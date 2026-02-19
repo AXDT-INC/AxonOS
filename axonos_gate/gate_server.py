@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""
-AXGT Gate Server - Simple Implementation
-
-Serves HTTP (HTML/API) and gates WebSocket connections to websockify.
-"""
+"""AXGT Gate Server - API helper implementation."""
 
 import os
 import sys
@@ -24,11 +20,27 @@ if '/axonos_gate' not in sys.path:
 
 # Import our modules
 try:
-    from axgt_verifier import has_access, validate_wallet_address, mask_wallet_address
+    from axgt_verifier import (
+        get_challenge_message,
+        get_challenge_ttl_seconds,
+        get_credit_policy,
+        get_wallet_access_status,
+        mask_wallet_address,
+        validate_wallet_address,
+        verify_signed_challenge,
+    )
 except ImportError:
     # Fallback to package import
     try:
-        from axonos_gate.axgt_verifier import has_access, validate_wallet_address, mask_wallet_address
+        from axonos_gate.axgt_verifier import (
+            get_challenge_message,
+            get_challenge_ttl_seconds,
+            get_credit_policy,
+            get_wallet_access_status,
+            mask_wallet_address,
+            validate_wallet_address,
+            verify_signed_challenge,
+        )
     except ImportError as e:
         print(f"ERROR: Cannot import axgt_verifier: {e}", file=sys.stderr)
         sys.exit(1)
@@ -68,7 +80,7 @@ def after_request(response):
 
 @app.route('/api/auth/verify-wallet', methods=['POST', 'OPTIONS'])
 def verify_wallet():
-    """Verify wallet holds AXGT tokens."""
+    """Verify wallet ownership (signed challenge) and AXGT access policy."""
     if request.method == 'OPTIONS':
         return '', 200
     try:
@@ -83,6 +95,8 @@ def verify_wallet():
             return jsonify({'verified': False, 'error': 'No JSON data provided'}), 400
         
         wallet_address = data.get('wallet_address', '').strip()
+        message = (data.get('message') or '').strip()
+        signature_hex = (data.get('signature') or data.get('signature_hex') or '').strip()
         
         if not wallet_address:
             return jsonify({'verified': False, 'error': 'wallet_address is required'}), 400
@@ -93,31 +107,75 @@ def verify_wallet():
                 'error': 'Invalid wallet address format. Must be 0x followed by 40 hex characters.'
             }), 400
         
-        has_access_result, access_type, days_remaining = has_access(wallet_address)
-        
-        if has_access_result:
-            response_data = {
-                'verified': True,
-                'access_type': access_type
-            }
-            if access_type == 'trial' and days_remaining is not None:
-                response_data['trial_days_remaining'] = round(days_remaining, 1)
-                response_data['message'] = f'7-day trial active ({days_remaining:.1f} days remaining)'
-            elif access_type == 'balance':
-                response_data['message'] = 'Wallet verified - AXGT holder'
-            
-            logger.info(f"Wallet verified: {mask_wallet_address(wallet_address)} (access_type: {access_type})")
-            return jsonify(response_data)
-        else:
-            logger.info(f"Wallet verification failed: {mask_wallet_address(wallet_address)}")
-            return jsonify({
-                'verified': False,
-                'error': 'No access available for this wallet'
-            })
+        if not message:
+            return jsonify({'verified': False, 'error': 'message is required'}), 400
+        if not signature_hex:
+            return jsonify({'verified': False, 'error': 'signature is required'}), 400
+
+        if not verify_signed_challenge(wallet_address, message, signature_hex):
+            logger.warning("Sign-to-verify failed for %s", mask_wallet_address(wallet_address))
+            return jsonify({'verified': False, 'error': 'Wallet signature verification failed.'}), 401
+
+        status = get_wallet_access_status(wallet_address, consume_usage=False)
+        status['wallet_address'] = wallet_address
+        if status.get('verified'):
+            logger.info("Wallet verified: %s", mask_wallet_address(wallet_address))
+            return jsonify(status)
+        logger.info("Wallet verification failed after signature check: %s", mask_wallet_address(wallet_address))
+        return jsonify({
+            'verified': False,
+            'error': status.get('reason') or 'No access available for this wallet'
+        })
             
     except Exception as e:
         logger.error(f"Error in verify_wallet: {e}", exc_info=True)
         return jsonify({'verified': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/auth/challenge', methods=['GET', 'OPTIONS'])
+def auth_challenge():
+    if request.method == 'OPTIONS':
+        return '', 200
+    wallet_address = (request.args.get('wallet_address') or request.headers.get('X-Wallet-Address') or '').strip()
+    if not wallet_address:
+        return jsonify({'error': 'wallet_address is required'}), 400
+    if not validate_wallet_address(wallet_address):
+        return jsonify({'error': 'Invalid wallet address format.'}), 400
+    try:
+        return jsonify({
+            'challenge': get_challenge_message(wallet_address),
+            'challenge_expires_in_seconds': get_challenge_ttl_seconds(),
+        })
+    except ValueError:
+        return jsonify({'error': 'wallet_address is invalid'}), 400
+
+
+@app.route('/api/auth/wallet-status', methods=['GET', 'OPTIONS'])
+def wallet_status():
+    if request.method == 'OPTIONS':
+        return '', 200
+    wallet_address = (request.args.get('wallet_address') or request.headers.get('X-Wallet-Address') or '').strip()
+    if not wallet_address:
+        return jsonify({'verified': False, 'error': 'wallet_address is required'}), 400
+    if not validate_wallet_address(wallet_address):
+        return jsonify({'verified': False, 'error': 'Invalid wallet address format.'}), 400
+    status = get_wallet_access_status(wallet_address, consume_usage=False)
+    status['wallet_address'] = wallet_address
+    if not status.get('verified'):
+        status['error'] = status.get('reason') or 'Access denied for this wallet.'
+    return jsonify(status)
+
+
+@app.route('/api/config', methods=['GET'])
+def api_config():
+    policy = get_credit_policy()
+    return jsonify({
+        'axgt_contract_address': (os.getenv("AXGT_CONTRACT_ADDRESS") or "").strip() or None,
+        'axgt_chain_id': (os.getenv("AXGT_CHAIN_ID") or "").strip() or None,
+        'axgt_min_hold_amount': policy.get("min_hold_amount"),
+        'axgt_credit_per_100_axgt_minutes': policy.get("credit_per_100_axgt_minutes"),
+        'axgt_warning_threshold_minutes': policy.get("warning_threshold_minutes"),
+    })
+
 
 @app.route('/')
 def index():
