@@ -841,36 +841,18 @@ document.addEventListener("DOMContentLoaded", function() {
                 window.verifiedWalletAddress = walletAddress;
                 verifiedWalletAddress = walletAddress;
                 
-                // Close dialog and proceed with connection
+                // Close dialog then auto-trigger "Launch GPU-Native Desktop" so connection starts without a second click
                 setTimeout(() => {
-                    // Close the credentials dialog
                     const credentialsDialog = document.getElementById('noVNC_credentials_dlg');
                     if (credentialsDialog) {
                         credentialsDialog.classList.remove('noVNC_open');
                     }
-                    
-                    // If RFB connection already exists and is waiting for credentials, send them
-                    if (typeof UI !== 'undefined' && UI.rfb && typeof UI.rfb.sendCredentials === 'function') {
-                        const password = WebUtil.getConfigVar('password') || 'axonpassword';
-                        UI.reconnectPassword = password;
-                        try {
-                            UI.rfb.sendCredentials({ username: '', password: password });
-                            console.log('Credentials sent to existing RFB connection');
-                        } catch (e) {
-                            console.log('RFB not ready for credentials yet:', e);
-                            // If RFB not ready, initiate connection
-                            if (typeof UI.connect === 'function') {
-                                UI.connect(null, password);
-                            }
-                        }
-                    } else {
-                        // RFB not initialized yet - initiate connection now that wallet is verified
-                        console.log('Initiating VNC connection with verified wallet');
-                        if (typeof UI !== 'undefined' && typeof UI.connect === 'function') {
-                            const password = WebUtil.getConfigVar('password') || 'axonpassword';
-                            UI.reconnectPassword = password;
-                            UI.connect(null, password);
-                        }
+                    const launchBtn = document.getElementById('noVNC_connect_button');
+                    if (launchBtn && typeof launchBtn.click === 'function') {
+                        launchBtn.click();
+                    } else if (typeof UI !== 'undefined' && typeof UI.connect === 'function') {
+                        var p = (typeof WebUtil !== 'undefined' && WebUtil.getConfigVar) ? WebUtil.getConfigVar('password') : null;
+                        UI.connect(null, p || 'axonpassword');
                     }
                 }, 1500);
             } else {
