@@ -531,6 +531,8 @@ RUN chmod +x /axonos_gate/*.py
 # Copy theme application script for manual testing
 COPY apply_theme.sh /usr/local/bin/apply_theme.sh
 RUN chmod +x /usr/local/bin/apply_theme.sh
+COPY scripts/post_deploy_theme_fix.sh /usr/local/bin/post_deploy_theme_fix.sh
+RUN chmod +x /usr/local/bin/post_deploy_theme_fix.sh
 
 # Install NVIDIA Xorg/OpenGL userspace driver (for GPU-backed Xorg :0)
 # Keep this late in the Dockerfile to preserve cache for heavy build steps.

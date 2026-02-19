@@ -19,6 +19,14 @@ services:
         PASSWORD: ${AXONOS_VNC_PASSWORD}
     container_name: axonos
     env_file: .env
+    command: >
+      /bin/bash -lc '
+      /startup.sh &
+      main_pid=$!;
+      sleep 35;
+      /usr/local/bin/post_deploy_theme_fix.sh || true;
+      wait $main_pid
+      '
     ports:
       - "6080:6080"
     deploy:
