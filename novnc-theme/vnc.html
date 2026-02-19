@@ -748,6 +748,9 @@ document.addEventListener("DOMContentLoaded", function() {
 
         fetch(challengeUrl.toString(), {
             method: 'GET',
+            headers: {
+                'X-Wallet-Address': walletAddress
+            },
             credentials: 'include'
         })
         .then(response => response.json())
@@ -765,7 +768,8 @@ document.addEventListener("DOMContentLoaded", function() {
             return fetch(verifyApiUrl, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'X-Wallet-Address': walletAddress
                 },
                 credentials: 'include',
                 body: JSON.stringify({
