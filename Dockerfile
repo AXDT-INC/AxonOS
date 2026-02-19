@@ -523,7 +523,7 @@ COPY novnc-theme/icon.png /usr/share/novnc/icon.png
 
 # Install AXGT Gate
 COPY axonos_gate/ /axonos_gate/
-RUN pip3 install -r /axonos_gate/requirements.txt
+RUN /usr/bin/python3 -m pip install -r /axonos_gate/requirements.txt
 RUN chmod +x /axonos_gate/*.py
 
 # AXGT / gate configuration is provided via environment variables at runtime.
