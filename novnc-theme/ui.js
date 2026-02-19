@@ -200,11 +200,6 @@ const UI = {
         UI.initSetting('view_only', false);
         UI.initSetting('show_dot', false);
         UI.initSetting('path', 'websockify');
-        // AXGT WebSocket auth mode:
-        // - cookie (default): rely on HttpOnly auth cookie set by /api/auth/verify-wallet
-        // - query: include auth_token in ws URL query string (tunnels/proxies fallback)
-        // - both: include query token and also accept cookie on server
-        UI.initSetting('axgt_ws_auth', 'cookie');
         UI.initSetting('repeaterID', '');
         UI.initSetting('reconnect', false);
         UI.initSetting('reconnect_delay', 5000);
@@ -1021,7 +1016,13 @@ const UI = {
             return;
         }
         
-        const wsAuthMode = String(UI.getSetting('axgt_ws_auth') || 'cookie').toLowerCase();
+        // Read AXGT WS auth mode from URL (or cookie/local storage), without registering
+        // it as a noVNC setting (no corresponding UI control exists in vnc.html).
+        const wsAuthMode = String(
+            WebUtil.getConfigVar('axgt_ws_auth') ??
+            WebUtil.readSetting('axgt_ws_auth') ??
+            'cookie'
+        ).toLowerCase();
         const includeQueryAuthToken = (wsAuthMode === 'query' || wsAuthMode === 'both');
 
         // Check if wallet is verified before connecting
