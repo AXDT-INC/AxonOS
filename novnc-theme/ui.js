@@ -200,6 +200,11 @@ const UI = {
         UI.initSetting('view_only', false);
         UI.initSetting('show_dot', false);
         UI.initSetting('path', 'websockify');
+        // AXGT WebSocket auth mode:
+        // - cookie (default): rely on HttpOnly auth cookie set by /api/auth/verify-wallet
+        // - query: include auth_token in ws URL query string (tunnels/proxies fallback)
+        // - both: include query token and also accept cookie on server
+        UI.initSetting('axgt_ws_auth', 'cookie');
         UI.initSetting('repeaterID', '');
         UI.initSetting('reconnect', false);
         UI.initSetting('reconnect_delay', 5000);
@@ -1016,6 +1021,9 @@ const UI = {
             return;
         }
         
+        const wsAuthMode = String(UI.getSetting('axgt_ws_auth') || 'cookie').toLowerCase();
+        const includeQueryAuthToken = (wsAuthMode === 'query' || wsAuthMode === 'both');
+
         // Check if wallet is verified before connecting
         if (!window.verifiedWalletAddress) {
             Log.Warn("Wallet not verified - showing credentials dialog");
@@ -1023,7 +1031,7 @@ const UI = {
             UI.credentials({ detail: { types: ['password'] } });
             return;
         }
-        if (!window.verifiedWalletAuthToken) {
+        if (includeQueryAuthToken && !window.verifiedWalletAuthToken) {
             Log.Warn("Wallet auth token missing - showing credentials dialog");
             UI.credentials({ detail: { types: ['password'] } });
             return;
@@ -1064,15 +1072,14 @@ const UI = {
         }
         url += '/' + path;
         
-        // Add wallet address and auth token to query string if verified.
-        // Auth token is also set as HttpOnly cookie, but tunnels/proxies may not
-        // forward cookies on WebSocket upgrades, so include it as query fallback.
+        // Always include wallet in query string (browser WebSocket cannot set custom headers).
+        // Auth token is preferably sent as HttpOnly cookie; include as query only when requested.
         const verifiedWallet = window.verifiedWalletAddress || null;
         const verifiedAuthToken = window.verifiedWalletAuthToken || null;
         if (verifiedWallet) {
             const separator = url.includes('?') ? '&' : '?';
             url += separator + 'wallet=' + encodeURIComponent(verifiedWallet);
-            if (verifiedAuthToken) {
+            if (includeQueryAuthToken && verifiedAuthToken) {
                 url += '&auth_token=' + encodeURIComponent(verifiedAuthToken);
             }
         }

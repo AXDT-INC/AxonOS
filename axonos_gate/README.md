@@ -63,6 +63,13 @@ Additional configuration for websockify:
 
 The gate will serve the noVNC page and `/api/auth/*`, issue `auth_token`, and proxy WebSocket `/websockify` to 6080 (connections from 127.0.0.1 are accepted by websockify_gate without a separate secret).
 
+**WebSocket auth mode (production vs tunnels):**
+
+- **Production default**: the WebSocket uses the **HttpOnly cookie** set by `/api/auth/verify-wallet` (no `auth_token` in the WS URL).
+- **Tunnel fallback**: some tunnels/proxies break cookie forwarding on WebSocket upgrades. You can opt into including the auth token in the WebSocket URL by adding a URL param to the page:
+  - `?axgt_ws_auth=query` (query token only)
+  - `?axgt_ws_auth=both` (send query token; server still accepts cookie)
+
 ## Components
 
 - `axgt_verifier.py`: Core wallet verification logic using Ethereum RPC
