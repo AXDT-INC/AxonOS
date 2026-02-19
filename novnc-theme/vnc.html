@@ -348,6 +348,10 @@ Copyright (C) 2019 The noVNC Authors
             <li id="noVNC_wallet_block">
                 <label>Wallet Address:</label>
                 <input id="noVNC_wallet_input" type="text" placeholder="0x...">
+                <div style="margin-top: 8px;">
+                    <button id="axonos_connect_wallet_btn" type="button" class="noVNC_submit" style="white-space: nowrap;">Connect Wallet</button>
+                    <span id="axonos_connected_wallet_hint" style="margin-left: 8px; opacity: 0.85; font-size: 12px;"></span>
+                </div>
             </li>
             <li id="axonos-wallet-status" class="axonos-wallet-status" style="display: none;">
                 <div id="axonos-wallet-status-content"></div>
@@ -667,6 +671,8 @@ document.addEventListener("DOMContentLoaded", function() {
     const walletStatusContent = document.getElementById('axonos-wallet-status-content');
     const connectButton = document.getElementById('noVNC_connect_button');
     const contractEl = document.getElementById('axonos-axgt-contract');
+    const connectWalletBtn = document.getElementById('axonos_connect_wallet_btn');
+    const connectedWalletHint = document.getElementById('axonos_connected_wallet_hint');
 
     // Populate AXGT contract display dynamically (same-origin; avoids hardcoding in static HTML)
     if (contractEl) {
@@ -703,6 +709,23 @@ document.addEventListener("DOMContentLoaded", function() {
         } else if (state === 'verifying') {
             walletStatusContent.innerHTML = '⏳ ' + message;
         }
+    }
+
+    async function requestConnectedWallet() {
+        if (!window.ethereum || typeof window.ethereum.request !== 'function') {
+            throw new Error('No wallet provider detected');
+        }
+        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        if (!Array.isArray(accounts) || accounts.length === 0) {
+            throw new Error('No wallet account available');
+        }
+        const account = String(accounts[0] || '').trim();
+        if (!/^0x[a-fA-F0-9]{40}$/.test(account)) {
+            throw new Error('Connected wallet address is invalid');
+        }
+        if (walletInput) walletInput.value = account;
+        if (connectedWalletHint) connectedWalletHint.textContent = `Connected: ${account.slice(0, 6)}...${account.slice(-4)}`;
+        return account;
     }
     
     function verifyWallet() {
@@ -759,6 +782,18 @@ document.addEventListener("DOMContentLoaded", function() {
             if (!challenge) {
                 throw new Error((challengeData && challengeData.error) || 'Failed to get wallet challenge');
             }
+            return window.ethereum.request({ method: 'eth_requestAccounts' }).then(accounts => {
+                const account = Array.isArray(accounts) && accounts[0] ? String(accounts[0]).trim() : '';
+                if (!account) {
+                    throw new Error('No authorized wallet account available');
+                }
+                if (account.toLowerCase() !== walletAddress.toLowerCase()) {
+                    throw new Error('Connected wallet does not match the entered address. Use Connect Wallet or switch account.');
+                }
+                return challenge;
+            });
+        })
+        .then(challenge => {
             return window.ethereum.request({
                 method: 'personal_sign',
                 params: [challenge, walletAddress]
@@ -854,6 +889,15 @@ document.addEventListener("DOMContentLoaded", function() {
     
     if (verifyBtn) {
         verifyBtn.addEventListener('click', verifyWallet);
+    }
+
+    if (connectWalletBtn) {
+        connectWalletBtn.addEventListener('click', function () {
+            setWalletStatus('verifying', 'Connecting wallet...');
+            requestConnectedWallet()
+                .then(() => setWalletStatus('verifying', 'Wallet connected. Click Verify Wallet to continue.'))
+                .catch((err) => setWalletStatus('error', 'Wallet connect failed: ' + (err && err.message ? err.message : String(err))));
+        });
     }
     
     // Handle credentials form submission (wallet verification)
