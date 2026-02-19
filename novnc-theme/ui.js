@@ -1156,6 +1156,16 @@ const UI = {
         UI.showStatus(msg);
         UI.updateVisualState('connected');
 
+        // Start AXGT usage polling when connected with a verified wallet
+        if (window.verifiedWalletAddress) {
+            UI._axgtUpdateUsageOverlay('hidden');
+            if (UI._axgtStatusPollId) clearInterval(UI._axgtStatusPollId);
+            const poll = () => UI._axgtPollWalletStatus();
+            UI._axgtStatusPollId = setInterval(poll, 60000);
+            setTimeout(poll, 2000);
+            UI._axgtSetupUsageOverlayButton();
+        }
+
         // Do this last because it can only be used on rendered elements
         UI.rfb.focus();
     },
@@ -1170,6 +1180,15 @@ const UI = {
         UI.connected = false;
 
         UI.rfb = undefined;
+
+        if (UI._axgtStatusPollId) {
+            clearInterval(UI._axgtStatusPollId);
+            UI._axgtStatusPollId = null;
+        }
+        const overlay = document.getElementById('axonos_usage_overlay');
+        if (!overlay || !overlay.classList.contains('axonos-usage-overlay--locked')) {
+            UI._axgtUpdateUsageOverlay('hidden');
+        }
 
         if (!e.detail.clean) {
             UI.updateVisualState('disconnected');
@@ -1194,6 +1213,68 @@ const UI = {
 
         UI.openControlbar();
         UI.openConnectPanel();
+    },
+
+    _axgtUpdateUsageOverlay(state, message) {
+        const overlay = document.getElementById('axonos_usage_overlay');
+        const msgEl = document.getElementById('axonos_usage_overlay_message');
+        if (!overlay || !msgEl) return;
+        overlay.classList.remove('axonos-usage-overlay--hidden', 'axonos-usage-overlay--warning', 'axonos-usage-overlay--locked');
+        if (state === 'hidden') {
+            overlay.classList.add('axonos-usage-overlay--hidden');
+            overlay.setAttribute('aria-hidden', 'true');
+            return;
+        }
+        overlay.setAttribute('aria-hidden', 'false');
+        msgEl.textContent = message || '';
+        if (state === 'warning') overlay.classList.add('axonos-usage-overlay--warning');
+        else if (state === 'locked') overlay.classList.add('axonos-usage-overlay--locked');
+    },
+
+    _axgtPollWalletStatus() {
+        if (!UI.connected || !UI.rfb || !window.verifiedWalletAddress) return;
+        const wallet = window.verifiedWalletAddress;
+        const url = new URL('/api/auth/wallet-status', window.location.origin);
+        url.searchParams.set('wallet_address', wallet);
+        const opts = {
+            method: 'GET',
+            credentials: 'include',
+            headers: { 'X-Wallet-Address': wallet }
+        };
+        const token = window.verifiedWalletAuthToken || null;
+        if (token) opts.headers['X-AXGT-Auth-Token'] = token;
+        fetch(url.toString(), opts)
+            .then(r => r.json())
+            .then(data => {
+                const locked = data.locked === true;
+                const remaining = typeof data.remaining_minutes === 'number' ? data.remaining_minutes : 0;
+                const threshold = typeof data.warning_threshold_minutes === 'number' ? data.warning_threshold_minutes : 10;
+                const reason = (data.reason && String(data.reason)) || '';
+                if (locked) {
+                    UI._axgtUpdateUsageOverlay('locked',
+                        'Usage credit exhausted. Add more AXGT to unlock access.');
+                    if (UI.rfb && typeof UI.rfb.disconnect === 'function') {
+                        UI.inhibitReconnect = true;
+                        UI.rfb.disconnect();
+                    }
+                } else if (remaining <= threshold && remaining > 0) {
+                    UI._axgtUpdateUsageOverlay('warning',
+                        reason || `Less than ${threshold} minutes of AXGT usage credit remaining. Add more AXGT to continue.`);
+                } else if (remaining > threshold) {
+                    UI._axgtUpdateUsageOverlay('hidden');
+                }
+            })
+            .catch(() => {});
+    },
+
+    _axgtSetupUsageOverlayButton() {
+        const btn = document.getElementById('axonos_usage_overlay_verify_btn');
+        if (!btn || btn.hasAttribute('data-axgt-listener')) return;
+        btn.setAttribute('data-axgt-listener', 'true');
+        btn.addEventListener('click', () => {
+            UI._axgtUpdateUsageOverlay('hidden');
+            UI.credentials({ detail: { types: ['password'] } });
+        });
     },
 
     securityFailed(e) {

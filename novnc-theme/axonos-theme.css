@@ -426,6 +426,46 @@ input[type="password"]::placeholder {
     color: #ffd700;
 }
 
+/* AXGT usage overlay (during VNC session: warning or locked) */
+.axonos-usage-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.75);
+    pointer-events: auto;
+}
+.axonos-usage-overlay--hidden {
+    display: none !important;
+}
+.axonos-usage-overlay__panel {
+    max-width: 420px;
+    padding: 24px;
+    border-radius: 8px;
+    text-align: center;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+}
+.axonos-usage-overlay--warning .axonos-usage-overlay__panel {
+    background: rgba(30, 30, 30, 0.98);
+    border: 2px solid var(--axonos-accent);
+    color: var(--axonos-light);
+}
+.axonos-usage-overlay--locked .axonos-usage-overlay__panel {
+    background: rgba(30, 30, 30, 0.98);
+    border: 2px solid #dc143c;
+    color: var(--axonos-light);
+}
+.axonos-usage-overlay__message {
+    margin: 0 0 20px 0;
+    font-size: 1rem;
+    line-height: 1.5;
+}
+.axonos-usage-overlay__btn {
+    margin-top: 8px;
+}
+
 /* Fix all credential form inputs */
 #noVNC_credentials_dlg input {
   background-color: var(--axonos-dark) !important;

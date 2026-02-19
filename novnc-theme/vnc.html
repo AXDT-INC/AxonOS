@@ -382,6 +382,14 @@ Copyright (C) 2019 The noVNC Authors
             autocomplete="off" spellcheck="false" tabindex="-1"></textarea>
     </div>
 
+    <!-- AXGT usage overlay: warning (low minutes) or locked (exhausted). Shown only when connected. -->
+    <div id="axonos_usage_overlay" class="axonos-usage-overlay axonos-usage-overlay--hidden" aria-hidden="true">
+        <div class="axonos-usage-overlay__panel">
+            <p id="axonos_usage_overlay_message" class="axonos-usage-overlay__message"></p>
+            <button type="button" id="axonos_usage_overlay_verify_btn" class="noVNC_submit axonos-usage-overlay__btn">Verify wallet again</button>
+        </div>
+    </div>
+
     <audio id="noVNC_bell">
         <source src="app/sounds/bell.oga" type="audio/ogg">
         <source src="app/sounds/bell.mp3" type="audio/mpeg">
