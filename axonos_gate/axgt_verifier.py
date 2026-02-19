@@ -110,6 +110,13 @@ def get_challenge_message(wallet_address: str) -> str:
     return challenge
 
 
+def _normalize_challenge_message(message: str) -> str:
+    """Normalize line endings to \\n so parsing and recovery match what wallets sign."""
+    if not message:
+        return message
+    return message.replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
 def _extract_challenge_fields(message: str) -> tuple[Optional[str], Optional[str]]:
     if not message or not message.startswith(_CHALLENGE_PREFIX):
         return None, None
@@ -151,12 +158,20 @@ def recover_signer_from_signature(message: str, signature_hex: str) -> Optional[
 
 def verify_signed_challenge(wallet_address: str, message: str, signature_hex: str) -> bool:
     if not validate_wallet_address(wallet_address):
+        logger.warning("verify_signed_challenge: invalid wallet address")
         return False
+    message_normalized = _normalize_challenge_message(message)
     expected_wallet = wallet_address.lower()
-    challenge_wallet, challenge_nonce = _extract_challenge_fields(message)
+    challenge_wallet, challenge_nonce = _extract_challenge_fields(message_normalized)
     if not challenge_wallet or not challenge_nonce:
+        logger.warning(
+            "verify_signed_challenge: could not parse challenge (prefix=%s, parts_ok=%s)",
+            (message_normalized or "")[:50],
+            bool(message_normalized and message_normalized.startswith(_CHALLENGE_PREFIX)),
+        )
         return False
     if challenge_wallet != expected_wallet:
+        logger.warning("verify_signed_challenge: wallet in challenge does not match")
         return False
 
     now_ts = time.time()
@@ -164,17 +179,31 @@ def verify_signed_challenge(wallet_address: str, message: str, signature_hex: st
         _prune_expired_challenges(now_ts)
         challenge_record = _challenge_registry.get(challenge_nonce)
         if not challenge_record:
+            logger.warning(
+                "verify_signed_challenge: challenge not found or expired (nonce=%s)",
+                challenge_nonce[:12] + "..." if challenge_nonce else "?",
+            )
             return False
         if challenge_record.get("wallet_address") != expected_wallet:
+            logger.warning("verify_signed_challenge: challenge wallet mismatch")
             return False
         if bool(challenge_record.get("used")):
+            logger.warning("verify_signed_challenge: challenge already used")
             return False
         if float(challenge_record.get("expires_at", 0)) <= now_ts:
             _challenge_registry.pop(challenge_nonce, None)
+            logger.warning("verify_signed_challenge: challenge expired")
             return False
 
+    # Recover signer: try original message first, then normalized (some wallets normalize line endings)
     recovered = recover_signer_from_signature(message, signature_hex)
+    if not recovered and message != message_normalized:
+        recovered = recover_signer_from_signature(message_normalized, signature_hex)
     if not recovered or recovered.lower() != expected_wallet:
+        logger.warning(
+            "verify_signed_challenge: signature recovery failed (recovered=%s)",
+            mask_wallet_address(recovered) if recovered else "None",
+        )
         return False
 
     with _challenge_lock:
