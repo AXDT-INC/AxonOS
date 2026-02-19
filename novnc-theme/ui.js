@@ -1064,11 +1064,17 @@ const UI = {
         }
         url += '/' + path;
         
-        // Add wallet address to query string if verified
+        // Add wallet address and auth token to query string if verified.
+        // Auth token is also set as HttpOnly cookie, but tunnels/proxies may not
+        // forward cookies on WebSocket upgrades, so include it as query fallback.
         const verifiedWallet = window.verifiedWalletAddress || null;
+        const verifiedAuthToken = window.verifiedWalletAuthToken || null;
         if (verifiedWallet) {
             const separator = url.includes('?') ? '&' : '?';
             url += separator + 'wallet=' + encodeURIComponent(verifiedWallet);
+            if (verifiedAuthToken) {
+                url += '&auth_token=' + encodeURIComponent(verifiedAuthToken);
+            }
         }
 
         UI.rfb = new RFB(document.getElementById('noVNC_container'), url,
