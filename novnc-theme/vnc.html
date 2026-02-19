@@ -907,7 +907,21 @@ document.addEventListener("DOMContentLoaded", function() {
                 .catch((err) => setWalletStatus('error', 'Wallet connect failed: ' + (err && err.message ? err.message : String(err))));
         });
     }
-    
+
+    // When user switches account in the extension, sync input and hint so Verify works without clicking Connect again
+    if (window.ethereum && typeof window.ethereum.on === 'function') {
+        window.ethereum.on('accountsChanged', function (accounts) {
+            const account = Array.isArray(accounts) && accounts.length > 0 ? String(accounts[0]).trim() : '';
+            if (account && /^0x[a-fA-F0-9]{40}$/.test(account)) {
+                if (walletInput) walletInput.value = account;
+                if (connectedWalletHint) connectedWalletHint.textContent = 'Connected: ' + account.slice(0, 6) + '...' + account.slice(-4);
+                setWalletStatus('verifying', 'Account switched. Click Verify Wallet to continue.');
+            } else {
+                if (connectedWalletHint) connectedWalletHint.textContent = '';
+            }
+        });
+    }
+
     // Handle credentials form submission (wallet verification)
     const credentialsForm = document.querySelector('#noVNC_credentials_dlg form');
     if (credentialsForm) {
