@@ -4,6 +4,8 @@
 import os
 import sys
 import logging
+import secrets
+import time
 import threading
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -62,6 +64,39 @@ _rate_limiter = get_rate_limiter_from_env()
 
 NOVNC_WEB_DIR = Path('/usr/share/novnc')
 
+# In-memory auth tokens for WebSocket (same-origin verify_wallet flow when tunnel points at GATE_PORT)
+_AUTH_TOKEN_TTL = int(os.getenv("AXGT_AUTH_TOKEN_TTL_SECONDS", "300").strip() or "300") or 300
+_auth_tokens = {}
+_auth_lock = threading.Lock()
+
+
+def _issue_gate_auth_token(wallet_address: str) -> tuple[str, int]:
+    now_ts = time.time()
+    token = secrets.token_urlsafe(32)
+    with _auth_lock:
+        # Prune expired
+        expired = [t for t, info in _auth_tokens.items() if (info.get("expires_at") or 0) < now_ts]
+        for t in expired:
+            _auth_tokens.pop(t, None)
+        _auth_tokens[token] = {
+            "wallet_address": wallet_address,
+            "expires_at": now_ts + _AUTH_TOKEN_TTL,
+        }
+    return token, _AUTH_TOKEN_TTL
+
+
+def _is_gate_auth_token_valid(token: str, wallet_address: str) -> bool:
+    if not token:
+        return False
+    now_ts = time.time()
+    with _auth_lock:
+        info = _auth_tokens.get(token)
+        if not info or info.get("wallet_address") != wallet_address:
+            return False
+        if (info.get("expires_at") or 0) < now_ts:
+            return False
+        return True
+
 @app.after_request
 def after_request(response):
     """Add CORS headers to all responses."""
@@ -119,6 +154,9 @@ def verify_wallet():
         status = get_wallet_access_status(wallet_address, consume_usage=False)
         status['wallet_address'] = wallet_address
         if status.get('verified'):
+            token, ttl = _issue_gate_auth_token(wallet_address)
+            status['auth_token'] = token
+            status['auth_token_expires_in_seconds'] = ttl
             logger.info("Wallet verified: %s", mask_wallet_address(wallet_address))
             return jsonify(status)
         logger.info("Wallet verification failed after signature check: %s", mask_wallet_address(wallet_address))
@@ -187,18 +225,133 @@ def serve_static(path):
     """Serve static files from noVNC directory."""
     return send_from_directory(str(NOVNC_WEB_DIR), path)
 
+
+def _extract_wallet_and_token_from_environ(environ):
+    query = environ.get('QUERY_STRING', '')
+    qs = parse_qs(query)
+    wallet = (qs.get('wallet') or [None])[0] if qs else None
+    token = (qs.get('auth_token') or [None])[0] if qs else None
+    if wallet:
+        wallet = wallet.strip()
+    if token:
+        token = token.strip()
+    return wallet, token
+
+
+def _handle_websockify_proxy(environ, start_response):
+    """Handle /websockify WebSocket: validate wallet+token, proxy to websockify_gate on 6080."""
+    ws = environ.get('wsgi.websocket')
+    if not ws:
+        start_response('400 Bad Request', [('Content-Type', 'text/plain')])
+        return [b'WebSocket expected']
+
+    wallet, auth_token = _extract_wallet_and_token_from_environ(environ)
+    if not wallet or not validate_wallet_address(wallet):
+        try:
+            ws.close(code=403, reason='Invalid or missing wallet')
+        except Exception:
+            pass
+        return []
+
+    if not auth_token or not _is_gate_auth_token_valid(auth_token, wallet):
+        try:
+            ws.close(code=403, reason='Invalid or expired auth token')
+        except Exception:
+            pass
+        return []
+
+    status = get_wallet_access_status(wallet, consume_usage=False)
+    if not status.get('verified'):
+        try:
+            ws.close(code=403, reason=status.get('reason') or 'Access denied')
+        except Exception:
+            pass
+        return []
+
+    websockify_port = int(os.getenv('WEBSOCKIFY_PORT', '6080'))
+    backend_url = f'ws://127.0.0.1:{websockify_port}/websockify?wallet={wallet}'
+
+    try:
+        import gevent
+        from websocket import create_connection
+        backend = create_connection(backend_url)
+    except Exception as e:
+        logger.error("WebSocket proxy backend connect failed: %s", e, exc_info=True)
+        try:
+            ws.close(code=503, reason='Backend unavailable')
+        except Exception:
+            pass
+        return []
+
+    def client_to_backend():
+        try:
+            while True:
+                msg = ws.receive()
+                if msg is None:
+                    break
+                if isinstance(msg, bytes):
+                    backend.send(msg, opcode=2)
+                else:
+                    backend.send(msg, opcode=1)
+        except Exception:
+            pass
+        try:
+            backend.close()
+        except Exception:
+            pass
+
+    def backend_to_client():
+        try:
+            while True:
+                msg = backend.recv()
+                if msg is None:
+                    break
+                ws.send(msg)
+        except Exception:
+            pass
+        try:
+            ws.close()
+        except Exception:
+            pass
+
+    logger.info("WebSocket proxy started: %s", mask_wallet_address(wallet))
+    gevent.spawn(client_to_backend)
+    gevent.spawn(backend_to_client).get()
+    return []
+
+
+def _application(environ, start_response):
+    """WSGI app: /websockify with Upgrade: websocket -> proxy; else Flask."""
+    path = (environ.get('PATH_INFO') or '').strip()
+    is_ws = (environ.get('HTTP_UPGRADE') or '').lower() == 'websocket'
+    if path == '/websockify' and is_ws and environ.get('wsgi.websocket'):
+        return _handle_websockify_proxy(environ, start_response)
+    return app.wsgi_app(environ, start_response)
+
+
 def main():
-    """Run the gate server."""
-    # Defaults chosen to avoid collisions with IPFS gateway (8080) and reduce surface area.
-    # Override via env for non-default deployments.
+    """Run the gate server (HTTP + WebSocket on same port)."""
     host = os.getenv('GATE_HOST', '127.0.0.1')
     port = int(os.getenv('GATE_PORT', '8889'))
-    
+
     logger.info(f"Starting AxonOS AXGT Gate Server on {host}:{port}")
     logger.info(f"AXGT Contract: {(os.getenv('AXGT_CONTRACT_ADDRESS') or '<unset>').strip()}")
     logger.info(f"RPC URL: {(os.getenv('AXGT_RPC_URL') or '<unset>').strip()}")
-    
-    app.run(host=host, port=port, debug=False, use_reloader=False)
+
+    use_gevent = (os.getenv('GATE_USE_GEVENT', '1').strip().lower() in ('1', 'true', 'yes'))
+    if use_gevent:
+        try:
+            from gevent import pywsgi
+            from geventwebsocket.handler import WebSocketHandler
+            logger.info("WebSocket /websockify enabled (proxy to websockify_gate on 127.0.0.1)")
+            server = pywsgi.WSGIServer((host, port), _application, handler_class=WebSocketHandler)
+            server.serve_forever()
+        except ImportError as e:
+            logger.warning("gevent/gevent-websocket not available (%s); running Flask only (no WebSocket)", e)
+            app.run(host=host, port=port, debug=False, use_reloader=False)
+    else:
+        app.run(host=host, port=port, debug=False, use_reloader=False)
+
 
 if __name__ == '__main__':
     main()

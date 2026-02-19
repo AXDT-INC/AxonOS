@@ -522,6 +522,20 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             self.send_error(403, "Invalid wallet address format")
             return
 
+        # Allow internal proxy from gate_server (127.0.0.1 only; tunnel points at GATE_PORT)
+        client_address = self.client_address[0] if getattr(self, "client_address", None) else None
+        if client_address == "127.0.0.1":
+            status = get_wallet_access_status(wallet_address, consume_usage=False)
+            if status.get("verified"):
+                logger.info(
+                    "WebSocket upgrade approved (internal proxy): %s",
+                    mask_wallet_address(wallet_address),
+                )
+                return super().handle_upgrade()
+            reason = status.get("reason") or "Access denied for this wallet"
+            self.send_error(403, reason)
+            return
+
         auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
         if not auth_token:
             self.send_error(403, "AXGT auth token required")
@@ -542,26 +556,33 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
 def main():
     """Run websockify server with wallet gating + same-origin /api/auth/verify-wallet."""
     # Get configuration
+    listen_host = (os.getenv('WEBSOCKIFY_HOST') or '0.0.0.0').strip()
     listen_port = int(os.getenv('WEBSOCKIFY_PORT', '6080'))
     target_host = os.getenv('VNC_HOST', 'localhost')
     target_port = int(os.getenv('VNC_PORT', '5901'))
     web_dir = os.getenv('NOVNC_WEB_DIR', '/usr/share/novnc')
     
-    logger.info(f"Starting Websockify on port {listen_port}")
+    logger.info(f"Starting Websockify on {listen_host}:{listen_port}")
     logger.info(f"Target: {target_host}:{target_port}")
     logger.info(
         "AXGT gate enabled: /api/auth/{challenge,verify-wallet,wallet-status} "
         "served on same origin; WebSocket upgrades require wallet + auth token"
     )
     
-    # Create and run the proxy
-    server = websockify.WebSocketProxy(
+    # Create and run the proxy (listen_host so tunnel/cloudflared can reach localhost:6080)
+    proxy_kw = dict(
         RequestHandlerClass=AxonOSProxyRequestHandler,
         listen_port=listen_port,
         target_host=target_host,
         target_port=target_port,
-        web=web_dir
+        web=web_dir,
     )
+    try:
+        proxy_kw["listen_host"] = listen_host
+        server = websockify.WebSocketProxy(**proxy_kw)
+    except TypeError:
+        # Older websockify package may not support listen_host
+        server = websockify.WebSocketProxy(**{k: v for k, v in proxy_kw.items() if k != "listen_host"})
     
     server.start_server()
 

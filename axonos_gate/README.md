@@ -42,18 +42,32 @@ Optional hardening environment variables:
 - `AXGT_AUTH_ROTATE_BEFORE_EXPIRY_SECONDS`: Rotate current token only near expiry.
 - `AXGT_AUTH_GRACE_SECONDS`: Keep previous token briefly valid to prevent rotation races.
 
+Gate server (when tunnel points at gate):
+
+- `GATE_HOST`: Bind address for gate (default: `127.0.0.1`). Set to `0.0.0.0` when exposing the gate for a tunnel.
+- `GATE_PORT`: Port for the gate (default: `8889`).
+
 Additional configuration for websockify:
 
+- `WEBSOCKIFY_HOST`: Bind address for websockify (default: `0.0.0.0`).
 - `WEBSOCKIFY_PORT`: Port for websockify server (default: `6080`)
 - `VNC_HOST`: VNC server host (default: `localhost`)
 - `VNC_PORT`: VNC server port (default: `5901`)
 - `NOVNC_WEB_DIR`: Directory containing noVNC web files (default: `/usr/share/novnc`)
 
+**Gradio-tunneling (and other HTTP-only tunnels):** Many tunnels (including gradio-tunneling’s FRP “http” proxy) do not forward WebSocket upgrades. If you get “WebSocket connection refused” when the tunnel points at 6080, point the tunnel at the **gate** (port 8889) instead:
+
+1. Expose the gate: `-p 8889:8889` (and keep `-p 6080:6080` for the backend).
+2. Set `GATE_HOST=0.0.0.0` so the gate listens on all interfaces.
+3. Run the tunnel to the gate: `gradio-tun 8889` (not `gradio-tun 6080`).
+
+The gate will serve the noVNC page and `/api/auth/*`, issue `auth_token`, and proxy WebSocket `/websockify` to 6080 (connections from 127.0.0.1 are accepted by websockify_gate without a separate secret).
+
 ## Components
 
 - `axgt_verifier.py`: Core wallet verification logic using Ethereum RPC
 - `websockify_gate.py`: WebSocket gate wrapper for websockify
-- `gate_server.py`: HTTP server for serving HTML and API endpoints
+- `gate_server.py`: HTTP server for serving HTML and API endpoints; when the tunnel points at 8889, also handles WebSocket `/websockify` and proxies to websockify_gate on 6080
 
 ## API Endpoints
 
