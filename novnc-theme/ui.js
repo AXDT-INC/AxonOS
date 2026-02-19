@@ -1023,6 +1023,11 @@ const UI = {
             UI.credentials({ detail: { types: ['password'] } });
             return;
         }
+        if (!window.verifiedWalletAuthToken) {
+            Log.Warn("Wallet auth token missing - showing credentials dialog");
+            UI.credentials({ detail: { types: ['password'] } });
+            return;
+        }
 
         const host = UI.getSetting('host');
         const port = UI.getSetting('port');
@@ -1202,7 +1207,8 @@ const UI = {
         // This avoids getting stuck in a loop where the server asks for credentials after
         // the websocket connection is established.
         const verifiedWallet = window.verifiedWalletAddress || null;
-        if (verifiedWallet) {
+        const verifiedAuthToken = window.verifiedWalletAuthToken || null;
+        if (verifiedWallet && verifiedAuthToken) {
             // Prefer explicit config (URL/config var). Fall back to the image default.
             // NOTE: The VNC password is not a secret in this flow; access is gated by AXGT verification.
             const password = WebUtil.getConfigVar('password') || 'axonpassword';
@@ -1249,7 +1255,8 @@ const UI = {
 
         // Check if wallet is verified
         const verifiedWallet = window.verifiedWalletAddress;
-        if (!verifiedWallet) {
+        const verifiedAuthToken = window.verifiedWalletAuthToken || null;
+        if (!verifiedWallet || !verifiedAuthToken) {
             Log.Warn("Wallet not verified yet");
             // The wallet verification will be handled by the form submit handler in vnc.html
             return;

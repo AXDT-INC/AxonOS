@@ -336,7 +336,7 @@ Copyright (C) 2019 The noVNC Authors
             <li class="axonos-wallet-dialog-header">
                 <h2>AXGT Wallet Required</h2>
                 <p class="axonos-wallet-description">
-                    To access AxonOS, you must hold AXGT in your wallet or use your 7-day free trial.
+                    To access AxonOS, you must hold AXGT in your wallet and verify ownership by signing a challenge.
                 </p>
                 <p class="axonos-wallet-contract">
                     AXGT Contract: <code id="axonos-axgt-contract">(loading…)</code>
@@ -659,6 +659,7 @@ document.addEventListener("DOMContentLoaded", function() {
     // AXGT Wallet Verification (in credentials dialog)
     let verifiedWalletAddress = null;
     window.verifiedWalletAddress = null; // Make it globally accessible for ui.js
+    window.verifiedWalletAuthToken = null;
     
     const walletInput = document.getElementById('noVNC_wallet_input');
     const verifyBtn = document.getElementById('noVNC_credentials_button');
@@ -733,30 +734,59 @@ document.addEventListener("DOMContentLoaded", function() {
         
         setWalletStatus('verifying', 'Verifying wallet...');
         if (verifyBtn) verifyBtn.disabled = true;
-        
-        // Use same-origin API so this works behind tunnels (e.g. gradio-tun) and reverse proxies
-        const apiUrl = new URL('/api/auth/verify-wallet', window.location.origin).toString();
-        fetch(apiUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ wallet_address: walletAddress })
+
+        const hasEthereum = typeof window.ethereum !== 'undefined';
+        if (!hasEthereum) {
+            setWalletStatus('error', 'No wallet provider detected. Install MetaMask or another EVM wallet extension.');
+            if (verifyBtn) verifyBtn.disabled = false;
+            return;
+        }
+
+        const challengeUrl = new URL('/api/auth/challenge', window.location.origin);
+        challengeUrl.searchParams.set('wallet_address', walletAddress);
+        const verifyApiUrl = new URL('/api/auth/verify-wallet', window.location.origin).toString();
+
+        fetch(challengeUrl.toString(), {
+            method: 'GET',
+            credentials: 'include'
+        })
+        .then(response => response.json())
+        .then(challengeData => {
+            const challenge = (challengeData && challengeData.challenge) ? String(challengeData.challenge) : '';
+            if (!challenge) {
+                throw new Error((challengeData && challengeData.error) || 'Failed to get wallet challenge');
+            }
+            return window.ethereum.request({
+                method: 'personal_sign',
+                params: [challenge, walletAddress]
+            }).then(signature => ({ challenge, signature }));
+        })
+        .then(({ challenge, signature }) => {
+            return fetch(verifyApiUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                credentials: 'include',
+                body: JSON.stringify({
+                    wallet_address: walletAddress,
+                    message: challenge,
+                    signature: signature
+                })
+            });
         })
         .then(response => response.json())
         .then(data => {
             if (data.verified) {
                 verifiedWalletAddress = walletAddress;
                 window.verifiedWalletAddress = walletAddress; // Make globally accessible
+                window.verifiedWalletAuthToken = data.auth_token || null;
                 
-                // Show appropriate message based on access type
                 let statusMessage = 'Wallet verified - Connecting...';
-                if (data.access_type === 'trial' && data.trial_days_remaining !== undefined) {
-                    statusMessage = `7-day trial active (${data.trial_days_remaining.toFixed(1)} days remaining) - Connecting...`;
-                } else if (data.access_type === 'balance') {
-                    statusMessage = 'AXGT holder - Connecting...';
-                } else if (data.message) {
+                if (data.message) {
                     statusMessage = data.message + ' - Connecting...';
+                } else if (typeof data.remaining_minutes === 'number') {
+                    statusMessage = `Access granted (${data.remaining_minutes.toFixed(1)} minutes remaining) - Connecting...`;
                 }
                 
                 setWalletStatus('verified', statusMessage);
@@ -799,13 +829,19 @@ document.addEventListener("DOMContentLoaded", function() {
             } else {
                 verifiedWalletAddress = null;
                 window.verifiedWalletAddress = null;
+                window.verifiedWalletAuthToken = null;
                 setWalletStatus('not-verified', data.error || 'No access available for this wallet');
             }
         })
         .catch(error => {
             verifiedWalletAddress = null;
             window.verifiedWalletAddress = null;
-            setWalletStatus('error', 'Error verifying wallet: ' + error.message);
+            window.verifiedWalletAuthToken = null;
+            if (error && (error.code === 4001 || /user rejected/i.test(String(error.message || '')))) {
+                setWalletStatus('error', 'Signature request was rejected. Please approve the wallet signature to continue.');
+            } else {
+                setWalletStatus('error', 'Error verifying wallet: ' + error.message);
+            }
         })
         .finally(() => {
             if (verifyBtn) verifyBtn.disabled = false;
