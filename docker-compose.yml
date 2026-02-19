@@ -1,0 +1,31 @@
+# AxonOS – noVNC + AXGT gate (single service, GPU, port 6080)
+#
+# Build and run (from repo root, with .env present):
+#   docker compose build
+#   docker compose up -d
+#
+# Or one-shot: docker compose up -d --build
+#
+# Access: http://localhost:6080/vnc.html (or your host/tunnel URL)
+# VNC password and AXGT config come from .env (see env.example).
+
+services:
+  axonos:
+    image: axonos:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PASSWORD: ${AXONOS_VNC_PASSWORD}
+    container_name: axonos
+    env_file: .env
+    ports:
+      - "6080:6080"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
