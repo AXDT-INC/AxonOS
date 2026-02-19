@@ -236,6 +236,8 @@ chmod +x /tmp/setup_x.sh
 # Switch to aXonian user and run the script
 su - aXonian -c '/tmp/setup_x.sh'
 
+# Apply theme/wallpaper after XFCE is fully up (avoids race; runs same logic as post_deploy_theme.sh)
+( sleep 35; /usr/local/bin/post_deploy_theme.sh ) &
 
 echo "== Xorg log =="; ls -l /var/log/Xorg.0.log || true
 test -f /var/log/Xorg.0.log && tail -n 200 /var/log/Xorg.0.log || true
