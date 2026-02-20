@@ -53,7 +53,7 @@ Copyright (C) 2019 The noVNC Authors
 
     <!-- Stylesheets -->
     <link rel="stylesheet" href="app/styles/base.css">
-    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=15.3&t=1737654200">
+    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=15.4&t=1739900000">
 
     <!-- Images that will later appear via CSS -->
     <link rel="preload" as="image" href="app/images/info.svg">
@@ -66,11 +66,17 @@ Copyright (C) 2019 The noVNC Authors
 
 <body>
 
+    <!-- Mobile-only notice at top (visible without JS on small viewports) -->
+    <div id="axonos-mobile-notice-standalone" class="axonos-mobile-notice-standalone" aria-live="polite">
+        <p class="axonos-mobile-notice__title">Desktop experience recommended</p>
+        <p class="axonos-mobile-notice__text">AxonOS Desktop is designed for laptop and desktop use. For the best experience, please open this page in Chrome or Firefox on a computer.</p>
+    </div>
     <div id="noVNC_fallback_error" class="noVNC_center">
         <div>
             <div>noVNC encountered an error:</div>
             <br>
             <div id="noVNC_fallback_errormsg"></div>
+            <p class="axonos-fallback-hint">If you're on a phone or in-app browser, use Chrome or Firefox on a computer for the best experience.</p>
         </div>
     </div>
 
