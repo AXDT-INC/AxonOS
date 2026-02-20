@@ -1186,8 +1186,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 /* Mobile notice: hidden on desktop, shown on small viewports */
-.axonos-mobile-notice,
-.axonos-mobile-notice-standalone {
+.axonos-mobile-notice {
   display: none;
 }
 
@@ -1213,10 +1212,9 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   opacity: 0.9;
 }
 
-/* Responsive: show mobile notice and standalone (992px = tablets + phones) */
+/* Responsive: show mobile notice (992px = tablets + phones) */
 @media (max-width: 992px) {
-  .axonos-mobile-notice,
-  .axonos-mobile-notice-standalone {
+  .axonos-mobile-notice {
     display: block;
     margin-bottom: 1.25rem;
     padding: 1rem 1.25rem;
@@ -1224,11 +1222,6 @@ input#noVNC_setting_path:-webkit-autofill:focus {
     border: 1px solid var(--axonos-secondary);
     border-radius: 8px;
     text-align: center;
-  }
-  .axonos-mobile-notice-standalone {
-    margin: 1rem;
-    position: relative;
-    z-index: 1000;
   }
   #noVNC_connect_dlg {
     max-height: calc(100vh - 6rem);
