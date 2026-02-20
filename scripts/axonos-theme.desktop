@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=AxonOS Theme
+Exec=sh -c "sleep 25 && /usr/local/bin/apply_theme_session.sh"
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

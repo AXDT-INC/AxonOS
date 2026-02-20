@@ -190,8 +190,6 @@ gtk-application-prefer-dark-theme=1
 GTK3
             chown -R $USER:$USER /home/$USER/.config/gtk-3.0
 
-            # Restart panel to ensure new settings apply
-            DISPLAY=:0 xfce4-panel -r 2>/dev/null || true
             break
         fi
         sleep 1
