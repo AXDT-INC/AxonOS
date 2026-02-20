@@ -1185,8 +1185,38 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   z-index: 10;
 }
 
+/* Mobile notice: hidden on desktop, shown on small viewports */
+.axonos-mobile-notice {
+  display: none;
+}
+
+.axonos-mobile-notice__title {
+  margin: 0 0 0.5em;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--axonos-accent);
+}
+
+.axonos-mobile-notice__text {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  color: var(--axonos-light);
+  opacity: 0.95;
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
+  .axonos-mobile-notice {
+    display: block;
+    margin-bottom: 1.25rem;
+    padding: 1rem 1.25rem;
+    background: rgba(46, 139, 87, 0.15);
+    border: 1px solid var(--axonos-secondary);
+    border-radius: 8px;
+    text-align: center;
+  }
+
   .axonos-main-title {
     font-size: 2.5rem !important;
   }

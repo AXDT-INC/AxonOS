@@ -41,7 +41,7 @@ const setSetting = (name, value) => {
     }
 };
 
-const PAGE_TITLE = "noVNC";
+const PAGE_TITLE = "AxonOS Desktop";
 
 const UI = {
 
