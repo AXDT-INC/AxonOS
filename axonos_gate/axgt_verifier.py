@@ -38,8 +38,45 @@ _usage_db_loaded = False
 # One-time wallet-bound challenge config.
 _CHALLENGE_PREFIX = "AxonOS verify\n"
 _CHALLENGE_TTL_SECONDS_DEFAULT = 180
-_challenge_registry: Dict[str, Dict[str, Any]] = {}
+_CHALLENGE_DB_PATH_DEFAULT = "/var/lib/axonos_gate/challenges.json"
 _challenge_lock = Lock()
+
+
+def _challenge_db_path() -> str:
+    return os.getenv("AXGT_CHALLENGE_DB_PATH", _CHALLENGE_DB_PATH_DEFAULT)
+
+
+def _load_challenge_registry() -> Dict[str, Dict[str, Any]]:
+    """Load challenge registry from shared file (cross-process safe)."""
+    path = _challenge_db_path()
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                import fcntl
+                fcntl.flock(f, fcntl.LOCK_SH)
+                data = json.load(f)
+                fcntl.flock(f, fcntl.LOCK_UN)
+                if isinstance(data, dict):
+                    return data
+    except Exception as e:
+        logger.warning("Failed to load challenge registry: %s", e)
+    return {}
+
+
+def _save_challenge_registry(registry: Dict[str, Dict[str, Any]]) -> None:
+    """Persist challenge registry to shared file (cross-process safe)."""
+    path = _challenge_db_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.tmp.{os.getpid()}"
+        with open(tmp, "w", encoding="utf-8") as f:
+            import fcntl
+            fcntl.flock(f, fcntl.LOCK_EX)
+            json.dump(registry, f)
+            fcntl.flock(f, fcntl.LOCK_UN)
+        os.replace(tmp, path)
+    except Exception as e:
+        logger.warning("Failed to save challenge registry: %s", e)
 
 
 def mask_wallet_address(address: str) -> str:
@@ -76,14 +113,14 @@ def get_challenge_ttl_seconds() -> int:
     return _challenge_ttl_seconds()
 
 
-def _prune_expired_challenges(now_ts: float) -> None:
+def _prune_expired_challenges(registry: Dict[str, Dict[str, Any]], now_ts: float) -> None:
     expired = [
         nonce
-        for nonce, record in _challenge_registry.items()
+        for nonce, record in registry.items()
         if float(record.get("expires_at", 0)) <= now_ts
     ]
     for nonce in expired:
-        _challenge_registry.pop(nonce, None)
+        registry.pop(nonce, None)
 
 
 def get_challenge_message(wallet_address: str) -> str:
@@ -101,12 +138,14 @@ def get_challenge_message(wallet_address: str) -> str:
         f"IssuedAt: {issued_at}"
     )
     with _challenge_lock:
-        _prune_expired_challenges(now_ts)
-        _challenge_registry[nonce] = {
+        registry = _load_challenge_registry()
+        _prune_expired_challenges(registry, now_ts)
+        registry[nonce] = {
             "wallet_address": normalized_wallet,
             "expires_at": now_ts + _challenge_ttl_seconds(),
             "used": False,
         }
+        _save_challenge_registry(registry)
     return challenge
 
 
@@ -176,13 +215,15 @@ def verify_signed_challenge(wallet_address: str, message: str, signature_hex: st
 
     now_ts = time.time()
     with _challenge_lock:
-        _prune_expired_challenges(now_ts)
-        challenge_record = _challenge_registry.get(challenge_nonce)
+        registry = _load_challenge_registry()
+        _prune_expired_challenges(registry, now_ts)
+        challenge_record = registry.get(challenge_nonce)
         if not challenge_record:
             logger.warning(
                 "verify_signed_challenge: challenge not found or expired (nonce=%s)",
                 challenge_nonce[:12] + "..." if challenge_nonce else "?",
             )
+            _save_challenge_registry(registry)
             return False
         if challenge_record.get("wallet_address") != expected_wallet:
             logger.warning("verify_signed_challenge: challenge wallet mismatch")
@@ -191,7 +232,8 @@ def verify_signed_challenge(wallet_address: str, message: str, signature_hex: st
             logger.warning("verify_signed_challenge: challenge already used")
             return False
         if float(challenge_record.get("expires_at", 0)) <= now_ts:
-            _challenge_registry.pop(challenge_nonce, None)
+            registry.pop(challenge_nonce, None)
+            _save_challenge_registry(registry)
             logger.warning("verify_signed_challenge: challenge expired")
             return False
 
@@ -207,10 +249,12 @@ def verify_signed_challenge(wallet_address: str, message: str, signature_hex: st
         return False
 
     with _challenge_lock:
-        challenge_record = _challenge_registry.get(challenge_nonce)
+        registry = _load_challenge_registry()
+        challenge_record = registry.get(challenge_nonce)
         if not challenge_record or bool(challenge_record.get("used")):
             return False
         challenge_record["used"] = True
+        _save_challenge_registry(registry)
     return True
 
 
