@@ -36,10 +36,16 @@ _usage_lock = Lock()
 _usage_db_loaded = False
 
 # One-time wallet-bound challenge config.
+# When AXGT_CHALLENGE_DB_URL is set, challenges are stored in Postgres (shared across backends).
+# Otherwise in-memory only (sticky sessions required for multiple backends).
 _CHALLENGE_PREFIX = "AxonOS verify\n"
 _CHALLENGE_TTL_SECONDS_DEFAULT = 180
 _challenge_registry: Dict[str, Dict[str, Any]] = {}
 _challenge_lock = Lock()
+
+_CHALLENGE_TABLE = "axgt_challenges"
+_postgres_init_done = False
+_postgres_init_lock = Lock()
 
 
 def mask_wallet_address(address: str) -> str:
@@ -76,6 +82,61 @@ def get_challenge_ttl_seconds() -> int:
     return _challenge_ttl_seconds()
 
 
+def _challenge_db_url() -> Optional[str]:
+    return os.getenv("AXGT_CHALLENGE_DB_URL") or None
+
+
+def _postgres_ensure_table(conn) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {_CHALLENGE_TABLE} (
+                nonce TEXT PRIMARY KEY,
+                wallet_address TEXT NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                used BOOLEAN NOT NULL DEFAULT FALSE
+            )
+            """
+        )
+    conn.commit()
+
+
+def _postgres_get_connection():
+    url = _challenge_db_url()
+    if not url:
+        return None
+    try:
+        import psycopg2
+        conn = psycopg2.connect(url)
+        return conn
+    except Exception as e:
+        logger.warning("Postgres challenge DB connect failed: %s", e)
+        return None
+
+
+def _postgres_init_once() -> bool:
+    """Ensure challenge table exists. Call when DB URL is set. Returns True if init succeeded."""
+    global _postgres_init_done
+    url = _challenge_db_url()
+    if not url:
+        return False
+    with _postgres_init_lock:
+        if _postgres_init_done:
+            return True
+        conn = _postgres_get_connection()
+        if not conn:
+            return False
+        try:
+            _postgres_ensure_table(conn)
+            _postgres_init_done = True
+            return True
+        except Exception as e:
+            logger.warning("Postgres challenge table init failed: %s", e)
+            return False
+        finally:
+            conn.close()
+
+
 def _prune_expired_challenges(now_ts: float) -> None:
     expired = [
         nonce
@@ -100,6 +161,30 @@ def get_challenge_message(wallet_address: str) -> str:
         f"Nonce: {nonce}\n"
         f"IssuedAt: {issued_at}"
     )
+
+    if _challenge_db_url():
+        if not _postgres_init_once():
+            raise RuntimeError("Challenge DB unavailable (Postgres init failed)")
+        from datetime import datetime, timezone
+        conn = _postgres_get_connection()
+        if not conn:
+            raise RuntimeError("Challenge DB unavailable (could not connect)")
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"DELETE FROM {_CHALLENGE_TABLE} WHERE expires_at <= %s", (datetime.fromtimestamp(now_ts, tz=timezone.utc),))
+                cur.execute(
+                    f"INSERT INTO {_CHALLENGE_TABLE} (nonce, wallet_address, expires_at, used) VALUES (%s, %s, %s, FALSE)",
+                    (nonce, normalized_wallet, datetime.fromtimestamp(now_ts + _challenge_ttl_seconds(), tz=timezone.utc)),
+                )
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            logger.warning("Postgres challenge insert failed: %s", e)
+            raise RuntimeError("Challenge DB write failed") from e
+        finally:
+            conn.close()
+        return challenge
+
     with _challenge_lock:
         _prune_expired_challenges(now_ts)
         _challenge_registry[nonce] = {
@@ -175,6 +260,65 @@ def verify_signed_challenge(wallet_address: str, message: str, signature_hex: st
         return False
 
     now_ts = time.time()
+
+    if _challenge_db_url():
+        if not _postgres_init_once():
+            logger.warning("verify_signed_challenge: Postgres init failed")
+            return False
+        from datetime import datetime, timezone
+        conn = _postgres_get_connection()
+        if not conn:
+            logger.warning("verify_signed_challenge: Postgres unavailable")
+            return False
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT wallet_address, expires_at, used FROM {_CHALLENGE_TABLE} WHERE nonce = %s",
+                    (challenge_nonce,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    logger.warning(
+                        "verify_signed_challenge: challenge not found or expired (nonce=%s)",
+                        challenge_nonce[:12] + "..." if challenge_nonce else "?",
+                    )
+                    return False
+                stored_wallet, expires_at, used = row
+                if (stored_wallet or "").lower() != expected_wallet:
+                    logger.warning("verify_signed_challenge: challenge wallet mismatch")
+                    return False
+                if used:
+                    logger.warning("verify_signed_challenge: challenge already used")
+                    return False
+                if expires_at and expires_at.timestamp() <= now_ts:
+                    logger.warning("verify_signed_challenge: challenge expired")
+                    return False
+                cur.execute(
+                    f"UPDATE {_CHALLENGE_TABLE} SET used = TRUE WHERE nonce = %s AND used = FALSE",
+                    (challenge_nonce,),
+                )
+                if cur.rowcount != 1:
+                    logger.warning("verify_signed_challenge: challenge already used (race)")
+                    return False
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            logger.warning("verify_signed_challenge: Postgres error: %s", e)
+            return False
+        finally:
+            conn.close()
+        # Signature check after we've claimed the challenge
+        recovered = recover_signer_from_signature(message, signature_hex)
+        if not recovered and message != message_normalized:
+            recovered = recover_signer_from_signature(message_normalized, signature_hex)
+        if not recovered or recovered.lower() != expected_wallet:
+            logger.warning(
+                "verify_signed_challenge: signature recovery failed (recovered=%s)",
+                mask_wallet_address(recovered) if recovered else "None",
+            )
+            return False
+        return True
+
     with _challenge_lock:
         _prune_expired_challenges(now_ts)
         challenge_record = _challenge_registry.get(challenge_nonce)

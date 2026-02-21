@@ -8,8 +8,27 @@
 #
 # Access: http://localhost:6080/vnc.html (or your host/tunnel URL)
 # VNC password and AXGT config come from .env (see env.example).
+#
+# Optional: set AXGT_CHALLENGE_DB_URL (e.g. from postgres service below) so the
+# challenge registry is shared across multiple AxonOS backends (no sticky sessions needed).
 
 services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: axonos_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-axonos_gate}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-axonos_gate_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-axonos_gate}
+    volumes:
+      - axonos_postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-axonos_gate} -d ${POSTGRES_DB:-axonos_gate}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   axonos:
     image: axonos:latest
     build:
@@ -19,6 +38,11 @@ services:
         PASSWORD: ${AXONOS_VNC_PASSWORD}
     container_name: axonos
     env_file: .env
+    environment:
+      AXGT_CHALLENGE_DB_URL: postgresql://${POSTGRES_USER:-axonos_gate}:${POSTGRES_PASSWORD:-axonos_gate_secret}@postgres:5432/${POSTGRES_DB:-axonos_gate}
+    depends_on:
+      postgres:
+        condition: service_healthy
     # Theme/wallpaper applied from startup.sh after 35s delay
     command: ["/startup.sh"]
     ports:
@@ -32,3 +56,6 @@ services:
               count: all
               capabilities: [gpu]
     restart: unless-stopped
+
+volumes:
+  axonos_postgres_data: {}
