@@ -64,24 +64,93 @@ _rate_limiter = get_rate_limiter_from_env()
 
 NOVNC_WEB_DIR = Path('/usr/share/novnc')
 
-# In-memory auth tokens for WebSocket (same-origin verify_wallet flow when tunnel points at GATE_PORT)
+# Postgres-backed auth tokens (shared across backends via AXGT_CHALLENGE_DB_URL)
 _AUTH_TOKEN_TTL = int(os.getenv("AXGT_AUTH_TOKEN_TTL_SECONDS", "300").strip() or "300") or 300
-_auth_tokens = {}
-_auth_lock = threading.Lock()
+_AUTH_TABLE = "axgt_auth_tokens"
+_gate_pg_init_done = False
+_gate_pg_init_lock = threading.Lock()
+
+
+def _gate_db_url():
+    return os.getenv("AXGT_CHALLENGE_DB_URL") or None
+
+
+def _gate_pg_get_connection():
+    url = _gate_db_url()
+    if not url:
+        return None
+    try:
+        import psycopg2
+        return psycopg2.connect(url)
+    except Exception as e:
+        logger.warning("Postgres auth token DB connect failed: %s", e)
+        return None
+
+
+def _gate_pg_init_once() -> bool:
+    global _gate_pg_init_done
+    if not _gate_db_url():
+        return False
+    with _gate_pg_init_lock:
+        if _gate_pg_init_done:
+            return True
+        conn = _gate_pg_get_connection()
+        if not conn:
+            return False
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {_AUTH_TABLE} (
+                        token TEXT PRIMARY KEY,
+                        wallet_address TEXT NOT NULL,
+                        issued_at DOUBLE PRECISION NOT NULL,
+                        expires_at DOUBLE PRECISION NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'current',
+                        grace_until DOUBLE PRECISION NOT NULL
+                    )
+                    """
+                )
+                cur.execute(
+                    f"CREATE INDEX IF NOT EXISTS idx_{_AUTH_TABLE}_wallet ON {_AUTH_TABLE} (wallet_address)"
+                )
+            conn.commit()
+            _gate_pg_init_done = True
+            return True
+        except Exception as e:
+            logger.warning("Postgres auth token table init failed: %s", e)
+            return False
+        finally:
+            conn.close()
 
 
 def _issue_gate_auth_token(wallet_address: str) -> tuple[str, int]:
     now_ts = time.time()
     token = secrets.token_urlsafe(32)
-    with _auth_lock:
-        # Prune expired
-        expired = [t for t, info in _auth_tokens.items() if (info.get("expires_at") or 0) < now_ts]
-        for t in expired:
-            _auth_tokens.pop(t, None)
-        _auth_tokens[token] = {
-            "wallet_address": wallet_address,
-            "expires_at": now_ts + _AUTH_TOKEN_TTL,
-        }
+    if not _gate_pg_init_once():
+        raise RuntimeError("Auth token DB unavailable")
+    conn = _gate_pg_get_connection()
+    if not conn:
+        raise RuntimeError("Auth token DB connect failed")
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"DELETE FROM {_AUTH_TABLE} WHERE GREATEST(expires_at, grace_until) <= %s",
+                (now_ts,),
+            )
+            cur.execute(
+                f"""INSERT INTO {_AUTH_TABLE}
+                    (token, wallet_address, issued_at, expires_at, status, grace_until)
+                    VALUES (%s, %s, %s, %s, 'current', %s)""",
+                (token, wallet_address, now_ts, now_ts + _AUTH_TOKEN_TTL, now_ts + _AUTH_TOKEN_TTL),
+            )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.warning("Postgres auth token insert failed: %s", e)
+        raise RuntimeError("Auth token DB write failed") from e
+    finally:
+        conn.close()
     return token, _AUTH_TOKEN_TTL
 
 
@@ -89,13 +158,32 @@ def _is_gate_auth_token_valid(token: str, wallet_address: str) -> bool:
     if not token:
         return False
     now_ts = time.time()
-    with _auth_lock:
-        info = _auth_tokens.get(token)
-        if not info or info.get("wallet_address") != wallet_address:
+    if not _gate_pg_init_once():
+        return False
+    conn = _gate_pg_get_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""SELECT status, expires_at, grace_until FROM {_AUTH_TABLE}
+                    WHERE token = %s AND wallet_address = %s""",
+                (token, wallet_address),
+            )
+            row = cur.fetchone()
+            if not row:
+                return False
+            status, expires_at, grace_until = row
+            if status == "current":
+                return now_ts < expires_at
+            if status == "grace":
+                return now_ts < grace_until
             return False
-        if (info.get("expires_at") or 0) < now_ts:
-            return False
-        return True
+    except Exception as e:
+        logger.warning("Postgres auth token validation failed: %s", e)
+        return False
+    finally:
+        conn.close()
 
 @app.after_request
 def after_request(response):
