@@ -23,6 +23,7 @@ services:
     command: ["/startup.sh"]
     ports:
       - "6080:6080"
+      - "8889:8889"
     deploy:
       resources:
         reservations:
