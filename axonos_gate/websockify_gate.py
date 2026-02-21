@@ -80,8 +80,68 @@ _allow_any, _allowlist = parse_cors_allowlist(os.getenv("AXGT_CORS_ORIGINS"))
 _rate_limiter = get_rate_limiter_from_env()
 
 
-_auth_tokens: dict[str, dict] = {}
 _auth_lock = Lock()
+_AUTH_TABLE = "axgt_auth_tokens"
+_auth_pg_init_done = False
+_auth_pg_init_lock = Lock()
+
+
+def _auth_db_url():
+    """Reuse the same Postgres URL as the challenge registry."""
+    return os.getenv("AXGT_CHALLENGE_DB_URL") or None
+
+
+def _auth_pg_get_connection():
+    url = _auth_db_url()
+    if not url:
+        return None
+    try:
+        import psycopg2
+        return psycopg2.connect(url)
+    except Exception as e:
+        logger.warning("Postgres auth token DB connect failed: %s", e)
+        return None
+
+
+def _auth_pg_ensure_table(conn) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {_AUTH_TABLE} (
+                token TEXT PRIMARY KEY,
+                wallet_address TEXT NOT NULL,
+                issued_at DOUBLE PRECISION NOT NULL,
+                expires_at DOUBLE PRECISION NOT NULL,
+                status TEXT NOT NULL DEFAULT 'current',
+                grace_until DOUBLE PRECISION NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_{_AUTH_TABLE}_wallet ON {_AUTH_TABLE} (wallet_address)"
+        )
+    conn.commit()
+
+
+def _auth_pg_init_once() -> bool:
+    global _auth_pg_init_done
+    if not _auth_db_url():
+        return False
+    with _auth_pg_init_lock:
+        if _auth_pg_init_done:
+            return True
+        conn = _auth_pg_get_connection()
+        if not conn:
+            return False
+        try:
+            _auth_pg_ensure_table(conn)
+            _auth_pg_init_done = True
+            return True
+        except Exception as e:
+            logger.warning("Postgres auth token table init failed: %s", e)
+            return False
+        finally:
+            conn.close()
 
 
 def _auth_ttl_seconds() -> int:
@@ -153,119 +213,191 @@ def _clear_auth_cookie() -> str:
     )
 
 
-def _prune_expired_auth_tokens(now_ts: float) -> None:
-    expired_tokens = []
-    for token, info in _auth_tokens.items():
-        expires_at = float(info.get("expires_at", 0))
-        grace_until = float(info.get("grace_until", 0))
-        if now_ts >= max(expires_at, grace_until):
-            expired_tokens.append(token)
-    for token in expired_tokens:
-        _auth_tokens.pop(token, None)
-
-
-def _retire_current_wallet_tokens(wallet_address: str, now_ts: float) -> None:
-    grace_until = now_ts + _auth_grace_seconds()
-    for token, info in list(_auth_tokens.items()):
-        if info.get("wallet_address") == wallet_address and info.get("status") == "current":
-            info["status"] = "grace"
-            info["grace_until"] = max(float(info.get("expires_at", now_ts)), grace_until)
-
-
 def _issue_auth_token(wallet_address: str) -> tuple[str, int]:
     now_ts = time.time()
     ttl = _auth_ttl_seconds()
     token = secrets.token_urlsafe(32)
-    with _auth_lock:
-        _prune_expired_auth_tokens(now_ts)
-        _retire_current_wallet_tokens(wallet_address, now_ts)
-        _auth_tokens[token] = {
-            "wallet_address": wallet_address,
-            "issued_at": now_ts,
-            "expires_at": now_ts + ttl,
-            "status": "current",
-            "grace_until": now_ts + ttl,
-        }
+
+    if not _auth_pg_init_once():
+        raise RuntimeError("Auth token DB unavailable (Postgres init failed)")
+
+    conn = _auth_pg_get_connection()
+    if not conn:
+        raise RuntimeError("Auth token DB unavailable (could not connect)")
+    try:
+        with conn.cursor() as cur:
+            # Prune expired
+            cur.execute(
+                f"DELETE FROM {_AUTH_TABLE} WHERE GREATEST(expires_at, grace_until) <= %s",
+                (now_ts,),
+            )
+            # Retire current tokens for this wallet → grace
+            grace_until = now_ts + _auth_grace_seconds()
+            cur.execute(
+                f"""UPDATE {_AUTH_TABLE}
+                    SET status = 'grace',
+                        grace_until = GREATEST(expires_at, %s)
+                    WHERE wallet_address = %s AND status = 'current'""",
+                (grace_until, wallet_address),
+            )
+            # Insert new token
+            cur.execute(
+                f"""INSERT INTO {_AUTH_TABLE}
+                    (token, wallet_address, issued_at, expires_at, status, grace_until)
+                    VALUES (%s, %s, %s, %s, 'current', %s)""",
+                (token, wallet_address, now_ts, now_ts + ttl, now_ts + ttl),
+            )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.warning("Postgres auth token insert failed: %s", e)
+        raise RuntimeError("Auth token DB write failed") from e
+    finally:
+        conn.close()
     return token, ttl
 
 
 def _current_wallet_token_and_remaining(wallet_address: str) -> tuple[str | None, int | None]:
     now_ts = time.time()
-    current_token = None
-    best_remaining = None
-    with _auth_lock:
-        _prune_expired_auth_tokens(now_ts)
-        for token, info in _auth_tokens.items():
-            if info.get("wallet_address") != wallet_address:
-                continue
-            if info.get("status") != "current":
-                continue
-            remaining = int(float(info.get("expires_at", now_ts)) - now_ts)
-            if remaining < 0:
-                continue
-            if best_remaining is None or remaining > best_remaining:
-                current_token = token
-                best_remaining = remaining
-    return current_token, best_remaining
+    if not _auth_pg_init_once():
+        return None, None
+    conn = _auth_pg_get_connection()
+    if not conn:
+        return None, None
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""SELECT token, expires_at FROM {_AUTH_TABLE}
+                    WHERE wallet_address = %s AND status = 'current' AND expires_at > %s
+                    ORDER BY expires_at DESC LIMIT 1""",
+                (wallet_address, now_ts),
+            )
+            row = cur.fetchone()
+            if row:
+                return row[0], int(row[1] - now_ts)
+    except Exception as e:
+        logger.warning("Postgres auth token lookup failed: %s", e)
+    finally:
+        conn.close()
+    return None, None
 
 
 def _auth_token_remaining_seconds(token: str, wallet_address: str) -> int | None:
     now_ts = time.time()
-    with _auth_lock:
-        _prune_expired_auth_tokens(now_ts)
-        info = _auth_tokens.get(token)
-        if not info or info.get("wallet_address") != wallet_address:
-            return None
-        if info.get("status") != "current":
-            return None
-        remaining = int(float(info.get("expires_at", 0)) - now_ts)
-        if remaining < 0:
-            return None
-        return remaining
+    if not _auth_pg_init_once():
+        return None
+    conn = _auth_pg_get_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""SELECT expires_at FROM {_AUTH_TABLE}
+                    WHERE token = %s AND wallet_address = %s
+                    AND status = 'current' AND expires_at > %s""",
+                (token, wallet_address, now_ts),
+            )
+            row = cur.fetchone()
+            if row:
+                return int(row[0] - now_ts)
+    except Exception as e:
+        logger.warning("Postgres auth token remaining check failed: %s", e)
+    finally:
+        conn.close()
+    return None
 
 
 def _is_auth_token_valid(token: str, wallet_address: str) -> bool:
     if not token:
         return False
     now_ts = time.time()
-    with _auth_lock:
-        _prune_expired_auth_tokens(now_ts)
-        info = _auth_tokens.get(token)
-        if not info:
-            return False
-        if info.get("wallet_address") != wallet_address:
-            return False
-        status = info.get("status")
-        expires_at = float(info.get("expires_at", 0))
-        grace_until = float(info.get("grace_until", 0))
-        if status == "current":
-            return now_ts < expires_at
-        if status == "grace":
-            return now_ts < grace_until
+    if not _auth_pg_init_once():
         return False
+    conn = _auth_pg_get_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""SELECT status, expires_at, grace_until FROM {_AUTH_TABLE}
+                    WHERE token = %s AND wallet_address = %s""",
+                (token, wallet_address),
+            )
+            row = cur.fetchone()
+            if not row:
+                return False
+            status, expires_at, grace_until = row
+            if status == "current":
+                return now_ts < expires_at
+            if status == "grace":
+                return now_ts < grace_until
+            return False
+    except Exception as e:
+        logger.warning("Postgres auth token validation failed: %s", e)
+        return False
+    finally:
+        conn.close()
 
 
 def _rotate_auth_token(existing_token: str, wallet_address: str) -> tuple[str | None, int]:
     now_ts = time.time()
-    with _auth_lock:
-        _prune_expired_auth_tokens(now_ts)
-        info = _auth_tokens.get(existing_token)
-        if not info or info.get("wallet_address") != wallet_address:
-            return None, 0
-        current_token, remaining = _current_wallet_token_and_remaining(wallet_address)
-        if current_token and current_token != existing_token and remaining is not None:
-            return current_token, remaining
-        ttl = _auth_ttl_seconds()
-        new_token = secrets.token_urlsafe(32)
-        _retire_current_wallet_tokens(wallet_address, now_ts)
-        _auth_tokens[new_token] = {
-            "wallet_address": wallet_address,
-            "issued_at": now_ts,
-            "expires_at": now_ts + ttl,
-            "status": "current",
-            "grace_until": now_ts + ttl,
-        }
+    if not _auth_pg_init_once():
+        return None, 0
+    conn = _auth_pg_get_connection()
+    if not conn:
+        return None, 0
+    try:
+        with conn.cursor() as cur:
+            # Prune expired
+            cur.execute(
+                f"DELETE FROM {_AUTH_TABLE} WHERE GREATEST(expires_at, grace_until) <= %s",
+                (now_ts,),
+            )
+            # Verify existing token belongs to wallet
+            cur.execute(
+                f"SELECT 1 FROM {_AUTH_TABLE} WHERE token = %s AND wallet_address = %s",
+                (existing_token, wallet_address),
+            )
+            if not cur.fetchone():
+                conn.rollback()
+                return None, 0
+            # Check if a newer current token already exists
+            cur.execute(
+                f"""SELECT token, expires_at FROM {_AUTH_TABLE}
+                    WHERE wallet_address = %s AND status = 'current'
+                    AND expires_at > %s AND token != %s
+                    ORDER BY expires_at DESC LIMIT 1""",
+                (wallet_address, now_ts, existing_token),
+            )
+            row = cur.fetchone()
+            if row:
+                conn.rollback()
+                return row[0], int(row[1] - now_ts)
+            # Issue new token
+            ttl = _auth_ttl_seconds()
+            new_token = secrets.token_urlsafe(32)
+            grace_until = now_ts + _auth_grace_seconds()
+            cur.execute(
+                f"""UPDATE {_AUTH_TABLE}
+                    SET status = 'grace',
+                        grace_until = GREATEST(expires_at, %s)
+                    WHERE wallet_address = %s AND status = 'current'""",
+                (grace_until, wallet_address),
+            )
+            cur.execute(
+                f"""INSERT INTO {_AUTH_TABLE}
+                    (token, wallet_address, issued_at, expires_at, status, grace_until)
+                    VALUES (%s, %s, %s, %s, 'current', %s)""",
+                (new_token, wallet_address, now_ts, now_ts + ttl, now_ts + ttl),
+            )
+        conn.commit()
         return new_token, ttl
+    except Exception as e:
+        conn.rollback()
+        logger.warning("Postgres auth token rotate failed: %s", e)
+        return None, 0
+    finally:
+        conn.close()
 
 
 def _extract_wallet_from_path_and_headers(path: str, headers) -> str | None:
