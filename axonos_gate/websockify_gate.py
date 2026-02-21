@@ -374,13 +374,10 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         return super().do_OPTIONS()
 
     def do_GET(self):
-        # Redirect bare / to /vnc.html
+        # Serve vnc.html at / without redirect (keeps clean URL in address bar)
         if self.path == '/' or self.path == '/?':
-            self.send_response(302)
-            self.send_header('Location', '/vnc.html')
-            self.send_header('Content-Length', '0')
-            self.end_headers()
-            return
+            self.path = '/vnc.html'
+            return super().do_GET()
 
         if self.path.startswith('/api/config'):
             policy = get_credit_policy()
