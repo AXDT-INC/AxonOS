@@ -514,6 +514,8 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         return self._send_json(200, status, set_cookie=_build_auth_cookie(token, ttl))
 
     def handle_upgrade(self):
+        # Diagnostic: confirms the WebSocket upgrade request reached this process (helps debug 1006 in proxy chains)
+        logger.info("WebSocket upgrade request received for /websockify (chain reached AxonOS)")
         wallet_address = _extract_wallet_from_path_and_headers(self.path, self.headers)
         if not wallet_address:
             self.send_error(403, "Wallet address required (?wallet=0x... or X-Wallet-Address)")
