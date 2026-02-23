@@ -19,6 +19,19 @@ rm -f "${HOME_USER}/.local/share/recently-used.xbel" 2>/dev/null || true
 rm -rf /tmp/user-session-* 2>/dev/null || true
 rm -rf /tmp/.X*-lock 2>/dev/null || true
 
+# Reset VNC password to default so the next user gets axonpassword (or AXONOS_VNC_PASSWORD)
+# and can use the change-password UI on first connect.
+DEFAULT_VNC_PASSWORD="${AXONOS_VNC_PASSWORD:-axonpassword}"
+VNC_PASSWD="${HOME_USER}/.vnc/passwd"
+if [ -d "${HOME_USER}/.vnc" ] && command -v vncpasswd >/dev/null 2>&1; then
+  echo "$DEFAULT_VNC_PASSWORD" | vncpasswd -f > "$VNC_PASSWD" 2>/dev/null && true
+  chmod 600 "$VNC_PASSWD" 2>/dev/null || true
+  chown "${USER}:${USER}" "$VNC_PASSWD" 2>/dev/null || true
+  if command -v supervisorctl >/dev/null 2>&1; then
+    supervisorctl restart x11vnc 2>/dev/null || true
+  fi
+fi
+
 # Restart XFCE so the desktop comes up clean (supervisord is PID 1 in container)
 if command -v supervisorctl >/dev/null 2>&1; then
   supervisorctl restart xfce4 2>/dev/null || true

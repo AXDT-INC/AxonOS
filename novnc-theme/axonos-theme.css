@@ -466,6 +466,34 @@ input[type="password"]::placeholder {
     margin-top: 8px;
 }
 
+/* Desktop password notice on connect panel (production) */
+.axonos-password-notice {
+    max-width: 480px;
+    margin: 0 auto 16px auto;
+    padding: 12px 16px;
+    background: rgba(70, 130, 180, 0.15);
+    border: 1px solid rgba(70, 130, 180, 0.5);
+    border-radius: 8px;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    color: var(--axonos-light);
+}
+.axonos-password-notice__title {
+    margin: 0 0 6px 0;
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: var(--axonos-accent);
+}
+.axonos-password-notice__text {
+    margin: 0;
+}
+.axonos-password-notice__text code {
+    font-family: var(--axonos-mono);
+    background: rgba(0, 0, 0, 0.3);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
 /* Prerequisites on connect panel (what you need to sign in) */
 .axonos-prerequisites {
     max-width: 480px;
@@ -582,6 +610,81 @@ input[type="password"]::placeholder {
     margin: 0;
 }
 .axonos-queue-overlay__btn--secondary {
+    background: transparent;
+    border-color: rgba(255, 255, 255, 0.4);
+}
+
+/* Change password overlay (after wallet verify, before desktop connect) */
+.axonos-change-password-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.85);
+    pointer-events: auto;
+}
+.axonos-change-password-overlay--hidden {
+    display: none !important;
+}
+.axonos-change-password-overlay__panel {
+    max-width: 420px;
+    padding: 24px;
+    border-radius: 8px;
+    text-align: left;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+    background: rgba(30, 30, 30, 0.98);
+    border: 2px solid var(--axonos-accent);
+    color: var(--axonos-light);
+}
+.axonos-change-password-overlay__title {
+    margin: 0 0 8px 0;
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+.axonos-change-password-overlay__text {
+    margin: 0 0 16px 0;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    opacity: 0.95;
+}
+.axonos-change-password-overlay__form label {
+    display: block;
+    margin: 12px 0 4px 0;
+    font-size: 0.9rem;
+}
+.axonos-change-password-overlay__form input[type="password"] {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    margin-bottom: 4px;
+    background: #1C1C1C;
+    border: 2px solid var(--axonos-secondary);
+    color: var(--axonos-light);
+    border-radius: 5px;
+}
+.axonos-change-password-overlay__form input:focus {
+    border-color: var(--axonos-accent);
+    outline: none;
+}
+.axonos-change-password-overlay__error {
+    margin: 10px 0 0 0;
+    font-size: 0.9rem;
+    color: #e74c3c;
+    min-height: 1.2em;
+}
+.axonos-change-password-overlay__actions {
+    margin-top: 20px;
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+}
+.axonos-change-password-overlay__btn {
+    margin: 0;
+}
+.axonos-change-password-overlay__btn--secondary {
     background: transparent;
     border-color: rgba(255, 255, 255, 0.4);
 }

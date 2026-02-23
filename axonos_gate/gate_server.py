@@ -5,6 +5,7 @@ import os
 import sys
 import logging
 import secrets
+import subprocess
 import time
 import threading
 from pathlib import Path
@@ -435,6 +436,78 @@ def api_queue_leave():
     if auth_err:
         return auth_err
     return jsonify(leave_queue(wallet_address))
+
+
+# VNC passwd file and x11vnc restart for change-password
+_VNC_PASSWD_PATH = Path("/home/aXonian/.vnc/passwd")
+_VNC_USER = "aXonian"
+_DEFAULT_VNC_PASSWORD = (os.getenv("AXONOS_VNC_PASSWORD") or "axonpassword").strip() or "axonpassword"
+
+
+@app.route('/api/desktop/change-password', methods=['POST', 'OPTIONS'])
+def api_desktop_change_password():
+    """Change the VNC desktop password. Requires wallet auth. Uses default (axonpassword) as current."""
+    if request.method == 'OPTIONS':
+        return '', 200
+    data = request.get_json() or {}
+    wallet_address = (data.get('wallet_address') or '').strip()
+    if not wallet_address or not validate_wallet_address(wallet_address):
+        return jsonify({"ok": False, "error": "Valid wallet_address required"}), 400
+    auth_err = _require_auth_token(wallet_address)
+    if auth_err:
+        return auth_err
+
+    new_password = (data.get('new_password') or '').strip()
+    if len(new_password) < 8:
+        return jsonify({"ok": False, "error": "New password must be at least 8 characters"}), 400
+    if len(new_password) > 128:
+        return jsonify({"ok": False, "error": "New password too long"}), 400
+
+    if not _VNC_PASSWD_PATH.parent.exists():
+        return jsonify({"ok": False, "error": "VNC not configured"}), 503
+
+    try:
+        result = subprocess.run(
+            ["vncpasswd", "-f"],
+            input=new_password.encode("utf-8"),
+            capture_output=True,
+            timeout=5,
+            cwd="/tmp",
+        )
+        if result.returncode != 0:
+            logger.warning("vncpasswd failed: %s", result.stderr.decode("utf-8", errors="replace"))
+            return jsonify({"ok": False, "error": "Failed to generate password file"}), 500
+
+        passwd_content = result.stdout
+        if not passwd_content:
+            return jsonify({"ok": False, "error": "Failed to generate password file"}), 500
+
+        _VNC_PASSWD_PATH.write_bytes(passwd_content)
+        _VNC_PASSWD_PATH.chmod(0o600)
+        try:
+            import pwd as pwd_module
+            uid = pwd_module.getpwnam(_VNC_USER).pw_uid
+            gid = pwd_module.getpwnam(_VNC_USER).pw_gid
+            os.chown(_VNC_PASSWD_PATH, uid, gid)
+        except Exception as e:
+            logger.warning("chown VNC passwd file: %s", e)
+
+        # Restart x11vnc so it picks up the new password file
+        restart = subprocess.run(
+            ["supervisorctl", "restart", "x11vnc"],
+            capture_output=True,
+            timeout=10,
+        )
+        if restart.returncode != 0:
+            logger.warning("supervisorctl restart x11vnc: %s", restart.stderr.decode("utf-8", errors="replace"))
+            # Password file was updated; connection may need a reconnect
+        logger.info("Desktop password changed for wallet %s", mask_wallet_address(wallet_address))
+        return jsonify({"ok": True})
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "Operation timed out"}), 500
+    except Exception as e:
+        logger.exception("Change password failed: %s", e)
+        return jsonify({"ok": False, "error": "Internal server error"}), 500
 
 
 @app.route('/')

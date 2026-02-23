@@ -1043,7 +1043,7 @@ const UI = {
         const path = UI.getSetting('path');
 
         if (typeof password === 'undefined') {
-            password = WebUtil.getConfigVar('password');
+            password = (typeof window !== 'undefined' && window.desktopPasswordForConnection) || WebUtil.getConfigVar('password');
             UI.reconnectPassword = password;
         }
 
@@ -1314,9 +1314,8 @@ const UI = {
         const verifiedWallet = window.verifiedWalletAddress || null;
         const verifiedAuthToken = window.verifiedWalletAuthToken || null;
         if (verifiedWallet && verifiedAuthToken) {
-            // Prefer explicit config (URL/config var). Fall back to the image default.
-            // NOTE: The VNC password is not a secret in this flow; access is gated by AXGT verification.
-            const password = WebUtil.getConfigVar('password') || 'axonpassword';
+            // Use password set by change-password step, then config, then default.
+            const password = (typeof window !== 'undefined' && window.desktopPasswordForConnection) || WebUtil.getConfigVar('password') || 'axonpassword';
             UI.reconnectPassword = password;
             try {
                 if (UI.rfb && typeof UI.rfb.sendCredentials === 'function') {
@@ -1367,9 +1366,8 @@ const UI = {
             return;
         }
 
-        // Wallet is verified, proceed with connection using default password
-        // The password is typically from config var, otherwise image default.
-        const password = WebUtil.getConfigVar('password') || 'axonpassword';
+        // Wallet is verified, proceed with connection using chosen/default password
+        const password = (typeof window !== 'undefined' && window.desktopPasswordForConnection) || WebUtil.getConfigVar('password') || 'axonpassword';
         UI.reconnectPassword = password;
         
         // Close the credentials dialog

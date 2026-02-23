@@ -296,6 +296,12 @@ Copyright (C) 2019 The noVNC Authors
                 </p>
             </div>
             
+            <!-- Desktop password notice (production): show so users can log in and are reminded to change it. -->
+            <div id="axonos_password_notice" class="axonos-password-notice" aria-label="Desktop password">
+                <p class="axonos-password-notice__title">Desktop password</p>
+                <p class="axonos-password-notice__text">Use <code id="axonos_desktop_password">axonpassword</code> when the connection asks for a password. <strong>Change it after first login for security.</strong></p>
+            </div>
+
             <!-- Prerequisites (loaded from /api/config for min AXGT) -->
             <div id="axonos_prerequisites" class="axonos-prerequisites" aria-label="Requirements to sign in">
                 <p class="axonos-prerequisites__title">To sign in you need:</p>
@@ -422,6 +428,25 @@ Copyright (C) 2019 The noVNC Authors
             <div class="axonos-queue-overlay__actions">
                 <button type="button" id="axonos_queue_join_btn" class="noVNC_submit axonos-queue-overlay__btn">Join Queue</button>
                 <button type="button" id="axonos_queue_leave_btn" class="noVNC_submit axonos-queue-overlay__btn axonos-queue-overlay__btn--secondary" style="display:none">Leave Queue</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Change password overlay: after wallet verify, before desktop connect. Uses default (axonpassword) to set new one. -->
+    <div id="axonos_change_password_overlay" class="axonos-change-password-overlay axonos-change-password-overlay--hidden" aria-hidden="true">
+        <div class="axonos-change-password-overlay__panel noVNC_panel">
+            <h2 class="axonos-change-password-overlay__title">Set desktop password</h2>
+            <p class="axonos-change-password-overlay__text">We’ll use the default password to set a new one. Optional — you can skip and keep the default.</p>
+            <div class="axonos-change-password-overlay__form">
+                <label for="axonos_new_password">New password (min 8 characters)</label>
+                <input type="password" id="axonos_new_password" autocomplete="new-password" placeholder="New password" minlength="8">
+                <label for="axonos_confirm_password">Confirm new password</label>
+                <input type="password" id="axonos_confirm_password" autocomplete="new-password" placeholder="Confirm">
+                <p id="axonos_change_password_error" class="axonos-change-password-overlay__error" aria-live="polite"></p>
+                <div class="axonos-change-password-overlay__actions">
+                    <button type="button" id="axonos_change_password_skip_btn" class="noVNC_submit axonos-change-password-overlay__btn axonos-change-password-overlay__btn--secondary">Skip</button>
+                    <button type="button" id="axonos_change_password_submit_btn" class="noVNC_submit axonos-change-password-overlay__btn">Set password & connect</button>
+                </div>
             </div>
         </div>
     </div>
@@ -785,16 +810,51 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     }
 
+    var axonosChangePasswordCallback = null;
+
+    function showChangePasswordOverlay(callback) {
+        axonosChangePasswordCallback = callback;
+        const overlay = document.getElementById('axonos_change_password_overlay');
+        const errEl = document.getElementById('axonos_change_password_error');
+        const newPw = document.getElementById('axonos_new_password');
+        const confirmPw = document.getElementById('axonos_confirm_password');
+        if (overlay) {
+            overlay.classList.remove('axonos-change-password-overlay--hidden');
+            overlay.setAttribute('aria-hidden', 'false');
+        }
+        if (errEl) errEl.textContent = '';
+        if (newPw) newPw.value = '';
+        if (confirmPw) confirmPw.value = '';
+        if (newPw) setTimeout(function () { newPw.focus(); }, 100);
+    }
+
+    function hideChangePasswordOverlay() {
+        const overlay = document.getElementById('axonos_change_password_overlay');
+        if (overlay) {
+            overlay.classList.add('axonos-change-password-overlay--hidden');
+            overlay.setAttribute('aria-hidden', 'true');
+        }
+        axonosChangePasswordCallback = null;
+    }
+
+    function proceedAfterPasswordChoice(passwordToUse) {
+        if (typeof axonosChangePasswordCallback === 'function') {
+            axonosChangePasswordCallback(passwordToUse);
+        }
+        hideChangePasswordOverlay();
+    }
+
     function tryConnectAfterClaim() {
         hideQueueOverlay();
         const credentialsDialog = document.getElementById('noVNC_credentials_dlg');
         if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
         showConnectionLoader();
-        const launchBtn = document.getElementById('noVNC_connect_button');
-        if (launchBtn && typeof launchBtn.click === 'function') launchBtn.click();
-        else if (typeof UI !== 'undefined' && typeof UI.connect === 'function') {
-            var p = (typeof WebUtil !== 'undefined' && WebUtil.getConfigVar) ? WebUtil.getConfigVar('password') : null;
-            UI.connect(null, p || 'axonpassword');
+        var p = window.desktopPasswordForConnection || (typeof WebUtil !== 'undefined' && WebUtil.getConfigVar ? WebUtil.getConfigVar('password') : null) || 'axonpassword';
+        if (typeof UI !== 'undefined' && typeof UI.connect === 'function') {
+            UI.connect(null, p);
+        } else {
+            const launchBtn = document.getElementById('noVNC_connect_button');
+            if (launchBtn && typeof launchBtn.click === 'function') launchBtn.click();
         }
     }
 
@@ -978,25 +1038,26 @@ document.addEventListener("DOMContentLoaded", function() {
                 window.verifiedWalletAddress = walletAddress;
                 window.verifiedWalletAuthToken = data.auth_token || null;
 
-                setWalletStatus('verifying', 'Claiming desktop session...');
-
-                claimSession().then(function (claim) {
-                    if (claim.granted) {
-                        var statusMessage = 'Wallet verified - Connecting...';
-                        if (typeof data.remaining_minutes === 'number') statusMessage = 'Access granted (' + data.remaining_minutes.toFixed(1) + ' min remaining) - Connecting...';
-                        setWalletStatus('verified', statusMessage);
-                        setTimeout(tryConnectAfterClaim, 800);
-                    } else {
-                        setWalletStatus('verified', 'Wallet verified. Desktop is in use — join the queue or wait.');
-                        showQueueOverlay({ reason: claim.reason || 'Desktop in use.', queue_position: claim.queue_position, queue_length: claim.queue_length });
-                        startQueuePolling();
-                        setTimeout(function () {
-                            var credentialsDialog = document.getElementById('noVNC_credentials_dlg');
-                            if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
-                        }, 1200);
-                    }
-                }).catch(function () {
-                    setWalletStatus('error', 'Session claim failed. Try again.');
+                var credentialsDialog = document.getElementById('noVNC_credentials_dlg');
+                if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
+                setWalletStatus('verified', 'Wallet verified.');
+                showChangePasswordOverlay(function (passwordToUse) {
+                    window.desktopPasswordForConnection = passwordToUse;
+                    setWalletStatus('verifying', 'Claiming desktop session...');
+                    claimSession().then(function (claim) {
+                        if (claim.granted) {
+                            var statusMessage = 'Wallet verified - Connecting...';
+                            if (typeof data.remaining_minutes === 'number') statusMessage = 'Access granted (' + data.remaining_minutes.toFixed(1) + ' min remaining) - Connecting...';
+                            setWalletStatus('verified', statusMessage);
+                            setTimeout(tryConnectAfterClaim, 800);
+                        } else {
+                            setWalletStatus('verified', 'Wallet verified. Desktop is in use — join the queue or wait.');
+                            showQueueOverlay({ reason: claim.reason || 'Desktop in use.', queue_position: claim.queue_position, queue_length: claim.queue_length });
+                            startQueuePolling();
+                        }
+                    }).catch(function () {
+                        setWalletStatus('error', 'Session claim failed. Try again.');
+                    });
                 });
             } else {
                 verifiedWalletAddress = null;
@@ -1051,6 +1112,58 @@ document.addEventListener("DOMContentLoaded", function() {
         leaveQueueBtn.addEventListener('click', function () {
             leaveQueue().then(function () {
                 hideQueueOverlay();
+            });
+        });
+    }
+
+    var skipPwBtn = document.getElementById('axonos_change_password_skip_btn');
+    var setPwBtn = document.getElementById('axonos_change_password_submit_btn');
+    var newPwInput = document.getElementById('axonos_new_password');
+    var confirmPwInput = document.getElementById('axonos_confirm_password');
+    var changePwError = document.getElementById('axonos_change_password_error');
+
+    if (skipPwBtn) {
+        skipPwBtn.addEventListener('click', function () {
+            proceedAfterPasswordChoice('axonpassword');
+        });
+    }
+    if (setPwBtn) {
+        setPwBtn.addEventListener('click', function () {
+            var newPw = (newPwInput && newPwInput.value) ? newPwInput.value : '';
+            var confirmPw = (confirmPwInput && confirmPwInput.value) ? confirmPwInput.value : '';
+            if (changePwError) changePwError.textContent = '';
+            if (newPw.length < 8) {
+                if (changePwError) changePwError.textContent = 'New password must be at least 8 characters.';
+                return;
+            }
+            if (newPw !== confirmPw) {
+                if (changePwError) changePwError.textContent = 'Passwords do not match.';
+                return;
+            }
+            var wallet = window.verifiedWalletAddress;
+            if (!wallet) {
+                if (changePwError) changePwError.textContent = 'Wallet session lost. Please verify again.';
+                return;
+            }
+            setPwBtn.disabled = true;
+            fetch(new URL('/api/desktop/change-password', window.location.origin).toString(), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ wallet_address: wallet, new_password: newPw })
+            })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (data && data.ok) {
+                    proceedAfterPasswordChoice(newPw);
+                } else {
+                    if (changePwError) changePwError.textContent = (data && data.error) ? data.error : 'Failed to set password.';
+                    setPwBtn.disabled = false;
+                }
+            })
+            .catch(function () {
+                if (changePwError) changePwError.textContent = 'Network error. Try again.';
+                setPwBtn.disabled = false;
             });
         });
     }
