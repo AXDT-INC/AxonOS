@@ -546,6 +546,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 "axgt_min_hold_amount": policy.get("min_hold_amount"),
                 "axgt_credit_per_100_axgt_minutes": policy.get("credit_per_100_axgt_minutes"),
                 "axgt_warning_threshold_minutes": policy.get("warning_threshold_minutes"),
+                "vnc_default_password": os.getenv("AXONOS_VNC_PASSWORD", "axonpassword"),
             }
             return self._send_json(200, payload)
 

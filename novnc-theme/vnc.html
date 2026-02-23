@@ -850,7 +850,7 @@ document.addEventListener("DOMContentLoaded", function() {
         const credentialsDialog = document.getElementById('noVNC_credentials_dlg');
         if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
         showConnectionLoader();
-        var p = window.desktopPasswordForConnection || (typeof WebUtil !== 'undefined' && WebUtil.getConfigVar ? WebUtil.getConfigVar('password') : null) || 'axonpassword';
+        var p = window.desktopPasswordForConnection || (typeof WebUtil !== 'undefined' && WebUtil.getConfigVar ? WebUtil.getConfigVar('password') : null) || window.axonosDefaultVncPassword || 'axonpassword';
         if (typeof UI !== 'undefined' && typeof UI.connect === 'function') {
             UI.connect(null, p);
         } else {
@@ -900,6 +900,10 @@ document.addEventListener("DOMContentLoaded", function() {
                 if (prereqMin) prereqMin.textContent = minHold;
                 if (dlgMin1) dlgMin1.textContent = minHold;
                 if (dlgMin2) dlgMin2.textContent = minHold;
+                var vncDefault = (cfg && cfg.vnc_default_password) ? String(cfg.vnc_default_password) : 'axonpassword';
+                window.axonosDefaultVncPassword = vncDefault;
+                var pwCodeEl = document.getElementById('axonos_desktop_password');
+                if (pwCodeEl) pwCodeEl.textContent = vncDefault;
             })
             .catch(function () {
                 if (contractEl) contractEl.textContent = '(not configured)';
@@ -1125,7 +1129,7 @@ document.addEventListener("DOMContentLoaded", function() {
 
     if (skipPwBtn) {
         skipPwBtn.addEventListener('click', function () {
-            proceedAfterPasswordChoice('axonpassword');
+            proceedAfterPasswordChoice(window.axonosDefaultVncPassword || 'axonpassword');
         });
     }
     if (setPwBtn) {

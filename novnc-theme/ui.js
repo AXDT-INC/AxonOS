@@ -1043,7 +1043,7 @@ const UI = {
         const path = UI.getSetting('path');
 
         if (typeof password === 'undefined') {
-            password = (typeof window !== 'undefined' && window.desktopPasswordForConnection) || WebUtil.getConfigVar('password');
+            password = (typeof window !== 'undefined' && window.desktopPasswordForConnection) || WebUtil.getConfigVar('password') || (typeof window !== 'undefined' && window.axonosDefaultVncPassword) || 'axonpassword';
             UI.reconnectPassword = password;
         }
 
@@ -1315,7 +1315,7 @@ const UI = {
         const verifiedAuthToken = window.verifiedWalletAuthToken || null;
         if (verifiedWallet && verifiedAuthToken) {
             // Use password set by change-password step, then config, then default.
-            const password = (typeof window !== 'undefined' && window.desktopPasswordForConnection) || WebUtil.getConfigVar('password') || 'axonpassword';
+            const password = (typeof window !== 'undefined' && window.desktopPasswordForConnection) || WebUtil.getConfigVar('password') || (typeof window !== 'undefined' && window.axonosDefaultVncPassword) || 'axonpassword';
             UI.reconnectPassword = password;
             try {
                 if (UI.rfb && typeof UI.rfb.sendCredentials === 'function') {
@@ -1367,7 +1367,7 @@ const UI = {
         }
 
         // Wallet is verified, proceed with connection using chosen/default password
-        const password = (typeof window !== 'undefined' && window.desktopPasswordForConnection) || WebUtil.getConfigVar('password') || 'axonpassword';
+        const password = (typeof window !== 'undefined' && window.desktopPasswordForConnection) || WebUtil.getConfigVar('password') || (typeof window !== 'undefined' && window.axonosDefaultVncPassword) || 'axonpassword';
         UI.reconnectPassword = password;
         
         // Close the credentials dialog
