@@ -268,6 +268,10 @@ input[type="password"]::placeholder {
     color: var(--axonos-light);
     font-size: 0.9em;
     margin-bottom: 10px;
+    word-spacing: 0.25em;
+}
+.axonos-wallet-dialog-header .axonos-wallet-description strong {
+    margin: 0 0.15em;
 }
 
 .axonos-wallet-dialog-header .axonos-wallet-contract {
@@ -510,21 +514,29 @@ input[type="password"]::placeholder {
     padding: 12px 14px;
     background: rgba(0, 0, 0, 0.25);
     border-radius: 6px;
+    color: #F5F5F5;
     border-left: 3px solid var(--axonos-accent);
 }
 .axonos-wallet-prereqs__title {
     margin: 0 0 8px 0;
     font-weight: 600;
     font-size: 0.9rem;
+    color: #F5F5F5;
 }
 .axonos-wallet-prereqs__list {
     margin: 0;
     padding-left: 1.2em;
     font-size: 0.9rem;
     line-height: 1.5;
+    color: #F5F5F5;
 }
 .axonos-wallet-prereqs__list li {
     margin: 4px 0;
+    word-spacing: 0.25em;
+    color: #F5F5F5;
+}
+.axonos-wallet-prereqs__list strong {
+    margin: 0 0.15em;
 }
 .axonos-wallet-prereqs__list a {
     color: var(--axonos-accent);
