@@ -296,6 +296,17 @@ Copyright (C) 2019 The noVNC Authors
                 </p>
             </div>
             
+            <!-- Prerequisites (loaded from /api/config for min AXGT) -->
+            <div id="axonos_prerequisites" class="axonos-prerequisites" aria-label="Requirements to sign in">
+                <p class="axonos-prerequisites__title">To sign in you need:</p>
+                <ul class="axonos-prerequisites__list">
+                    <li>An <strong>EVM wallet</strong> (e.g. <a href="https://metamask.io" target="_blank" rel="noopener noreferrer">MetaMask</a>)</li>
+                    <li>At least <strong id="axonos_prereq_min_axgt">—</strong> <strong>AXGT</strong> in that wallet (<a href="https://axondao.io" target="_blank" rel="noopener noreferrer">Get AXGT</a>)</li>
+                    <li>You’ll <strong>sign a one-time message</strong> (no gas, no transaction)</li>
+                    <li><strong>One desktop at a time</strong> — if in use, you can join the queue</li>
+                </ul>
+            </div>
+
             <!-- Connect Button with Enhanced Styling -->
             <div id="noVNC_connect_button" class="axonos-enhanced-connect">
                 <div class="axonos-connect-content">
@@ -340,15 +351,20 @@ Copyright (C) 2019 The noVNC Authors
     <div id="noVNC_credentials_dlg" class="noVNC_panel"><form>
         <ul>
             <li class="axonos-wallet-dialog-header">
-                <h2>AXGT Wallet Required</h2>
+                <h2>Verify your wallet to continue</h2>
                 <p class="axonos-wallet-description">
-                    To access AxonOS, you must hold AXGT in your wallet and verify ownership by signing a challenge.
+                    You need <strong id="axonos-dlg-min-axgt">—</strong> AXGT in your wallet. We’ll ask you to <strong>sign a one-time message</strong> (no gas, no transfer).
                 </p>
+                <div class="axonos-wallet-prereqs">
+                    <p class="axonos-wallet-prereqs__title">Before you continue:</p>
+                    <ul class="axonos-wallet-prereqs__list">
+                        <li>Install an EVM wallet (e.g. <a href="https://metamask.io" target="_blank" rel="noopener noreferrer">MetaMask</a>) if you don’t have one</li>
+                        <li>Hold at least <strong id="axonos-dlg-min-axgt-2">—</strong> AXGT — <a href="https://axondao.io" target="_blank" rel="noopener noreferrer">Get AXGT at axondao.io</a></li>
+                        <li>Use the same wallet when you click “Verify Wallet”</li>
+                    </ul>
+                </div>
                 <p class="axonos-wallet-contract">
                     AXGT Contract: <code id="axonos-axgt-contract">(loading…)</code>
-                </p>
-                <p class="axonos-wallet-contract" style="opacity: 0.85;">
-                    Official site: <a href="https://axondao.io" target="_blank" rel="noopener noreferrer">axondao.io</a>
                 </p>
             </li>
             <li id="noVNC_wallet_block">
@@ -808,19 +824,26 @@ document.addEventListener("DOMContentLoaded", function() {
     const connectWalletBtn = document.getElementById('axonos_connect_wallet_btn');
     const connectedWalletHint = document.getElementById('axonos_connected_wallet_hint');
 
-    // Populate AXGT contract display dynamically (same-origin; avoids hardcoding in static HTML)
-    if (contractEl) {
-        const cfgUrl = new URL('/api/config', window.location.origin).toString();
+    // Populate AXGT config (contract + min hold) for contract display and prerequisites
+    (function loadAxonOSConfig() {
+        var cfgUrl = new URL('/api/config', window.location.origin).toString();
         fetch(cfgUrl, { method: 'GET' })
-            .then(r => r.json())
-            .then(cfg => {
-                const addr = (cfg && cfg.axgt_contract_address) ? String(cfg.axgt_contract_address) : '';
-                contractEl.textContent = addr || '(not configured)';
+            .then(function (r) { return r.json(); })
+            .then(function (cfg) {
+                var addr = (cfg && cfg.axgt_contract_address) ? String(cfg.axgt_contract_address) : '';
+                var minHold = (cfg && cfg.axgt_min_hold_amount != null) ? String(cfg.axgt_min_hold_amount) : '100';
+                if (contractEl) contractEl.textContent = addr || '(not configured)';
+                var prereqMin = document.getElementById('axonos_prereq_min_axgt');
+                var dlgMin1 = document.getElementById('axonos-dlg-min-axgt');
+                var dlgMin2 = document.getElementById('axonos-dlg-min-axgt-2');
+                if (prereqMin) prereqMin.textContent = minHold;
+                if (dlgMin1) dlgMin1.textContent = minHold;
+                if (dlgMin2) dlgMin2.textContent = minHold;
             })
-            .catch(() => {
-                contractEl.textContent = '(not configured)';
+            .catch(function () {
+                if (contractEl) contractEl.textContent = '(not configured)';
             });
-    }
+    })();
     
     function setWalletStatus(state, message) {
         if (!walletStatus || !walletStatusContent) return;

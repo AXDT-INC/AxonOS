@@ -466,6 +466,69 @@ input[type="password"]::placeholder {
     margin-top: 8px;
 }
 
+/* Prerequisites on connect panel (what you need to sign in) */
+.axonos-prerequisites {
+    max-width: 480px;
+    margin: 0 auto 20px auto;
+    padding: 14px 18px;
+    background: rgba(28, 28, 28, 0.6);
+    border: 1px solid rgba(70, 130, 180, 0.4);
+    border-radius: 8px;
+    text-align: left;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    color: var(--axonos-light);
+}
+.axonos-prerequisites__title {
+    margin: 0 0 8px 0;
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+.axonos-prerequisites__list {
+    margin: 0;
+    padding-left: 1.2em;
+}
+.axonos-prerequisites__list li {
+    margin: 6px 0;
+}
+.axonos-prerequisites__list a {
+    color: var(--axonos-accent);
+    text-decoration: none;
+}
+.axonos-prerequisites__list a:hover {
+    text-decoration: underline;
+}
+
+/* Prerequisites in wallet verification dialog */
+.axonos-wallet-prereqs {
+    margin: 14px 0;
+    padding: 12px 14px;
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 6px;
+    border-left: 3px solid var(--axonos-accent);
+}
+.axonos-wallet-prereqs__title {
+    margin: 0 0 8px 0;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+.axonos-wallet-prereqs__list {
+    margin: 0;
+    padding-left: 1.2em;
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+.axonos-wallet-prereqs__list li {
+    margin: 4px 0;
+}
+.axonos-wallet-prereqs__list a {
+    color: var(--axonos-accent);
+    text-decoration: none;
+}
+.axonos-wallet-prereqs__list a:hover {
+    text-decoration: underline;
+}
+
 /* AXGT queue overlay (desktop in use, wait or join queue) */
 .axonos-queue-overlay {
     position: fixed;
