@@ -535,6 +535,8 @@ COPY scripts/post_deploy_theme.sh /usr/local/bin/post_deploy_theme.sh
 RUN chmod +x /usr/local/bin/post_deploy_theme.sh
 COPY scripts/apply_theme_session.sh /usr/local/bin/apply_theme_session.sh
 RUN chmod +x /usr/local/bin/apply_theme_session.sh
+COPY scripts/reset_session.sh /usr/local/bin/reset_session.sh
+RUN chmod +x /usr/local/bin/reset_session.sh
 RUN mkdir -p /home/aXonian/.config/autostart
 COPY scripts/axonos-theme.desktop /home/aXonian/.config/autostart/axonos-theme.desktop
 RUN chown -R aXonian:aXonian /home/aXonian/.config/autostart

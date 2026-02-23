@@ -69,7 +69,11 @@ def _session_cooldown_seconds() -> int:
 
 def _reset_script_path() -> Optional[str]:
     raw = (os.getenv("AXGT_SESSION_RESET_SCRIPT") or "").strip()
-    return raw if raw else None
+    if raw:
+        return raw
+    # Default path in container (Feature 2 Option A desktop reset)
+    default = "/usr/local/bin/reset_session.sh"
+    return default if os.path.isfile(default) else None
 
 
 # ---------------------------------------------------------------------------

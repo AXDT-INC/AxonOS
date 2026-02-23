@@ -12,7 +12,7 @@
     - `POST /api/queue/leave` — leave the queue
   - [x] WebSocket upgrade gated on session ownership
   - [ ] Frontend queue overlay + auto-claim after wallet verify
-  - [ ] Desktop reset script between session transitions
+  - [x] Desktop reset script between session transitions (Feature 2 Option A)
 - [ ] Phase 2: Frontend Connect Wallet + strict sign-to-verify + status polling/overlay
 - [ ] Phase 3: Deployment helpers (`docker-compose.yml`, tunnel helper script) and docs touch-up
 - [ ] Phase 4: End-to-end runtime test checklist
