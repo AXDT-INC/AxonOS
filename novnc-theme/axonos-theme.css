@@ -490,6 +490,11 @@ input[type="password"]::placeholder {
 }
 .axonos-prerequisites__list li {
     margin: 6px 0;
+    word-spacing: 0.25em;
+}
+.axonos-prerequisites__list strong,
+.axonos-prerequisites__list a {
+    margin: 0 0.15em;
 }
 .axonos-prerequisites__list a {
     color: var(--axonos-accent);
@@ -1127,6 +1132,10 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   color: var(--axonos-light);
   margin: 0 0 10px 0;
   font-weight: 500;
+  word-spacing: 0.25em;
+}
+.axonos-mission-text strong {
+  margin: 0 0.15em;
 }
 
 .axonos-subtitle {
