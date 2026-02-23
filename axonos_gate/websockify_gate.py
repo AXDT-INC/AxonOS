@@ -7,12 +7,15 @@ This script is called by supervisord instead of websockify directly.
 """
 
 import os
+import shutil
+import subprocess
 import sys
 import logging
 import json
 import time
 import secrets
 from http.cookies import SimpleCookie
+from pathlib import Path
 from threading import Lock
 from urllib.parse import parse_qs, urlparse
 
@@ -511,6 +514,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             or self.path.startswith('/api/config')
             or self.path.startswith('/api/session/')
             or self.path.startswith('/api/queue/')
+            or self.path.startswith('/api/desktop/')
         ):
             self.send_response(200)
             origin = cors_origin_for_request(
@@ -687,6 +691,43 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 return self._send_json(401, {'left': False, 'error': 'Valid auth token required'})
             result = leave_queue(wallet_address)
             return self._send_json(200, result)
+
+        if self.path.startswith('/api/desktop/change-password'):
+            data = self._read_json_body()
+            wallet_address = (data.get('wallet_address') or '').strip()
+            new_password = data.get('new_password', '')
+            if not wallet_address or not validate_wallet_address(wallet_address):
+                return self._send_json(400, {'ok': False, 'error': 'Valid wallet_address required'})
+            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+            if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
+                return self._send_json(401, {'ok': False, 'error': 'Valid auth token required'})
+            if not new_password or len(new_password) < 8 or len(new_password) > 128:
+                return self._send_json(400, {'ok': False, 'error': 'Password must be 8-128 characters'})
+            try:
+                vnc_user = os.environ.get('VNC_USER', 'aXonian')
+                vnc_passwd_path = Path(f'/home/{vnc_user}/.vnc/passwd')
+                proc = subprocess.run(
+                    ['vncpasswd', '-f'],
+                    input=new_password.encode(),
+                    capture_output=True,
+                    timeout=5,
+                )
+                if proc.returncode != 0:
+                    logger.error("vncpasswd failed: %s", proc.stderr.decode(errors='replace'))
+                    return self._send_json(500, {'ok': False, 'error': 'Failed to set VNC password'})
+                vnc_passwd_path.parent.mkdir(parents=True, exist_ok=True)
+                vnc_passwd_path.write_bytes(proc.stdout)
+                vnc_passwd_path.chmod(0o600)
+                shutil.chown(str(vnc_passwd_path), user=vnc_user, group=vnc_user)
+                subprocess.run(
+                    ['supervisorctl', 'restart', 'x11vnc'],
+                    capture_output=True, timeout=10,
+                )
+                logger.info("VNC password changed for wallet %s", mask_wallet_address(wallet_address))
+                return self._send_json(200, {'ok': True})
+            except Exception as exc:
+                logger.exception("change-password error: %s", exc)
+                return self._send_json(500, {'ok': False, 'error': str(exc)})
 
         if not self.path.startswith('/api/auth/verify-wallet'):
             return self.send_error(404, "Not Found")
