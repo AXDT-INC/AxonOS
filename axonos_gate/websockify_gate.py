@@ -8,6 +8,7 @@ This script is called by supervisord instead of websockify directly.
 
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import logging
@@ -724,6 +725,13 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                     ['supervisorctl', 'restart', 'x11vnc'],
                     capture_output=True, timeout=10,
                 )
+                for _attempt in range(10):
+                    time.sleep(0.5)
+                    try:
+                        with socket.create_connection(('127.0.0.1', 5901), timeout=1):
+                            break
+                    except OSError:
+                        continue
                 logger.info("VNC password changed for wallet %s", mask_wallet_address(wallet_address))
                 return self._send_json(200, {'ok': True})
             except Exception as exc:

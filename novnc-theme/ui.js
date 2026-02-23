@@ -1146,6 +1146,7 @@ const UI = {
     connectFinished(e) {
         UI.connected = true;
         UI.inhibitReconnect = false;
+        if (typeof window._connectRetries !== 'undefined') window._connectRetries = 0;
 
         let msg;
         if (UI.getSetting('encrypt')) {
@@ -1191,6 +1192,12 @@ const UI = {
         }
 
         if (!e.detail.clean) {
+            if (!wasConnected && window.desktopPasswordForConnection &&
+                typeof window.retryConnectOnFailure === 'function') {
+                Log.Warn("Connection failed after password change; will retry...");
+                window.retryConnectOnFailure();
+                return;
+            }
             UI.updateVisualState('disconnected');
             if (wasConnected) {
                 UI.showStatus(_("Something went wrong, connection is closed"),
@@ -1289,14 +1296,19 @@ const UI = {
 
     securityFailed(e) {
         let msg = "";
-        // On security failures we might get a string with a reason
-        // directly from the server. Note that we can't control if
-        // this string is translated or not.
         if ('reason' in e.detail) {
             msg = _("New connection has been rejected with reason: ") +
                 e.detail.reason;
         } else {
             msg = _("New connection has been rejected");
+        }
+
+        if (window.desktopPasswordForConnection &&
+            typeof window.retryConnectOnFailure === 'function') {
+            Log.Warn("Security failed after password change; will retry: " + msg);
+            UI.rfb = undefined;
+            window.retryConnectOnFailure();
+            return;
         }
         UI.showStatus(msg, 'error');
     },
