@@ -13,6 +13,6 @@
   - [x] WebSocket upgrade gated on session ownership
   - [x] Frontend queue overlay + auto-claim after wallet verify (Feature 3)
   - [x] Desktop reset script between session transitions (Feature 2 Option A)
-- [ ] Phase 2: Frontend Connect Wallet + strict sign-to-verify + status polling/overlay
-- [ ] Phase 3: Deployment helpers (`docker-compose.yml`, tunnel helper script) and docs touch-up
+- [x] Phase 2: Frontend Connect Wallet + strict sign-to-verify + status polling/overlay
+- [ ] Phase 3: Deployment helpers (`docker-compose.yml`) and docs touch-up
 - [ ] Phase 4: End-to-end runtime test checklist
