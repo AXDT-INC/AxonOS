@@ -1,0 +1,30 @@
+name: Build and Push to Harbor
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: harbor.internal.oci.axondao.io
+  IMAGE: axondao/axonos
+  BUILDKIT_HOST: tcp://buildkitd.buildkit:1234
+
+jobs:
+  build-push:
+    runs-on: arc-runner-set-mgmt
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install buildctl
+        run: |
+          curl -sSL https://github.com/moby/buildkit/releases/download/v0.21.1/buildkit-v0.21.1.linux-amd64.tar.gz | \
+            sudo tar -xz -C /usr/local
+
+      - name: Build and push
+        run: |
+          buildctl build \
+            --frontend dockerfile.v0 \
+            --local context=. \
+            --local dockerfile=. \
+            --output type=image,\"name=${{ env.REGISTRY }}/${{ env.IMAGE }}:sha-${GITHUB_SHA::7},${{ env.REGISTRY }}/${{ env.IMAGE }}:latest\",push=true
