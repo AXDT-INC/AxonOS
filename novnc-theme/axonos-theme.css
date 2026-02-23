@@ -1146,6 +1146,71 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   opacity: 0.9;
 }
 
+/* Connect wrapper: tooltip shown on hover */
+.axonos-connect-wrapper {
+  position: relative;
+}
+
+.axonos-prerequisites-tooltip {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  transform: translateX(-50%);
+  margin-bottom: 12px;
+  max-width: 420px;
+  min-width: 320px;
+  padding: 14px 18px;
+  background: rgba(28, 28, 28, 0.98);
+  border: 1px solid rgba(70, 130, 180, 0.5);
+  border-radius: 8px;
+  text-align: left;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--axonos-light);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  z-index: 50;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+}
+
+.axonos-connect-wrapper:hover .axonos-prerequisites-tooltip {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.axonos-prerequisites-tooltip .axonos-prerequisites__title {
+  margin: 0 0 8px 0;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.axonos-prerequisites-tooltip .axonos-prerequisites__list {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+.axonos-prerequisites-tooltip .axonos-prerequisites__list li {
+  margin: 6px 0;
+  word-spacing: 0.25em;
+}
+
+.axonos-prerequisites-tooltip .axonos-prerequisites__list strong,
+.axonos-prerequisites-tooltip .axonos-prerequisites__list a {
+  margin: 0 0.15em;
+}
+
+.axonos-prerequisites-tooltip .axonos-prerequisites__list a {
+  color: var(--axonos-accent);
+  text-decoration: none;
+}
+
+.axonos-prerequisites-tooltip .axonos-prerequisites__list a:hover {
+  text-decoration: underline;
+}
+
 /* Enhanced Connect Button */
 .axonos-enhanced-connect {
   background: linear-gradient(135deg, var(--axonos-primary), var(--axonos-secondary)) !important;
