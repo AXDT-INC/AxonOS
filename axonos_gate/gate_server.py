@@ -47,6 +47,34 @@ except ImportError:
         print(f"ERROR: Cannot import axgt_verifier: {e}", file=sys.stderr)
         sys.exit(1)
 
+try:
+    from session_manager import (
+        get_active_session,
+        heartbeat as session_heartbeat,
+        is_session_owner,
+        join_queue,
+        leave_queue,
+        release_session,
+        session_status,
+        try_claim_session,
+    )
+    _session_mgr_available = True
+except ImportError:
+    try:
+        from axonos_gate.session_manager import (
+            get_active_session,
+            heartbeat as session_heartbeat,
+            is_session_owner,
+            join_queue,
+            leave_queue,
+            release_session,
+            session_status,
+            try_claim_session,
+        )
+        _session_mgr_available = True
+    except ImportError:
+        _session_mgr_available = False
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -303,6 +331,112 @@ def api_config():
     })
 
 
+def _require_auth_token(wallet_address: str):
+    """Validate auth token from cookie / header / query. Returns None on success, or (response, status)."""
+    from flask import request as _req
+    token = None
+    cookie_val = _req.cookies.get(os.getenv("AXGT_AUTH_COOKIE_NAME", "axgt_auth_token").strip())
+    if cookie_val:
+        token = cookie_val.strip()
+    if not token:
+        token = (_req.headers.get("X-AXGT-Auth-Token") or "").strip() or None
+    if not token:
+        token = (_req.args.get("auth_token") or "").strip() or None
+    if not token or not _is_gate_auth_token_valid(token, wallet_address):
+        return jsonify({"error": "Valid auth token required"}), 401
+    return None
+
+
+@app.route('/api/session/status', methods=['GET', 'OPTIONS'])
+def api_session_status():
+    if request.method == 'OPTIONS':
+        return '', 200
+    if not _session_mgr_available:
+        return jsonify({"error": "Session manager unavailable"}), 503
+    wallet_address = (request.args.get('wallet_address') or request.headers.get('X-Wallet-Address') or '').strip() or None
+    return jsonify(session_status(wallet_address))
+
+
+@app.route('/api/session/claim', methods=['POST', 'OPTIONS'])
+def api_session_claim():
+    if request.method == 'OPTIONS':
+        return '', 200
+    if not _session_mgr_available:
+        return jsonify({"granted": False, "error": "Session manager unavailable"}), 503
+    data = request.get_json() or {}
+    wallet_address = (data.get('wallet_address') or '').strip()
+    if not wallet_address or not validate_wallet_address(wallet_address):
+        return jsonify({"granted": False, "error": "Valid wallet_address required"}), 400
+    auth_err = _require_auth_token(wallet_address)
+    if auth_err:
+        return auth_err
+    return jsonify(try_claim_session(wallet_address))
+
+
+@app.route('/api/session/heartbeat', methods=['POST', 'OPTIONS'])
+def api_session_heartbeat():
+    if request.method == 'OPTIONS':
+        return '', 200
+    if not _session_mgr_available:
+        return jsonify({"ok": False, "error": "Session manager unavailable"}), 503
+    data = request.get_json() or {}
+    wallet_address = (data.get('wallet_address') or '').strip()
+    if not wallet_address or not validate_wallet_address(wallet_address):
+        return jsonify({"ok": False, "error": "Valid wallet_address required"}), 400
+    auth_err = _require_auth_token(wallet_address)
+    if auth_err:
+        return auth_err
+    return jsonify(session_heartbeat(wallet_address))
+
+
+@app.route('/api/session/release', methods=['POST', 'OPTIONS'])
+def api_session_release():
+    if request.method == 'OPTIONS':
+        return '', 200
+    if not _session_mgr_available:
+        return jsonify({"released": False, "error": "Session manager unavailable"}), 503
+    data = request.get_json() or {}
+    wallet_address = (data.get('wallet_address') or '').strip()
+    if not wallet_address or not validate_wallet_address(wallet_address):
+        return jsonify({"released": False, "error": "Valid wallet_address required"}), 400
+    auth_err = _require_auth_token(wallet_address)
+    if auth_err:
+        return auth_err
+    return jsonify(release_session(wallet_address))
+
+
+@app.route('/api/queue/join', methods=['POST', 'OPTIONS'])
+def api_queue_join():
+    if request.method == 'OPTIONS':
+        return '', 200
+    if not _session_mgr_available:
+        return jsonify({"joined": False, "error": "Session manager unavailable"}), 503
+    data = request.get_json() or {}
+    wallet_address = (data.get('wallet_address') or '').strip()
+    if not wallet_address or not validate_wallet_address(wallet_address):
+        return jsonify({"joined": False, "error": "Valid wallet_address required"}), 400
+    auth_err = _require_auth_token(wallet_address)
+    if auth_err:
+        return auth_err
+    return jsonify(join_queue(wallet_address))
+
+
+@app.route('/api/queue/leave', methods=['POST', 'OPTIONS'])
+def api_queue_leave():
+    if request.method == 'OPTIONS':
+        return '', 200
+    if not _session_mgr_available:
+        return jsonify({"left": False, "error": "Session manager unavailable"}), 503
+    data = request.get_json() or {}
+    wallet_address = (data.get('wallet_address') or '').strip()
+    if not wallet_address or not validate_wallet_address(wallet_address):
+        return jsonify({"left": False, "error": "Valid wallet_address required"}), 400
+    auth_err = _require_auth_token(wallet_address)
+    if auth_err:
+        return auth_err
+    return jsonify(leave_queue(wallet_address))
+
+
 @app.route('/')
 def index():
     """Serve the main noVNC HTML page."""
@@ -352,6 +486,13 @@ def _handle_websockify_proxy(environ, start_response):
     if not status.get('verified'):
         try:
             ws.close(code=403, reason=status.get('reason') or 'Access denied')
+        except Exception:
+            pass
+        return []
+
+    if _session_mgr_available and not is_session_owner(wallet):
+        try:
+            ws.close(code=403, reason='Session not owned by this wallet')
         except Exception:
             pass
         return []
