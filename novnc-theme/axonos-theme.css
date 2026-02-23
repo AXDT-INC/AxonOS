@@ -466,6 +466,63 @@ input[type="password"]::placeholder {
     margin-top: 8px;
 }
 
+/* AXGT queue overlay (desktop in use, wait or join queue) */
+.axonos-queue-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10001;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.8);
+    pointer-events: auto;
+}
+.axonos-queue-overlay--hidden {
+    display: none !important;
+}
+.axonos-queue-overlay__panel {
+    max-width: 420px;
+    padding: 24px;
+    border-radius: 8px;
+    text-align: center;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+    background: rgba(30, 30, 30, 0.98);
+    border: 2px solid var(--axonos-accent);
+    color: var(--axonos-light);
+}
+.axonos-queue-overlay__title {
+    margin: 0 0 12px 0;
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+.axonos-queue-overlay__message {
+    margin: 0 0 16px 0;
+    font-size: 1rem;
+    line-height: 1.5;
+    opacity: 0.95;
+}
+.axonos-queue-overlay__row {
+    margin: 8px 0;
+    font-size: 0.95rem;
+}
+.axonos-queue-overlay__row strong {
+    color: var(--axonos-accent);
+}
+.axonos-queue-overlay__actions {
+    margin-top: 20px;
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+.axonos-queue-overlay__btn {
+    margin: 0;
+}
+.axonos-queue-overlay__btn--secondary {
+    background: transparent;
+    border-color: rgba(255, 255, 255, 0.4);
+}
+
 /* Fix all credential form inputs */
 #noVNC_credentials_dlg input {
   background-color: var(--axonos-dark) !important;
