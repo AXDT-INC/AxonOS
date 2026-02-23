@@ -1234,15 +1234,25 @@ const UI = {
     _axgtPollWalletStatus() {
         if (!UI.connected || !UI.rfb || !window.verifiedWalletAddress) return;
         const wallet = window.verifiedWalletAddress;
+        const token = window.verifiedWalletAuthToken || null;
+        const headers = { 'X-Wallet-Address': wallet };
+        if (token) headers['X-AXGT-Auth-Token'] = token;
+
+        // Session heartbeat so the desktop session is not auto-released due to timeout
+        fetch(new URL('/api/session/heartbeat', window.location.origin).toString(), {
+            method: 'POST',
+            credentials: 'include',
+            headers: { ...headers, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ wallet_address: wallet })
+        }).then(() => {}).catch(() => {});
+
         const url = new URL('/api/auth/wallet-status', window.location.origin);
         url.searchParams.set('wallet_address', wallet);
         const opts = {
             method: 'GET',
             credentials: 'include',
-            headers: { 'X-Wallet-Address': wallet }
+            headers
         };
-        const token = window.verifiedWalletAuthToken || null;
-        if (token) opts.headers['X-AXGT-Auth-Token'] = token;
         fetch(url.toString(), opts)
             .then(r => r.json())
             .then(data => {

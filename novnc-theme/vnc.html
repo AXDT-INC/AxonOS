@@ -296,14 +296,25 @@ Copyright (C) 2019 The noVNC Authors
                 </p>
             </div>
             
-            <!-- Connect Button with Enhanced Styling -->
-            <div id="noVNC_connect_button" class="axonos-enhanced-connect">
-                <div class="axonos-connect-content">
-                    <div class="axonos-connect-icon">
-                        <img src="icon.png" alt="AxonOS" style="width: 48px; height: 48px; object-fit: contain;">
+            <!-- Connect Button; prerequisites shown on hover to save vertical space -->
+            <div class="axonos-connect-wrapper">
+                <div id="axonos_prerequisites_tooltip" class="axonos-prerequisites-tooltip" aria-label="Requirements to sign in" role="tooltip">
+                    <p class="axonos-prerequisites__title">To sign in you need:</p>
+                    <ul class="axonos-prerequisites__list">
+                        <li>An <strong>EVM wallet</strong> (e.g. <a href="https://metamask.io" target="_blank" rel="noopener noreferrer">MetaMask</a>)</li>
+                        <li>At least <strong id="axonos_prereq_min_axgt">—</strong> <strong>AXGT</strong> in that wallet (<a href="https://axondao.io" target="_blank" rel="noopener noreferrer">Get AXGT</a>)</li>
+                        <li>You'll <strong>sign a one-time message</strong> (no gas, no transaction)</li>
+                        <li><strong>One desktop at a time</strong> — if in use, you can join the queue</li>
+                    </ul>
+                </div>
+                <div id="noVNC_connect_button" class="axonos-enhanced-connect">
+                    <div class="axonos-connect-content">
+                        <div class="axonos-connect-icon">
+                            <img src="icon.png" alt="AxonOS" style="width: 48px; height: 48px; object-fit: contain;">
+                        </div>
+                        <span class="axonos-connect-text">Launch GPU-Native Desktop</span>
+                        <div class="axonos-connect-subtext">Full Linux environment with direct GPU access</div>
                     </div>
-                    <span class="axonos-connect-text">Launch GPU-Native Desktop</span>
-                    <div class="axonos-connect-subtext">Full Linux environment with direct GPU access</div>
                 </div>
             </div>
             
@@ -340,15 +351,20 @@ Copyright (C) 2019 The noVNC Authors
     <div id="noVNC_credentials_dlg" class="noVNC_panel"><form>
         <ul>
             <li class="axonos-wallet-dialog-header">
-                <h2>AXGT Wallet Required</h2>
+                <h2>Verify your wallet to continue</h2>
                 <p class="axonos-wallet-description">
-                    To access AxonOS, you must hold AXGT in your wallet and verify ownership by signing a challenge.
+                    You need <strong id="axonos-dlg-min-axgt">—</strong> <strong>AXGT</strong> in your wallet. We’ll ask you to <strong>sign a one-time message</strong> (no gas, no transfer).
                 </p>
+                <div class="axonos-wallet-prereqs">
+                    <p class="axonos-wallet-prereqs__title">Before you continue:</p>
+                    <ul class="axonos-wallet-prereqs__list">
+                        <li>Install an EVM wallet (e.g. <a href="https://metamask.io" target="_blank" rel="noopener noreferrer">MetaMask</a>) if you don’t have one</li>
+                        <li>Hold at least <strong id="axonos-dlg-min-axgt-2">—</strong> <strong>AXGT</strong> — <a href="https://axondao.io" target="_blank" rel="noopener noreferrer">Get AXGT at axondao.io</a></li>
+                        <li>Use the same wallet when you click “Verify Wallet”</li>
+                    </ul>
+                </div>
                 <p class="axonos-wallet-contract">
                     AXGT Contract: <code id="axonos-axgt-contract">(loading…)</code>
-                </p>
-                <p class="axonos-wallet-contract" style="opacity: 0.85;">
-                    Official site: <a href="https://axondao.io" target="_blank" rel="noopener noreferrer">axondao.io</a>
                 </p>
             </li>
             <li id="noVNC_wallet_block">
@@ -393,6 +409,20 @@ Copyright (C) 2019 The noVNC Authors
         <div class="axonos-usage-overlay__panel">
             <p id="axonos_usage_overlay_message" class="axonos-usage-overlay__message"></p>
             <button type="button" id="axonos_usage_overlay_verify_btn" class="noVNC_submit axonos-usage-overlay__btn">Verify wallet again</button>
+        </div>
+    </div>
+
+    <!-- AXGT queue overlay: desktop in use, show position and join/leave queue. -->
+    <div id="axonos_queue_overlay" class="axonos-queue-overlay axonos-queue-overlay--hidden" aria-hidden="true">
+        <div class="axonos-queue-overlay__panel">
+            <h2 class="axonos-queue-overlay__title">Desktop In Use</h2>
+            <p id="axonos_queue_message" class="axonos-queue-overlay__message">Another researcher is currently using the desktop.</p>
+            <p class="axonos-queue-overlay__row">Your position in queue: <strong id="axonos_queue_position">—</strong></p>
+            <p class="axonos-queue-overlay__row">People waiting: <strong id="axonos_queue_length">—</strong></p>
+            <div class="axonos-queue-overlay__actions">
+                <button type="button" id="axonos_queue_join_btn" class="noVNC_submit axonos-queue-overlay__btn">Join Queue</button>
+                <button type="button" id="axonos_queue_leave_btn" class="noVNC_submit axonos-queue-overlay__btn axonos-queue-overlay__btn--secondary" style="display:none">Leave Queue</button>
+            </div>
         </div>
     </div>
 
@@ -678,7 +708,113 @@ document.addEventListener("DOMContentLoaded", function() {
     let verifiedWalletAddress = null;
     window.verifiedWalletAddress = null; // Make it globally accessible for ui.js
     window.verifiedWalletAuthToken = null;
-    
+
+    // Queue overlay polling (cleared when we connect or leave queue)
+    let axonosQueuePollId = null;
+
+    function axonosFetch(opts) {
+        const headers = { 'Content-Type': 'application/json' };
+        if (window.verifiedWalletAddress) headers['X-Wallet-Address'] = window.verifiedWalletAddress;
+        if (window.verifiedWalletAuthToken) headers['X-AXGT-Auth-Token'] = window.verifiedWalletAuthToken;
+        return fetch(opts.url, { method: opts.method || 'GET', credentials: 'include', headers: opts.headers || headers, body: opts.body }).then(r => r.json());
+    }
+
+    function claimSession() {
+        const wallet = window.verifiedWalletAddress;
+        if (!wallet) return Promise.resolve({ granted: false });
+        return axonosFetch({
+            method: 'POST',
+            url: new URL('/api/session/claim', window.location.origin).toString(),
+            body: JSON.stringify({ wallet_address: wallet })
+        });
+    }
+
+    function sessionStatus() {
+        const wallet = window.verifiedWalletAddress;
+        const url = new URL('/api/session/status', window.location.origin);
+        if (wallet) url.searchParams.set('wallet_address', wallet);
+        return axonosFetch({ url: url.toString() });
+    }
+
+    function joinQueue() {
+        const wallet = window.verifiedWalletAddress;
+        if (!wallet) return Promise.resolve({ joined: false });
+        return axonosFetch({
+            method: 'POST',
+            url: new URL('/api/queue/join', window.location.origin).toString(),
+            body: JSON.stringify({ wallet_address: wallet })
+        });
+    }
+
+    function leaveQueue() {
+        const wallet = window.verifiedWalletAddress;
+        if (!wallet) return Promise.resolve({ left: false });
+        return axonosFetch({
+            method: 'POST',
+            url: new URL('/api/queue/leave', window.location.origin).toString(),
+            body: JSON.stringify({ wallet_address: wallet })
+        });
+    }
+
+    function showQueueOverlay(data) {
+        const overlay = document.getElementById('axonos_queue_overlay');
+        const msgEl = document.getElementById('axonos_queue_message');
+        const posEl = document.getElementById('axonos_queue_position');
+        const lenEl = document.getElementById('axonos_queue_length');
+        const joinBtn = document.getElementById('axonos_queue_join_btn');
+        const leaveBtn = document.getElementById('axonos_queue_leave_btn');
+        if (!overlay) return;
+        overlay.classList.remove('axonos-queue-overlay--hidden');
+        overlay.setAttribute('aria-hidden', 'false');
+        if (msgEl) msgEl.textContent = (data && data.reason) ? data.reason : 'Another researcher is currently using the desktop.';
+        if (posEl) posEl.textContent = (data && data.queue_position != null) ? String(data.queue_position) : '—';
+        if (lenEl) lenEl.textContent = (data && data.queue_length != null) ? String(data.queue_length) : '—';
+        if (joinBtn) joinBtn.style.display = (data && data.queue_position != null) ? 'none' : '';
+        if (leaveBtn) leaveBtn.style.display = (data && data.queue_position != null) ? '' : 'none';
+    }
+
+    function hideQueueOverlay() {
+        const overlay = document.getElementById('axonos_queue_overlay');
+        if (overlay) {
+            overlay.classList.add('axonos-queue-overlay--hidden');
+            overlay.setAttribute('aria-hidden', 'true');
+        }
+        if (axonosQueuePollId) {
+            clearInterval(axonosQueuePollId);
+            axonosQueuePollId = null;
+        }
+    }
+
+    function tryConnectAfterClaim() {
+        hideQueueOverlay();
+        const credentialsDialog = document.getElementById('noVNC_credentials_dlg');
+        if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
+        showConnectionLoader();
+        const launchBtn = document.getElementById('noVNC_connect_button');
+        if (launchBtn && typeof launchBtn.click === 'function') launchBtn.click();
+        else if (typeof UI !== 'undefined' && typeof UI.connect === 'function') {
+            var p = (typeof WebUtil !== 'undefined' && WebUtil.getConfigVar) ? WebUtil.getConfigVar('password') : null;
+            UI.connect(null, p || 'axonpassword');
+        }
+    }
+
+    function startQueuePolling() {
+        if (axonosQueuePollId) return;
+        function poll() {
+            sessionStatus().then(function (data) {
+                if (data.reason) showQueueOverlay({ reason: data.reason, queue_position: data.queue_position, queue_length: data.queue_length });
+                if (data.active === false || data.is_owner === true) {
+                    claimSession().then(function (claim) {
+                        if (claim.granted) tryConnectAfterClaim();
+                        else if (claim.queue_position != null) showQueueOverlay({ reason: claim.reason, queue_position: claim.queue_position, queue_length: claim.queue_length });
+                    });
+                }
+            }).catch(function () {});
+        }
+        poll();
+        axonosQueuePollId = setInterval(poll, 8000);
+    }
+
     const walletInput = document.getElementById('noVNC_wallet_input');
     const verifyBtn = document.getElementById('noVNC_credentials_button');
     const walletStatus = document.getElementById('axonos-wallet-status');
@@ -688,19 +824,26 @@ document.addEventListener("DOMContentLoaded", function() {
     const connectWalletBtn = document.getElementById('axonos_connect_wallet_btn');
     const connectedWalletHint = document.getElementById('axonos_connected_wallet_hint');
 
-    // Populate AXGT contract display dynamically (same-origin; avoids hardcoding in static HTML)
-    if (contractEl) {
-        const cfgUrl = new URL('/api/config', window.location.origin).toString();
+    // Populate AXGT config (contract + min hold) for contract display and prerequisites
+    (function loadAxonOSConfig() {
+        var cfgUrl = new URL('/api/config', window.location.origin).toString();
         fetch(cfgUrl, { method: 'GET' })
-            .then(r => r.json())
-            .then(cfg => {
-                const addr = (cfg && cfg.axgt_contract_address) ? String(cfg.axgt_contract_address) : '';
-                contractEl.textContent = addr || '(not configured)';
+            .then(function (r) { return r.json(); })
+            .then(function (cfg) {
+                var addr = (cfg && cfg.axgt_contract_address) ? String(cfg.axgt_contract_address) : '';
+                var minHold = (cfg && cfg.axgt_min_hold_amount != null) ? String(cfg.axgt_min_hold_amount) : '100';
+                if (contractEl) contractEl.textContent = addr || '(not configured)';
+                var prereqMin = document.getElementById('axonos_prereq_min_axgt');
+                var dlgMin1 = document.getElementById('axonos-dlg-min-axgt');
+                var dlgMin2 = document.getElementById('axonos-dlg-min-axgt-2');
+                if (prereqMin) prereqMin.textContent = minHold;
+                if (dlgMin1) dlgMin1.textContent = minHold;
+                if (dlgMin2) dlgMin2.textContent = minHold;
             })
-            .catch(() => {
-                contractEl.textContent = '(not configured)';
+            .catch(function () {
+                if (contractEl) contractEl.textContent = '(not configured)';
             });
-    }
+    })();
     
     function setWalletStatus(state, message) {
         if (!walletStatus || !walletStatusContent) return;
@@ -832,35 +975,29 @@ document.addEventListener("DOMContentLoaded", function() {
         .then(data => {
             if (data.verified) {
                 verifiedWalletAddress = walletAddress;
-                window.verifiedWalletAddress = walletAddress; // Make globally accessible
-                window.verifiedWalletAuthToken = data.auth_token || null;
-                
-                let statusMessage = 'Wallet verified - Connecting...';
-                if (data.message) {
-                    statusMessage = data.message + ' - Connecting...';
-                } else if (typeof data.remaining_minutes === 'number') {
-                    statusMessage = `Access granted (${data.remaining_minutes.toFixed(1)} minutes remaining) - Connecting...`;
-                }
-                
-                setWalletStatus('verified', statusMessage);
-                // Set wallet address immediately (before setTimeout)
                 window.verifiedWalletAddress = walletAddress;
-                verifiedWalletAddress = walletAddress;
-                
-                // Close dialog then auto-trigger "Launch GPU-Native Desktop" so connection starts without a second click
-                setTimeout(() => {
-                    const credentialsDialog = document.getElementById('noVNC_credentials_dlg');
-                    if (credentialsDialog) {
-                        credentialsDialog.classList.remove('noVNC_open');
+                window.verifiedWalletAuthToken = data.auth_token || null;
+
+                setWalletStatus('verifying', 'Claiming desktop session...');
+
+                claimSession().then(function (claim) {
+                    if (claim.granted) {
+                        var statusMessage = 'Wallet verified - Connecting...';
+                        if (typeof data.remaining_minutes === 'number') statusMessage = 'Access granted (' + data.remaining_minutes.toFixed(1) + ' min remaining) - Connecting...';
+                        setWalletStatus('verified', statusMessage);
+                        setTimeout(tryConnectAfterClaim, 800);
+                    } else {
+                        setWalletStatus('verified', 'Wallet verified. Desktop is in use — join the queue or wait.');
+                        showQueueOverlay({ reason: claim.reason || 'Desktop in use.', queue_position: claim.queue_position, queue_length: claim.queue_length });
+                        startQueuePolling();
+                        setTimeout(function () {
+                            var credentialsDialog = document.getElementById('noVNC_credentials_dlg');
+                            if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
+                        }, 1200);
                     }
-                    const launchBtn = document.getElementById('noVNC_connect_button');
-                    if (launchBtn && typeof launchBtn.click === 'function') {
-                        launchBtn.click();
-                    } else if (typeof UI !== 'undefined' && typeof UI.connect === 'function') {
-                        var p = (typeof WebUtil !== 'undefined' && WebUtil.getConfigVar) ? WebUtil.getConfigVar('password') : null;
-                        UI.connect(null, p || 'axonpassword');
-                    }
-                }, 1500);
+                }).catch(function () {
+                    setWalletStatus('error', 'Session claim failed. Try again.');
+                });
             } else {
                 verifiedWalletAddress = null;
                 window.verifiedWalletAddress = null;
@@ -893,6 +1030,28 @@ document.addEventListener("DOMContentLoaded", function() {
             requestConnectedWallet()
                 .then(() => setWalletStatus('verifying', 'Wallet connected. Click Verify Wallet to continue.'))
                 .catch((err) => setWalletStatus('error', 'Wallet connect failed: ' + (err && err.message ? err.message : String(err))));
+        });
+    }
+
+    var joinQueueBtn = document.getElementById('axonos_queue_join_btn');
+    var leaveQueueBtn = document.getElementById('axonos_queue_leave_btn');
+    if (joinQueueBtn) {
+        joinQueueBtn.addEventListener('click', function () {
+            joinQueue().then(function (r) {
+                if (r.joined || r.queue_position) {
+                    showQueueOverlay({ reason: 'You are in the queue.', queue_position: r.queue_position, queue_length: r.queue_length });
+                    if (joinQueueBtn) joinQueueBtn.style.display = 'none';
+                    if (leaveQueueBtn) leaveQueueBtn.style.display = '';
+                    startQueuePolling();
+                }
+            });
+        });
+    }
+    if (leaveQueueBtn) {
+        leaveQueueBtn.addEventListener('click', function () {
+            leaveQueue().then(function () {
+                hideQueueOverlay();
+            });
         });
     }
 

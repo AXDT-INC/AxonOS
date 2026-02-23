@@ -70,6 +70,34 @@ except ImportError:
         print(f"ERROR: Cannot import axgt_verifier: {e}", file=sys.stderr)
         sys.exit(1)
 
+try:
+    from session_manager import (
+        get_active_session,
+        heartbeat as session_heartbeat,
+        is_session_owner,
+        join_queue,
+        leave_queue,
+        release_session,
+        session_status,
+        try_claim_session,
+    )
+    _session_mgr_available = True
+except ImportError:
+    try:
+        from axonos_gate.session_manager import (
+            get_active_session,
+            heartbeat as session_heartbeat,
+            is_session_owner,
+            join_queue,
+            leave_queue,
+            release_session,
+            session_status,
+            try_claim_session,
+        )
+        _session_mgr_available = True
+    except ImportError:
+        _session_mgr_available = False
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -479,10 +507,10 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
 
     def do_OPTIONS(self):
         if (
-            self.path.startswith('/api/auth/verify-wallet')
-            or self.path.startswith('/api/auth/wallet-status')
-            or self.path.startswith('/api/auth/challenge')
+            self.path.startswith('/api/auth/')
             or self.path.startswith('/api/config')
+            or self.path.startswith('/api/session/')
+            or self.path.startswith('/api/queue/')
         ):
             self.send_response(200)
             origin = cors_origin_for_request(
@@ -584,11 +612,83 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             status['auth_token_expires_in_seconds'] = remaining
             return self._send_json(200, status)
 
+        # ---- Session / Queue read endpoints ----
+        if _session_mgr_available and self.path.startswith('/api/session/status'):
+            wallet_address = _extract_wallet_from_path_and_headers(self.path, self.headers)
+            result = session_status(wallet_address)
+            return self._send_json(200, result)
+
         return super().do_GET()
 
+    def _read_json_body(self) -> dict:
+        try:
+            content_length = int(self.headers.get('Content-Length') or '0')
+        except ValueError:
+            content_length = 0
+        raw = self.rfile.read(content_length) if content_length > 0 else b''
+        try:
+            return json.loads(raw.decode('utf-8') or '{}')
+        except Exception:
+            return {}
+
     def do_POST(self):
+        # ---- Session / Queue write endpoints ----
+        if _session_mgr_available and self.path.startswith('/api/session/claim'):
+            data = self._read_json_body()
+            wallet_address = (data.get('wallet_address') or '').strip()
+            if not wallet_address or not validate_wallet_address(wallet_address):
+                return self._send_json(400, {'granted': False, 'error': 'Valid wallet_address required'})
+            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+            if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
+                return self._send_json(401, {'granted': False, 'error': 'Valid auth token required'})
+            result = try_claim_session(wallet_address)
+            return self._send_json(200, result)
+
+        if _session_mgr_available and self.path.startswith('/api/session/heartbeat'):
+            data = self._read_json_body()
+            wallet_address = (data.get('wallet_address') or '').strip()
+            if not wallet_address or not validate_wallet_address(wallet_address):
+                return self._send_json(400, {'ok': False, 'error': 'Valid wallet_address required'})
+            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+            if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
+                return self._send_json(401, {'ok': False, 'error': 'Valid auth token required'})
+            result = session_heartbeat(wallet_address)
+            return self._send_json(200, result)
+
+        if _session_mgr_available and self.path.startswith('/api/session/release'):
+            data = self._read_json_body()
+            wallet_address = (data.get('wallet_address') or '').strip()
+            if not wallet_address or not validate_wallet_address(wallet_address):
+                return self._send_json(400, {'released': False, 'error': 'Valid wallet_address required'})
+            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+            if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
+                return self._send_json(401, {'released': False, 'error': 'Valid auth token required'})
+            result = release_session(wallet_address)
+            return self._send_json(200, result)
+
+        if _session_mgr_available and self.path.startswith('/api/queue/join'):
+            data = self._read_json_body()
+            wallet_address = (data.get('wallet_address') or '').strip()
+            if not wallet_address or not validate_wallet_address(wallet_address):
+                return self._send_json(400, {'joined': False, 'error': 'Valid wallet_address required'})
+            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+            if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
+                return self._send_json(401, {'joined': False, 'error': 'Valid auth token required'})
+            result = join_queue(wallet_address)
+            return self._send_json(200, result)
+
+        if _session_mgr_available and self.path.startswith('/api/queue/leave'):
+            data = self._read_json_body()
+            wallet_address = (data.get('wallet_address') or '').strip()
+            if not wallet_address or not validate_wallet_address(wallet_address):
+                return self._send_json(400, {'left': False, 'error': 'Valid wallet_address required'})
+            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+            if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
+                return self._send_json(401, {'left': False, 'error': 'Valid auth token required'})
+            result = leave_queue(wallet_address)
+            return self._send_json(200, result)
+
         if not self.path.startswith('/api/auth/verify-wallet'):
-            # websockify doesn't implement POST for static; return 404 for safety
             return self.send_error(404, "Not Found")
 
         # Best-effort rate limiting (per client IP)
@@ -597,16 +697,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             if not _rate_limiter.allow(client_ip):
                 return self._send_json(429, {"verified": False, "error": "Rate limit exceeded"})
 
-        try:
-            content_length = int(self.headers.get('Content-Length') or '0')
-        except ValueError:
-            content_length = 0
-
-        raw = self.rfile.read(content_length) if content_length > 0 else b''
-        try:
-            data = json.loads(raw.decode('utf-8') or '{}')
-        except Exception:
-            return self._send_json(400, {'verified': False, 'error': 'Invalid JSON'})
+        data = self._read_json_body()
 
         wallet_address = (data.get('wallet_address') or '').strip()
         message = (data.get('message') or '').strip()
@@ -660,15 +751,18 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         client_address = self.client_address[0] if getattr(self, "client_address", None) else None
         if client_address == "127.0.0.1":
             status = get_wallet_access_status(wallet_address, consume_usage=False)
-            if status.get("verified"):
-                logger.info(
-                    "WebSocket upgrade approved (internal proxy): %s",
-                    mask_wallet_address(wallet_address),
-                )
-                return super().handle_upgrade()
-            reason = status.get("reason") or "Access denied for this wallet"
-            self.send_error(403, reason)
-            return
+            if not status.get("verified"):
+                reason = status.get("reason") or "Access denied for this wallet"
+                self.send_error(403, reason)
+                return
+            if _session_mgr_available and not is_session_owner(wallet_address):
+                self.send_error(403, "Session not owned by this wallet")
+                return
+            logger.info(
+                "WebSocket upgrade approved (internal proxy): %s",
+                mask_wallet_address(wallet_address),
+            )
+            return super().handle_upgrade()
 
         auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
         if not auth_token:
@@ -682,6 +776,10 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         if not status.get("verified"):
             reason = status.get("reason") or "Access denied for this wallet"
             self.send_error(403, reason)
+            return
+
+        if _session_mgr_available and not is_session_owner(wallet_address):
+            self.send_error(403, "Session not owned by this wallet. Claim a session first.")
             return
 
         logger.info("WebSocket upgrade approved: %s", mask_wallet_address(wallet_address))
