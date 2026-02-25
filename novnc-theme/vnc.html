@@ -302,7 +302,7 @@ Copyright (C) 2019 The noVNC Authors
                     <p class="axonos-prerequisites__title">To sign in you need:</p>
                     <ul class="axonos-prerequisites__list">
                         <li>An <strong>EVM wallet</strong> (e.g. <a href="https://metamask.io" target="_blank" rel="noopener noreferrer">MetaMask</a>)</li>
-                        <li>At least <strong id="axonos_prereq_min_axgt">—</strong> <strong>AXGT</strong> in that wallet (<a href="https://axondao.io" target="_blank" rel="noopener noreferrer">Get AXGT</a>)</li>
+                        <li>At least <strong id="axonos_prereq_min_axgt">—</strong> <strong>AXGT</strong> in that wallet (<a href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=0x6112c3509a8a787df576028450febb3786a2274d" target="_blank" rel="noopener noreferrer">Get AXGT on Uniswap</a>)</li>
                         <li>You'll <strong>sign a one-time message</strong> (no gas, no transaction)</li>
                         <li><strong>One desktop at a time</strong> — if in use, you can join the queue</li>
                     </ul>
@@ -359,7 +359,7 @@ Copyright (C) 2019 The noVNC Authors
                     <p class="axonos-wallet-prereqs__title">Before you continue:</p>
                     <ul class="axonos-wallet-prereqs__list">
                         <li>Install an EVM wallet (e.g. <a href="https://metamask.io" target="_blank" rel="noopener noreferrer">MetaMask</a>) if you don’t have one</li>
-                        <li>Hold at least <strong id="axonos-dlg-min-axgt-2">—</strong> <strong>AXGT</strong> — <a href="https://axondao.io" target="_blank" rel="noopener noreferrer">Get AXGT at axondao.io</a></li>
+                        <li>Hold at least <strong id="axonos-dlg-min-axgt-2">—</strong> <strong>AXGT</strong> — <a href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=0x6112c3509a8a787df576028450febb3786a2274d" target="_blank" rel="noopener noreferrer">Get AXGT on Uniswap</a></li>
                         <li>Use the same wallet when you click “Verify Wallet”</li>
                     </ul>
                 </div>
@@ -370,9 +370,9 @@ Copyright (C) 2019 The noVNC Authors
             <li id="noVNC_wallet_block">
                 <label>Wallet Address:</label>
                 <input id="noVNC_wallet_input" type="text" placeholder="0x...">
-                <div style="margin-top: 8px;">
-                    <button id="axonos_connect_wallet_btn" type="button" class="noVNC_submit" style="white-space: nowrap;">Connect Wallet</button>
-                    <span id="axonos_connected_wallet_hint" style="margin-left: 8px; opacity: 0.85; font-size: 12px;"></span>
+                <div class="axonos-connect-wallet-row">
+                    <button id="axonos_connect_wallet_btn" type="button" class="axonos-connect-wallet-btn">Connect Wallet</button>
+                    <span id="axonos_connected_wallet_hint" class="axonos-connected-wallet-hint"></span>
                 </div>
             </li>
             <li id="axonos-wallet-status" class="axonos-wallet-status" style="display: none;">
