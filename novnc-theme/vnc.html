@@ -373,11 +373,11 @@ Copyright (C) 2019 The noVNC Authors
                 <p class="axonos-wallet-state__title">Wallet Verified</p>
                 <p id="axonos_wallet_verified_address" class="axonos-wallet-state__address">0x1234…abcd</p>
                 <p id="axonos_wallet_verified_balance" class="axonos-wallet-state__balance">— AXGT</p>
-                <button type="button" id="axonos_continue_btn" class="axonos-continue-btn">Continue</button>
+                <p class="axonos-wallet-state__msg">Connecting to desktop…</p>
             </div>
             <div id="axonos_wallet_state_insufficient" class="axonos-wallet-state axonos-wallet-state--hidden">
                 <div class="axonos-wallet-state__icon axonos-wallet-state__icon--warning" aria-hidden="true"></div>
-                <p class="axonos-wallet-state__title">You need at least <span id="axonos_insufficient_min">100</span> AXGT</p>
+                <p class="axonos-wallet-state__title">You need at least <span id="axonos_insufficient_min"> 100 </span> AXGT</p>
                 <p id="axonos_wallet_insufficient_balance" class="axonos-wallet-state__balance">Current balance: —</p>
                 <a id="axonos_get_axgt_btn" href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=0x6112c3509a8a787df576028450febb3786a2274d" target="_blank" rel="noopener noreferrer" class="axonos-get-axgt-btn">Get AXGT</a>
             </div>
@@ -396,7 +396,7 @@ Copyright (C) 2019 The noVNC Authors
                 <button type="button" id="axonos_switch_network_btn" class="axonos-switch-network-btn">Switch Network</button>
             </div>
         </div>
-        <input id="noVNC_credentials_button" type="submit" value="Continue" class="noVNC_hidden" tabindex="-1" aria-hidden="true">
+        <input id="noVNC_credentials_button" type="submit" value="" class="noVNC_hidden" tabindex="-1" aria-hidden="true" style="display: none !important;">
     </form></div>
     </div>
 
@@ -837,7 +837,6 @@ document.addEventListener("DOMContentLoaded", function() {
     const connectWalletBtn = document.getElementById('axonos_connect_wallet_btn');
     const retryConnectBtn = document.getElementById('axonos_retry_connect_btn');
     const switchNetworkBtn = document.getElementById('axonos_switch_network_btn');
-    const continueBtn = document.getElementById('axonos_continue_btn');
     const STATE_IDS = ['axonos_wallet_state_disconnected', 'axonos_wallet_state_checking', 'axonos_wallet_state_verified', 'axonos_wallet_state_insufficient', 'axonos_wallet_state_no_wallet', 'axonos_wallet_state_rejected', 'axonos_wallet_state_wrong_network'];
     let axonosConfig = { axgt_contract_address: '', axgt_chain_id: null, axgt_min_hold_amount: '100' };
 
@@ -1019,14 +1018,6 @@ document.addEventListener("DOMContentLoaded", function() {
             window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: chainIdHex }] })
                 .then(function () { setWalletUIState('axonos_wallet_state_disconnected'); })
                 .catch(function () {});
-        });
-    }
-    if (continueBtn) {
-        continueBtn.addEventListener('click', function () {
-            if (typeof showConnectionLoader === 'function') showConnectionLoader();
-            if (typeof UI !== 'undefined' && typeof UI.setCredentials === 'function') {
-                UI.setCredentials({ preventDefault: function () {} });
-            }
         });
     }
     if (contractCopyBtn && contractShortEl) {
