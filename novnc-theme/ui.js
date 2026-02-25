@@ -1331,24 +1331,14 @@ const UI = {
             }
         }
 
-        // Wallet not verified yet: show wallet verification dialog instead of password
-        // Hide username/password blocks, show wallet block
+        // Wallet not verified yet: show wallet verification dialog (state-driven UI)
         const usernameBlock = document.getElementById("noVNC_username_block");
         const passwordBlock = document.getElementById("noVNC_password_block");
-        const walletBlock = document.getElementById("noVNC_wallet_block");
-        
         if (usernameBlock) usernameBlock.classList.add("noVNC_hidden");
         if (passwordBlock) passwordBlock.classList.add("noVNC_hidden");
-        if (walletBlock) walletBlock.classList.remove("noVNC_hidden");
-        
+
         document.getElementById('noVNC_credentials_dlg')
             .classList.add('noVNC_open');
-
-        // Focus on wallet input
-        const walletInput = document.getElementById('noVNC_wallet_input');
-        if (walletInput) {
-            setTimeout(() => walletInput.focus(), 100);
-        }
 
         Log.Warn("Wallet verification required");
         UI.showStatus(_("AXGT wallet verification required"), "warning");

@@ -348,40 +348,55 @@ Copyright (C) 2019 The noVNC Authors
 
     <!-- AXGT Wallet Verification Dialog (replaces password dialog) -->
     <div class="noVNC_center noVNC_connect_layer">
-    <div id="noVNC_credentials_dlg" class="noVNC_panel"><form>
-        <ul>
-            <li class="axonos-wallet-dialog-header">
-                <h2>Verify your wallet to continue</h2>
-                <p class="axonos-wallet-description">
-                    You need <strong id="axonos-dlg-min-axgt">—</strong> <strong>AXGT</strong> in your wallet. We’ll ask you to <strong>sign a one-time message</strong> (no gas, no transfer).
-                </p>
-                <div class="axonos-wallet-prereqs">
-                    <p class="axonos-wallet-prereqs__title">Before you continue:</p>
-                    <ul class="axonos-wallet-prereqs__list">
-                        <li>Install an EVM wallet (e.g. <a href="https://metamask.io" target="_blank" rel="noopener noreferrer">MetaMask</a>) if you don’t have one</li>
-                        <li>Hold at least <strong id="axonos-dlg-min-axgt-2">—</strong> <strong>AXGT</strong> — <a href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=0x6112c3509a8a787df576028450febb3786a2274d" target="_blank" rel="noopener noreferrer">Get AXGT on Uniswap</a></li>
-                        <li>Use the same wallet when you click “Verify Wallet”</li>
-                    </ul>
-                </div>
-                <p class="axonos-wallet-contract">
-                    AXGT Contract: <code id="axonos-axgt-contract">(loading…)</code>
-                </p>
-            </li>
-            <li id="noVNC_wallet_block">
-                <label>Wallet Address:</label>
-                <input id="noVNC_wallet_input" type="text" placeholder="0x...">
-                <div class="axonos-connect-wallet-row">
-                    <button id="axonos_connect_wallet_btn" type="button" class="axonos-connect-wallet-btn">Connect Wallet</button>
-                    <span id="axonos_connected_wallet_hint" class="axonos-connected-wallet-hint"></span>
-                </div>
-            </li>
-            <li id="axonos-wallet-status" class="axonos-wallet-status" style="display: none;">
-                <div id="axonos-wallet-status-content"></div>
-            </li>
-            <li>
-                <input id="noVNC_credentials_button" type="submit" value="Verify Wallet" class="noVNC_submit">
-            </li>
-        </ul>
+        <div id="noVNC_credentials_dlg" class="noVNC_panel axonos-wallet-card"><form id="axonos_wallet_form">
+        <div class="axonos-wallet-card__title">
+            <h2>Connect your wallet to continue</h2>
+            <p class="axonos-wallet-card__hints">Requires ≥<span id="axonos-dlg-min-axgt">100</span> AXGT · No gas required</p>
+        </div>
+        <div class="axonos-wallet-card__contract">
+            <span class="axonos-wallet-card__contract-label">AXGT</span>
+            <code id="axonos-axgt-contract-short">0x6112…2274d</code>
+            <button type="button" id="axonos_contract_copy_btn" class="axonos-contract-copy-btn" title="Copy address">Copy</button>
+            <a id="axonos_contract_etherscan" href="#" target="_blank" rel="noopener noreferrer" class="axonos-contract-etherscan">View on Etherscan</a>
+        </div>
+        <div class="axonos-wallet-card__status">
+            <div id="axonos_wallet_state_disconnected" class="axonos-wallet-state">
+                <p class="axonos-wallet-state__help">Connect your wallet to continue</p>
+                <button type="button" id="axonos_connect_wallet_btn" class="axonos-connect-wallet-btn">Connect Wallet</button>
+            </div>
+            <div id="axonos_wallet_state_checking" class="axonos-wallet-state axonos-wallet-state--hidden">
+                <div class="axonos-wallet-state__spinner" aria-hidden="true"></div>
+                <p class="axonos-wallet-state__msg">Checking AXGT balance…</p>
+            </div>
+            <div id="axonos_wallet_state_verified" class="axonos-wallet-state axonos-wallet-state--hidden">
+                <div class="axonos-wallet-state__icon axonos-wallet-state__icon--success" aria-hidden="true"></div>
+                <p class="axonos-wallet-state__title">Wallet Verified</p>
+                <p id="axonos_wallet_verified_address" class="axonos-wallet-state__address">0x1234…abcd</p>
+                <p id="axonos_wallet_verified_balance" class="axonos-wallet-state__balance">— AXGT</p>
+                <button type="button" id="axonos_continue_btn" class="axonos-continue-btn">Continue</button>
+            </div>
+            <div id="axonos_wallet_state_insufficient" class="axonos-wallet-state axonos-wallet-state--hidden">
+                <div class="axonos-wallet-state__icon axonos-wallet-state__icon--warning" aria-hidden="true"></div>
+                <p class="axonos-wallet-state__title">You need at least <span id="axonos_insufficient_min">100</span> AXGT</p>
+                <p id="axonos_wallet_insufficient_balance" class="axonos-wallet-state__balance">Current balance: —</p>
+                <a id="axonos_get_axgt_btn" href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=0x6112c3509a8a787df576028450febb3786a2274d" target="_blank" rel="noopener noreferrer" class="axonos-get-axgt-btn">Get AXGT</a>
+            </div>
+            <div id="axonos_wallet_state_no_wallet" class="axonos-wallet-state axonos-wallet-state--hidden">
+                <div class="axonos-wallet-state__icon axonos-wallet-state__icon--warning" aria-hidden="true"></div>
+                <p class="axonos-wallet-state__msg">No wallet detected</p>
+                <a href="https://metamask.io" target="_blank" rel="noopener noreferrer" class="axonos-install-metamask-btn">Install MetaMask</a>
+            </div>
+            <div id="axonos_wallet_state_rejected" class="axonos-wallet-state axonos-wallet-state--hidden">
+                <p class="axonos-wallet-state__msg">Connection was rejected. Try again.</p>
+                <button type="button" id="axonos_retry_connect_btn" class="axonos-connect-wallet-btn">Connect Wallet</button>
+            </div>
+            <div id="axonos_wallet_state_wrong_network" class="axonos-wallet-state axonos-wallet-state--hidden">
+                <div class="axonos-wallet-state__icon axonos-wallet-state__icon--warning" aria-hidden="true"></div>
+                <p class="axonos-wallet-state__msg">Wrong network</p>
+                <button type="button" id="axonos_switch_network_btn" class="axonos-switch-network-btn">Switch Network</button>
+            </div>
+        </div>
+        <input id="noVNC_credentials_button" type="submit" value="Continue" class="noVNC_hidden" tabindex="-1" aria-hidden="true">
     </form></div>
     </div>
 
@@ -815,16 +830,17 @@ document.addEventListener("DOMContentLoaded", function() {
         axonosQueuePollId = setInterval(poll, 8000);
     }
 
-    const walletInput = document.getElementById('noVNC_wallet_input');
-    const verifyBtn = document.getElementById('noVNC_credentials_button');
-    const walletStatus = document.getElementById('axonos-wallet-status');
-    const walletStatusContent = document.getElementById('axonos-wallet-status-content');
     const connectButton = document.getElementById('noVNC_connect_button');
-    const contractEl = document.getElementById('axonos-axgt-contract');
+    const contractShortEl = document.getElementById('axonos-axgt-contract-short');
+    const contractCopyBtn = document.getElementById('axonos_contract_copy_btn');
+    const contractEtherscanEl = document.getElementById('axonos_contract_etherscan');
     const connectWalletBtn = document.getElementById('axonos_connect_wallet_btn');
-    const connectedWalletHint = document.getElementById('axonos_connected_wallet_hint');
+    const retryConnectBtn = document.getElementById('axonos_retry_connect_btn');
+    const switchNetworkBtn = document.getElementById('axonos_switch_network_btn');
+    const continueBtn = document.getElementById('axonos_continue_btn');
+    const STATE_IDS = ['axonos_wallet_state_disconnected', 'axonos_wallet_state_checking', 'axonos_wallet_state_verified', 'axonos_wallet_state_insufficient', 'axonos_wallet_state_no_wallet', 'axonos_wallet_state_rejected', 'axonos_wallet_state_wrong_network'];
+    let axonosConfig = { axgt_contract_address: '', axgt_chain_id: null, axgt_min_hold_amount: '100' };
 
-    // Populate AXGT config (contract + min hold) for contract display and prerequisites
     (function loadAxonOSConfig() {
         var cfgUrl = new URL('/api/config', window.location.origin).toString();
         fetch(cfgUrl, { method: 'GET' })
@@ -832,39 +848,42 @@ document.addEventListener("DOMContentLoaded", function() {
             .then(function (cfg) {
                 var addr = (cfg && cfg.axgt_contract_address) ? String(cfg.axgt_contract_address) : '';
                 var minHold = (cfg && cfg.axgt_min_hold_amount != null) ? String(cfg.axgt_min_hold_amount) : '100';
-                if (contractEl) contractEl.textContent = addr || '(not configured)';
+                axonosConfig.axgt_contract_address = addr;
+                axonosConfig.axgt_chain_id = (cfg && cfg.axgt_chain_id) ? String(cfg.axgt_chain_id) : null;
+                axonosConfig.axgt_min_hold_amount = minHold;
+                var short = addr ? (addr.slice(0, 6) + '\u2026' + addr.slice(-4)) : '(not configured)';
+                if (contractShortEl) contractShortEl.textContent = short;
                 var prereqMin = document.getElementById('axonos_prereq_min_axgt');
-                var dlgMin1 = document.getElementById('axonos-dlg-min-axgt');
-                var dlgMin2 = document.getElementById('axonos-dlg-min-axgt-2');
+                var dlgMin = document.getElementById('axonos-dlg-min-axgt');
+                var insufficientMin = document.getElementById('axonos_insufficient_min');
                 if (prereqMin) prereqMin.textContent = minHold;
-                if (dlgMin1) dlgMin1.textContent = minHold;
-                if (dlgMin2) dlgMin2.textContent = minHold;
+                if (dlgMin) dlgMin.textContent = minHold;
+                if (insufficientMin) insufficientMin.textContent = minHold;
+                if (contractEtherscanEl && addr) {
+                    var chainId = axonosConfig.axgt_chain_id || '1';
+                    contractEtherscanEl.href = 'https://etherscan.io/address/' + addr;
+                    if (chainId !== '1') contractEtherscanEl.href = 'https://etherscan.io/address/' + addr;
+                }
             })
             .catch(function () {
-                if (contractEl) contractEl.textContent = '(not configured)';
+                if (contractShortEl) contractShortEl.textContent = '(not configured)';
             });
     })();
-    
-    function setWalletStatus(state, message) {
-        if (!walletStatus || !walletStatusContent) return;
-        walletStatus.style.display = 'block';
-        walletStatusContent.textContent = message;
-        walletStatus.className = 'axonos-wallet-status ' + state;
-        
-        if (state === 'verified') {
-            walletStatusContent.innerHTML = '✓ ' + message;
-            // Close credentials dialog and allow connection
-            const credentialsDialog = document.getElementById('noVNC_credentials_dlg');
-            if (credentialsDialog && credentialsDialog.offsetParent !== null) {
-                // Hide the dialog after a short delay to show success message
-                setTimeout(() => {
-                    credentialsDialog.style.display = 'none';
-                }, 1500);
-            }
-        } else if (state === 'error' || state === 'not-verified') {
-            walletStatusContent.innerHTML = '✗ ' + message;
-        } else if (state === 'verifying') {
-            walletStatusContent.innerHTML = '⏳ ' + message;
+
+    function setWalletUIState(state, data) {
+        STATE_IDS.forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.classList.toggle('axonos-wallet-state--hidden', id !== state);
+        });
+        if (state === 'axonos_wallet_state_verified' && data) {
+            var addrEl = document.getElementById('axonos_wallet_verified_address');
+            var balEl = document.getElementById('axonos_wallet_verified_balance');
+            if (addrEl) addrEl.textContent = (data.address ? data.address.slice(0, 6) + '\u2026' + data.address.slice(-4) : '—');
+            if (balEl) balEl.textContent = (data.balance != null ? data.balance : '—') + ' AXGT';
+        }
+        if (state === 'axonos_wallet_state_insufficient' && data) {
+            var insufBal = document.getElementById('axonos_wallet_insufficient_balance');
+            if (insufBal) insufBal.textContent = 'Current balance: ' + (data.balance != null ? data.balance : '—') + ' AXGT';
         }
     }
 
@@ -872,164 +891,153 @@ document.addEventListener("DOMContentLoaded", function() {
         if (!window.ethereum || typeof window.ethereum.request !== 'function') {
             throw new Error('No wallet provider detected');
         }
-        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        var accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
         if (!Array.isArray(accounts) || accounts.length === 0) {
             throw new Error('No wallet account available');
         }
-        const account = String(accounts[0] || '').trim();
+        var account = String(accounts[0] || '').trim();
         if (!/^0x[a-fA-F0-9]{40}$/.test(account)) {
             throw new Error('Connected wallet address is invalid');
         }
-        if (walletInput) walletInput.value = account;
-        if (connectedWalletHint) connectedWalletHint.textContent = `Connected: ${account.slice(0, 6)}...${account.slice(-4)}`;
+        if (axonosConfig.axgt_chain_id) {
+            var chainIdHex = await window.ethereum.request({ method: 'eth_chainId' }).catch(function () { return null; });
+            var currentChain = chainIdHex ? parseInt(chainIdHex, 16) + '' : null;
+            if (currentChain && currentChain !== axonosConfig.axgt_chain_id) {
+                var err = new Error('Wrong network');
+                err.code = 'WRONG_NETWORK';
+                throw err;
+            }
+        }
         return account;
     }
-    
-    function verifyWallet() {
-        if (!walletInput) return;
-        let walletAddress = walletInput.value.trim();
-        
-        // Remove any whitespace within the address
-        walletAddress = walletAddress.replace(/\s+/g, '');
-        
-        if (!walletAddress) {
-            setWalletStatus('error', 'Please enter a wallet address');
-            return;
-        }
-        
-        // Basic format validation - must be 0x followed by exactly 40 hex characters
-        if (!/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) {
-            const length = walletAddress.length;
-            if (length < 42) {
-                setWalletStatus('error', `Address too short (${length}/42 characters). Ethereum addresses must be exactly 42 characters.`);
-            } else if (length > 42) {
-                setWalletStatus('error', `Address too long (${length}/42 characters). Ethereum addresses must be exactly 42 characters.`);
-            } else if (!/^0x/.test(walletAddress)) {
-                setWalletStatus('error', 'Address must start with 0x');
-            } else {
-                setWalletStatus('error', 'Invalid wallet address format. Must be 0x followed by 40 hexadecimal characters.');
-            }
-            return;
-        }
-        
-        setWalletStatus('verifying', 'Verifying wallet...');
-        if (verifyBtn) verifyBtn.disabled = true;
 
-        const hasEthereum = typeof window.ethereum !== 'undefined';
-        if (!hasEthereum) {
-            setWalletStatus('error', 'No wallet provider detected. Install MetaMask or another EVM wallet extension.');
-            if (verifyBtn) verifyBtn.disabled = false;
-            return;
-        }
-
-        const challengeUrl = new URL('/api/auth/challenge', window.location.origin);
+    function runVerify(walletAddress) {
+        setWalletUIState('axonos_wallet_state_checking');
+        var challengeUrl = new URL('/api/auth/challenge', window.location.origin);
         challengeUrl.searchParams.set('wallet_address', walletAddress);
-        const verifyApiUrl = new URL('/api/auth/verify-wallet', window.location.origin).toString();
-
+        var verifyApiUrl = new URL('/api/auth/verify-wallet', window.location.origin).toString();
         fetch(challengeUrl.toString(), {
             method: 'GET',
-            headers: {
-                'X-Wallet-Address': walletAddress
-            },
+            headers: { 'X-Wallet-Address': walletAddress },
             credentials: 'include'
         })
-        .then(response => response.json())
-        .then(challengeData => {
-            const challenge = (challengeData && challengeData.challenge) ? String(challengeData.challenge) : '';
-            if (!challenge) {
-                throw new Error((challengeData && challengeData.error) || 'Failed to get wallet challenge');
-            }
-            return window.ethereum.request({ method: 'eth_requestAccounts' }).then(accounts => {
-                const account = Array.isArray(accounts) && accounts[0] ? String(accounts[0]).trim() : '';
-                if (!account) {
-                    throw new Error('No authorized wallet account available');
-                }
-                if (account.toLowerCase() !== walletAddress.toLowerCase()) {
-                    throw new Error('Connected wallet does not match the entered address. Use Connect Wallet or switch account.');
+        .then(function (r) { return r.json(); })
+        .then(function (challengeData) {
+            var challenge = (challengeData && challengeData.challenge) ? String(challengeData.challenge) : '';
+            if (!challenge) throw new Error((challengeData && challengeData.error) || 'Failed to get wallet challenge');
+            return window.ethereum.request({ method: 'eth_requestAccounts' }).then(function (accounts) {
+                var account = Array.isArray(accounts) && accounts[0] ? String(accounts[0]).trim() : '';
+                if (!account || account.toLowerCase() !== walletAddress.toLowerCase()) {
+                    throw new Error('Connected wallet does not match. Please use the same account.');
                 }
                 return challenge;
             });
         })
-        .then(challenge => {
+        .then(function (challenge) {
             return window.ethereum.request({
                 method: 'personal_sign',
                 params: [challenge, walletAddress]
-            }).then(signature => ({ challenge, signature }));
+            }).then(function (signature) { return { challenge: challenge, signature: signature }; });
         })
-        .then(({ challenge, signature }) => {
+        .then(function (_ref) {
             return fetch(verifyApiUrl, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Wallet-Address': walletAddress
-                },
+                headers: { 'Content-Type': 'application/json', 'X-Wallet-Address': walletAddress },
                 credentials: 'include',
                 body: JSON.stringify({
                     wallet_address: walletAddress,
-                    message: challenge,
-                    signature: signature
+                    message: _ref.challenge,
+                    signature: _ref.signature
                 })
             });
         })
-        .then(response => response.json())
-        .then(data => {
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
             if (data.verified) {
                 verifiedWalletAddress = walletAddress;
                 window.verifiedWalletAddress = walletAddress;
                 window.verifiedWalletAuthToken = data.auth_token || null;
-
-                setWalletStatus('verifying', 'Claiming desktop session...');
-
+                try { localStorage.setItem('axonos_last_wallet', walletAddress); } catch (e) {}
+                var balanceStr = (data.balance_axgt != null) ? String(data.balance_axgt) : null;
+                setWalletUIState('axonos_wallet_state_verified', { address: walletAddress, balance: balanceStr });
                 claimSession().then(function (claim) {
                     if (claim.granted) {
-                        var statusMessage = 'Wallet verified - Connecting...';
-                        if (typeof data.remaining_minutes === 'number') statusMessage = 'Access granted (' + data.remaining_minutes.toFixed(1) + ' min remaining) - Connecting...';
-                        setWalletStatus('verified', statusMessage);
-                        setTimeout(tryConnectAfterClaim, 800);
+                        tryConnectAfterClaim();
                     } else {
-                        setWalletStatus('verified', 'Wallet verified. Desktop is in use — join the queue or wait.');
                         showQueueOverlay({ reason: claim.reason || 'Desktop in use.', queue_position: claim.queue_position, queue_length: claim.queue_length });
                         startQueuePolling();
-                        setTimeout(function () {
-                            var credentialsDialog = document.getElementById('noVNC_credentials_dlg');
-                            if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
-                        }, 1200);
+                        var credentialsDialog = document.getElementById('noVNC_credentials_dlg');
+                        if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
                     }
                 }).catch(function () {
-                    setWalletStatus('error', 'Session claim failed. Try again.');
+                    setWalletUIState('axonos_wallet_state_rejected');
                 });
             } else {
                 verifiedWalletAddress = null;
                 window.verifiedWalletAddress = null;
                 window.verifiedWalletAuthToken = null;
-                setWalletStatus('not-verified', data.error || 'No access available for this wallet');
+                var balanceStr = (data.balance_axgt != null) ? String(data.balance_axgt) : null;
+                setWalletUIState('axonos_wallet_state_insufficient', { balance: balanceStr });
             }
         })
-        .catch(error => {
+        .catch(function (error) {
             verifiedWalletAddress = null;
             window.verifiedWalletAddress = null;
             window.verifiedWalletAuthToken = null;
             if (error && (error.code === 4001 || /user rejected/i.test(String(error.message || '')))) {
-                setWalletStatus('error', 'Signature request was rejected. Please approve the wallet signature to continue.');
+                setWalletUIState('axonos_wallet_state_rejected');
             } else {
-                setWalletStatus('error', 'Error verifying wallet: ' + error.message);
+                setWalletUIState('axonos_wallet_state_rejected');
             }
-        })
-        .finally(() => {
-            if (verifyBtn) verifyBtn.disabled = false;
         });
     }
-    
-    if (verifyBtn) {
-        verifyBtn.addEventListener('click', verifyWallet);
+
+    function onConnectWalletClick() {
+        if (!window.ethereum || typeof window.ethereum.request !== 'function') {
+            setWalletUIState('axonos_wallet_state_no_wallet');
+            return;
+        }
+        setWalletUIState('axonos_wallet_state_checking');
+        requestConnectedWallet()
+            .then(function (account) { runVerify(account); })
+            .catch(function (err) {
+                if (err && err.code === 'WRONG_NETWORK') {
+                    setWalletUIState('axonos_wallet_state_wrong_network');
+                } else if (err && (err.code === 4001 || /reject/i.test(String(err.message || '')))) {
+                    setWalletUIState('axonos_wallet_state_rejected');
+                } else {
+                    setWalletUIState('axonos_wallet_state_rejected');
+                }
+            });
     }
 
-    if (connectWalletBtn) {
-        connectWalletBtn.addEventListener('click', function () {
-            setWalletStatus('verifying', 'Connecting wallet...');
-            requestConnectedWallet()
-                .then(() => setWalletStatus('verifying', 'Wallet connected. Click Verify Wallet to continue.'))
-                .catch((err) => setWalletStatus('error', 'Wallet connect failed: ' + (err && err.message ? err.message : String(err))));
+    if (connectWalletBtn) connectWalletBtn.addEventListener('click', onConnectWalletClick);
+    if (retryConnectBtn) retryConnectBtn.addEventListener('click', onConnectWalletClick);
+    if (switchNetworkBtn) {
+        switchNetworkBtn.addEventListener('click', function () {
+            var chainIdHex = axonosConfig.axgt_chain_id ? '0x' + parseInt(axonosConfig.axgt_chain_id, 10).toString(16) : '0x1';
+            window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: chainIdHex }] })
+                .then(function () { setWalletUIState('axonos_wallet_state_disconnected'); })
+                .catch(function () {});
+        });
+    }
+    if (continueBtn) {
+        continueBtn.addEventListener('click', function () {
+            if (typeof showConnectionLoader === 'function') showConnectionLoader();
+            if (typeof UI !== 'undefined' && typeof UI.setCredentials === 'function') {
+                UI.setCredentials({ preventDefault: function () {} });
+            }
+        });
+    }
+    if (contractCopyBtn && contractShortEl) {
+        contractCopyBtn.addEventListener('click', function () {
+            var full = axonosConfig.axgt_contract_address;
+            if (!full) return;
+            navigator.clipboard.writeText(full).then(function () {
+                var t = contractCopyBtn.textContent;
+                contractCopyBtn.textContent = 'Copied!';
+                setTimeout(function () { contractCopyBtn.textContent = t; }, 1500);
+            });
         });
     }
 
@@ -1055,38 +1063,48 @@ document.addEventListener("DOMContentLoaded", function() {
         });
     }
 
-    // When user switches account in the extension, sync input and hint so Verify works without clicking Connect again
     if (window.ethereum && typeof window.ethereum.on === 'function') {
         window.ethereum.on('accountsChanged', function (accounts) {
-            const account = Array.isArray(accounts) && accounts.length > 0 ? String(accounts[0]).trim() : '';
-            if (account && /^0x[a-fA-F0-9]{40}$/.test(account)) {
-                if (walletInput) walletInput.value = account;
-                if (connectedWalletHint) connectedWalletHint.textContent = 'Connected: ' + account.slice(0, 6) + '...' + account.slice(-4);
-                setWalletStatus('verifying', 'Account switched. Click Verify Wallet to continue.');
+            if (!Array.isArray(accounts) || accounts.length === 0) {
+                verifiedWalletAddress = null;
+                window.verifiedWalletAddress = null;
+                window.verifiedWalletAuthToken = null;
+                setWalletUIState('axonos_wallet_state_disconnected');
             } else {
-                if (connectedWalletHint) connectedWalletHint.textContent = '';
+                setWalletUIState('axonos_wallet_state_disconnected');
             }
         });
     }
 
-    // Handle credentials form submission (wallet verification)
-    const credentialsForm = document.querySelector('#noVNC_credentials_dlg form');
+    var credentialsForm = document.querySelector('#noVNC_credentials_dlg form');
     if (credentialsForm) {
-        credentialsForm.addEventListener('submit', function(e) {
+        credentialsForm.addEventListener('submit', function (e) {
             e.preventDefault();
-            verifyWallet();
-        });
-    }
-    
-    // Handle wallet input Enter key
-    if (walletInput) {
-        walletInput.addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                verifyWallet();
+            if (window.verifiedWalletAddress && window.verifiedWalletAuthToken && typeof UI !== 'undefined' && typeof UI.setCredentials === 'function') {
+                UI.setCredentials({ preventDefault: function () {} });
             }
         });
     }
+
+    (function () {
+        var dlg = document.getElementById('noVNC_credentials_dlg');
+        if (!dlg) return;
+        var obs = new MutationObserver(function () {
+            if (!dlg.classList.contains('noVNC_open')) return;
+            setWalletUIState('axonos_wallet_state_disconnected');
+            var lastWallet = null;
+            try { lastWallet = localStorage.getItem('axonos_last_wallet'); } catch (e) {}
+            if (lastWallet && window.ethereum && typeof window.ethereum.request === 'function') {
+                window.ethereum.request({ method: 'eth_accounts' }).then(function (accounts) {
+                    var account = Array.isArray(accounts) && accounts[0] ? String(accounts[0]).trim() : '';
+                    if (account && account.toLowerCase() === lastWallet.toLowerCase() && /^0x[a-fA-F0-9]{40}$/.test(account)) {
+                        runVerify(account);
+                    }
+                }).catch(function () {});
+            }
+        });
+        obs.observe(dlg, { attributes: true, attributeFilter: ['class'] });
+    })();
 
     // Hide loader and branding when connection is established (when noVNC_connected class is added)
     const connectionObserver = new MutationObserver(function(mutations) {
