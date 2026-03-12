@@ -364,6 +364,11 @@ Copyright (C) 2019 The noVNC Authors
                 <p class="axonos-wallet-state__help">Connect your wallet to continue</p>
                 <button type="button" id="axonos_connect_wallet_btn" class="axonos-connect-wallet-btn">Connect Wallet</button>
             </div>
+            <div id="axonos_wallet_state_choose_wallet" class="axonos-wallet-state axonos-wallet-state--hidden">
+                <p class="axonos-wallet-state__help">Choose a wallet to connect</p>
+                <div id="axonos_wallet_picker_list" class="axonos-wallet-picker-list"></div>
+                <p class="axonos-wallet-state__back"><button type="button" id="axonos_wallet_picker_back_btn" class="axonos-wallet-picker-back">Back</button></p>
+            </div>
             <div id="axonos_wallet_state_checking" class="axonos-wallet-state axonos-wallet-state--hidden">
                 <div class="axonos-wallet-state__spinner" aria-hidden="true"></div>
                 <p class="axonos-wallet-state__msg">Checking AXGT balance…</p>
@@ -837,8 +842,50 @@ document.addEventListener("DOMContentLoaded", function() {
     const connectWalletBtn = document.getElementById('axonos_connect_wallet_btn');
     const retryConnectBtn = document.getElementById('axonos_retry_connect_btn');
     const switchNetworkBtn = document.getElementById('axonos_switch_network_btn');
-    const STATE_IDS = ['axonos_wallet_state_disconnected', 'axonos_wallet_state_checking', 'axonos_wallet_state_verified', 'axonos_wallet_state_insufficient', 'axonos_wallet_state_no_wallet', 'axonos_wallet_state_rejected', 'axonos_wallet_state_wrong_network'];
+    const STATE_IDS = ['axonos_wallet_state_disconnected', 'axonos_wallet_state_choose_wallet', 'axonos_wallet_state_checking', 'axonos_wallet_state_verified', 'axonos_wallet_state_insufficient', 'axonos_wallet_state_no_wallet', 'axonos_wallet_state_rejected', 'axonos_wallet_state_wrong_network'];
     let axonosConfig = { axgt_contract_address: '', axgt_chain_id: null, axgt_min_deposit: '100', eth_min_deposit: '0.01' };
+    var selectedEthereumProvider = null;
+
+    /** Collect available wallet providers (EIP-6963, then window.ethereum.providers, then single ethereum). */
+    function getWalletProviders() {
+        return new Promise(function (resolve) {
+            var list = [];
+            var done = false;
+            function finish() {
+                if (done) return;
+                done = true;
+                window.removeEventListener('eip6963:announceProvider', onAnnounce);
+                if (list.length > 0) {
+                    resolve(list);
+                    return;
+                }
+                if (window.ethereum && typeof window.ethereum.request === 'function') {
+                    var prov = window.ethereum;
+                    if (Array.isArray(prov.providers) && prov.providers.length > 0) {
+                        prov.providers.forEach(function (p, i) {
+                            if (p && typeof p.request === 'function') {
+                                var name = (p.providerInfo && p.providerInfo.name) || (p.isMetaMask ? 'MetaMask' : 'Wallet ' + (i + 1));
+                                list.push({ provider: p, name: name });
+                            }
+                        });
+                    }
+                    if (list.length === 0) {
+                        list.push({ provider: prov, name: (prov.providerInfo && prov.providerInfo.name) || (prov.isMetaMask ? 'MetaMask' : 'Browser Wallet') });
+                    }
+                }
+                resolve(list);
+            }
+            function onAnnounce(ev) {
+                var d = ev.detail;
+                if (d && d.provider && typeof d.provider.request === 'function' && d.info) {
+                    list.push({ provider: d.provider, name: d.info.name || 'Wallet' });
+                }
+            }
+            window.addEventListener('eip6963:announceProvider', onAnnounce);
+            window.dispatchEvent(new Event('eip6963:requestProvider'));
+            setTimeout(finish, 400);
+        });
+    }
 
     (function loadAxonOSConfig() {
         var cfgUrl = new URL('/api/config', window.location.origin).toString();
@@ -897,11 +944,12 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     }
 
-    async function requestConnectedWallet() {
-        if (!window.ethereum || typeof window.ethereum.request !== 'function') {
+    async function requestConnectedWallet(provider) {
+        var eth = provider || selectedEthereumProvider || window.ethereum;
+        if (!eth || typeof eth.request !== 'function') {
             throw new Error('No wallet provider detected');
         }
-        var accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        var accounts = await eth.request({ method: 'eth_requestAccounts' });
         if (!Array.isArray(accounts) || accounts.length === 0) {
             throw new Error('No wallet account available');
         }
@@ -910,7 +958,7 @@ document.addEventListener("DOMContentLoaded", function() {
             throw new Error('Connected wallet address is invalid');
         }
         if (axonosConfig.axgt_chain_id) {
-            var chainIdHex = await window.ethereum.request({ method: 'eth_chainId' }).catch(function () { return null; });
+            var chainIdHex = await eth.request({ method: 'eth_chainId' }).catch(function () { return null; });
             var currentChain = chainIdHex ? parseInt(chainIdHex, 16) + '' : null;
             if (currentChain && currentChain !== axonosConfig.axgt_chain_id) {
                 var err = new Error('Wrong network');
@@ -921,7 +969,8 @@ document.addEventListener("DOMContentLoaded", function() {
         return account;
     }
 
-    function runVerify(walletAddress) {
+    function runVerify(walletAddress, provider) {
+        var eth = provider || selectedEthereumProvider || window.ethereum;
         setWalletUIState('axonos_wallet_state_checking');
         var challengeUrl = new URL('/api/auth/challenge', window.location.origin);
         challengeUrl.searchParams.set('wallet_address', walletAddress);
@@ -935,7 +984,7 @@ document.addEventListener("DOMContentLoaded", function() {
         .then(function (challengeData) {
             var challenge = (challengeData && challengeData.challenge) ? String(challengeData.challenge) : '';
             if (!challenge) throw new Error((challengeData && challengeData.error) || 'Failed to get wallet challenge');
-            return window.ethereum.request({ method: 'eth_requestAccounts' }).then(function (accounts) {
+            return eth.request({ method: 'eth_requestAccounts' }).then(function (accounts) {
                 var account = Array.isArray(accounts) && accounts[0] ? String(accounts[0]).trim() : '';
                 if (!account || account.toLowerCase() !== walletAddress.toLowerCase()) {
                     throw new Error('Connected wallet does not match. Please use the same account.');
@@ -944,7 +993,7 @@ document.addEventListener("DOMContentLoaded", function() {
             });
         })
         .then(function (challenge) {
-            return window.ethereum.request({
+            return eth.request({
                 method: 'personal_sign',
                 params: [challenge, walletAddress]
             }).then(function (signature) { return { challenge: challenge, signature: signature }; });
@@ -1002,31 +1051,60 @@ document.addEventListener("DOMContentLoaded", function() {
         });
     }
 
-    function onConnectWalletClick() {
-        if (!window.ethereum || typeof window.ethereum.request !== 'function') {
-            setWalletUIState('axonos_wallet_state_no_wallet');
+    function onConnectWalletClick(provider) {
+        if (provider) {
+            selectedEthereumProvider = provider;
+            setWalletUIState('axonos_wallet_state_checking');
+            requestConnectedWallet(provider)
+                .then(function (account) { runVerify(account, provider); })
+                .catch(function (err) {
+                    if (err && err.code === 'WRONG_NETWORK') {
+                        setWalletUIState('axonos_wallet_state_wrong_network');
+                    } else if (err && (err.code === 4001 || /reject/i.test(String(err.message || '')))) {
+                        setWalletUIState('axonos_wallet_state_rejected');
+                    } else {
+                        setWalletUIState('axonos_wallet_state_rejected');
+                    }
+                });
             return;
         }
-        setWalletUIState('axonos_wallet_state_checking');
-        requestConnectedWallet()
-            .then(function (account) { runVerify(account); })
-            .catch(function (err) {
-                if (err && err.code === 'WRONG_NETWORK') {
-                    setWalletUIState('axonos_wallet_state_wrong_network');
-                } else if (err && (err.code === 4001 || /reject/i.test(String(err.message || '')))) {
-                    setWalletUIState('axonos_wallet_state_rejected');
-                } else {
-                    setWalletUIState('axonos_wallet_state_rejected');
-                }
+        getWalletProviders().then(function (providers) {
+            if (!providers || providers.length === 0) {
+                setWalletUIState('axonos_wallet_state_no_wallet');
+                return;
+            }
+            if (providers.length === 1) {
+                onConnectWalletClick(providers[0].provider);
+                return;
+            }
+            var listEl = document.getElementById('axonos_wallet_picker_list');
+            if (!listEl) return;
+            listEl.innerHTML = '';
+            providers.forEach(function (item) {
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'axonos-connect-wallet-btn';
+                btn.textContent = item.name;
+                btn.addEventListener('click', function () {
+                    setWalletUIState('axonos_wallet_state_checking');
+                    onConnectWalletClick(item.provider);
+                });
+                listEl.appendChild(btn);
             });
+            setWalletUIState('axonos_wallet_state_choose_wallet');
+        });
     }
 
-    if (connectWalletBtn) connectWalletBtn.addEventListener('click', onConnectWalletClick);
-    if (retryConnectBtn) retryConnectBtn.addEventListener('click', onConnectWalletClick);
+    if (connectWalletBtn) connectWalletBtn.addEventListener('click', function () { onConnectWalletClick(); });
+    if (retryConnectBtn) retryConnectBtn.addEventListener('click', function () { onConnectWalletClick(); });
+    var pickerBackBtn = document.getElementById('axonos_wallet_picker_back_btn');
+    if (pickerBackBtn) pickerBackBtn.addEventListener('click', function () { setWalletUIState('axonos_wallet_state_disconnected'); });
     if (switchNetworkBtn) {
         switchNetworkBtn.addEventListener('click', function () {
+            var eth = selectedEthereumProvider || window.ethereum;
+            if (!eth || typeof eth.request !== 'function') return;
             var chainIdHex = axonosConfig.axgt_chain_id ? '0x' + parseInt(axonosConfig.axgt_chain_id, 10).toString(16) : '0x1';
-            window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: chainIdHex }] })
+            eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: chainIdHex }] })
                 .then(function () { setWalletUIState('axonos_wallet_state_disconnected'); })
                 .catch(function () {});
         });

@@ -887,7 +887,31 @@ input[type="password"]#noVNC_password_input {
   color: rgba(255, 255, 255, 0.75);
   margin: 0 0 14px 0;
 }
-.axonos-continue-btn {
+.axonos-wallet-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+.axonos-wallet-picker-list .axonos-connect-wallet-btn {
+  width: 100%;
+  justify-content: center;
+}
+.axonos-wallet-state__back {
+  margin: 14px 0 0 0;
+}
+.axonos-wallet-picker-back {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.9rem;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+.axonos-wallet-picker-back:hover {
+  color: #fff;
+}
   display: inline-block;
   padding: 12px 28px !important;
   font-size: 1rem !important;
