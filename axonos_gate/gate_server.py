@@ -360,6 +360,8 @@ def api_config():
         'axgt_revenue_wallet': (os.getenv("AXGT_REVENUE_WALLET") or "").strip() or None,
         'axgt_min_deposit': policy.get("min_deposit"),
         'axgt_credit_per_100_axgt_minutes': policy.get("credit_per_100_axgt_minutes"),
+        'eth_min_deposit': policy.get("eth_min_deposit"),
+        'eth_credit_per_eth_minutes': policy.get("eth_credit_per_eth_minutes"),
         'axgt_warning_threshold_minutes': policy.get("warning_threshold_minutes"),
     })
 

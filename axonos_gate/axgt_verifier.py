@@ -44,6 +44,8 @@ _postgres_init_done = False
 DEFAULT_MIN_DEPOSIT = 100
 DEFAULT_CREDIT_PER_100_AXGT_MINUTES = 60
 DEFAULT_WARNING_THRESHOLD_MINUTES = 10
+DEFAULT_ETH_MIN_DEPOSIT = "0.01"
+DEFAULT_ETH_CREDIT_PER_ETH_MINUTES = 60
 
 
 def mask_wallet_address(address: str) -> str:
@@ -389,6 +391,32 @@ def _get_credit_per_100_axgt_minutes() -> int:
         return DEFAULT_CREDIT_PER_100_AXGT_MINUTES
 
 
+def _get_eth_min_deposit_display() -> str:
+    raw = (os.getenv("ETH_MIN_DEPOSIT") or "").strip()
+    if not raw:
+        return DEFAULT_ETH_MIN_DEPOSIT
+    try:
+        n = float(raw)
+        if n > 0:
+            return str(n)
+    except ValueError:
+        pass
+    return DEFAULT_ETH_MIN_DEPOSIT
+
+
+def _get_eth_credit_per_eth_minutes() -> float:
+    raw = (os.getenv("ETH_CREDIT_PER_ETH_MINUTES") or "").strip()
+    if not raw:
+        return float(DEFAULT_ETH_CREDIT_PER_ETH_MINUTES)
+    try:
+        n = float(raw)
+        if n > 0:
+            return n
+    except ValueError:
+        pass
+    return float(DEFAULT_ETH_CREDIT_PER_ETH_MINUTES)
+
+
 def _get_warning_threshold_minutes() -> int:
     raw = (os.getenv("AXGT_WARNING_THRESHOLD_MINUTES") or "").strip()
     if not raw:
@@ -464,10 +492,12 @@ def _get_axgt_balance_display(wallet_address: str) -> Optional[str]:
 
 
 def get_credit_policy() -> Dict[str, Any]:
-    """Deposit-credit policy: min deposit, credit per 100 AXGT, warning threshold."""
+    """Deposit-credit policy: min deposit (AXGT/ETH), credit rates, warning threshold."""
     return {
         "min_deposit": _get_min_deposit_display(),
         "credit_per_100_axgt_minutes": _get_credit_per_100_axgt_minutes(),
+        "eth_min_deposit": _get_eth_min_deposit_display(),
+        "eth_credit_per_eth_minutes": _get_eth_credit_per_eth_minutes(),
         "warning_threshold_minutes": _get_warning_threshold_minutes(),
     }
 

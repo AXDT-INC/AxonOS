@@ -22,6 +22,9 @@ DEFAULT_MIN_CONFIRMATIONS = 6
 DEFAULT_MIN_DEPOSIT = 100
 DEFAULT_CREDIT_PER_100_AXGT_MINUTES = 60
 DEFAULT_TOKEN_DECIMALS = 18
+# Native ETH deposit (optional)
+DEFAULT_ETH_MIN_DEPOSIT = Decimal("0.01")
+DEFAULT_ETH_CREDIT_PER_ETH_MINUTES = 60
 
 
 def _rpc(url: str, method: str, params: List[Any]) -> Optional[Any]:
@@ -93,6 +96,39 @@ def _credit_per_100_minutes() -> float:
     except ValueError:
         pass
     return float(DEFAULT_CREDIT_PER_100_AXGT_MINUTES)
+
+
+def _min_eth_deposit() -> Decimal:
+    raw = (os.getenv("ETH_MIN_DEPOSIT") or "").strip()
+    if not raw:
+        return DEFAULT_ETH_MIN_DEPOSIT
+    try:
+        val = Decimal(raw)
+        if val > 0:
+            return val
+        logger.warning(
+            "Invalid ETH_MIN_DEPOSIT value '%s' (must be positive); using default %s",
+            raw,
+            DEFAULT_ETH_MIN_DEPOSIT,
+        )
+    except Exception:
+        logger.warning(
+            "Invalid ETH_MIN_DEPOSIT value '%s'; using default %s",
+            raw,
+            DEFAULT_ETH_MIN_DEPOSIT,
+        )
+    return DEFAULT_ETH_MIN_DEPOSIT
+
+
+def _eth_credit_per_eth_minutes() -> float:
+    raw = (os.getenv("ETH_CREDIT_PER_ETH_MINUTES") or "").strip()
+    try:
+        n = float(raw)
+        if n > 0:
+            return n
+    except ValueError:
+        pass
+    return float(DEFAULT_ETH_CREDIT_PER_ETH_MINUTES)
 
 
 def _token_decimals(rpc_url: str, contract: str) -> int:
@@ -189,8 +225,8 @@ def verify_deposit(
         "error": msg,
     }
 
-    if not revenue or not contract or not rpc_url:
-        return fail("Deposit verification not configured (AXGT_REVENUE_WALLET, AXGT_CONTRACT_ADDRESS, AXGT_RPC_URL)")
+    if not revenue or not rpc_url:
+        return fail("Deposit verification not configured (AXGT_REVENUE_WALLET, AXGT_RPC_URL)")
 
     if not wallet:
         return fail("Wallet address required")
@@ -256,10 +292,57 @@ def verify_deposit(
         )
         return fail(f"Insufficient confirmations (have {confirmations}, need {min_conf})")
 
-    # Transaction must be to AXGT contract (transfer call)
     to_addr = (tx_obj.get("to") or "").strip().lower()
     if not to_addr:
         to_addr = (receipt.get("to") or "").strip().lower()
+    from_hex = (tx_obj.get("from") or "").strip().lower()
+    if from_hex != wallet:
+        deposit_ledger.record_verification_reject(wallet, notes="Sender does not match authenticated wallet")
+        return fail("Transaction sender does not match authenticated wallet")
+
+    # Native ETH deposit: tx.to == revenue, tx.value >= min
+    value_hex = tx_obj.get("value")
+    if value_hex is not None and to_addr == revenue:
+        try:
+            value_wei = int(value_hex, 16) if isinstance(value_hex, str) else int(value_hex)
+        except (ValueError, TypeError):
+            value_wei = 0
+        if value_wei > 0:
+            eth_amount = Decimal(value_wei) / Decimal(10 ** 18)
+            min_eth = _min_eth_deposit()
+            if eth_amount >= min_eth:
+                credit_per_eth = _eth_credit_per_eth_minutes()
+                credited_minutes = float(eth_amount * Decimal(str(credit_per_eth)))
+                ok, remaining, err = deposit_ledger.credit_eth_deposit(
+                    wallet,
+                    eth_amount,
+                    credited_minutes,
+                    tx,
+                    block_number,
+                )
+                if not ok:
+                    return fail(err or "Failed to credit ETH deposit")
+                return {
+                    "verified": True,
+                    "wallet_address": wallet,
+                    "tx_hash": tx,
+                    "deposit_currency": "ETH",
+                    "eth_amount": str(eth_amount),
+                    "axgt_amount": None,
+                    "credited_minutes": round(credited_minutes, 2),
+                    "remaining_minutes": round(remaining, 2),
+                    "confirmations": confirmations,
+                }
+            deposit_ledger.record_verification_reject(
+                wallet,
+                notes=f"ETH amount {eth_amount} below minimum {min_eth}",
+            )
+            return fail(f"ETH deposit below minimum ({min_eth} ETH)")
+
+    # AXGT: transaction must be to AXGT contract (transfer call)
+    if not contract:
+        deposit_ledger.record_verification_reject(wallet, notes="AXGT contract not configured")
+        return fail("AXGT deposit requires AXGT_CONTRACT_ADDRESS")
     if to_addr != contract:
         deposit_ledger.record_verification_reject(wallet, notes="Wrong token contract")
         return fail("Transaction is not for the AXGT contract")
@@ -301,7 +384,9 @@ def verify_deposit(
         "verified": True,
         "wallet_address": wallet,
         "tx_hash": tx,
+        "deposit_currency": "AXGT",
         "axgt_amount": str(axgt_amount),
+        "eth_amount": None,
         "credited_minutes": round(credited_minutes, 2),
         "remaining_minutes": round(remaining, 2),
         "confirmations": confirmations,

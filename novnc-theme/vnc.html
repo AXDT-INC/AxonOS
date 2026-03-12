@@ -302,7 +302,7 @@ Copyright (C) 2019 The noVNC Authors
                     <p class="axonos-prerequisites__title">To sign in you need:</p>
                     <ul class="axonos-prerequisites__list">
                         <li>An <strong>EVM wallet</strong> (e.g. <a href="https://metamask.io" target="_blank" rel="noopener noreferrer">MetaMask</a>)</li>
-                        <li>At least <strong id="axonos_prereq_min_axgt">—</strong> <strong>AXGT</strong> in that wallet (<a href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=0x6112c3509a8a787df576028450febb3786a2274d" target="_blank" rel="noopener noreferrer">Get AXGT on Uniswap</a>)</li>
+                        <li>Deposit at least <strong id="axonos_prereq_min_axgt">—</strong> <strong>AXGT</strong> or <strong id="axonos_prereq_min_eth">—</strong> <strong>ETH</strong> to the revenue wallet, then submit your transaction hash (<a href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=0x6112c3509a8a787df576028450febb3786a2274d" target="_blank" rel="noopener noreferrer">Get AXGT on Uniswap</a>)</li>
                         <li>You'll <strong>sign a one-time message</strong> (no gas, no transaction)</li>
                         <li><strong>One desktop at a time</strong> — if in use, you can join the queue</li>
                     </ul>
@@ -351,7 +351,7 @@ Copyright (C) 2019 The noVNC Authors
         <div id="noVNC_credentials_dlg" class="noVNC_panel axonos-wallet-card"><form id="axonos_wallet_form">
         <div class="axonos-wallet-card__title">
             <h2>Connect your wallet to continue</h2>
-            <p class="axonos-wallet-card__hints">Requires ≥<span id="axonos-dlg-min-axgt">100</span> AXGT · No gas required</p>
+            <p class="axonos-wallet-card__hints">Requires ≥<span id="axonos-dlg-min-axgt">100</span> AXGT or ≥<span id="axonos-dlg-min-eth">0.01</span> ETH · Deposit then submit tx hash</p>
         </div>
         <div class="axonos-wallet-card__contract">
             <span class="axonos-wallet-card__contract-label">AXGT</span>
@@ -377,7 +377,7 @@ Copyright (C) 2019 The noVNC Authors
             </div>
             <div id="axonos_wallet_state_insufficient" class="axonos-wallet-state axonos-wallet-state--hidden">
                 <div class="axonos-wallet-state__icon axonos-wallet-state__icon--warning" aria-hidden="true"></div>
-                <p class="axonos-wallet-state__title">You need at least <span id="axonos_insufficient_min"> 100 </span> AXGT</p>
+                <p class="axonos-wallet-state__title">You need prepaid credit: at least <span id="axonos_insufficient_min"> 100 </span> AXGT or <span id="axonos_insufficient_min_eth"> 0.01 </span> ETH</p>
                 <p id="axonos_wallet_insufficient_balance" class="axonos-wallet-state__balance">Current balance: —</p>
                 <a id="axonos_get_axgt_btn" href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=0x6112c3509a8a787df576028450febb3786a2274d" target="_blank" rel="noopener noreferrer" class="axonos-get-axgt-btn">Get AXGT</a>
             </div>
@@ -838,7 +838,7 @@ document.addEventListener("DOMContentLoaded", function() {
     const retryConnectBtn = document.getElementById('axonos_retry_connect_btn');
     const switchNetworkBtn = document.getElementById('axonos_switch_network_btn');
     const STATE_IDS = ['axonos_wallet_state_disconnected', 'axonos_wallet_state_checking', 'axonos_wallet_state_verified', 'axonos_wallet_state_insufficient', 'axonos_wallet_state_no_wallet', 'axonos_wallet_state_rejected', 'axonos_wallet_state_wrong_network'];
-    let axonosConfig = { axgt_contract_address: '', axgt_chain_id: null, axgt_min_deposit: '100' };
+    let axonosConfig = { axgt_contract_address: '', axgt_chain_id: null, axgt_min_deposit: '100', eth_min_deposit: '0.01' };
 
     (function loadAxonOSConfig() {
         var cfgUrl = new URL('/api/config', window.location.origin).toString();
@@ -848,17 +848,25 @@ document.addEventListener("DOMContentLoaded", function() {
                 var addr = (cfg && cfg.axgt_contract_address) ? String(cfg.axgt_contract_address) : '';
                 var minDeposit = (cfg && (cfg.axgt_min_deposit != null || cfg.axgt_min_hold_amount != null))
                     ? String(cfg.axgt_min_deposit ?? cfg.axgt_min_hold_amount) : '100';
+                var minEth = (cfg && cfg.eth_min_deposit != null) ? String(cfg.eth_min_deposit) : '0.01';
                 axonosConfig.axgt_contract_address = addr;
                 axonosConfig.axgt_chain_id = (cfg && cfg.axgt_chain_id) ? String(cfg.axgt_chain_id) : null;
                 axonosConfig.axgt_min_deposit = minDeposit;
+                axonosConfig.eth_min_deposit = minEth;
                 var short = addr ? (addr.slice(0, 6) + '\u2026' + addr.slice(-4)) : '(not configured)';
                 if (contractShortEl) contractShortEl.textContent = short;
                 var prereqMin = document.getElementById('axonos_prereq_min_axgt');
+                var prereqMinEth = document.getElementById('axonos_prereq_min_eth');
                 var dlgMin = document.getElementById('axonos-dlg-min-axgt');
+                var dlgMinEth = document.getElementById('axonos-dlg-min-eth');
                 var insufficientMin = document.getElementById('axonos_insufficient_min');
+                var insufficientMinEth = document.getElementById('axonos_insufficient_min_eth');
                 if (prereqMin) prereqMin.textContent = minDeposit;
+                if (prereqMinEth) prereqMinEth.textContent = minEth;
                 if (dlgMin) dlgMin.textContent = minDeposit;
+                if (dlgMinEth) dlgMinEth.textContent = minEth;
                 if (insufficientMin) insufficientMin.textContent = minDeposit;
+                if (insufficientMinEth) insufficientMinEth.textContent = minEth;
                 if (contractEtherscanEl && addr) {
                     var chainId = axonosConfig.axgt_chain_id || '1';
                     var base = (chainId === '1') ? 'https://etherscan.io' : 'https://' + (chainId === '11155111' ? 'sepolia.' : chainId === '5' ? 'goerli.' : chainId === '8453' ? 'base.' : '') + 'etherscan.io';

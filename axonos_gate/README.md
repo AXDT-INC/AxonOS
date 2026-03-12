@@ -1,6 +1,6 @@
 # AXGT Gate for AxonOS
 
-This module implements **prepaid deposit-credit billing** for AxonOS remote desktop access. Users deposit AXGT to a revenue wallet, submit the transaction hash for verification, and receive usage minutes. Sessions consume minutes via heartbeat-based incremental billing.
+This module implements **prepaid deposit-credit billing** for AxonOS remote desktop access. Users deposit **AXGT** or **native ETH** to a revenue wallet, submit the transaction hash for verification, and receive usage minutes. Sessions consume minutes via heartbeat-based incremental billing.
 
 ## Official References
 
@@ -11,14 +11,14 @@ This module implements **prepaid deposit-credit billing** for AxonOS remote desk
 ## Overview
 
 - **Authentication**: Wallet ownership is proven via signed challenge (`personal_sign`); one-time, wallet-bound nonces.
-- **Deposit-credit**: Users deposit AXGT to a configured **revenue wallet**. They submit the **transaction hash**; the backend verifies the tx on-chain (confirmations, token contract, sender/recipient, amount) and credits prepaid minutes. No escrow, no oracle, no trust in client-reported amounts.
+- **Deposit-credit**: Users deposit AXGT or native ETH to a configured **revenue wallet**. They submit the **transaction hash**; the backend verifies the tx on-chain (confirmations, contract/value, sender/recipient, amount) and credits prepaid minutes. No escrow, no oracle, no trust in client-reported amounts.
 - **Billing**: Usage is deducted **incrementally** on each session heartbeat. When remaining minutes reach zero, access is denied until the user deposits again. Unused credits persist.
 - **Accounting**: Postgres-backed deposit ledger and audit ledger; all balance changes are logged.
 
 ## User flow
 
 1. Connect wallet and sign the challenge (existing flow).
-2. Deposit AXGT to the configured **revenue wallet** (any wallet or DEX).
+2. Deposit AXGT or ETH to the configured **revenue wallet** (any wallet or DEX).
 3. Submit the transaction hash via `POST /api/auth/verify-deposit` (requires auth token).
 4. Backend verifies the tx and credits minutes; response includes `remaining_minutes`.
 5. Claim a session; during the session the client sends heartbeats; each heartbeat bills elapsed time since last billing checkpoint.
@@ -39,6 +39,8 @@ This module implements **prepaid deposit-credit billing** for AxonOS remote desk
 - `AXGT_DEPOSIT_MIN_CONFIRMATIONS`: Minimum block confirmations before crediting (default `6`).
 - `AXGT_MIN_DEPOSIT`: Minimum AXGT amount per deposit to accept (default `100`).
 - `AXGT_CREDIT_PER_100_AXGT_MINUTES`: Usage minutes granted per 100 AXGT deposited (default `60`).
+- `ETH_MIN_DEPOSIT`: Minimum native ETH amount per deposit, in ETH (default `0.01`).
+- `ETH_CREDIT_PER_ETH_MINUTES`: Usage minutes granted per 1 ETH deposited (default `60`).
 - `AXGT_WARNING_THRESHOLD_MINUTES`: Warning threshold for UI (e.g. low balance).
 
 ### Optional
@@ -91,7 +93,7 @@ Verify a deposit by transaction hash. **Requires auth token** (cookie or header)
 
 ### GET /api/config
 
-Returns contract address, chain ID, revenue wallet, min deposit, credit per 100 AXGT, warning threshold.
+Returns contract address, chain ID, revenue wallet, min deposit (AXGT and ETH), credit rates, warning threshold.
 
 ### Session and queue
 
