@@ -838,7 +838,7 @@ document.addEventListener("DOMContentLoaded", function() {
     const retryConnectBtn = document.getElementById('axonos_retry_connect_btn');
     const switchNetworkBtn = document.getElementById('axonos_switch_network_btn');
     const STATE_IDS = ['axonos_wallet_state_disconnected', 'axonos_wallet_state_checking', 'axonos_wallet_state_verified', 'axonos_wallet_state_insufficient', 'axonos_wallet_state_no_wallet', 'axonos_wallet_state_rejected', 'axonos_wallet_state_wrong_network'];
-    let axonosConfig = { axgt_contract_address: '', axgt_chain_id: null, axgt_min_hold_amount: '100' };
+    let axonosConfig = { axgt_contract_address: '', axgt_chain_id: null, axgt_min_deposit: '100' };
 
     (function loadAxonOSConfig() {
         var cfgUrl = new URL('/api/config', window.location.origin).toString();
@@ -846,22 +846,24 @@ document.addEventListener("DOMContentLoaded", function() {
             .then(function (r) { return r.json(); })
             .then(function (cfg) {
                 var addr = (cfg && cfg.axgt_contract_address) ? String(cfg.axgt_contract_address) : '';
-                var minHold = (cfg && cfg.axgt_min_hold_amount != null) ? String(cfg.axgt_min_hold_amount) : '100';
+                var minDeposit = (cfg && (cfg.axgt_min_deposit != null || cfg.axgt_min_hold_amount != null))
+                    ? String(cfg.axgt_min_deposit ?? cfg.axgt_min_hold_amount) : '100';
                 axonosConfig.axgt_contract_address = addr;
                 axonosConfig.axgt_chain_id = (cfg && cfg.axgt_chain_id) ? String(cfg.axgt_chain_id) : null;
-                axonosConfig.axgt_min_hold_amount = minHold;
+                axonosConfig.axgt_min_deposit = minDeposit;
                 var short = addr ? (addr.slice(0, 6) + '\u2026' + addr.slice(-4)) : '(not configured)';
                 if (contractShortEl) contractShortEl.textContent = short;
                 var prereqMin = document.getElementById('axonos_prereq_min_axgt');
                 var dlgMin = document.getElementById('axonos-dlg-min-axgt');
                 var insufficientMin = document.getElementById('axonos_insufficient_min');
-                if (prereqMin) prereqMin.textContent = minHold;
-                if (dlgMin) dlgMin.textContent = minHold;
-                if (insufficientMin) insufficientMin.textContent = minHold;
+                if (prereqMin) prereqMin.textContent = minDeposit;
+                if (dlgMin) dlgMin.textContent = minDeposit;
+                if (insufficientMin) insufficientMin.textContent = minDeposit;
                 if (contractEtherscanEl && addr) {
                     var chainId = axonosConfig.axgt_chain_id || '1';
-                    contractEtherscanEl.href = 'https://etherscan.io/address/' + addr;
-                    if (chainId !== '1') contractEtherscanEl.href = 'https://etherscan.io/address/' + addr;
+                    var base = (chainId === '1') ? 'https://etherscan.io' : 'https://' + (chainId === '11155111' ? 'sepolia.' : chainId === '5' ? 'goerli.' : chainId === '8453' ? 'base.' : '') + 'etherscan.io';
+                    if (chainId !== '1' && chainId !== '11155111' && chainId !== '5' && chainId !== '8453') base = 'https://etherscan.io';
+                    contractEtherscanEl.href = base + '/address/' + addr;
                 }
             })
             .catch(function () {
@@ -874,15 +876,16 @@ document.addEventListener("DOMContentLoaded", function() {
             var el = document.getElementById(id);
             if (el) el.classList.toggle('axonos-wallet-state--hidden', id !== state);
         });
+        var balanceText = (data && data.balanceDisplay != null) ? data.balanceDisplay : ((data && data.balance != null) ? data.balance + ' AXGT' : '—');
         if (state === 'axonos_wallet_state_verified' && data) {
             var addrEl = document.getElementById('axonos_wallet_verified_address');
             var balEl = document.getElementById('axonos_wallet_verified_balance');
             if (addrEl) addrEl.textContent = (data.address ? data.address.slice(0, 6) + '\u2026' + data.address.slice(-4) : '—');
-            if (balEl) balEl.textContent = (data.balance != null ? data.balance : '—') + ' AXGT';
+            if (balEl) balEl.textContent = balanceText;
         }
         if (state === 'axonos_wallet_state_insufficient' && data) {
             var insufBal = document.getElementById('axonos_wallet_insufficient_balance');
-            if (insufBal) insufBal.textContent = 'Current balance: ' + (data.balance != null ? data.balance : '—') + ' AXGT';
+            if (insufBal) insufBal.textContent = 'Current balance: ' + balanceText;
         }
     }
 
@@ -957,8 +960,8 @@ document.addEventListener("DOMContentLoaded", function() {
                 window.verifiedWalletAddress = walletAddress;
                 window.verifiedWalletAuthToken = data.auth_token || null;
                 try { localStorage.setItem('axonos_last_wallet', walletAddress); } catch (e) {}
-                var balanceStr = (data.balance_axgt != null) ? String(data.balance_axgt) : null;
-                setWalletUIState('axonos_wallet_state_verified', { address: walletAddress, balance: balanceStr });
+                var balanceDisplay = (data.balance_axgt != null) ? (String(data.balance_axgt) + ' AXGT') : ((typeof data.remaining_minutes === 'number') ? (data.remaining_minutes + ' min remaining') : '—');
+                setWalletUIState('axonos_wallet_state_verified', { address: walletAddress, balanceDisplay: balanceDisplay });
                 claimSession().then(function (claim) {
                     if (claim.granted) {
                         tryConnectAfterClaim();
@@ -975,8 +978,8 @@ document.addEventListener("DOMContentLoaded", function() {
                 verifiedWalletAddress = null;
                 window.verifiedWalletAddress = null;
                 window.verifiedWalletAuthToken = null;
-                var balanceStr = (data.balance_axgt != null) ? String(data.balance_axgt) : null;
-                setWalletUIState('axonos_wallet_state_insufficient', { balance: balanceStr });
+                var balanceDisplay = (data.balance_axgt != null) ? (String(data.balance_axgt) + ' AXGT') : ((typeof data.remaining_minutes === 'number') ? (data.remaining_minutes + ' min prepaid') : '—');
+                setWalletUIState('axonos_wallet_state_insufficient', { balanceDisplay: balanceDisplay });
             }
         })
         .catch(function (error) {

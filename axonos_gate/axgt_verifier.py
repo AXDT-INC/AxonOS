@@ -2,38 +2,27 @@
 """
 AXGT Wallet Verification Module
 
-Checks hold-based access and off-chain usage credits for AXGT wallets.
+Deposit-credit access: wallet must have remaining_minutes > 0 from verified
+AXGT deposits to the revenue wallet. Wallet signature verification (challenge)
+remains for authentication. No hold-based balance checks.
 """
 
-import json
 import logging
 import os
 import re
 import secrets
 import time
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
-from threading import Lock
 from typing import Any, Dict, Optional, Tuple
 
 import requests
 
 logger = logging.getLogger(__name__)
 
+# ERC-20 balanceOf(address) and decimals() selectors (for optional UI balance display)
 BALANCE_OF_SIGNATURE = "0x70a08231"
 DECIMALS_SIGNATURE = "0x313ce567"
-
-DEFAULT_AXGT_MIN_HOLD = Decimal("100")
 DEFAULT_TOKEN_DECIMALS = 18
-DEFAULT_CREDIT_PER_100_AXGT_MINUTES = 60
-DEFAULT_WARNING_THRESHOLD_MINUTES = 10
-
-_USAGE_DB_PATH_DEFAULT = "/var/lib/axonos_gate/usage.json"
-_USAGE_RETENTION_DAYS_DEFAULT = 180
-_HUNDRED_AXGT = Decimal("100")
-
-_usage_registry: Dict[str, Dict[str, float]] = {}
-_usage_lock = Lock()
-_usage_db_loaded = False
 
 # One-time wallet-bound challenge config.
 # When AXGT_CHALLENGE_DB_URL is set, challenges are stored in Postgres (shared across backends).
@@ -41,11 +30,20 @@ _usage_db_loaded = False
 _CHALLENGE_PREFIX = "AxonOS verify\n"
 _CHALLENGE_TTL_SECONDS_DEFAULT = 180
 _challenge_registry: Dict[str, Dict[str, Any]] = {}
-_challenge_lock = Lock()
+_challenge_lock = None
+_postgres_init_lock = None
+
+# Use threading.Lock for concurrency (in-memory challenge registry)
+from threading import Lock as _ThreadLock
+_challenge_lock = _ThreadLock()
+_postgres_init_lock = _ThreadLock()
 
 _CHALLENGE_TABLE = "axgt_challenges"
 _postgres_init_done = False
-_postgres_init_lock = Lock()
+
+DEFAULT_MIN_DEPOSIT = 100
+DEFAULT_CREDIT_PER_100_AXGT_MINUTES = 60
+DEFAULT_WARNING_THRESHOLD_MINUTES = 10
 
 
 def mask_wallet_address(address: str) -> str:
@@ -358,118 +356,19 @@ def verify_signed_challenge(wallet_address: str, message: str, signature_hex: st
     return True
 
 
-def _usage_db_path() -> str:
-    return os.getenv("AXGT_USAGE_DB_PATH", _USAGE_DB_PATH_DEFAULT)
+# --- Deposit-credit policy and access (no hold-based logic) ---
 
-
-def _usage_retention_days() -> int:
-    raw = (os.getenv("AXGT_USAGE_RETENTION_DAYS") or "").strip()
+def _get_min_deposit_display() -> str:
+    raw = (os.getenv("AXGT_MIN_DEPOSIT") or "").strip()
     if not raw:
-        return _USAGE_RETENTION_DAYS_DEFAULT
+        return str(DEFAULT_MIN_DEPOSIT)
     try:
-        value = int(raw)
-        if value <= 0:
-            raise ValueError("must be positive")
-        return value
+        n = int(float(raw))
+        if n > 0:
+            return str(n)
     except ValueError:
-        logger.warning(
-            "Invalid AXGT_USAGE_RETENTION_DAYS value '%s'; using default %s",
-            raw,
-            _USAGE_RETENTION_DAYS_DEFAULT,
-        )
-        return _USAGE_RETENTION_DAYS_DEFAULT
-
-
-def _ensure_usage_db_loaded() -> None:
-    global _usage_db_loaded
-    if _usage_db_loaded:
-        return
-    path = _usage_db_path()
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f) or {}
-            if isinstance(data, dict):
-                for wallet, record in data.items():
-                    if not isinstance(wallet, str) or not isinstance(record, dict):
-                        continue
-                    consumed = record.get("consumed_minutes")
-                    last_update = record.get("last_update_ts")
-                    if isinstance(consumed, (int, float)) and isinstance(last_update, (int, float)):
-                        _usage_registry[wallet.lower()] = {
-                            "consumed_minutes": float(max(0.0, consumed)),
-                            "last_update_ts": float(last_update),
-                        }
-    except Exception as e:
-        logger.warning("Failed to load usage registry from disk: %s", e)
-    finally:
-        _usage_db_loaded = True
-
-
-def _persist_usage_best_effort() -> None:
-    path = _usage_db_path()
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = f"{path}.tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(_usage_registry, f)
-        os.replace(tmp, path)
-    except Exception as e:
-        logger.warning("Failed to persist usage registry to disk: %s", e)
-
-
-def _cleanup_usage_registry(now_ts: float) -> None:
-    retention_seconds = _usage_retention_days() * 86400
-    stale_wallets = [
-        wallet
-        for wallet, record in _usage_registry.items()
-        if (now_ts - float(record.get("last_update_ts", now_ts))) > retention_seconds
-    ]
-    for wallet in stale_wallets:
-        _usage_registry.pop(wallet, None)
-
-
-def _eth_call(rpc_url: str, contract_address: str, data: str) -> Optional[str]:
-    payload = {
-        "jsonrpc": "2.0",
-        "method": "eth_call",
-        "params": [{"to": contract_address, "data": data}, "latest"],
-        "id": 1,
-    }
-    response = requests.post(
-        rpc_url,
-        json=payload,
-        timeout=10,
-        headers={"Content-Type": "application/json"},
-    )
-    response.raise_for_status()
-    result = response.json()
-    if "error" in result:
-        logger.error("RPC eth_call error: %s", result["error"])
-        return None
-    if "result" not in result:
-        logger.error("No result in eth_call RPC response")
-        return None
-    return result["result"]
-
-
-def _get_min_hold_amount() -> Decimal:
-    raw = (os.getenv("AXGT_MIN_HOLD_AMOUNT") or "").strip()
-    if not raw:
-        return DEFAULT_AXGT_MIN_HOLD
-    try:
-        parsed = Decimal(raw)
-        if parsed < 0:
-            raise InvalidOperation("negative not allowed")
-        return parsed
-    except (InvalidOperation, ValueError):
-        logger.warning(
-            "Invalid AXGT_MIN_HOLD_AMOUNT value '%s'; using default %s",
-            raw,
-            str(DEFAULT_AXGT_MIN_HOLD),
-        )
-        return DEFAULT_AXGT_MIN_HOLD
+        pass
+    return str(DEFAULT_MIN_DEPOSIT)
 
 
 def _get_credit_per_100_axgt_minutes() -> int:
@@ -477,7 +376,7 @@ def _get_credit_per_100_axgt_minutes() -> int:
     if not raw:
         return DEFAULT_CREDIT_PER_100_AXGT_MINUTES
     try:
-        minutes = int(raw)
+        minutes = int(float(raw))
         if minutes <= 0:
             raise ValueError("must be positive")
         return minutes
@@ -508,203 +407,139 @@ def _get_warning_threshold_minutes() -> int:
         return DEFAULT_WARNING_THRESHOLD_MINUTES
 
 
-def get_min_hold_amount_display() -> str:
-    amount = _get_min_hold_amount()
-    normalized = format(amount.normalize(), "f")
-    if "." in normalized:
-        normalized = normalized.rstrip("0").rstrip(".")
-    return normalized or "0"
+def _eth_call(rpc_url: str, contract_address: str, data: str) -> Optional[str]:
+    """Single eth_call for optional on-chain balance display. Returns hex result or None."""
+    payload = {
+        "jsonrpc": "2.0",
+        "method": "eth_call",
+        "params": [{"to": contract_address, "data": data}, "latest"],
+        "id": 1,
+    }
+    try:
+        resp = requests.post(
+            rpc_url,
+            json=payload,
+            timeout=10,
+            headers={"Content-Type": "application/json"},
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        if "error" in result or "result" not in result:
+            return None
+        return result["result"]
+    except Exception:
+        return None
 
 
-def _decimal_display(value: Decimal) -> str:
-    normalized = format(value.normalize(), "f")
-    if "." in normalized:
-        normalized = normalized.rstrip("0").rstrip(".")
-    return normalized or "0"
+def _get_axgt_balance_display(wallet_address: str) -> Optional[str]:
+    """
+    Optional on-chain AXGT balance for UI display (e.g. wallet verification dialog).
+    Returns a formatted string (e.g. "100" or "50.5") or None if not configured or on error.
+    Does not affect access logic (deposit-credit only).
+    """
+    if not validate_wallet_address(wallet_address):
+        return None
+    contract = (os.getenv("AXGT_CONTRACT_ADDRESS") or "").strip()
+    rpc_url = (os.getenv("AXGT_RPC_URL") or "").strip()
+    if not contract or not rpc_url:
+        return None
+    try:
+        padded = wallet_address[2:].lower().zfill(64)
+        balance_hex = _eth_call(rpc_url, contract, BALANCE_OF_SIGNATURE + padded)
+        if not balance_hex or balance_hex == "0x":
+            return None
+        balance_units = int(balance_hex, 16)
+        decimals_hex = _eth_call(rpc_url, contract, DECIMALS_SIGNATURE)
+        decimals = int(decimals_hex, 16) if decimals_hex and decimals_hex != "0x" else DEFAULT_TOKEN_DECIMALS
+        if decimals < 0 or decimals > 255:
+            decimals = DEFAULT_TOKEN_DECIMALS
+        divisor = Decimal(10) ** decimals
+        balance_axgt = Decimal(balance_units) / divisor
+        normalized = format(balance_axgt.normalize(), "f")
+        if "." in normalized:
+            normalized = normalized.rstrip("0").rstrip(".")
+        return normalized or "0"
+    except (InvalidOperation, ValueError, TypeError):
+        return None
 
 
 def get_credit_policy() -> Dict[str, Any]:
+    """Deposit-credit policy: min deposit, credit per 100 AXGT, warning threshold."""
     return {
-        "min_hold_amount": get_min_hold_amount_display(),
+        "min_deposit": _get_min_deposit_display(),
         "credit_per_100_axgt_minutes": _get_credit_per_100_axgt_minutes(),
         "warning_threshold_minutes": _get_warning_threshold_minutes(),
     }
 
 
-def _get_token_decimals(contract_address: str, rpc_url: str) -> int:
-    try:
-        decimals_hex = _eth_call(rpc_url, contract_address, DECIMALS_SIGNATURE)
-        if not decimals_hex or decimals_hex == "0x":
-            raise ValueError("empty decimals result")
-        decimals = int(decimals_hex, 16)
-        if decimals < 0 or decimals > 255:
-            raise ValueError(f"invalid decimals value: {decimals}")
-        return decimals
-    except Exception as e:
-        logger.warning(
-            "Failed to read token decimals for AXGT contract %s: %s. Using default decimals=%s",
-            contract_address,
-            e,
-            DEFAULT_TOKEN_DECIMALS,
-        )
-        return DEFAULT_TOKEN_DECIMALS
-
-
-def _required_balance_base_units(decimals: int) -> int:
-    min_hold_amount = _get_min_hold_amount()
-    base_multiplier = Decimal(10) ** decimals
-    required_units_decimal = (min_hold_amount * base_multiplier).to_integral_value(
-        rounding=ROUND_CEILING
-    )
-    return int(required_units_decimal)
-
-
-def _get_axgt_balance_info(wallet_address: str) -> Optional[Dict[str, Any]]:
-    if not validate_wallet_address(wallet_address):
-        logger.warning("Invalid wallet address format: %s", mask_wallet_address(wallet_address))
-        return None
-
-    contract_address = (os.getenv("AXGT_CONTRACT_ADDRESS") or "").strip()
-    rpc_url = (os.getenv("AXGT_RPC_URL") or "").strip()
-    chain_id = (os.getenv("AXGT_CHAIN_ID") or "").strip()
-    if not contract_address or not rpc_url or not chain_id:
-        logger.error(
-            "AXGT verification not configured. Set AXGT_CONTRACT_ADDRESS, AXGT_RPC_URL, and AXGT_CHAIN_ID."
-        )
-        return None
-
-    expected_contract = (os.getenv("AXGT_EXPECTED_CONTRACT_ADDRESS") or "").strip()
-    if expected_contract and contract_address.lower() != expected_contract.lower():
-        logger.error(
-            "Contract address mismatch. Expected: %s, Got: %s",
-            expected_contract,
-            contract_address,
-        )
-        return None
-
-    try:
-        padded_address = wallet_address[2:].lower().zfill(64)
-        data = BALANCE_OF_SIGNATURE + padded_address
-        balance_hex = _eth_call(rpc_url, contract_address, data)
-        if not balance_hex or balance_hex == "0x":
-            logger.warning("Empty balance result from RPC for %s", mask_wallet_address(wallet_address))
-            return None
-        balance_base_units = int(balance_hex, 16)
-        decimals = _get_token_decimals(contract_address, rpc_url)
-        divisor = Decimal(10) ** decimals
-        balance_axgt = Decimal(balance_base_units) / divisor
-        return {
-            "contract_address": contract_address,
-            "balance_base_units": balance_base_units,
-            "decimals": decimals,
-            "balance_axgt": balance_axgt,
-            "required_base_units": _required_balance_base_units(decimals),
-        }
-    except requests.exceptions.RequestException as e:
-        logger.error("RPC request failed for %s: %s", mask_wallet_address(wallet_address), e)
-        return None
-    except (ValueError, KeyError) as e:
-        logger.error("Error parsing balance response for %s: %s", mask_wallet_address(wallet_address), e)
-        return None
-    except Exception as e:
-        logger.error("Unexpected error checking balance for %s: %s", mask_wallet_address(wallet_address), e)
-        return None
-
-
-def has_axgt_balance(wallet_address: str) -> bool:
-    details = _get_axgt_balance_info(wallet_address)
-    if not details:
-        return False
-    return details["balance_axgt"] >= _get_min_hold_amount()
-
-
-def get_wallet_access_status(wallet_address: str, consume_usage: bool = True) -> Dict[str, Any]:
+def get_wallet_access_status(wallet_address: str, consume_usage: bool = False) -> Dict[str, Any]:
+    """
+    Access status from deposit ledger only. consume_usage is ignored (billing is heartbeat-based).
+    Returns verified, access_type, remaining_minutes, consumed_minutes, credited_minutes, etc.
+    """
     warning_threshold = _get_warning_threshold_minutes()
-    min_hold_amount = _get_min_hold_amount()
     base_response: Dict[str, Any] = {
         "verified": False,
         "access_type": None,
-        "locked": True,
-        "reason": "Wallet verification failed.",
         "remaining_minutes": 0.0,
         "consumed_minutes": 0.0,
-        "capacity_minutes": 0.0,
+        "credited_minutes": 0.0,
         "warning_threshold_minutes": warning_threshold,
-        "min_hold_amount": get_min_hold_amount_display(),
+        "min_deposit": _get_min_deposit_display(),
         "credit_per_100_axgt_minutes": _get_credit_per_100_axgt_minutes(),
-        "balance_axgt": "0",
+        "reason": "No deposit record or zero balance.",
     }
 
     if not validate_wallet_address(wallet_address):
         base_response["reason"] = "Invalid wallet address format."
         return base_response
 
-    details = _get_axgt_balance_info(wallet_address)
-    if not details:
-        base_response["reason"] = "Unable to verify AXGT balance."
+    try:
+        from . import deposit_ledger
+    except ImportError:
+        from axonos_gate import deposit_ledger
+
+    if not deposit_ledger.init_once():
+        base_response["reason"] = "Ledger unavailable."
         return base_response
 
-    balance_axgt: Decimal = details["balance_axgt"]
-    base_response["balance_axgt"] = _decimal_display(balance_axgt)
+    status = deposit_ledger.get_deposit_status(wallet_address)
+    remaining = status["remaining_minutes"]
+    consumed = status["consumed_minutes"]
+    credited = status["credited_minutes_total"]
 
-    if balance_axgt < min_hold_amount:
-        base_response["reason"] = (
-            f"Access requires holding at least {get_min_hold_amount_display()} AXGT."
-        )
-        return base_response
-
-    credit_per_100 = _get_credit_per_100_axgt_minutes()
-    bucket_count = int(balance_axgt // _HUNDRED_AXGT)
-    capacity_minutes = float(bucket_count * credit_per_100)
-    now_ts = time.time()
-
-    with _usage_lock:
-        _ensure_usage_db_loaded()
-        _cleanup_usage_registry(now_ts)
-        wallet_key = wallet_address.lower()
-        record = _usage_registry.get(wallet_key)
-        if record is None:
-            record = {"consumed_minutes": 0.0, "last_update_ts": now_ts}
-            _usage_registry[wallet_key] = record
-        elif consume_usage:
-            last_update_ts = float(record.get("last_update_ts", now_ts))
-            elapsed_minutes = max(0.0, now_ts - last_update_ts) / 60.0
-            record["consumed_minutes"] = float(record.get("consumed_minutes", 0.0)) + elapsed_minutes
-            record["last_update_ts"] = now_ts
-        consumed_minutes = float(record.get("consumed_minutes", 0.0))
-        if consume_usage:
-            _persist_usage_best_effort()
-
-    remaining_minutes = max(0.0, capacity_minutes - consumed_minutes)
-    locked = remaining_minutes <= 0.0
+    verified = remaining > 0
     response: Dict[str, Any] = {
-        "verified": not locked,
-        "access_type": "holding_credit" if not locked else None,
-        "locked": locked,
-        "reason": None,
-        "remaining_minutes": round(remaining_minutes, 2),
-        "consumed_minutes": round(consumed_minutes, 2),
-        "capacity_minutes": round(capacity_minutes, 2),
+        "verified": verified,
+        "access_type": "deposit_credit" if verified else None,
+        "remaining_minutes": round(remaining, 2),
+        "consumed_minutes": round(consumed, 2),
+        "credited_minutes": round(credited, 2),
         "warning_threshold_minutes": warning_threshold,
-        "min_hold_amount": get_min_hold_amount_display(),
-        "credit_per_100_axgt_minutes": credit_per_100,
-        "balance_axgt": _decimal_display(balance_axgt),
+        "min_deposit": _get_min_deposit_display(),
+        "credit_per_100_axgt_minutes": _get_credit_per_100_axgt_minutes(),
+        "reason": None,
     }
-    if locked:
+    if not verified:
         response["reason"] = (
-            "Usage credit exhausted. Increase held AXGT to raise capacity and unlock access."
+            "No prepaid credit. Deposit AXGT to the revenue wallet and submit the transaction hash to get usage minutes."
         )
-    elif remaining_minutes <= warning_threshold:
+    elif remaining <= warning_threshold:
         response["reason"] = (
-            f"Warning: less than {warning_threshold} minutes of AXGT usage credit remaining."
+            f"Warning: less than {warning_threshold} minutes of prepaid credit remaining."
         )
+    # Optional on-chain balance for UI (wallet dialog); None if RPC not configured or on error
+    balance_display = _get_axgt_balance_display(wallet_address)
+    if balance_display is not None:
+        response["balance_axgt"] = balance_display
     return response
 
 
 def has_access(wallet_address: str) -> Tuple[bool, Optional[str], Optional[float]]:
+    """Returns (allowed, access_type, remaining_minutes). Access only if remaining_minutes > 0."""
     if not validate_wallet_address(wallet_address):
         return False, None, None
-    status = get_wallet_access_status(wallet_address, consume_usage=False)
+    status = get_wallet_access_status(wallet_address)
     if status.get("verified"):
         return True, status.get("access_type"), status.get("remaining_minutes")
     return False, None, status.get("remaining_minutes")

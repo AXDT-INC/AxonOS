@@ -48,6 +48,14 @@ except ImportError:
         sys.exit(1)
 
 try:
+    from deposit_verifier import verify_deposit
+except ImportError:
+    try:
+        from axonos_gate.deposit_verifier import verify_deposit
+    except ImportError:
+        verify_deposit = None
+
+try:
     from session_manager import (
         get_active_session,
         heartbeat as session_heartbeat,
@@ -280,7 +288,6 @@ def verify_wallet():
             'verified': False,
             'error': status.get('reason') or 'No access available for this wallet'
         })
-            
     except Exception as e:
         logger.error(f"Error in verify_wallet: {e}", exc_info=True)
         return jsonify({'verified': False, 'error': 'Internal server error'}), 500
@@ -319,16 +326,163 @@ def wallet_status():
     return jsonify(status)
 
 
+@app.route('/api/auth/verify-deposit', methods=['POST', 'OPTIONS'])
+def api_verify_deposit():
+    """Verify AXGT deposit by tx hash. Requires authenticated wallet (auth token)."""
+    if request.method == 'OPTIONS':
+        return '', 200
+    if verify_deposit is None:
+        return jsonify({"verified": False, "error": "Deposit verification unavailable"}), 503
+    data = request.get_json()
+    if not data:
+        return jsonify({"verified": False, "error": "JSON body required"}), 400
+    wallet_address = (data.get("wallet_address") or "").strip()
+    tx_hash = (data.get("tx_hash") or "").strip()
+    if not wallet_address or not validate_wallet_address(wallet_address):
+        return jsonify({"verified": False, "error": "Valid wallet_address required"}), 400
+    if not tx_hash:
+        return jsonify({"verified": False, "error": "tx_hash required"}), 400
+    auth_err = _require_auth_token(wallet_address)
+    if auth_err:
+        return auth_err
+    result = verify_deposit(authenticated_wallet=wallet_address, tx_hash=tx_hash)
+    if result.get("verified"):
+        return jsonify(result)
+    return jsonify(result), 400
+
+
 @app.route('/api/config', methods=['GET'])
 def api_config():
     policy = get_credit_policy()
     return jsonify({
         'axgt_contract_address': (os.getenv("AXGT_CONTRACT_ADDRESS") or "").strip() or None,
         'axgt_chain_id': (os.getenv("AXGT_CHAIN_ID") or "").strip() or None,
-        'axgt_min_hold_amount': policy.get("min_hold_amount"),
+        'axgt_revenue_wallet': (os.getenv("AXGT_REVENUE_WALLET") or "").strip() or None,
+        'axgt_min_deposit': policy.get("min_deposit"),
         'axgt_credit_per_100_axgt_minutes': policy.get("credit_per_100_axgt_minutes"),
         'axgt_warning_threshold_minutes': policy.get("warning_threshold_minutes"),
     })
+
+
+def _require_admin():
+    """Require AXGT_ADMIN_SECRET. Returns None on success, or (response, status)."""
+    secret = (os.getenv("AXGT_ADMIN_SECRET") or "").strip()
+    if not secret:
+        return jsonify({"error": "Admin API disabled"}), 503
+    provided = (request.headers.get("X-AXGT-Admin-Secret") or request.args.get("admin_secret") or "").strip()
+    if provided != secret:
+        return jsonify({"error": "Unauthorized"}), 401
+    return None
+
+
+@app.route('/api/admin/credit-minutes', methods=['POST', 'OPTIONS'])
+def api_admin_credit_minutes():
+    if request.method == 'OPTIONS':
+        return '', 200
+    err = _require_admin()
+    if err:
+        return err
+    try:
+        from axonos_gate import deposit_ledger
+    except ImportError:
+        import deposit_ledger
+    data = request.get_json() or {}
+    wallet = (data.get("wallet_address") or "").strip()
+    minutes = data.get("minutes")
+    notes = (data.get("notes") or "").strip() or None
+    if not wallet or not validate_wallet_address(wallet):
+        return jsonify({"ok": False, "error": "Valid wallet_address required"}), 400
+    try:
+        minutes = float(minutes)
+        if minutes <= 0:
+            raise ValueError("minutes must be positive")
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Positive minutes required"}), 400
+    ok, remaining, error = deposit_ledger.credit_wallet_minutes(wallet, minutes, notes=notes, created_by="admin_api")
+    if not ok:
+        return jsonify({"ok": False, "error": error}), 400
+    return jsonify({"ok": True, "remaining_minutes": remaining})
+
+
+@app.route('/api/admin/refund-minutes', methods=['POST', 'OPTIONS'])
+def api_admin_refund_minutes():
+    if request.method == 'OPTIONS':
+        return '', 200
+    err = _require_admin()
+    if err:
+        return err
+    try:
+        from axonos_gate import deposit_ledger
+    except ImportError:
+        import deposit_ledger
+    data = request.get_json() or {}
+    wallet = (data.get("wallet_address") or "").strip()
+    minutes = data.get("minutes")
+    notes = (data.get("notes") or "").strip() or None
+    if not wallet or not validate_wallet_address(wallet):
+        return jsonify({"ok": False, "error": "Valid wallet_address required"}), 400
+    try:
+        minutes = float(minutes)
+        if minutes <= 0:
+            raise ValueError("minutes must be positive")
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Positive minutes required"}), 400
+    ok, remaining, error = deposit_ledger.refund_wallet_minutes(wallet, minutes, notes=notes, created_by="admin_api")
+    if not ok:
+        return jsonify({"ok": False, "error": error}), 400
+    return jsonify({"ok": True, "remaining_minutes": remaining})
+
+
+@app.route('/api/admin/adjust-balance', methods=['POST', 'OPTIONS'])
+def api_admin_adjust_balance():
+    if request.method == 'OPTIONS':
+        return '', 200
+    err = _require_admin()
+    if err:
+        return err
+    try:
+        from axonos_gate import deposit_ledger
+    except ImportError:
+        import deposit_ledger
+    data = request.get_json() or {}
+    wallet = (data.get("wallet_address") or "").strip()
+    minutes_delta = data.get("minutes_delta")
+    notes = (data.get("notes") or "").strip() or None
+    if not wallet or not validate_wallet_address(wallet):
+        return jsonify({"ok": False, "error": "Valid wallet_address required"}), 400
+    try:
+        minutes_delta = float(minutes_delta)
+        if minutes_delta == 0:
+            raise ValueError("minutes_delta must be non-zero")
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Non-zero minutes_delta required"}), 400
+    ok, remaining, error = deposit_ledger.adjust_wallet_balance(wallet, minutes_delta, notes=notes, created_by="admin_api")
+    if not ok:
+        return jsonify({"ok": False, "error": error}), 400
+    return jsonify({"ok": True, "remaining_minutes": remaining})
+
+
+@app.route('/api/admin/ledger', methods=['GET', 'OPTIONS'])
+def api_admin_ledger():
+    if request.method == 'OPTIONS':
+        return '', 200
+    err = _require_admin()
+    if err:
+        return err
+    try:
+        from axonos_gate import deposit_ledger
+    except ImportError:
+        import deposit_ledger
+    wallet = (request.args.get("wallet_address") or "").strip()
+    if not wallet or not validate_wallet_address(wallet):
+        return jsonify({"error": "Valid wallet_address required"}), 400
+    limit = request.args.get("limit", "100")
+    try:
+        limit = min(500, max(1, int(limit)))
+    except ValueError:
+        limit = 100
+    entries = deposit_ledger.get_wallet_ledger(wallet, limit=limit)
+    return jsonify({"wallet_address": wallet, "ledger": entries})
 
 
 def _require_auth_token(wallet_address: str):
