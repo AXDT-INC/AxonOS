@@ -255,7 +255,10 @@ def _on_session_ended(wallet_address: str, session_id: int) -> None:
     try:
         from . import deposit_ledger
     except ImportError:
-        from axonos_gate import deposit_ledger
+        try:
+            from axonos_gate import deposit_ledger
+        except ImportError:
+            import deposit_ledger
     if deposit_ledger.init_once():
         remaining = deposit_ledger.get_remaining_minutes(wallet_address)
         deposit_ledger.record_session_expiry(
@@ -328,7 +331,10 @@ def try_claim_session(wallet_address: str) -> Dict[str, Any]:
             try:
                 from . import deposit_ledger
             except ImportError:
-                from axonos_gate import deposit_ledger
+                try:
+                    from axonos_gate import deposit_ledger
+                except ImportError:
+                    import deposit_ledger
             is_owner = active and active["wallet_address"] == wallet
             if not is_owner:
                 if not deposit_ledger.init_once():
@@ -419,7 +425,10 @@ def heartbeat(wallet_address: str) -> Dict[str, Any]:
     try:
         from . import deposit_ledger
     except ImportError:
-        from axonos_gate import deposit_ledger
+        try:
+            from axonos_gate import deposit_ledger
+        except ImportError:
+            import deposit_ledger
 
     try:
         now = time.time()
