@@ -584,7 +584,7 @@ def get_wallet_access_status(wallet_address: str, consume_usage: bool = False) -
     }
     if not verified:
         response["reason"] = (
-            "No prepaid credit. Deposit AXGT to the revenue wallet and submit the transaction hash to get usage minutes."
+            "No prepaid credit. Deposit AXGT/ETH to the revenue wallet and submit the transaction hash to get usage minutes."
         )
     elif remaining <= warning_threshold:
         response["reason"] = (

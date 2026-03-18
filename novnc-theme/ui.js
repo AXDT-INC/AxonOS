@@ -1261,8 +1261,17 @@ const UI = {
                 const threshold = typeof data.warning_threshold_minutes === 'number' ? data.warning_threshold_minutes : 10;
                 const reason = (data.reason && String(data.reason)) || '';
                 if (locked) {
-                    UI._axgtUpdateUsageOverlay('locked',
-                        'Usage credit exhausted. Add more AXGT to unlock access.');
+                    // Credit exhausted: treat as signed-out-for-desktop so the next
+                    // "Launch GPU-Native Desktop" goes back through the normal
+                    // verify/top-up flow instead of trying to reuse a stale session.
+                    if (typeof window !== 'undefined') {
+                        window.axonosAllowVncConnect = false;
+                        window.verifiedWalletAuthToken = null;
+                    }
+                    UI._axgtUpdateUsageOverlay(
+                        'locked',
+                        'Usage credit exhausted. Add more AXGT/ETH to unlock access.'
+                    );
                     if (UI.rfb && typeof UI.rfb.disconnect === 'function') {
                         UI.inhibitReconnect = true;
                         UI.rfb.disconnect();
