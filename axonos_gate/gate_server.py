@@ -233,7 +233,7 @@ def after_request(response):
     if origin:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Vary"] = "Origin"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Wallet-Address"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Wallet-Address, X-AXGT-Auth-Token"
         response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
     return response
 
@@ -276,18 +276,29 @@ def verify_wallet():
             return jsonify({'verified': False, 'error': 'Wallet signature verification failed.'}), 401
 
         status = get_wallet_access_status(wallet_address, consume_usage=False)
-        status['wallet_address'] = wallet_address
-        if status.get('verified'):
+        status["wallet_address"] = wallet_address
+        # Auth token = wallet ownership (for verify-deposit, session APIs). Desktop/VNC still requires prepaid minutes.
+        try:
             token, ttl = _issue_gate_auth_token(wallet_address)
-            status['auth_token'] = token
-            status['auth_token_expires_in_seconds'] = ttl
-            logger.info("Wallet verified: %s", mask_wallet_address(wallet_address))
+            status["auth_token"] = token
+            status["auth_token_expires_in_seconds"] = ttl
+        except Exception as ex:
+            logger.warning("Auth token issue failed for %s: %s", mask_wallet_address(wallet_address), ex)
+            return jsonify(
+                {
+                    "verified": False,
+                    "error": "Auth database unavailable; cannot complete sign-in.",
+                    "wallet_address": wallet_address,
+                }
+            ), 503
+        if status.get("verified"):
+            logger.info("Wallet verified (prepaid): %s", mask_wallet_address(wallet_address))
             return jsonify(status)
-        logger.info("Wallet verification failed after signature check: %s", mask_wallet_address(wallet_address))
-        return jsonify({
-            'verified': False,
-            'error': status.get('reason') or 'No access available for this wallet'
-        })
+        logger.info("Wallet signed in, no prepaid credit: %s", mask_wallet_address(wallet_address))
+        denied = dict(status)
+        denied["verified"] = False
+        denied["error"] = status.get("reason") or "No access available for this wallet"
+        return jsonify(denied)
     except Exception as e:
         logger.error(f"Error in verify_wallet: {e}", exc_info=True)
         return jsonify({'verified': False, 'error': 'Internal server error'}), 500

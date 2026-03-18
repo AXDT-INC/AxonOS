@@ -351,13 +351,19 @@ Copyright (C) 2019 The noVNC Authors
         <div id="noVNC_credentials_dlg" class="noVNC_panel axonos-wallet-card"><form id="axonos_wallet_form">
         <div class="axonos-wallet-card__title">
             <h2>Connect your wallet to continue</h2>
-            <p class="axonos-wallet-card__hints">Requires ≥<span id="axonos-dlg-min-axgt">100</span> AXGT or ≥<span id="axonos-dlg-min-eth">0.01</span> ETH · Deposit then submit tx hash</p>
+            <p class="axonos-wallet-card__hints">Requires at least <span id="axonos-dlg-min-axgt">100</span> AXGT or at least <span id="axonos-dlg-min-eth">0.01</span> ETH · Deposit then submit tx hash</p>
+        </div>
+        <div class="axonos-wallet-card__contract axonos-wallet-card__contract--revenue">
+            <span class="axonos-wallet-card__contract-label">Deposit AXGT or ETH here</span>
+            <code id="axonos-revenue-short" title="Revenue wallet">—</code>
+            <button type="button" id="axonos_revenue_copy_btn" class="axonos-contract-copy-btn" title="Copy revenue address">Copy</button>
+            <a id="axonos_revenue_etherscan" href="#" target="_blank" rel="noopener noreferrer" class="axonos-contract-etherscan">Etherscan</a>
         </div>
         <div class="axonos-wallet-card__contract">
-            <span class="axonos-wallet-card__contract-label">AXGT</span>
+            <span class="axonos-wallet-card__contract-label">AXGT token (Uniswap)</span>
             <code id="axonos-axgt-contract-short">0x6112…2274d</code>
-            <button type="button" id="axonos_contract_copy_btn" class="axonos-contract-copy-btn" title="Copy address">Copy</button>
-            <a id="axonos_contract_etherscan" href="#" target="_blank" rel="noopener noreferrer" class="axonos-contract-etherscan">View on Etherscan</a>
+            <button type="button" id="axonos_contract_copy_btn" class="axonos-contract-copy-btn" title="Copy token contract">Copy</button>
+            <a id="axonos_contract_etherscan" href="#" target="_blank" rel="noopener noreferrer" class="axonos-contract-etherscan">Token</a>
         </div>
         <div class="axonos-wallet-card__status">
             <div id="axonos_wallet_state_disconnected" class="axonos-wallet-state">
@@ -371,7 +377,7 @@ Copyright (C) 2019 The noVNC Authors
             </div>
             <div id="axonos_wallet_state_checking" class="axonos-wallet-state axonos-wallet-state--hidden">
                 <div class="axonos-wallet-state__spinner" aria-hidden="true"></div>
-                <p class="axonos-wallet-state__msg">Checking AXGT balance…</p>
+                <p class="axonos-wallet-state__msg">Sign in MetaMask, then verifying…</p>
             </div>
             <div id="axonos_wallet_state_verified" class="axonos-wallet-state axonos-wallet-state--hidden">
                 <div class="axonos-wallet-state__icon axonos-wallet-state__icon--success" aria-hidden="true"></div>
@@ -383,8 +389,20 @@ Copyright (C) 2019 The noVNC Authors
             <div id="axonos_wallet_state_insufficient" class="axonos-wallet-state axonos-wallet-state--hidden">
                 <div class="axonos-wallet-state__icon axonos-wallet-state__icon--warning" aria-hidden="true"></div>
                 <p class="axonos-wallet-state__title">You need prepaid credit: at least <span id="axonos_insufficient_min"> 100 </span> AXGT or <span id="axonos_insufficient_min_eth"> 0.01 </span> ETH</p>
-                <p id="axonos_wallet_insufficient_balance" class="axonos-wallet-state__balance">Current balance: —</p>
+                <p id="axonos_wallet_insufficient_balance" class="axonos-wallet-state__balance">Wallet AXGT balance (info only): —</p>
+                <p class="axonos-wallet-state__help" style="margin-top:0.75rem;font-size:0.9em;opacity:0.9;">Send AXGT or ETH to <strong>Deposit AXGT or ETH here</strong> above. Then paste your transaction hash:</p>
+                <p style="margin:0.5rem 0;display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;justify-content:center;">
+                    <input type="text" id="axonos_tx_hash_input" placeholder="0x… transaction hash" autocomplete="off" spellcheck="false" style="flex:1;min-width:12rem;max-width:22rem;padding:0.45rem 0.6rem;border-radius:6px;border:1px solid rgba(255,255,255,0.25);background:rgba(0,0,0,0.3);color:inherit;font-family:monospace;font-size:0.85rem;" />
+                    <button type="button" id="axonos_verify_deposit_btn" class="axonos-connect-wallet-btn" style="margin:0;">Credit deposit</button>
+                </p>
+                <p id="axonos_verify_deposit_msg" class="axonos-wallet-state__msg" style="font-size:0.85rem;min-height:1.2rem;"></p>
                 <a id="axonos_get_axgt_btn" href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=0x6112c3509a8a787df576028450febb3786a2274d" target="_blank" rel="noopener noreferrer" class="axonos-get-axgt-btn">Get AXGT</a>
+            </div>
+            <div id="axonos_wallet_state_connect_error" class="axonos-wallet-state axonos-wallet-state--hidden">
+                <div class="axonos-wallet-state__icon axonos-wallet-state__icon--warning" aria-hidden="true"></div>
+                <p class="axonos-wallet-state__title">Could not complete sign-in</p>
+                <p id="axonos_wallet_connect_error_detail" class="axonos-wallet-state__msg" style="text-align:left;max-width:28rem;margin:0.5rem auto;"></p>
+                <button type="button" id="axonos_retry_connect_error_btn" class="axonos-connect-wallet-btn">Try again</button>
             </div>
             <div id="axonos_wallet_state_no_wallet" class="axonos-wallet-state axonos-wallet-state--hidden">
                 <div class="axonos-wallet-state__icon axonos-wallet-state__icon--warning" aria-hidden="true"></div>
@@ -392,7 +410,7 @@ Copyright (C) 2019 The noVNC Authors
                 <a href="https://metamask.io" target="_blank" rel="noopener noreferrer" class="axonos-install-metamask-btn">Install MetaMask</a>
             </div>
             <div id="axonos_wallet_state_rejected" class="axonos-wallet-state axonos-wallet-state--hidden">
-                <p class="axonos-wallet-state__msg">Connection was rejected. Try again.</p>
+                <p class="axonos-wallet-state__msg">You cancelled the signature request, or the wallet declined. Try again.</p>
                 <button type="button" id="axonos_retry_connect_btn" class="axonos-connect-wallet-btn">Connect Wallet</button>
             </div>
             <div id="axonos_wallet_state_wrong_network" class="axonos-wallet-state axonos-wallet-state--hidden">
@@ -727,6 +745,8 @@ document.addEventListener("DOMContentLoaded", function() {
     // AXGT Wallet Verification (in credentials dialog)
     let verifiedWalletAddress = null;
     window.verifiedWalletAddress = null; // Make it globally accessible for ui.js
+    /** Only true when wallet has prepaid minutes (VNC allowed). Token alone is not enough. */
+    window.axonosAllowVncConnect = false;
     window.verifiedWalletAuthToken = null;
 
     // Queue overlay polling (cleared when we connect or leave queue)
@@ -837,13 +857,16 @@ document.addEventListener("DOMContentLoaded", function() {
 
     const connectButton = document.getElementById('noVNC_connect_button');
     const contractShortEl = document.getElementById('axonos-axgt-contract-short');
+    const revenueShortEl = document.getElementById('axonos-revenue-short');
+    const revenueEtherscanEl = document.getElementById('axonos_revenue_etherscan');
     const contractCopyBtn = document.getElementById('axonos_contract_copy_btn');
+    const revenueCopyBtn = document.getElementById('axonos_revenue_copy_btn');
     const contractEtherscanEl = document.getElementById('axonos_contract_etherscan');
     const connectWalletBtn = document.getElementById('axonos_connect_wallet_btn');
     const retryConnectBtn = document.getElementById('axonos_retry_connect_btn');
     const switchNetworkBtn = document.getElementById('axonos_switch_network_btn');
-    const STATE_IDS = ['axonos_wallet_state_disconnected', 'axonos_wallet_state_choose_wallet', 'axonos_wallet_state_checking', 'axonos_wallet_state_verified', 'axonos_wallet_state_insufficient', 'axonos_wallet_state_no_wallet', 'axonos_wallet_state_rejected', 'axonos_wallet_state_wrong_network'];
-    let axonosConfig = { axgt_contract_address: '', axgt_chain_id: null, axgt_min_deposit: '100', eth_min_deposit: '0.01' };
+    const STATE_IDS = ['axonos_wallet_state_disconnected', 'axonos_wallet_state_choose_wallet', 'axonos_wallet_state_checking', 'axonos_wallet_state_verified', 'axonos_wallet_state_insufficient', 'axonos_wallet_state_connect_error', 'axonos_wallet_state_no_wallet', 'axonos_wallet_state_rejected', 'axonos_wallet_state_wrong_network'];
+    let axonosConfig = { axgt_contract_address: '', axgt_revenue_wallet: '', axgt_chain_id: null, axgt_min_deposit: '100', eth_min_deposit: '0.01' };
     var selectedEthereumProvider = null;
 
     /** Collect available wallet providers (EIP-6963, then window.ethereum.providers, then single ethereum). */
@@ -893,15 +916,23 @@ document.addEventListener("DOMContentLoaded", function() {
             .then(function (r) { return r.json(); })
             .then(function (cfg) {
                 var addr = (cfg && cfg.axgt_contract_address) ? String(cfg.axgt_contract_address) : '';
+                var rev = (cfg && cfg.axgt_revenue_wallet) ? String(cfg.axgt_revenue_wallet).trim() : '';
                 var minDeposit = (cfg && (cfg.axgt_min_deposit != null || cfg.axgt_min_hold_amount != null))
                     ? String(cfg.axgt_min_deposit ?? cfg.axgt_min_hold_amount) : '100';
                 var minEth = (cfg && cfg.eth_min_deposit != null) ? String(cfg.eth_min_deposit) : '0.01';
                 axonosConfig.axgt_contract_address = addr;
+                axonosConfig.axgt_revenue_wallet = rev;
                 axonosConfig.axgt_chain_id = (cfg && cfg.axgt_chain_id) ? String(cfg.axgt_chain_id) : null;
                 axonosConfig.axgt_min_deposit = minDeposit;
                 axonosConfig.eth_min_deposit = minEth;
+                var revShort = rev && /^0x[a-fA-F0-9]{40}$/.test(rev) ? (rev.slice(0, 6) + '\u2026' + rev.slice(-4)) : '(set AXGT_REVENUE_WALLET)';
+                if (revenueShortEl) revenueShortEl.textContent = revShort;
                 var short = addr ? (addr.slice(0, 6) + '\u2026' + addr.slice(-4)) : '(not configured)';
                 if (contractShortEl) contractShortEl.textContent = short;
+                var getAxgt = document.getElementById('axonos_get_axgt_btn');
+                if (getAxgt && addr) {
+                    getAxgt.href = 'https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=' + encodeURIComponent(addr.toLowerCase());
+                }
                 var prereqMin = document.getElementById('axonos_prereq_min_axgt');
                 var prereqMinEth = document.getElementById('axonos_prereq_min_eth');
                 var dlgMin = document.getElementById('axonos-dlg-min-axgt');
@@ -914,15 +945,21 @@ document.addEventListener("DOMContentLoaded", function() {
                 if (dlgMinEth) dlgMinEth.textContent = minEth;
                 if (insufficientMin) insufficientMin.textContent = minDeposit;
                 if (insufficientMinEth) insufficientMinEth.textContent = minEth;
-                if (contractEtherscanEl && addr) {
-                    var chainId = axonosConfig.axgt_chain_id || '1';
-                    var base = (chainId === '1') ? 'https://etherscan.io' : 'https://' + (chainId === '11155111' ? 'sepolia.' : chainId === '5' ? 'goerli.' : chainId === '8453' ? 'base.' : '') + 'etherscan.io';
-                    if (chainId !== '1' && chainId !== '11155111' && chainId !== '5' && chainId !== '8453') base = 'https://etherscan.io';
-                    contractEtherscanEl.href = base + '/address/' + addr;
+                function etherscanBase(chainId) {
+                    if (chainId === '1') return 'https://etherscan.io';
+                    if (chainId === '11155111') return 'https://sepolia.etherscan.io';
+                    if (chainId === '5') return 'https://goerli.etherscan.io';
+                    if (chainId === '8453') return 'https://basescan.org';
+                    return 'https://etherscan.io';
                 }
+                var chainId = axonosConfig.axgt_chain_id || '1';
+                var base = etherscanBase(chainId);
+                if (contractEtherscanEl && addr) contractEtherscanEl.href = base + '/address/' + addr;
+                if (revenueEtherscanEl && rev && /^0x[a-fA-F0-9]{40}$/.test(rev)) revenueEtherscanEl.href = base + '/address/' + rev;
             })
             .catch(function () {
                 if (contractShortEl) contractShortEl.textContent = '(not configured)';
+                if (revenueShortEl) revenueShortEl.textContent = '(error)';
             });
     })();
 
@@ -940,7 +977,11 @@ document.addEventListener("DOMContentLoaded", function() {
         }
         if (state === 'axonos_wallet_state_insufficient' && data) {
             var insufBal = document.getElementById('axonos_wallet_insufficient_balance');
-            if (insufBal) insufBal.textContent = 'Current balance: ' + balanceText;
+            if (insufBal) insufBal.textContent = 'Wallet AXGT balance (info only): ' + balanceText;
+        }
+        if (state === 'axonos_wallet_state_connect_error' && data && data.msg) {
+            var det = document.getElementById('axonos_wallet_connect_error_detail');
+            if (det) det.textContent = String(data.msg);
         }
     }
 
@@ -969,6 +1010,22 @@ document.addEventListener("DOMContentLoaded", function() {
         return account;
     }
 
+    function axonosReadFetchJson(r) {
+        return r.text().then(function (text) {
+            var data = {};
+            if (text) {
+                try {
+                    data = JSON.parse(text);
+                } catch (e) {
+                    var msg = 'Auth API returned non-JSON (HTTP ' + r.status + '). Point your tunnel at the AxonOS gate (port 8889), not only noVNC.';
+                    if (text.trim().charAt(0) === '<') msg += ' (Got HTML — wrong upstream or 502 page.)';
+                    throw { _axonosUi: true, _connectErr: msg };
+                }
+            }
+            return { status: r.status, ok: r.ok, data: data };
+        });
+    }
+
     function runVerify(walletAddress, provider) {
         var eth = provider || selectedEthereumProvider || window.ethereum;
         setWalletUIState('axonos_wallet_state_checking');
@@ -980,10 +1037,14 @@ document.addEventListener("DOMContentLoaded", function() {
             headers: { 'X-Wallet-Address': walletAddress },
             credentials: 'include'
         })
-        .then(function (r) { return r.json(); })
-        .then(function (challengeData) {
+        .then(axonosReadFetchJson)
+        .then(function (res) {
+            var challengeData = res.data;
             var challenge = (challengeData && challengeData.challenge) ? String(challengeData.challenge) : '';
-            if (!challenge) throw new Error((challengeData && challengeData.error) || 'Failed to get wallet challenge');
+            if (!challenge) {
+                var ce = (challengeData && challengeData.error) || 'Failed to get wallet challenge';
+                throw { _axonosUi: true, _connectErr: ce + (res.status !== 200 ? ' (HTTP ' + res.status + ')' : '') };
+            }
             return eth.request({ method: 'eth_requestAccounts' }).then(function (accounts) {
                 var account = Array.isArray(accounts) && accounts[0] ? String(accounts[0]).trim() : '';
                 if (!account || account.toLowerCase() !== walletAddress.toLowerCase()) {
@@ -1008,14 +1069,16 @@ document.addEventListener("DOMContentLoaded", function() {
                     message: _ref.challenge,
                     signature: _ref.signature
                 })
-            });
+            }).then(axonosReadFetchJson);
         })
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
+        .then(function (res) {
+            var data = res.data;
+            var st = res.status;
             if (data.verified) {
                 verifiedWalletAddress = walletAddress;
                 window.verifiedWalletAddress = walletAddress;
                 window.verifiedWalletAuthToken = data.auth_token || null;
+                window.axonosAllowVncConnect = true;
                 try { localStorage.setItem('axonos_last_wallet', walletAddress); } catch (e) {}
                 var balanceDisplay = (data.balance_axgt != null) ? (String(data.balance_axgt) + ' AXGT') : ((typeof data.remaining_minutes === 'number') ? (data.remaining_minutes + ' min remaining') : '—');
                 setWalletUIState('axonos_wallet_state_verified', { address: walletAddress, balanceDisplay: balanceDisplay });
@@ -1029,25 +1092,126 @@ document.addEventListener("DOMContentLoaded", function() {
                         if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
                     }
                 }).catch(function () {
-                    setWalletUIState('axonos_wallet_state_rejected');
+                    setWalletUIState('axonos_wallet_state_connect_error', { msg: 'Session claim failed. Check network or try again.' });
                 });
-            } else {
+                return;
+            }
+            if (st === 503 || !data.auth_token) {
                 verifiedWalletAddress = null;
                 window.verifiedWalletAddress = null;
                 window.verifiedWalletAuthToken = null;
-                var balanceDisplay = (data.balance_axgt != null) ? (String(data.balance_axgt) + ' AXGT') : ((typeof data.remaining_minutes === 'number') ? (data.remaining_minutes + ' min prepaid') : '—');
-                setWalletUIState('axonos_wallet_state_insufficient', { balanceDisplay: balanceDisplay });
+                window.axonosAllowVncConnect = false;
+                setWalletUIState('axonos_wallet_state_connect_error', {
+                    msg: data.error || 'Server could not issue a session (Postgres / AXGT_CHALLENGE_DB_URL required).'
+                });
+                return;
             }
+            verifiedWalletAddress = walletAddress;
+            window.verifiedWalletAddress = walletAddress;
+            window.verifiedWalletAuthToken = data.auth_token;
+            window.axonosAllowVncConnect = false;
+            try { localStorage.setItem('axonos_last_wallet', walletAddress); } catch (e) {}
+            var errLower = String(data.error || data.reason || '').toLowerCase();
+            if (errLower.indexOf('ledger unavailable') >= 0 || st >= 500) {
+                verifiedWalletAddress = null;
+                window.verifiedWalletAddress = null;
+                window.verifiedWalletAuthToken = null;
+                window.axonosAllowVncConnect = false;
+                setWalletUIState('axonos_wallet_state_connect_error', {
+                    msg: data.error || data.reason || ('Server error HTTP ' + st + '. Set AXGT_CHALLENGE_DB_URL / run Postgres (e.g. docker compose).')
+                });
+                return;
+            }
+            if (st === 429) {
+                verifiedWalletAddress = null;
+                window.verifiedWalletAddress = null;
+                window.verifiedWalletAuthToken = null;
+                window.axonosAllowVncConnect = false;
+                setWalletUIState('axonos_wallet_state_connect_error', { msg: data.error || 'Rate limited. Wait and try again.' });
+                return;
+            }
+            if (st === 401) {
+                verifiedWalletAddress = null;
+                window.verifiedWalletAddress = null;
+                window.verifiedWalletAuthToken = null;
+                window.axonosAllowVncConnect = false;
+                setWalletUIState('axonos_wallet_state_connect_error', { msg: data.error || 'Signature did not verify. Request a new challenge and try again.' });
+                return;
+            }
+            var balanceDisplay = (data.balance_axgt != null) ? (String(data.balance_axgt) + ' AXGT') : ((typeof data.remaining_minutes === 'number') ? (data.remaining_minutes + ' min prepaid') : '—');
+            var vmsg = document.getElementById('axonos_verify_deposit_msg');
+            if (vmsg) vmsg.textContent = '';
+            setWalletUIState('axonos_wallet_state_insufficient', { balanceDisplay: balanceDisplay });
         })
         .catch(function (error) {
             verifiedWalletAddress = null;
             window.verifiedWalletAddress = null;
             window.verifiedWalletAuthToken = null;
-            if (error && (error.code === 4001 || /user rejected/i.test(String(error.message || '')))) {
-                setWalletUIState('axonos_wallet_state_rejected');
-            } else {
-                setWalletUIState('axonos_wallet_state_rejected');
+            window.axonosAllowVncConnect = false;
+            if (error && error._axonosUi && error._connectErr) {
+                setWalletUIState('axonos_wallet_state_connect_error', { msg: error._connectErr });
+                return;
             }
+            if (error && (error.code === 4001 || /user rejected|user denied/i.test(String(error.message || '')))) {
+                setWalletUIState('axonos_wallet_state_rejected');
+                return;
+            }
+            var netMsg = (error && error.message) ? String(error.message) : 'Network error';
+            if (/fetch|network|failed to fetch/i.test(netMsg)) {
+                netMsg = 'Network error — tunnel offline, CORS, or wrong URL. Ensure the page and /api/* hit the same gate origin.';
+            }
+            setWalletUIState('axonos_wallet_state_connect_error', { msg: netMsg });
+        });
+    }
+
+    function runVerifyDeposit() {
+        var wallet = verifiedWalletAddress;
+        var tok = window.verifiedWalletAuthToken;
+        var inp = document.getElementById('axonos_tx_hash_input');
+        var msgEl = document.getElementById('axonos_verify_deposit_msg');
+        var tx = inp ? String(inp.value || '').trim() : '';
+        if (!wallet || !tok) {
+            if (msgEl) msgEl.textContent = 'Connect and sign in first.';
+            return;
+        }
+        if (!/^0x[a-fA-F0-9]{64}$/i.test(tx)) {
+            if (msgEl) msgEl.textContent = 'Paste a full tx hash (0x + 64 hex characters).';
+            return;
+        }
+        if (msgEl) msgEl.textContent = 'Verifying on-chain…';
+        fetch(new URL('/api/auth/verify-deposit', window.location.origin).toString(), {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Wallet-Address': wallet,
+                'X-AXGT-Auth-Token': tok
+            },
+            body: JSON.stringify({ wallet_address: wallet, tx_hash: tx })
+        }).then(axonosReadFetchJson).then(function (res) {
+            var d = res.data || {};
+            if (d.verified) {
+                if (msgEl) msgEl.textContent = 'Credited ' + (d.credited_minutes != null ? d.credited_minutes : '?') + ' min. Connecting…';
+                window.axonosAllowVncConnect = true;
+                var balanceDisplay = (typeof d.remaining_minutes === 'number') ? (d.remaining_minutes + ' min prepaid') : '—';
+                setWalletUIState('axonos_wallet_state_verified', { address: wallet, balanceDisplay: balanceDisplay });
+                if (inp) inp.value = '';
+                claimSession().then(function (claim) {
+                    if (claim.granted) tryConnectAfterClaim();
+                    else {
+                        showQueueOverlay({ reason: claim.reason || 'Desktop in use.', queue_position: claim.queue_position, queue_length: claim.queue_length });
+                        startQueuePolling();
+                        var credentialsDialog = document.getElementById('noVNC_credentials_dlg');
+                        if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
+                    }
+                }).catch(function () {
+                    if (msgEl) msgEl.textContent = 'Credited, but session claim failed. Try Connect again.';
+                });
+            } else {
+                if (msgEl) msgEl.textContent = d.error || d.message || ('Could not verify' + (res.status !== 200 ? ' (HTTP ' + res.status + ')' : '') + '.');
+            }
+        }).catch(function () {
+            if (msgEl) msgEl.textContent = 'Request failed. Check network.';
         });
     }
 
@@ -1097,6 +1261,8 @@ document.addEventListener("DOMContentLoaded", function() {
 
     if (connectWalletBtn) connectWalletBtn.addEventListener('click', function () { onConnectWalletClick(); });
     if (retryConnectBtn) retryConnectBtn.addEventListener('click', function () { onConnectWalletClick(); });
+    var retryConnectErrBtn = document.getElementById('axonos_retry_connect_error_btn');
+    if (retryConnectErrBtn) retryConnectErrBtn.addEventListener('click', function () { onConnectWalletClick(); });
     var pickerBackBtn = document.getElementById('axonos_wallet_picker_back_btn');
     if (pickerBackBtn) pickerBackBtn.addEventListener('click', function () { setWalletUIState('axonos_wallet_state_disconnected'); });
     if (switchNetworkBtn) {
@@ -1107,6 +1273,17 @@ document.addEventListener("DOMContentLoaded", function() {
             eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: chainIdHex }] })
                 .then(function () { setWalletUIState('axonos_wallet_state_disconnected'); })
                 .catch(function () {});
+        });
+    }
+    if (revenueCopyBtn && revenueShortEl) {
+        revenueCopyBtn.addEventListener('click', function () {
+            var full = axonosConfig.axgt_revenue_wallet;
+            if (!full || !/^0x[a-fA-F0-9]{40}$/i.test(full)) return;
+            navigator.clipboard.writeText(full).then(function () {
+                var t = revenueCopyBtn.textContent;
+                revenueCopyBtn.textContent = 'Copied!';
+                setTimeout(function () { revenueCopyBtn.textContent = t; }, 1500);
+            });
         });
     }
     if (contractCopyBtn && contractShortEl) {
@@ -1120,6 +1297,8 @@ document.addEventListener("DOMContentLoaded", function() {
             });
         });
     }
+    var verifyDepBtn = document.getElementById('axonos_verify_deposit_btn');
+    if (verifyDepBtn) verifyDepBtn.addEventListener('click', function () { runVerifyDeposit(); });
 
     var joinQueueBtn = document.getElementById('axonos_queue_join_btn');
     var leaveQueueBtn = document.getElementById('axonos_queue_leave_btn');
@@ -1149,6 +1328,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 verifiedWalletAddress = null;
                 window.verifiedWalletAddress = null;
                 window.verifiedWalletAuthToken = null;
+                window.axonosAllowVncConnect = false;
                 setWalletUIState('axonos_wallet_state_disconnected');
             } else {
                 setWalletUIState('axonos_wallet_state_disconnected');
@@ -1160,7 +1340,7 @@ document.addEventListener("DOMContentLoaded", function() {
     if (credentialsForm) {
         credentialsForm.addEventListener('submit', function (e) {
             e.preventDefault();
-            if (window.verifiedWalletAddress && window.verifiedWalletAuthToken && typeof UI !== 'undefined' && typeof UI.setCredentials === 'function') {
+            if (window.axonosAllowVncConnect && window.verifiedWalletAddress && window.verifiedWalletAuthToken && typeof UI !== 'undefined' && typeof UI.setCredentials === 'function') {
                 UI.setCredentials({ preventDefault: function () {} });
             }
         });

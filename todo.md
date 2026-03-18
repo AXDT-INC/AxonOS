@@ -16,4 +16,5 @@
 - [x] Phase 2: Frontend Connect Wallet + strict sign-to-verify + status polling/overlay
 - [x] Phase 3: Deployment helpers — parallel compose (16080/18889, deposit-preview image/volume)
 - [ ] Phase 3b: Docs touch-up if needed
+- [x] Wallet UI: revenue address from `/api/config`, tx-hash → verify-deposit; auth token after sign even with 0 prepaid
 - [ ] Phase 4: End-to-end runtime test checklist
