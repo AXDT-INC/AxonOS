@@ -17,4 +17,5 @@
 - [x] Phase 3: Deployment helpers — parallel compose (16080/18889, deposit-preview image/volume)
 - [ ] Phase 3b: Docs touch-up if needed
 - [x] Wallet UI: revenue address from `/api/config`, tx-hash → verify-deposit; auth token after sign even with 0 prepaid
+- [x] Fix `verify-wallet` 500: `get_wallet_access_status` must `import deposit_ledger` when gate runs with flat `/axonos_gate` on `sys.path` (not `axonos_gate` package)
 - [ ] Phase 4: End-to-end runtime test checklist

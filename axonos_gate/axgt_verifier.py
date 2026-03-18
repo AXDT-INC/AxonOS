@@ -524,10 +524,15 @@ def get_wallet_access_status(wallet_address: str, consume_usage: bool = False) -
         base_response["reason"] = "Invalid wallet address format."
         return base_response
 
+    # gate_server.py adds /axonos_gate to path and imports axgt_verifier as a top-level
+    # module — neither "from ." nor "axonos_gate" resolves deposit_ledger there.
     try:
         from . import deposit_ledger
     except ImportError:
-        from axonos_gate import deposit_ledger
+        try:
+            from axonos_gate import deposit_ledger
+        except ImportError:
+            import deposit_ledger
 
     if not deposit_ledger.init_once():
         base_response["reason"] = "Ledger unavailable."
