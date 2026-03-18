@@ -81,7 +81,7 @@ Returns a one-time challenge bound to the wallet.
 
 ### POST /api/auth/verify-wallet
 
-Verify signed challenge and issue auth token. Returns deposit-credit status: `verified`, `access_type` (`deposit_credit`), `remaining_minutes`, `consumed_minutes`, `credited_minutes`, `auth_token_expires_in_seconds`.
+Verify signed challenge and issue **auth token** (cookie + body) whenever the signature is valid—even if `verified` is false because there is no prepaid credit yet. Response includes `remaining_minutes`, `credited_minutes`, `auth_token`, etc. The UI needs the token to call **verify-deposit** and complete top-up on the **same origin** (e.g. tunnel to **6080**).
 
 ### GET /api/auth/wallet-status?wallet_address=0x...
 
@@ -115,7 +115,8 @@ Heartbeats trigger incremental billing; when remaining minutes reach zero the se
 - `deposit_ledger.py`: Postgres-backed deposits, ledger, verified-deposits; billing and admin helpers.
 - `deposit_verifier.py`: Tx-hash verification (RPC, Transfer events, confirmations); credits via deposit_ledger.
 - `session_manager.py`: Single active session, queue, heartbeat-based billing (calls deposit_ledger.deduct_usage).
-- `gate_server.py`: HTTP API and WebSocket proxy.
+- `gate_server.py`: HTTP API and WebSocket proxy (port **8889** by default).
+- `websockify_gate.py`: noVNC + WebSocket on **6080**; serves the same `/api/config`, `/api/auth/*` (challenge, verify-wallet, wallet-status, **verify-deposit**), and session/queue POSTs so a tunnel to 6080 alone can sign in and top up without hitting 8889.
 
 ## Security
 
@@ -123,6 +124,11 @@ Heartbeats trigger incremental billing; when remaining minutes reach zero the se
 - Deposit verification uses only on-chain data (tx, receipt, logs); no trust in client-reported amount.
 - Replay protection: each tx hash is credited at most once.
 - Server clocks should be NTP-synchronized for consistent billing timestamps.
+
+## Tunnel tips (Gradio / HTTP proxies)
+
+- **6080** (websockify): Full wallet + top-up flow works on one origin after signing (see `websockify_gate.py` above).
+- **8889** (gate): Proxies WebSocket to 6080. Some tunnels drop or mishandle WebSocket upgrades → **1006** on connect. Try loading noVNC with **`?axgt_ws_auth=query`** or **`?axgt_ws_auth=both`** so the auth token is sent on the WebSocket URL (see `novnc-theme/ui.js`).
 
 ## Installation
 

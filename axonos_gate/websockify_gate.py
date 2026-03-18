@@ -71,6 +71,14 @@ except ImportError:
         sys.exit(1)
 
 try:
+    from deposit_verifier import verify_deposit
+except ImportError:
+    try:
+        from axonos_gate.deposit_verifier import verify_deposit
+    except ImportError:
+        verify_deposit = None
+
+try:
     from session_manager import (
         get_active_session,
         heartbeat as session_heartbeat,
@@ -536,12 +544,24 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
     def do_GET(self):
         if self.path.startswith('/api/config'):
             policy = get_credit_policy()
+            _dec_raw = (os.getenv("AXGT_TOKEN_DECIMALS") or "").strip()
+            try:
+                _td = int(_dec_raw) if _dec_raw else 18
+                axgt_token_decimals = max(0, min(255, _td))
+            except ValueError:
+                axgt_token_decimals = 18
             payload = {
                 "axgt_contract_address": (os.getenv("AXGT_CONTRACT_ADDRESS") or "").strip() or None,
                 "axgt_chain_id": (os.getenv("AXGT_CHAIN_ID") or "").strip() or None,
-                "axgt_min_hold_amount": policy.get("min_hold_amount"),
+                "axgt_revenue_wallet": (os.getenv("AXGT_REVENUE_WALLET") or "").strip() or None,
+                "axgt_token_decimals": axgt_token_decimals,
+                "axgt_min_deposit": policy.get("min_deposit"),
                 "axgt_credit_per_100_axgt_minutes": policy.get("credit_per_100_axgt_minutes"),
+                "eth_min_deposit": policy.get("eth_min_deposit"),
+                "eth_credit_per_eth_minutes": policy.get("eth_credit_per_eth_minutes"),
                 "axgt_warning_threshold_minutes": policy.get("warning_threshold_minutes"),
+                "min_axgt_deposit_minutes": policy.get("min_axgt_deposit_minutes"),
+                "min_eth_deposit_minutes": policy.get("min_eth_deposit_minutes"),
             }
             return self._send_json(200, payload)
 
@@ -688,6 +708,30 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             result = leave_queue(wallet_address)
             return self._send_json(200, result)
 
+        if self.path.startswith('/api/auth/verify-deposit'):
+            if verify_deposit is None:
+                return self._send_json(
+                    503, {"verified": False, "error": "Deposit verification unavailable"}
+                )
+            data = self._read_json_body()
+            wallet_address = (data.get("wallet_address") or "").strip()
+            tx_hash = (data.get("tx_hash") or "").strip()
+            if not wallet_address or not validate_wallet_address(wallet_address):
+                return self._send_json(
+                    400, {"verified": False, "error": "Valid wallet_address required"}
+                )
+            if not tx_hash:
+                return self._send_json(400, {"verified": False, "error": "tx_hash required"})
+            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+            if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
+                return self._send_json(
+                    401, {"verified": False, "error": "Valid auth token required"}
+                )
+            result = verify_deposit(authenticated_wallet=wallet_address, tx_hash=tx_hash)
+            if result.get("verified"):
+                return self._send_json(200, result)
+            return self._send_json(400, result)
+
         if not self.path.startswith('/api/auth/verify-wallet'):
             return self.send_error(404, "Not Found")
 
@@ -722,19 +766,36 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             })
 
         status = get_wallet_access_status(wallet_address, consume_usage=False)
-        status['wallet_address'] = wallet_address
-        if not status.get("verified"):
-            logger.info("Wallet verification failed after signature check: %s", mask_wallet_address(wallet_address))
-            return self._send_json(200, {
-                'verified': False,
-                'error': status.get("reason") or 'No access available for this wallet'
-            }, set_cookie=_clear_auth_cookie())
-
-        token, ttl = _issue_auth_token(wallet_address)
-        status['auth_token'] = token
-        status['auth_token_expires_in_seconds'] = ttl
-        logger.info("Wallet verified with signature: %s", mask_wallet_address(wallet_address))
-        return self._send_json(200, status, set_cookie=_build_auth_cookie(token, ttl))
+        status["wallet_address"] = wallet_address
+        try:
+            token, ttl = _issue_auth_token(wallet_address)
+        except Exception as ex:
+            logger.warning(
+                "Auth token issue failed for %s: %s",
+                mask_wallet_address(wallet_address),
+                ex,
+            )
+            return self._send_json(
+                503,
+                {
+                    "verified": False,
+                    "error": "Auth database unavailable; cannot complete sign-in.",
+                    "wallet_address": wallet_address,
+                },
+                set_cookie=_clear_auth_cookie(),
+            )
+        if status.get("verified"):
+            status["auth_token"] = token
+            status["auth_token_expires_in_seconds"] = ttl
+            logger.info("Wallet verified (prepaid): %s", mask_wallet_address(wallet_address))
+            return self._send_json(200, status, set_cookie=_build_auth_cookie(token, ttl))
+        denied = dict(status)
+        denied["verified"] = False
+        denied["error"] = status.get("reason") or "No access available for this wallet"
+        denied["auth_token"] = token
+        denied["auth_token_expires_in_seconds"] = ttl
+        logger.info("Wallet signed in, no prepaid credit: %s", mask_wallet_address(wallet_address))
+        return self._send_json(200, denied, set_cookie=_build_auth_cookie(token, ttl))
 
     def handle_upgrade(self):
         # Diagnostic: confirms the WebSocket upgrade request reached this process (helps debug 1006 in proxy chains)
