@@ -163,6 +163,9 @@ def _gate_pg_init_once() -> bool:
 def _issue_gate_auth_token(wallet_address: str) -> tuple[str, int]:
     now_ts = time.time()
     token = secrets.token_urlsafe(32)
+    wallet_norm = (wallet_address or "").strip().lower()
+    if not wallet_norm:
+        raise RuntimeError("Wallet address required")
     if not _gate_pg_init_once():
         raise RuntimeError("Auth token DB unavailable")
     conn = _gate_pg_get_connection()
@@ -178,7 +181,7 @@ def _issue_gate_auth_token(wallet_address: str) -> tuple[str, int]:
                 f"""INSERT INTO {_AUTH_TABLE}
                     (token, wallet_address, issued_at, expires_at, status, grace_until)
                     VALUES (%s, %s, %s, %s, 'current', %s)""",
-                (token, wallet_address, now_ts, now_ts + _AUTH_TOKEN_TTL, now_ts + _AUTH_TOKEN_TTL),
+                (token, wallet_norm, now_ts, now_ts + _AUTH_TOKEN_TTL, now_ts + _AUTH_TOKEN_TTL),
             )
         conn.commit()
     except Exception as e:
@@ -194,6 +197,9 @@ def _is_gate_auth_token_valid(token: str, wallet_address: str) -> bool:
     if not token:
         return False
     now_ts = time.time()
+    wallet_norm = (wallet_address or "").strip().lower()
+    if not wallet_norm:
+        return False
     if not _gate_pg_init_once():
         return False
     conn = _gate_pg_get_connection()
@@ -204,7 +210,7 @@ def _is_gate_auth_token_valid(token: str, wallet_address: str) -> bool:
             cur.execute(
                 f"""SELECT status, expires_at, grace_until FROM {_AUTH_TABLE}
                     WHERE token = %s AND wallet_address = %s""",
-                (token, wallet_address),
+                (token, wallet_norm),
             )
             row = cur.fetchone()
             if not row:
@@ -510,6 +516,9 @@ def api_admin_ledger():
 def _require_auth_token(wallet_address: str):
     """Validate auth token from cookie / header / query. Returns None on success, or (response, status)."""
     from flask import request as _req
+    wallet_norm = (wallet_address or "").strip().lower()
+    if not wallet_norm:
+        return jsonify({"error": "Valid wallet_address required"}), 400
     token = None
     cookie_val = _req.cookies.get(os.getenv("AXGT_AUTH_COOKIE_NAME", "axgt_auth_token").strip())
     if cookie_val:
@@ -518,7 +527,7 @@ def _require_auth_token(wallet_address: str):
         token = (_req.headers.get("X-AXGT-Auth-Token") or "").strip() or None
     if not token:
         token = (_req.args.get("auth_token") or "").strip() or None
-    if not token or not _is_gate_auth_token_valid(token, wallet_address):
+    if not token or not _is_gate_auth_token_valid(token, wallet_norm):
         return jsonify({"error": "Valid auth token required"}), 401
     return None
 
