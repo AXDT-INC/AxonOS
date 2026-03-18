@@ -14,5 +14,6 @@
   - [x] Frontend queue overlay + auto-claim after wallet verify (Feature 3)
   - [x] Desktop reset script between session transitions (Feature 2 Option A)
 - [x] Phase 2: Frontend Connect Wallet + strict sign-to-verify + status polling/overlay
-- [ ] Phase 3: Deployment helpers (`docker-compose.yml`) and docs touch-up
+- [x] Phase 3: Deployment helpers — parallel compose (16080/18889, deposit-preview image/volume)
+- [ ] Phase 3b: Docs touch-up if needed
 - [ ] Phase 4: End-to-end runtime test checklist
