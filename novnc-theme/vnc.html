@@ -1452,9 +1452,10 @@ document.addEventListener("DOMContentLoaded", function() {
         var valueHex = '0x' + h;
         setPayDepositButtonsBusy(true);
         if (msgEl) msgEl.textContent = 'Confirm sending ' + rawEth + ' ETH in your wallet…';
+        // Explicit gas avoids wallets/RPC using a huge default (e.g. 21M) that fails cap 16777216.
         eth.request({
             method: 'eth_sendTransaction',
-            params: [{ from: wallet, to: revenue, value: valueHex }]
+            params: [{ from: wallet, to: revenue, value: valueHex, gas: '0x5208' }]
         }).then(function (txHash) {
             var h = String(txHash || '').trim();
             if (inp) inp.value = h;

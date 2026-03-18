@@ -20,4 +20,5 @@
 - [x] Fix `verify-wallet` 500: `get_wallet_access_status` must `import deposit_ledger` when gate runs with flat `/axonos_gate` on `sys.path` (not `axonos_gate` package)
 - [x] Wallet pay (AXGT/ETH) + auto poll verify-deposit (Option C)
 - [x] Wallet pay: optional amount inputs (≥ server min), Min reset, BigInt validation (`novnc-theme/vnc.html`)
+- [x] Send ETH from wallet: explicit `gas: 0x5208` (21000) — fixes MetaMask/RPC “gas limit too high (cap 16777216, tx 21000000)” on PublicNode-style caps
 - [ ] Phase 4: End-to-end runtime test checklist
