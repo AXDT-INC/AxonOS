@@ -53,7 +53,7 @@ Copyright (C) 2019 The noVNC Authors
 
     <!-- Stylesheets -->
     <link rel="stylesheet" href="app/styles/base.css">
-    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=15.4&t=1739900000">
+    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=15.5&t=1740200000">
 
     <!-- Images that will later appear via CSS -->
     <link rel="preload" as="image" href="app/images/info.svg">
@@ -388,22 +388,26 @@ Copyright (C) 2019 The noVNC Authors
             </div>
             <div id="axonos_wallet_state_insufficient" class="axonos-wallet-state axonos-wallet-state--hidden">
                 <div class="axonos-wallet-state__icon axonos-wallet-state__icon--warning" aria-hidden="true"></div>
-                <p class="axonos-wallet-state__title">You need prepaid credit: min. <span id="axonos_insufficient_min">100</span> AXGT or <span id="axonos_insufficient_min_eth">0.0005</span> ETH per top-up</p>
+                <p class="axonos-wallet-state__title" id="axonos_insufficient_credit_title">You need prepaid credit: min. 100 AXGT or 0.0005 ETH per top-up</p>
                 <p class="axonos-wallet-state__help" id="axonos_insufficient_credit_rates" style="margin-top:0.35rem;font-size:0.88em;opacity:0.92;">—</p>
                 <p id="axonos_wallet_insufficient_balance" class="axonos-wallet-state__balance">Wallet AXGT balance (info only): —</p>
                 <p class="axonos-wallet-state__help" style="margin-top:0.75rem;font-size:0.9em;opacity:0.9;">Pay from wallet (amount ≥ minimum below; larger adds more time). Or send elsewhere and paste the tx hash.</p>
-                <div style="margin:0.5rem 0;width:100%;max-width:28rem;margin-left:auto;margin-right:auto;">
-                    <div style="display:flex;flex-wrap:wrap;gap:0.4rem;align-items:center;margin-bottom:0.45rem;">
-                        <span style="min-width:2.5rem;font-size:0.85em;opacity:0.9;">AXGT</span>
-                        <input type="text" id="axonos_pay_axgt_amount" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="AXGT amount" style="flex:1;min-width:6rem;max-width:10rem;padding:0.4rem 0.5rem;border-radius:6px;border:1px solid rgba(255,255,255,0.25);background:rgba(0,0,0,0.3);color:inherit;font-size:0.88rem;" />
-                        <button type="button" id="axonos_pay_axgt_min_btn" class="axonos-connect-wallet-btn" style="margin:0;padding:0.35rem 0.55rem;font-size:0.8rem;opacity:0.9;">Min</button>
-                        <button type="button" id="axonos_pay_axgt_btn" class="axonos-connect-wallet-btn" style="margin:0;">Send AXGT</button>
+                <div class="axonos-pay-deposit-rows" style="margin:0.5rem 0;width:100%;max-width:28rem;margin-left:auto;margin-right:auto;">
+                    <div class="axonos-pay-deposit-row">
+                        <span class="axonos-pay-row-label">AXGT</span>
+                        <input type="text" id="axonos_pay_axgt_amount" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="AXGT amount" class="axonos-pay-amount-input" />
+                        <div class="axonos-pay-deposit-actions">
+                            <button type="button" id="axonos_pay_axgt_min_btn" class="axonos-connect-wallet-btn axonos-pay-min-btn">Min</button>
+                            <button type="button" id="axonos_pay_axgt_btn" class="axonos-connect-wallet-btn axonos-pay-send-btn">Send AXGT</button>
+                        </div>
                     </div>
-                    <div style="display:flex;flex-wrap:wrap;gap:0.4rem;align-items:center;">
-                        <span style="min-width:2.5rem;font-size:0.85em;opacity:0.9;">ETH</span>
-                        <input type="text" id="axonos_pay_eth_amount" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="ETH amount" style="flex:1;min-width:6rem;max-width:10rem;padding:0.4rem 0.5rem;border-radius:6px;border:1px solid rgba(255,255,255,0.25);background:rgba(0,0,0,0.3);color:inherit;font-size:0.88rem;" />
-                        <button type="button" id="axonos_pay_eth_min_btn" class="axonos-connect-wallet-btn" style="margin:0;padding:0.35rem 0.55rem;font-size:0.8rem;opacity:0.9;">Min</button>
-                        <button type="button" id="axonos_pay_eth_btn" class="axonos-connect-wallet-btn" style="margin:0;opacity:0.95;">Send ETH</button>
+                    <div class="axonos-pay-deposit-row">
+                        <span class="axonos-pay-row-label">ETH</span>
+                        <input type="text" id="axonos_pay_eth_amount" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="ETH amount" class="axonos-pay-amount-input" />
+                        <div class="axonos-pay-deposit-actions">
+                            <button type="button" id="axonos_pay_eth_min_btn" class="axonos-connect-wallet-btn axonos-pay-min-btn">Min</button>
+                            <button type="button" id="axonos_pay_eth_btn" class="axonos-connect-wallet-btn axonos-pay-send-btn">Send ETH</button>
+                        </div>
                     </div>
                 </div>
                 <p class="axonos-wallet-state__help" style="margin:0.35rem 0;font-size:0.82em;opacity:0.75;">Manual: paste tx hash after sending from another wallet or DEX.</p>
@@ -970,8 +974,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 }
                 var prereqMin = document.getElementById('axonos_prereq_min_axgt');
                 var prereqMinEth = document.getElementById('axonos_prereq_min_eth');
-                var insufficientMin = document.getElementById('axonos_insufficient_min');
-                var insufficientMinEth = document.getElementById('axonos_insufficient_min_eth');
+                var insufficientCreditTitle = document.getElementById('axonos_insufficient_credit_title');
                 if (prereqMin) prereqMin.textContent = minDeposit;
                 if (prereqMinEth) prereqMinEth.textContent = minEth;
                 var prereqAxgtMin = document.getElementById('axonos_prereq_axgt_min_label');
@@ -987,8 +990,9 @@ document.addEventListener("DOMContentLoaded", function() {
                 if (insRates) {
                     insRates.textContent = 'Same rates: 100 AXGT → ' + cp100 + ' min; min ' + minDeposit + ' AXGT → ~' + formatCreditMinutes(maMin) + '; min ' + minEth + ' ETH → ~' + formatCreditMinutes(meMin) + '.';
                 }
-                if (insufficientMin) insufficientMin.textContent = minDeposit;
-                if (insufficientMinEth) insufficientMinEth.textContent = minEth;
+                if (insufficientCreditTitle) {
+                    insufficientCreditTitle.textContent = 'You need prepaid credit: min. ' + minDeposit + ' AXGT or ' + minEth + ' ETH per top-up';
+                }
                 var payAxgtIn = document.getElementById('axonos_pay_axgt_amount');
                 var payEthIn = document.getElementById('axonos_pay_eth_amount');
                 if (payAxgtIn) {

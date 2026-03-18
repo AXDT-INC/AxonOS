@@ -646,6 +646,14 @@ input[type="password"]::placeholder {
   flex-wrap: wrap;
 }
 
+/* Lock label color: generic `button` rules elsewhere in the page (e.g. noVNC/base CSS) can
+   override our gradient buttons; !important keeps copy readable on the purple background. */
+.axonos-connect-wallet-btn,
+.axonos-connect-wallet-btn:visited {
+  color: #f8fafc !important;
+  -webkit-text-fill-color: #f8fafc !important;
+}
+
 .axonos-connect-wallet-btn {
   display: inline-flex;
   align-items: center;
@@ -655,7 +663,6 @@ input[type="password"]::placeholder {
   font-size: 1rem !important;
   font-weight: 600 !important;
   white-space: nowrap;
-  color: var(--axonos-light) !important;
   background: linear-gradient(135deg, #6366f1 0%, #4f46e5 50%, #4338ca 100%) !important;
   border: 2px solid rgba(255, 255, 255, 0.2) !important;
   border-radius: 10px !important;
@@ -899,6 +906,60 @@ input[type="password"]#noVNC_password_input {
 }
 .axonos-wallet-state__back {
   margin: 14px 0 0 0;
+}
+
+/* Prepaid deposit rows: label + amount + [Min | Send] stays aligned; Gradio-safe text color */
+.axonos-pay-deposit-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.45rem;
+  width: 100%;
+}
+.axonos-pay-deposit-row:last-child {
+  margin-bottom: 0;
+}
+.axonos-pay-row-label {
+  flex: 0 0 2.75rem;
+  font-size: 0.85em;
+  font-weight: 600;
+  color: #f5f5f5 !important;
+  -webkit-text-fill-color: #f5f5f5 !important;
+  text-align: left;
+}
+.axonos-pay-amount-input {
+  flex: 1 1 5.5rem;
+  min-width: 4.5rem;
+  max-width: 9.5rem;
+  box-sizing: border-box;
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.35);
+  color: #f5f5f5 !important;
+  -webkit-text-fill-color: #f5f5f5 !important;
+  font-size: 0.88rem;
+}
+.axonos-pay-deposit-actions {
+  display: inline-flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 0.4rem;
+  align-items: center;
+  flex-shrink: 0;
+}
+.axonos-pay-min-btn {
+  margin: 0 !important;
+  padding: 0.35rem 0.55rem !important;
+  font-size: 0.8rem !important;
+  opacity: 0.95;
+}
+.axonos-pay-send-btn {
+  margin: 0 !important;
+  padding: 0.4rem 0.7rem !important;
+  font-size: 0.8rem !important;
+  opacity: 0.98;
 }
 .axonos-wallet-picker-back {
   background: none;
