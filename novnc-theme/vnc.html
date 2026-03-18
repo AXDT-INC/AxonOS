@@ -1314,6 +1314,23 @@ document.addEventListener("DOMContentLoaded", function() {
         var msgEl = document.getElementById('axonos_verify_deposit_msg');
         var attempts = 0;
         var maxAttempts = 180;
+        function checkWalletStatusFallback() {
+            // If replay-protection says "already credited", confirm via wallet-status and proceed.
+            var ws = new URL('/api/auth/wallet-status', window.location.origin);
+            ws.searchParams.set('wallet_address', wallet);
+            return fetch(ws.toString(), {
+                method: 'GET',
+                headers: { 'X-Wallet-Address': wallet, 'X-AXGT-Auth-Token': window.verifiedWalletAuthToken || '' },
+                credentials: 'include'
+            }).then(axonosReadFetchJson).then(function (res) {
+                var d = res.data || {};
+                if (typeof d.remaining_minutes === 'number' && d.remaining_minutes > 0) {
+                    axonosDepositVerifiedSuccess({ verified: true, credited_minutes: null, remaining_minutes: d.remaining_minutes }, wallet);
+                    return true;
+                }
+                return false;
+            }).catch(function () { return false; });
+        }
         function tick() {
             attempts += 1;
             axonosVerifyDepositFetch(txHash).then(function (res) {
@@ -1324,6 +1341,14 @@ document.addEventListener("DOMContentLoaded", function() {
                     return;
                 }
                 var err = String(d.error || d.message || '');
+                if (/already credited|duplicate tx_hash|already.*credited/i.test(err)) {
+                    checkWalletStatusFallback().then(function (ok) {
+                        if (ok) return;
+                        setPayDepositButtonsBusy(false);
+                        if (msgEl) msgEl.textContent = err || ('Could not verify (HTTP ' + res.status + ').');
+                    });
+                    return;
+                }
                 if (/not found yet|pending|Insufficient confirmations/i.test(err)) {
                     if (msgEl) msgEl.textContent = err + (attempts < maxAttempts ? ' — checking again in ~12s…' : '');
                     if (attempts >= maxAttempts) {
@@ -1488,6 +1513,10 @@ document.addEventListener("DOMContentLoaded", function() {
             var d = res.data || {};
             if (d.verified) {
                 axonosDepositVerifiedSuccess(d, wallet);
+            } else if (/already credited|duplicate tx_hash|already.*credited/i.test(String(d.error || ''))) {
+                if (msgEl) msgEl.textContent = 'Already credited — syncing balance…';
+                setPayDepositButtonsBusy(true);
+                axonosPollVerifyDeposit(tx);
             } else if (/not found yet|pending|Insufficient confirmations/i.test(String(d.error || ''))) {
                 if (msgEl) msgEl.textContent = String(d.error || '') + ' — auto-retrying…';
                 setPayDepositButtonsBusy(true);
