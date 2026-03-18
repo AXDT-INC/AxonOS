@@ -645,6 +645,26 @@ def _extract_wallet_and_token_from_environ(environ):
     return wallet, token
 
 
+def _extract_auth_cookie_from_environ(environ) -> str | None:
+    """Best-effort parse auth token from Cookie header for WebSocket upgrades."""
+    cookie_header = environ.get("HTTP_COOKIE") or ""
+    if not cookie_header:
+        return None
+    cookie_name = (os.getenv("AXGT_AUTH_COOKIE_NAME", "axgt_auth_token") or "").strip()
+    if not cookie_name:
+        cookie_name = "axgt_auth_token"
+    # Minimal cookie parser: "a=b; c=d" → tokens
+    parts = [p.strip() for p in cookie_header.split(";") if p.strip()]
+    for p in parts:
+        if "=" not in p:
+            continue
+        k, v = p.split("=", 1)
+        if k.strip() == cookie_name:
+            val = v.strip()
+            return val or None
+    return None
+
+
 def _handle_websockify_proxy(environ, start_response):
     """Handle /websockify WebSocket: validate wallet+token, proxy to websockify_gate on 6080."""
     ws = environ.get('wsgi.websocket')
@@ -653,6 +673,9 @@ def _handle_websockify_proxy(environ, start_response):
         return [b'WebSocket expected']
 
     wallet, auth_token = _extract_wallet_and_token_from_environ(environ)
+    if not auth_token:
+        # Prefer HttpOnly cookie when present (default production mode).
+        auth_token = _extract_auth_cookie_from_environ(environ)
     if not wallet or not validate_wallet_address(wallet):
         try:
             ws.close(code=403, reason='Invalid or missing wallet')
@@ -660,14 +683,15 @@ def _handle_websockify_proxy(environ, start_response):
             pass
         return []
 
-    if not auth_token or not _is_gate_auth_token_valid(auth_token, wallet):
+    wallet_norm = wallet.strip().lower()
+    if not auth_token or not _is_gate_auth_token_valid(auth_token, wallet_norm):
         try:
             ws.close(code=403, reason='Invalid or expired auth token')
         except Exception:
             pass
         return []
 
-    status = get_wallet_access_status(wallet, consume_usage=False)
+    status = get_wallet_access_status(wallet_norm, consume_usage=False)
     if not status.get('verified'):
         try:
             ws.close(code=403, reason=status.get('reason') or 'Access denied')
@@ -675,7 +699,7 @@ def _handle_websockify_proxy(environ, start_response):
             pass
         return []
 
-    if _session_mgr_available and not is_session_owner(wallet):
+    if _session_mgr_available and not is_session_owner(wallet_norm):
         try:
             ws.close(code=403, reason='Session not owned by this wallet')
         except Exception:
@@ -683,7 +707,7 @@ def _handle_websockify_proxy(environ, start_response):
         return []
 
     websockify_port = int(os.getenv('WEBSOCKIFY_PORT', '6080'))
-    backend_url = f'ws://127.0.0.1:{websockify_port}/websockify?wallet={wallet}'
+    backend_url = f'ws://127.0.0.1:{websockify_port}/websockify?wallet={wallet_norm}'
 
     try:
         import gevent
