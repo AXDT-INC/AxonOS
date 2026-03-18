@@ -44,8 +44,9 @@ _postgres_init_done = False
 DEFAULT_MIN_DEPOSIT = 100
 DEFAULT_CREDIT_PER_100_AXGT_MINUTES = 60
 DEFAULT_WARNING_THRESHOLD_MINUTES = 10
-DEFAULT_ETH_MIN_DEPOSIT = "0.01"
-DEFAULT_ETH_CREDIT_PER_ETH_MINUTES = 60
+# ~100 AXGT ≈ 0.0005 ETH at typical DEX rates → same 60 min for min top-up on either rail
+DEFAULT_ETH_MIN_DEPOSIT = "0.0005"
+DEFAULT_ETH_CREDIT_PER_ETH_MINUTES = 120000.0  # 1 ETH → 120k min; 0.0005 ETH → 60 min
 
 
 def mask_wallet_address(address: str) -> str:
@@ -491,6 +492,30 @@ def _get_axgt_balance_display(wallet_address: str) -> Optional[str]:
         return None
 
 
+def _min_axgt_deposit_credit_minutes() -> float:
+    """Minutes credited for a deposit of exactly AXGT_MIN_DEPOSIT (linear per 100 AXGT)."""
+    try:
+        min_axgt = Decimal(_get_min_deposit_display())
+        if min_axgt <= 0:
+            min_axgt = Decimal(DEFAULT_MIN_DEPOSIT)
+    except (InvalidOperation, ValueError, TypeError):
+        min_axgt = Decimal(DEFAULT_MIN_DEPOSIT)
+    per_100 = Decimal(str(_get_credit_per_100_axgt_minutes()))
+    return float(min_axgt / Decimal("100") * per_100)
+
+
+def _min_eth_deposit_credit_minutes() -> float:
+    """Minutes credited for a deposit of exactly ETH_MIN_DEPOSIT."""
+    try:
+        eth = Decimal(_get_eth_min_deposit_display())
+        if eth <= 0:
+            eth = Decimal(str(DEFAULT_ETH_MIN_DEPOSIT))
+    except (InvalidOperation, ValueError, TypeError):
+        eth = Decimal(str(DEFAULT_ETH_MIN_DEPOSIT))
+    rate = Decimal(str(_get_eth_credit_per_eth_minutes()))
+    return float(eth * rate)
+
+
 def get_credit_policy() -> Dict[str, Any]:
     """Deposit-credit policy: min deposit (AXGT/ETH), credit rates, warning threshold."""
     return {
@@ -499,6 +524,8 @@ def get_credit_policy() -> Dict[str, Any]:
         "eth_min_deposit": _get_eth_min_deposit_display(),
         "eth_credit_per_eth_minutes": _get_eth_credit_per_eth_minutes(),
         "warning_threshold_minutes": _get_warning_threshold_minutes(),
+        "min_axgt_deposit_minutes": round(_min_axgt_deposit_credit_minutes(), 4),
+        "min_eth_deposit_minutes": round(_min_eth_deposit_credit_minutes(), 4),
     }
 
 

@@ -15,7 +15,7 @@
   - [x] Desktop reset script between session transitions (Feature 2 Option A)
 - [x] Phase 2: Frontend Connect Wallet + strict sign-to-verify + status polling/overlay
 - [x] Phase 3: Deployment helpers — parallel compose (16080/18889, deposit-preview image/volume)
-- [ ] Phase 3b: Docs touch-up if needed
+- [x] Phase 3b: Docs + UX — ETH/AXGT parity defaults (0.0005 ETH ≈ 100 AXGT min tier); `/api/config` + vnc copy for credit rates
 - [x] Wallet UI: revenue address from `/api/config`, tx-hash → verify-deposit; auth token after sign even with 0 prepaid
 - [x] Fix `verify-wallet` 500: `get_wallet_access_status` must `import deposit_ledger` when gate runs with flat `/axonos_gate` on `sys.path` (not `axonos_gate` package)
 - [x] Wallet pay (AXGT/ETH) + auto poll verify-deposit (Option C)

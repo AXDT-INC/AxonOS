@@ -39,8 +39,8 @@ This module implements **prepaid deposit-credit billing** for AxonOS remote desk
 - `AXGT_DEPOSIT_MIN_CONFIRMATIONS`: Minimum block confirmations before crediting (default `6`).
 - `AXGT_MIN_DEPOSIT`: Minimum AXGT amount per deposit to accept (default `100`).
 - `AXGT_CREDIT_PER_100_AXGT_MINUTES`: Usage minutes granted per 100 AXGT deposited (default `60`).
-- `ETH_MIN_DEPOSIT`: Minimum native ETH amount per deposit, in ETH (default `0.01`).
-- `ETH_CREDIT_PER_ETH_MINUTES`: Usage minutes granted per 1 ETH deposited (default `60`).
+- `ETH_MIN_DEPOSIT`: Minimum native ETH per deposit (default `0.0005`, ~parity with min AXGT tier at typical rates).
+- `ETH_CREDIT_PER_ETH_MINUTES`: Minutes per 1 ETH (default `120000` → min ETH deposit ≈ same minutes as min AXGT).
 - `AXGT_WARNING_THRESHOLD_MINUTES`: Warning threshold for UI (e.g. low balance).
 
 ### Optional

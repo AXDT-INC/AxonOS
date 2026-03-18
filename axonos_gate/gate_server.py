@@ -381,6 +381,8 @@ def api_config():
         'eth_min_deposit': policy.get("eth_min_deposit"),
         'eth_credit_per_eth_minutes': policy.get("eth_credit_per_eth_minutes"),
         'axgt_warning_threshold_minutes': policy.get("warning_threshold_minutes"),
+        'min_axgt_deposit_minutes': policy.get("min_axgt_deposit_minutes"),
+        'min_eth_deposit_minutes': policy.get("min_eth_deposit_minutes"),
     })
 
 

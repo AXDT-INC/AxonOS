@@ -26,17 +26,18 @@ Access is strictly conditional on having **remaining_minutes > 0** from at least
 ### Minimum deposit per credit event
 
 - **AXGT**: Each deposit must be at least **100 AXGT** (configurable via `AXGT_MIN_DEPOSIT`) to the revenue wallet. The backend verifies ERC-20 `Transfer` events to the revenue wallet and credits minutes.
-- **ETH**: Each **native ETH** transfer to the revenue wallet of at least **0.01 ETH** (configurable via `ETH_MIN_DEPOSIT`) is also accepted; the backend verifies `tx.to` and `tx.value` and credits minutes at a configurable rate.
+- **ETH**: Each **native ETH** transfer to the revenue wallet of at least **0.0005 ETH** by default (`ETH_MIN_DEPOSIT`), tuned so the minimum ETH top-up credits roughly the same minutes as the minimum AXGT top-up at typical DEX rates; configurable.
 
 ### Credit rates
 
 - **AXGT**: Every **100 AXGT** deposited grants **60 minutes** of usage (default; configurable via `AXGT_CREDIT_PER_100_AXGT_MINUTES`).
-- **ETH**: Every **1 ETH** deposited grants **60 minutes** of usage (default; configurable via `ETH_CREDIT_PER_ETH_MINUTES`).
+- **ETH**: Minutes scale linearly with wei sent. Default **120,000 minutes per 1 ETH** (`ETH_CREDIT_PER_ETH_MINUTES`), so **0.0005 ETH** (min deposit) → **60 minutes** — parity with **100 AXGT** at ~200k AXGT/ETH.
 
 Examples:
 
 - 100 AXGT deposit → 60 minutes credited.
-- 0.02 ETH deposit → 1.2 minutes credited (at 60 min/ETH).
+- 0.0005 ETH deposit → 60 minutes credited (defaults).
+- 1 ETH deposit → 120,000 minutes credited (defaults).
 - Credits are **additive**: multiple deposits increase total credited minutes; unused minutes persist until consumed.
 
 ### Usage metering (heartbeat-based)
@@ -90,8 +91,8 @@ Examples:
 |--------|---------|--------------|
 | Min AXGT per deposit | 100 AXGT | `AXGT_MIN_DEPOSIT` |
 | Minutes per 100 AXGT deposited | 60 | `AXGT_CREDIT_PER_100_AXGT_MINUTES` |
-| Min ETH per deposit | 0.01 ETH | `ETH_MIN_DEPOSIT` |
-| Minutes per 1 ETH deposited | 60 | `ETH_CREDIT_PER_ETH_MINUTES` |
+| Min ETH per deposit | 0.0005 ETH | `ETH_MIN_DEPOSIT` |
+| Minutes per 1 ETH deposited | 120000 | `ETH_CREDIT_PER_ETH_MINUTES` |
 | Warning threshold | 10 minutes | `AXGT_WARNING_THRESHOLD_MINUTES` |
 | Min block confirmations before credit | 6 | `AXGT_DEPOSIT_MIN_CONFIRMATIONS` |
 | Revenue wallet | — | `AXGT_REVENUE_WALLET` (required for deposit verification) |
