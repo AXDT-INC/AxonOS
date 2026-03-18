@@ -391,11 +391,21 @@ Copyright (C) 2019 The noVNC Authors
                 <p class="axonos-wallet-state__title">You need prepaid credit: min. <span id="axonos_insufficient_min">100</span> AXGT or <span id="axonos_insufficient_min_eth">0.0005</span> ETH per top-up</p>
                 <p class="axonos-wallet-state__help" id="axonos_insufficient_credit_rates" style="margin-top:0.35rem;font-size:0.88em;opacity:0.92;">—</p>
                 <p id="axonos_wallet_insufficient_balance" class="axonos-wallet-state__balance">Wallet AXGT balance (info only): —</p>
-                <p class="axonos-wallet-state__help" style="margin-top:0.75rem;font-size:0.9em;opacity:0.9;">Pay with your wallet (one approval) — we verify automatically. Or send manually and paste the tx hash below.</p>
-                <p style="margin:0.6rem 0;display:flex;flex-wrap:wrap;gap:0.5rem;justify-content:center;">
-                    <button type="button" id="axonos_pay_axgt_btn" class="axonos-connect-wallet-btn" style="margin:0;">Send min AXGT (wallet)</button>
-                    <button type="button" id="axonos_pay_eth_btn" class="axonos-connect-wallet-btn" style="margin:0;opacity:0.95;">Send min ETH (wallet)</button>
-                </p>
+                <p class="axonos-wallet-state__help" style="margin-top:0.75rem;font-size:0.9em;opacity:0.9;">Pay from wallet (amount ≥ minimum below; larger adds more time). Or send elsewhere and paste the tx hash.</p>
+                <div style="margin:0.5rem 0;width:100%;max-width:28rem;margin-left:auto;margin-right:auto;">
+                    <div style="display:flex;flex-wrap:wrap;gap:0.4rem;align-items:center;margin-bottom:0.45rem;">
+                        <span style="min-width:2.5rem;font-size:0.85em;opacity:0.9;">AXGT</span>
+                        <input type="text" id="axonos_pay_axgt_amount" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="AXGT amount" style="flex:1;min-width:6rem;max-width:10rem;padding:0.4rem 0.5rem;border-radius:6px;border:1px solid rgba(255,255,255,0.25);background:rgba(0,0,0,0.3);color:inherit;font-size:0.88rem;" />
+                        <button type="button" id="axonos_pay_axgt_min_btn" class="axonos-connect-wallet-btn" style="margin:0;padding:0.35rem 0.55rem;font-size:0.8rem;opacity:0.9;">Min</button>
+                        <button type="button" id="axonos_pay_axgt_btn" class="axonos-connect-wallet-btn" style="margin:0;">Send AXGT</button>
+                    </div>
+                    <div style="display:flex;flex-wrap:wrap;gap:0.4rem;align-items:center;">
+                        <span style="min-width:2.5rem;font-size:0.85em;opacity:0.9;">ETH</span>
+                        <input type="text" id="axonos_pay_eth_amount" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="ETH amount" style="flex:1;min-width:6rem;max-width:10rem;padding:0.4rem 0.5rem;border-radius:6px;border:1px solid rgba(255,255,255,0.25);background:rgba(0,0,0,0.3);color:inherit;font-size:0.88rem;" />
+                        <button type="button" id="axonos_pay_eth_min_btn" class="axonos-connect-wallet-btn" style="margin:0;padding:0.35rem 0.55rem;font-size:0.8rem;opacity:0.9;">Min</button>
+                        <button type="button" id="axonos_pay_eth_btn" class="axonos-connect-wallet-btn" style="margin:0;opacity:0.95;">Send ETH</button>
+                    </div>
+                </div>
                 <p class="axonos-wallet-state__help" style="margin:0.35rem 0;font-size:0.82em;opacity:0.75;">Manual: paste tx hash after sending from another wallet or DEX.</p>
                 <p style="margin:0.5rem 0;display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;justify-content:center;">
                     <input type="text" id="axonos_tx_hash_input" placeholder="0x… transaction hash" autocomplete="off" spellcheck="false" style="flex:1;min-width:12rem;max-width:22rem;padding:0.45rem 0.6rem;border-radius:6px;border:1px solid rgba(255,255,255,0.25);background:rgba(0,0,0,0.3);color:inherit;font-family:monospace;font-size:0.85rem;" />
@@ -971,7 +981,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 var dlgHints = document.getElementById('axonos-dlg-credit-hints');
                 if (dlgHints) {
                     var ethPer1 = (cpe >= 1e6) ? String(Math.round(cpe)) : String(Math.round(cpe * 1e6) / 1e6);
-                    dlgHints.innerHTML = '<strong>100 AXGT</strong> → <strong>' + cp100 + '</strong> min · <strong>1 ETH</strong> → <strong>' + ethPer1 + '</strong> min · Min. top-up: <strong>' + minDeposit + '</strong> AXGT (~' + formatCreditMinutes(maMin) + ') or <strong>' + minEth + '</strong> ETH (~' + formatCreditMinutes(meMin) + '). Larger sends credit proportionally. No amount to type — use <em>Send min</em> or paste your tx hash.';
+                    dlgHints.innerHTML = '<strong>100 AXGT</strong> → <strong>' + cp100 + '</strong> min · <strong>1 ETH</strong> → <strong>' + ethPer1 + '</strong> min · Min. top-up: <strong>' + minDeposit + '</strong> AXGT (~' + formatCreditMinutes(maMin) + ') or <strong>' + minEth + '</strong> ETH (~' + formatCreditMinutes(meMin) + '). Enter any amount ≥ min or paste your tx hash.';
                 }
                 var insRates = document.getElementById('axonos_insufficient_credit_rates');
                 if (insRates) {
@@ -979,6 +989,16 @@ document.addEventListener("DOMContentLoaded", function() {
                 }
                 if (insufficientMin) insufficientMin.textContent = minDeposit;
                 if (insufficientMinEth) insufficientMinEth.textContent = minEth;
+                var payAxgtIn = document.getElementById('axonos_pay_axgt_amount');
+                var payEthIn = document.getElementById('axonos_pay_eth_amount');
+                if (payAxgtIn) {
+                    payAxgtIn.placeholder = 'min ' + minDeposit;
+                    if (!payAxgtIn.dataset.axonosUserAmount) payAxgtIn.value = minDeposit;
+                }
+                if (payEthIn) {
+                    payEthIn.placeholder = 'min ' + minEth;
+                    if (!payEthIn.dataset.axonosUserAmount) payEthIn.value = minEth;
+                }
                 function etherscanBase(chainId) {
                     if (chainId === '1') return 'https://etherscan.io';
                     if (chainId === '11155111') return 'https://sepolia.etherscan.io';
@@ -1201,14 +1221,52 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 
     function setPayDepositButtonsBusy(busy) {
-        var a = document.getElementById('axonos_pay_axgt_btn');
-        var b = document.getElementById('axonos_pay_eth_btn');
-        [a, b].forEach(function (btn) {
+        var ids = ['axonos_pay_axgt_btn', 'axonos_pay_eth_btn', 'axonos_pay_axgt_min_btn', 'axonos_pay_eth_min_btn'];
+        ids.forEach(function (id) {
+            var btn = document.getElementById(id);
             if (btn) {
                 btn.disabled = !!busy;
                 btn.style.opacity = busy ? '0.55' : '';
             }
         });
+        ['axonos_pay_axgt_amount', 'axonos_pay_eth_amount'].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.disabled = !!busy;
+        });
+    }
+
+    /** AXGT human amount → base units (BigInt). Invalid → null. */
+    function axonosHumanToTokenUnits(human, decimals) {
+        var dec = Math.min(255, Math.max(0, parseInt(decimals, 10) || 18));
+        var s = String(human).trim().replace(/[^\d.]/g, '');
+        if (!s || s === '.') return null;
+        var parts = s.split('.');
+        var intPart = (parts[0] || '0').replace(/^0+(?=\d)/, '');
+        if (!intPart) intPart = '0';
+        var fracRaw = (parts[1] || '').replace(/\D/g, '');
+        var frac = fracRaw.slice(0, dec);
+        while (frac.length < dec) frac += '0';
+        try {
+            var mult = BigInt(10) ** BigInt(dec);
+            return BigInt(intPart) * mult + BigInt(frac || '0');
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function axonosHumanEthToWei(human) {
+        var s = String(human).trim().replace(/[^\d.]/g, '');
+        if (!s || s === '.') return null;
+        var parts = s.split('.');
+        var w = (parts[0] || '0').replace(/^0+(?=\d)/, '');
+        if (!w) w = '0';
+        var frac = (parts[1] || '').slice(0, 18);
+        while (frac.length < 18) frac += '0';
+        try {
+            return BigInt(w) * BigInt(10) ** BigInt(18) + BigInt(frac || '0');
+        } catch (e) {
+            return null;
+        }
     }
 
     function axonosDepositVerifiedSuccess(d, wallet) {
@@ -1304,18 +1362,6 @@ document.addEventListener("DOMContentLoaded", function() {
         return '0xa9059cbb' + toPadded + amtHex.padStart(64, '0');
     }
 
-    function axonosEthMinToValueHex(ethHuman) {
-        var s = String(ethHuman).trim().replace(/[^\d.]/g, '');
-        var parts = s.split('.');
-        var w = (parts[0] || '0').replace(/^0+(?=\d)/, '');
-        if (!w) w = '0';
-        var frac = (parts[1] || '').slice(0, 18);
-        while (frac.length < 18) frac += '0';
-        var mult = BigInt(10) ** BigInt(18);
-        var total = BigInt(w) * mult + BigInt(frac || '0');
-        return '0x' + total.toString(16);
-    }
-
     function axonosPayAxgtFromWallet() {
         var eth = selectedEthereumProvider || window.ethereum;
         var wallet = verifiedWalletAddress;
@@ -1341,9 +1387,18 @@ document.addEventListener("DOMContentLoaded", function() {
             return;
         }
         var dec = axonosConfig.axgt_token_decimals || 18;
-        var data = axonosErc20TransferData(revenue, axonosConfig.axgt_min_deposit || '100', dec);
+        var minStr = String(axonosConfig.axgt_min_deposit || '100');
+        var amtEl = document.getElementById('axonos_pay_axgt_amount');
+        var rawAmt = (amtEl && String(amtEl.value || '').trim()) ? String(amtEl.value).trim() : minStr;
+        var minU = axonosHumanToTokenUnits(minStr, dec);
+        var amtU = axonosHumanToTokenUnits(rawAmt, dec);
+        if (minU == null || amtU == null || amtU < minU || amtU === BigInt(0)) {
+            if (msgEl) msgEl.textContent = 'Enter AXGT amount ≥ minimum (' + minStr + ').';
+            return;
+        }
+        var data = axonosErc20TransferData(revenue, rawAmt, dec);
         setPayDepositButtonsBusy(true);
-        if (msgEl) msgEl.textContent = 'Confirm sending AXGT in your wallet…';
+        if (msgEl) msgEl.textContent = 'Confirm sending ' + rawAmt + ' AXGT in your wallet…';
         eth.request({
             method: 'eth_sendTransaction',
             params: [{ from: wallet, to: contract, data: data }]
@@ -1379,9 +1434,20 @@ document.addEventListener("DOMContentLoaded", function() {
             if (msgEl) msgEl.textContent = 'Revenue wallet not configured (AXGT_REVENUE_WALLET).';
             return;
         }
-        var valueHex = axonosEthMinToValueHex(axonosConfig.eth_min_deposit || '0.0005');
+        var minEthStr = String(axonosConfig.eth_min_deposit || '0.0005');
+        var ethEl = document.getElementById('axonos_pay_eth_amount');
+        var rawEth = (ethEl && String(ethEl.value || '').trim()) ? String(ethEl.value).trim() : minEthStr;
+        var minW = axonosHumanEthToWei(minEthStr);
+        var amtW = axonosHumanEthToWei(rawEth);
+        if (minW == null || amtW == null || amtW < minW || amtW === BigInt(0)) {
+            if (msgEl) msgEl.textContent = 'Enter ETH amount ≥ minimum (' + minEthStr + ').';
+            return;
+        }
+        var h = amtW.toString(16);
+        if (h.length % 2) h = '0' + h;
+        var valueHex = '0x' + h;
         setPayDepositButtonsBusy(true);
-        if (msgEl) msgEl.textContent = 'Confirm sending ETH in your wallet…';
+        if (msgEl) msgEl.textContent = 'Confirm sending ' + rawEth + ' ETH in your wallet…';
         eth.request({
             method: 'eth_sendTransaction',
             params: [{ from: wallet, to: revenue, value: valueHex }]
@@ -1515,8 +1581,28 @@ document.addEventListener("DOMContentLoaded", function() {
     if (verifyDepBtn) verifyDepBtn.addEventListener('click', function () { runVerifyDeposit(); });
     var payAxgtBtn = document.getElementById('axonos_pay_axgt_btn');
     var payEthBtn = document.getElementById('axonos_pay_eth_btn');
+    var payAxgtMinBtn = document.getElementById('axonos_pay_axgt_min_btn');
+    var payEthMinBtn = document.getElementById('axonos_pay_eth_min_btn');
     if (payAxgtBtn) payAxgtBtn.addEventListener('click', function () { axonosPayAxgtFromWallet(); });
     if (payEthBtn) payEthBtn.addEventListener('click', function () { axonosPayEthFromWallet(); });
+    if (payAxgtMinBtn) payAxgtMinBtn.addEventListener('click', function () {
+        var el = document.getElementById('axonos_pay_axgt_amount');
+        if (el) {
+            el.value = String(axonosConfig.axgt_min_deposit || '100');
+            delete el.dataset.axonosUserAmount;
+        }
+    });
+    if (payEthMinBtn) payEthMinBtn.addEventListener('click', function () {
+        var el = document.getElementById('axonos_pay_eth_amount');
+        if (el) {
+            el.value = String(axonosConfig.eth_min_deposit || '0.0005');
+            delete el.dataset.axonosUserAmount;
+        }
+    });
+    ['axonos_pay_axgt_amount', 'axonos_pay_eth_amount'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) el.addEventListener('input', function () { el.dataset.axonosUserAmount = '1'; });
+    });
 
     var joinQueueBtn = document.getElementById('axonos_queue_join_btn');
     var leaveQueueBtn = document.getElementById('axonos_queue_leave_btn');
