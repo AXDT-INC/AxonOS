@@ -365,10 +365,17 @@ def api_verify_deposit():
 @app.route('/api/config', methods=['GET'])
 def api_config():
     policy = get_credit_policy()
+    _dec_raw = (os.getenv("AXGT_TOKEN_DECIMALS") or "").strip()
+    try:
+        _td = int(_dec_raw) if _dec_raw else 18
+        axgt_token_decimals = max(0, min(255, _td))
+    except ValueError:
+        axgt_token_decimals = 18
     return jsonify({
         'axgt_contract_address': (os.getenv("AXGT_CONTRACT_ADDRESS") or "").strip() or None,
         'axgt_chain_id': (os.getenv("AXGT_CHAIN_ID") or "").strip() or None,
         'axgt_revenue_wallet': (os.getenv("AXGT_REVENUE_WALLET") or "").strip() or None,
+        'axgt_token_decimals': axgt_token_decimals,
         'axgt_min_deposit': policy.get("min_deposit"),
         'axgt_credit_per_100_axgt_minutes': policy.get("credit_per_100_axgt_minutes"),
         'eth_min_deposit': policy.get("eth_min_deposit"),

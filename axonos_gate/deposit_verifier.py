@@ -235,7 +235,10 @@ def verify_deposit(
     try:
         from . import deposit_ledger
     except ImportError:
-        from axonos_gate import deposit_ledger
+        try:
+            from axonos_gate import deposit_ledger
+        except ImportError:
+            import deposit_ledger
     if deposit_ledger.tx_hash_already_credited(tx):
         deposit_ledger.record_verification_reject(wallet, notes="Duplicate tx_hash")
         return fail("Transaction already credited")
@@ -243,14 +246,13 @@ def verify_deposit(
     # Fetch transaction
     tx_obj = _rpc(rpc_url, "eth_getTransactionByHash", [tx])
     if not tx_obj:
-        deposit_ledger.record_verification_reject(wallet, notes="Tx not found or RPC error")
-        return fail("Transaction not found or RPC error")
+        # No ledger row: client may poll immediately after broadcast (tx not indexed yet).
+        return fail("Transaction not found yet — wait a few seconds if you just submitted.")
 
-    # Fetch receipt
+    # Fetch receipt (None while pending)
     receipt = _rpc(rpc_url, "eth_getTransactionReceipt", [tx])
     if not receipt:
-        deposit_ledger.record_verification_reject(wallet, notes="Receipt not found")
-        return fail("Transaction receipt not found")
+        return fail("Transaction pending — waiting for inclusion in a block.")
 
     status = receipt.get("status")
     if status is None:
@@ -286,10 +288,7 @@ def verify_deposit(
     confirmations = latest - block_number + 1
     min_conf = _min_confirmations()
     if confirmations < min_conf:
-        deposit_ledger.record_verification_reject(
-            wallet,
-            notes=f"Insufficient confirmations (have {confirmations}, need {min_conf})",
-        )
+        # No ledger row: UI polls until min confirmations (avoids audit spam).
         return fail(f"Insufficient confirmations (have {confirmations}, need {min_conf})")
 
     to_addr = (tx_obj.get("to") or "").strip().lower()

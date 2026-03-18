@@ -18,8 +18,8 @@ This module implements **prepaid deposit-credit billing** for AxonOS remote desk
 ## User flow
 
 1. Connect wallet and sign the challenge (existing flow).
-2. Deposit AXGT or ETH to the configured **revenue wallet** (any wallet or DEX).
-3. Submit the transaction hash via `POST /api/auth/verify-deposit` (requires auth token).
+2. **Pay in-page** (recommended): use **Send min AXGT (wallet)** or **Send min ETH (wallet)** — the UI submits the tx and auto-calls verify-deposit until credited. Or deposit manually and paste the tx hash.
+3. Submit the transaction hash via `POST /api/auth/verify-deposit` (requires auth token) if not using in-wallet pay.
 4. Backend verifies the tx and credits minutes; response includes `remaining_minutes`.
 5. Claim a session; during the session the client sends heartbeats; each heartbeat bills elapsed time since last billing checkpoint.
 6. When remaining minutes reach zero, the session is terminated and access is denied until the user deposits again.
