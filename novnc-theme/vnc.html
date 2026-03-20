@@ -1719,6 +1719,9 @@ document.addEventListener("DOMContentLoaded", function() {
         leaveQueueBtn.addEventListener('click', function () {
             leaveQueue().then(function () {
                 hideQueueOverlay();
+                if (typeof UI !== 'undefined' && typeof UI.axonosResetDesktopGateForRetry === 'function') {
+                    UI.axonosResetDesktopGateForRetry();
+                }
             });
         });
     }

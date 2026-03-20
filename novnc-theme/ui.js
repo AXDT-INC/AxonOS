@@ -1009,10 +1009,54 @@ const UI = {
             .classList.remove("noVNC_open");
     },
 
+    /**
+     * Clear error banner, pending reconnect timer, and reconnect inhibition so the next
+     * "Launch GPU-Native Desktop" can proceed. Mirrors the intent of the credit-exhaustion
+     * path (reset gate) but without clearing wallet auth — use after leaving the queue or
+     * when recovering from a failed WS (e.g. 1006) before retrying.
+     */
+    axonosResetDesktopGateForRetry() {
+        UI.hideStatus();
+        if (UI.reconnectCallback !== null) {
+            clearTimeout(UI.reconnectCallback);
+            UI.reconnectCallback = null;
+        }
+        UI.inhibitReconnect = false;
+    },
+
     connect(event, password) {
 
-        // Ignore when rfb already exists
-        if (typeof UI.rfb !== 'undefined') {
+        // When already connected, do nothing.
+        // When RFB exists but we never reached "connected" (failed WS / 1006, race after
+        // leaving queue), the old guard "if (UI.rfb) return" blocked all retries. Tear down
+        // the stale RFB and reconnect once disconnect completes.
+        if (typeof UI.rfb !== 'undefined' && UI.rfb) {
+            if (UI.connected) {
+                return;
+            }
+            Log.Info("AxonOS: stale RFB from failed/aborted connect; disconnecting then retrying");
+            const passwordArg = typeof password === 'undefined'
+                ? (UI.reconnectPassword ?? WebUtil.getConfigVar('password'))
+                : password;
+            const disconnectHandler = () => {
+                try {
+                    UI.rfb.removeEventListener('disconnect', disconnectHandler);
+                } catch (e) { /* ignore */ }
+                // Defer past disconnectFinished() so UI.rfb is cleared before we recurse.
+                setTimeout(() => UI.connect(event, passwordArg), 0);
+            };
+            UI.rfb.addEventListener('disconnect', disconnectHandler);
+            try {
+                UI.rfb.disconnect();
+            } catch (err) {
+                Log.Warn("AxonOS stale RFB disconnect: " + err);
+                try {
+                    UI.rfb.removeEventListener('disconnect', disconnectHandler);
+                } catch (e2) { /* ignore */ }
+                UI.rfb = undefined;
+                UI.connected = false;
+                setTimeout(() => UI.connect(event, passwordArg), 0);
+            }
             return;
         }
         
