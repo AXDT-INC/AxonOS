@@ -1022,41 +1022,116 @@ const UI = {
             UI.reconnectCallback = null;
         }
         UI.inhibitReconnect = false;
+        if (typeof UI.rfb !== 'undefined' && UI.rfb) {
+            try {
+                UI.rfb.disconnect();
+            } catch (e) { /* ignore */ }
+            UI.rfb = undefined;
+            UI.connected = false;
+        }
+        if (UI._axgtStatusPollId) {
+            clearInterval(UI._axgtStatusPollId);
+            UI._axgtStatusPollId = null;
+        }
+        const overlay = document.getElementById('axonos_usage_overlay');
+        if (!overlay || !overlay.classList.contains('axonos-usage-overlay--locked')) {
+            UI._axgtUpdateUsageOverlay('hidden');
+        }
+        UI.updateVisualState('disconnected');
+    },
+
+    /** POST /api/session/claim — required by AxonOS gate before WebSocket upgrade. */
+    _axonosFetchSessionClaim() {
+        const wallet = window.verifiedWalletAddress;
+        if (!wallet) {
+            return Promise.resolve({ granted: false, reason: 'No wallet' });
+        }
+        const url = new URL('/api/session/claim', window.location.origin).toString();
+        const headers = {
+            'Content-Type': 'application/json',
+            'X-Wallet-Address': wallet,
+        };
+        if (window.verifiedWalletAuthToken) {
+            headers['X-AXGT-Auth-Token'] = window.verifiedWalletAuthToken;
+        }
+        return fetch(url, {
+            method: 'POST',
+            credentials: 'include',
+            headers,
+            body: JSON.stringify({ wallet_address: wallet }),
+        }).then((r) => {
+            const ct = (r.headers.get('content-type') || '');
+            if (!ct.includes('application/json')) {
+                if (!r.ok) {
+                    throw new Error('HTTP ' + r.status);
+                }
+                return {};
+            }
+            return r.json();
+        });
+    },
+
+    _axonosCreateRfbConnection(password, includeQueryAuthToken) {
+        let url;
+        url = UI.getSetting('encrypt') ? 'wss' : 'ws';
+        url += '://' + UI.getSetting('host');
+        if (UI.getSetting('port')) {
+            url += ':' + UI.getSetting('port');
+        }
+        url += '/' + UI.getSetting('path');
+
+        const verifiedWallet = window.verifiedWalletAddress || null;
+        const verifiedAuthToken = window.verifiedWalletAuthToken || null;
+        if (verifiedWallet) {
+            const sep = url.includes('?') ? '&' : '?';
+            url += sep + 'wallet=' + encodeURIComponent(verifiedWallet);
+            if (includeQueryAuthToken && verifiedAuthToken) {
+                url += '&auth_token=' + encodeURIComponent(verifiedAuthToken);
+            }
+        }
+
+        UI.rfb = new RFB(document.getElementById('noVNC_container'), url,
+            { shared: UI.getSetting('shared'),
+                repeaterID: UI.getSetting('repeaterID'),
+                credentials: { password: password } });
+        UI.rfb.addEventListener("connect", UI.connectFinished);
+        UI.rfb.addEventListener("disconnect", UI.disconnectFinished);
+        UI.rfb.addEventListener("credentialsrequired", UI.credentials);
+        UI.rfb.addEventListener("securityfailure", UI.securityFailed);
+        UI.rfb.addEventListener("capabilities", UI.updatePowerButton);
+        UI.rfb.addEventListener("clipboard", UI.clipboardReceive);
+        UI.rfb.addEventListener("bell", UI.bell);
+        UI.rfb.addEventListener("desktopname", UI.updateDesktopName);
+        UI.rfb.clipViewport = UI.getSetting('view_clip');
+        UI.rfb.scaleViewport = UI.getSetting('resize') === 'scale';
+        UI.rfb.resizeSession = UI.getSetting('resize') === 'remote';
+        UI.rfb.qualityLevel = parseInt(UI.getSetting('quality'));
+        UI.rfb.compressionLevel = parseInt(UI.getSetting('compression'));
+        UI.rfb.showDotCursor = UI.getSetting('show_dot');
+
+        UI.updateViewOnly();
     },
 
     connect(event, password) {
 
-        // When already connected, do nothing.
-        // When RFB exists but we never reached "connected" (failed WS / 1006, race after
-        // leaving queue), the old guard "if (UI.rfb) return" blocked all retries. Tear down
-        // the stale RFB and reconnect once disconnect completes.
+        // Stale RFB from a failed WebSocket (1006): disconnect may not always fire before
+        // retry — hard-reset client state and recurse (short delay lets the stack unwind).
         if (typeof UI.rfb !== 'undefined' && UI.rfb) {
             if (UI.connected) {
                 return;
             }
-            Log.Info("AxonOS: stale RFB from failed/aborted connect; disconnecting then retrying");
+            Log.Info("AxonOS: hard reset stale RFB before connect");
             const passwordArg = typeof password === 'undefined'
                 ? (UI.reconnectPassword ?? WebUtil.getConfigVar('password'))
                 : password;
-            const disconnectHandler = () => {
-                try {
-                    UI.rfb.removeEventListener('disconnect', disconnectHandler);
-                } catch (e) { /* ignore */ }
-                // Defer past disconnectFinished() so UI.rfb is cleared before we recurse.
-                setTimeout(() => UI.connect(event, passwordArg), 0);
-            };
-            UI.rfb.addEventListener('disconnect', disconnectHandler);
             try {
                 UI.rfb.disconnect();
             } catch (err) {
                 Log.Warn("AxonOS stale RFB disconnect: " + err);
-                try {
-                    UI.rfb.removeEventListener('disconnect', disconnectHandler);
-                } catch (e2) { /* ignore */ }
-                UI.rfb = undefined;
-                UI.connected = false;
-                setTimeout(() => UI.connect(event, passwordArg), 0);
             }
+            UI.rfb = undefined;
+            UI.connected = false;
+            setTimeout(() => UI.connect(event, passwordArg), 50);
             return;
         }
         
@@ -1083,8 +1158,6 @@ const UI = {
         }
 
         const host = UI.getSetting('host');
-        const port = UI.getSetting('port');
-        const path = UI.getSetting('path');
 
         if (typeof password === 'undefined') {
             password = WebUtil.getConfigVar('password');
@@ -1103,52 +1176,28 @@ const UI = {
             return;
         }
 
-        UI.closeConnectPanel();
-
-        UI.updateVisualState('connecting');
-
-        let url;
-
-        url = UI.getSetting('encrypt') ? 'wss' : 'ws';
-
-        url += '://' + host;
-        if (port) {
-            url += ':' + port;
-        }
-        url += '/' + path;
-        
-        // Always include wallet in query string (browser WebSocket cannot set custom headers).
-        // Auth token is preferably sent as HttpOnly cookie; include as query only when requested.
-        const verifiedWallet = window.verifiedWalletAddress || null;
-        const verifiedAuthToken = window.verifiedWalletAuthToken || null;
-        if (verifiedWallet) {
-            const separator = url.includes('?') ? '&' : '?';
-            url += separator + 'wallet=' + encodeURIComponent(verifiedWallet);
-            if (includeQueryAuthToken && verifiedAuthToken) {
-                url += '&auth_token=' + encodeURIComponent(verifiedAuthToken);
+        // AxonOS gate rejects WebSocket upgrade unless this wallet owns the active session
+        // (see websockify_gate / gate_server). Launch previously skipped claim if the user
+        // left the queue and clicked connect — server returned 403 / abnormal close (1006).
+        UI._axonosFetchSessionClaim().then((claim) => {
+            const granted = claim && (claim.granted === true || claim.granted === 'true');
+            if (!granted) {
+                UI.updateVisualState('disconnected');
+                const reason = (claim && claim.reason) ? String(claim.reason) : _('Could not claim desktop session.');
+                UI.showStatus(reason, 'error');
+                if (typeof window.axonosOnSessionClaimDenied === 'function') {
+                    window.axonosOnSessionClaimDenied(claim || {});
+                }
+                return;
             }
-        }
-
-        UI.rfb = new RFB(document.getElementById('noVNC_container'), url,
-                         { shared: UI.getSetting('shared'),
-                           repeaterID: UI.getSetting('repeaterID'),
-                           credentials: { password: password } });
-        UI.rfb.addEventListener("connect", UI.connectFinished);
-        UI.rfb.addEventListener("disconnect", UI.disconnectFinished);
-        UI.rfb.addEventListener("credentialsrequired", UI.credentials);
-        UI.rfb.addEventListener("securityfailure", UI.securityFailed);
-        UI.rfb.addEventListener("capabilities", UI.updatePowerButton);
-        UI.rfb.addEventListener("clipboard", UI.clipboardReceive);
-        UI.rfb.addEventListener("bell", UI.bell);
-        UI.rfb.addEventListener("desktopname", UI.updateDesktopName);
-        UI.rfb.clipViewport = UI.getSetting('view_clip');
-        UI.rfb.scaleViewport = UI.getSetting('resize') === 'scale';
-        UI.rfb.resizeSession = UI.getSetting('resize') === 'remote';
-        UI.rfb.qualityLevel = parseInt(UI.getSetting('quality'));
-        UI.rfb.compressionLevel = parseInt(UI.getSetting('compression'));
-        UI.rfb.showDotCursor = UI.getSetting('show_dot');
-
-        UI.updateViewOnly(); // requires UI.rfb
+            UI.closeConnectPanel();
+            UI.updateVisualState('connecting');
+            UI._axonosCreateRfbConnection(password, includeQueryAuthToken);
+        }).catch((err) => {
+            Log.Error('AxonOS session claim failed: ' + err);
+            UI.updateVisualState('disconnected');
+            UI.showStatus(_('Could not claim desktop session. Check network.'), 'error');
+        });
     },
 
     disconnect() {

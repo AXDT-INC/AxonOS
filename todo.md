@@ -27,4 +27,5 @@
 - [x] Queue join: `deposit_ledger` import + unique index migration on `axgt_queue` (fixes ON CONFLICT / Internal error); user-facing reason + vnc copy without raw "Internal error"
 - [x] Queue overlay: unified styled Join / Leave buttons (gold border, dark gradient, hover/disabled) — `axonos-theme.css`
 - [x] Leave queue + Launch: clear stale `UI.rfb` / retry path (`ui.js` connect) + `axonosResetDesktopGateForRetry()` after leave — fixes 1006 / “Failed to connect” loop
+- [x] **Launch must `POST /api/session/claim` before WebSocket** — gate rejects WS if not session owner (was 1006 after leave queue + Launch); `axonosOnSessionClaimDenied` → queue overlay (`ui.js` + `vnc.html`)
 - [ ] Phase 4: End-to-end runtime test checklist

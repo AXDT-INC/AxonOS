@@ -861,6 +861,16 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     }
 
+    /** Called from ui.js when Launch runs connect while session is not claimed (e.g. after queue leave). */
+    window.axonosOnSessionClaimDenied = function (claim) {
+        showQueueOverlay({
+            reason: (claim && claim.reason) ? claim.reason : 'Desktop in use.',
+            queue_position: claim && claim.queue_position != null ? claim.queue_position : null,
+            queue_length: claim && claim.queue_length != null ? claim.queue_length : null
+        });
+        startQueuePolling();
+    };
+
     function tryConnectAfterClaim() {
         hideQueueOverlay();
         const credentialsDialog = document.getElementById('noVNC_credentials_dlg');
