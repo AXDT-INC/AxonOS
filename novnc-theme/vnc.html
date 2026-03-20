@@ -475,8 +475,8 @@ Copyright (C) 2019 The noVNC Authors
         <div class="axonos-queue-overlay__panel">
             <h2 class="axonos-queue-overlay__title">Desktop In Use</h2>
             <p id="axonos_queue_message" class="axonos-queue-overlay__message">Another researcher is currently using the desktop.</p>
-            <p class="axonos-queue-overlay__row">Your position in queue: <strong id="axonos_queue_position">—</strong></p>
-            <p class="axonos-queue-overlay__row">People waiting: <strong id="axonos_queue_length">—</strong></p>
+            <p class="axonos-queue-overlay__row">Your position: <strong id="axonos_queue_position">Not in queue yet</strong></p>
+            <p class="axonos-queue-overlay__row">People waiting in queue: <strong id="axonos_queue_length">—</strong></p>
             <div class="axonos-queue-overlay__actions">
                 <button type="button" id="axonos_queue_join_btn" class="noVNC_submit axonos-queue-overlay__btn">Join Queue</button>
                 <button type="button" id="axonos_queue_leave_btn" class="noVNC_submit axonos-queue-overlay__btn axonos-queue-overlay__btn--secondary" style="display:none">Leave Queue</button>
@@ -827,7 +827,11 @@ document.addEventListener("DOMContentLoaded", function() {
         overlay.classList.remove('axonos-queue-overlay--hidden');
         overlay.setAttribute('aria-hidden', 'false');
         if (msgEl) msgEl.textContent = (data && data.reason) ? data.reason : 'Another researcher is currently using the desktop.';
-        if (posEl) posEl.textContent = (data && data.queue_position != null) ? String(data.queue_position) : '—';
+        if (posEl) {
+            posEl.textContent = (data && data.queue_position != null && data.queue_position !== '')
+                ? String(data.queue_position)
+                : 'Not in queue yet';
+        }
         if (lenEl) lenEl.textContent = (data && data.queue_length != null) ? String(data.queue_length) : '—';
         if (joinBtn) joinBtn.style.display = (data && data.queue_position != null) ? 'none' : '';
         if (leaveBtn) leaveBtn.style.display = (data && data.queue_position != null) ? '' : 'none';
