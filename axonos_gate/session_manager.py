@@ -92,6 +92,18 @@ def _get_connection():
         return None
 
 
+def _import_deposit_ledger():
+    """Works when loaded as package, as axonos_gate.*, or flat on sys.path (websockify_gate)."""
+    try:
+        from . import deposit_ledger
+    except ImportError:
+        try:
+            from axonos_gate import deposit_ledger
+        except ImportError:
+            import deposit_ledger
+    return deposit_ledger
+
+
 def _ensure_tables(conn) -> None:
     with conn.cursor() as cur:
         cur.execute(f"""
@@ -128,6 +140,31 @@ def _ensure_tables(conn) -> None:
                 notified_at    DOUBLE PRECISION
             )
         """)
+        # Legacy DBs may have axgt_queue without UNIQUE(wallet_address); INSERT ... ON CONFLICT
+        # requires a unique index on that column.
+        cur.execute(
+            """
+            SELECT 1 FROM pg_indexes
+            WHERE schemaname = current_schema()
+              AND tablename = %s
+              AND indexdef LIKE '%%UNIQUE%%'
+              AND indexdef LIKE '%%wallet_address%%'
+            """,
+            (_QUEUE_TABLE,),
+        )
+        if cur.fetchone() is None:
+            try:
+                cur.execute(
+                    f"CREATE UNIQUE INDEX IF NOT EXISTS axgt_queue_wallet_address_uq "
+                    f"ON {_QUEUE_TABLE} (wallet_address)"
+                )
+            except Exception as exc:
+                logger.warning(
+                    "session_manager: could not add unique index on %s.wallet_address "
+                    "(queue join needs this; fix duplicates then re-run): %s",
+                    _QUEUE_TABLE,
+                    exc,
+                )
     conn.commit()
 
 
@@ -626,10 +663,7 @@ def join_queue(wallet_address: str) -> Dict[str, Any]:
         return {"joined": False, "reason": "Session DB unavailable"}
     try:
         # Require deposit credit before allowing queue join (deposit-credit access control).
-        try:
-            from . import deposit_ledger
-        except ImportError:
-            from axonos_gate import deposit_ledger
+        deposit_ledger = _import_deposit_ledger()
         if not deposit_ledger.init_once():
             return {"joined": False, "reason": "Billing unavailable. Cannot join queue without deposit ledger."}
         if deposit_ledger.get_remaining_minutes(wallet) <= 0:
@@ -659,8 +693,11 @@ def join_queue(wallet_address: str) -> Dict[str, Any]:
         return {"joined": True, "queue_position": pos, "queue_length": qlen}
     except Exception as exc:
         conn.rollback()
-        logger.warning("join_queue failed: %s", exc)
-        return {"joined": False, "reason": "Internal error"}
+        logger.warning("join_queue failed: %s", exc, exc_info=True)
+        return {
+            "joined": False,
+            "reason": "Could not join the queue. Please try again.",
+        }
     finally:
         conn.close()
 

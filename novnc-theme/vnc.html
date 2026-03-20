@@ -1683,17 +1683,22 @@ document.addEventListener("DOMContentLoaded", function() {
                     startQueuePolling();
                     return;
                 }
-                var errLine = r.reason || r.error || (r._ok === false && r._httpStatus ? ('Request failed (HTTP ' + r._httpStatus + ')') : '') || 'Could not join the queue.';
+                var rawErr = String(r.reason || r.error || (r._ok === false && r._httpStatus ? ('Request failed (HTTP ' + r._httpStatus + ')') : '') || '').trim();
                 var baseMsg = 'Desktop is in use by another researcher.';
+                // Avoid showing raw "Internal error" / generic server strings next to the desktop-in-use line.
+                var genericFail = !rawErr || /^internal error$/i.test(rawErr) || /^could not join the queue/i.test(rawErr);
+                var fullReason = genericFail
+                    ? baseMsg + '\n\n' + 'Could not update the queue. Please try again.'
+                    : baseMsg + '\n\n' + (rawErr || 'Could not join the queue.');
                 sessionStatus().then(function (st) {
                     showQueueOverlay({
-                        reason: baseMsg + '\n\n' + errLine,
+                        reason: fullReason,
                         queue_position: st.queue_position != null ? st.queue_position : r.queue_position,
                         queue_length: st.queue_length != null ? st.queue_length : r.queue_length
                     });
                 }).catch(function () {
                     showQueueOverlay({
-                        reason: baseMsg + '\n\n' + errLine,
+                        reason: fullReason,
                         queue_position: r.queue_position,
                         queue_length: r.queue_length
                     });
