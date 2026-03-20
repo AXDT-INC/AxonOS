@@ -25,4 +25,5 @@
 - [x] Join Queue button: show errors (reason/error/HTTP), Joining… state, `white-space: pre-line` for multi-line message; `joinQueue()` uses fetch + `_ok`/`_httpStatus` (was silent on failure)
 - [x] **websockify (6080) parity with gate**: `verify-wallet` issues `auth_token` when signed but 0 prepaid; `/api/config` includes revenue wallet + deposit policy; `POST /api/auth/verify-deposit` on 6080 (fixes tunnel-on-6080 “Could not complete sign-in” + missing top-up UI)
 - [x] Queue join: `deposit_ledger` import + unique index migration on `axgt_queue` (fixes ON CONFLICT / Internal error); user-facing reason + vnc copy without raw "Internal error"
+- [x] Queue overlay: unified styled Join / Leave buttons (gold border, dark gradient, hover/disabled) — `axonos-theme.css`
 - [ ] Phase 4: End-to-end runtime test checklist
