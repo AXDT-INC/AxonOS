@@ -211,6 +211,15 @@ def _queue_position(cur, wallet_address: str) -> Optional[int]:
     return row[0]
 
 
+def _queue_length(cur) -> int:
+    """Number of wallets currently waiting in the FIFO queue."""
+    cur.execute(f"SELECT COUNT(*) FROM {_QUEUE_TABLE}")
+    row = cur.fetchone()
+    if not row or row[0] is None:
+        return 0
+    return int(row[0])
+
+
 def _next_in_queue(cur) -> Optional[str]:
     cur.execute(
         f"""SELECT wallet_address FROM {_QUEUE_TABLE}
@@ -363,6 +372,7 @@ def try_claim_session(wallet_address: str) -> Dict[str, Any]:
             # Session occupied by someone else
             if active:
                 pos = _queue_position(cur, wallet)
+                qlen = _queue_length(cur)
                 conn.commit()
                 if ended:
                     _on_session_ended(ended[0], ended[1])
@@ -371,12 +381,14 @@ def try_claim_session(wallet_address: str) -> Dict[str, Any]:
                     "reason": "Desktop is in use by another researcher.",
                     "active_wallet": _mask(active["wallet_address"]),
                     "queue_position": pos,
+                    "queue_length": qlen,
                 }
 
             # No active session — check queue priority
             first = _next_in_queue(cur)
             if first and first != wallet:
                 pos = _queue_position(cur, wallet)
+                qlen = _queue_length(cur)
                 conn.commit()
                 if ended:
                     _on_session_ended(ended[0], ended[1])
@@ -384,6 +396,7 @@ def try_claim_session(wallet_address: str) -> Dict[str, Any]:
                     "granted": False,
                     "reason": "Another researcher is next in the queue.",
                     "queue_position": pos,
+                    "queue_length": qlen,
                 }
 
             # Grant session (with last_billed_at for heartbeat billing)
@@ -577,11 +590,7 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
 
             active = _get_active_row(cur)
 
-            queue_len = 0
-            cur.execute(f"SELECT COUNT(*) FROM {_QUEUE_TABLE}")
-            row = cur.fetchone()
-            if row:
-                queue_len = row[0]
+            queue_len = _queue_length(cur)
 
             result: Dict[str, Any] = {
                 "active": active is not None,
@@ -644,9 +653,10 @@ def join_queue(wallet_address: str) -> Dict[str, Any]:
                 (wallet, now),
             )
             pos = _queue_position(cur, wallet)
+            qlen = _queue_length(cur)
         conn.commit()
         logger.info("session_manager: %s joined queue at position %s", _mask(wallet), pos)
-        return {"joined": True, "queue_position": pos}
+        return {"joined": True, "queue_position": pos, "queue_length": qlen}
     except Exception as exc:
         conn.rollback()
         logger.warning("join_queue failed: %s", exc)

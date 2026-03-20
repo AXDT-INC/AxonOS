@@ -862,11 +862,19 @@ document.addEventListener("DOMContentLoaded", function() {
         if (axonosQueuePollId) return;
         function poll() {
             sessionStatus().then(function (data) {
-                if (data.reason) showQueueOverlay({ reason: data.reason, queue_position: data.queue_position, queue_length: data.queue_length });
+                var qOverlay = document.getElementById('axonos_queue_overlay');
+                var queueVisible = qOverlay && !qOverlay.classList.contains('axonos-queue-overlay--hidden');
+                if (data.reason) {
+                    showQueueOverlay({ reason: data.reason, queue_position: data.queue_position, queue_length: data.queue_length });
+                } else if (queueVisible && data.active === true && !data.is_owner) {
+                    var qMsg = document.getElementById('axonos_queue_message');
+                    var keepMsg = (qMsg && qMsg.textContent) ? qMsg.textContent : 'Another researcher is currently using the desktop.';
+                    showQueueOverlay({ reason: keepMsg, queue_position: data.queue_position, queue_length: data.queue_length });
+                }
                 if (data.active === false || data.is_owner === true) {
                     claimSession().then(function (claim) {
                         if (claim.granted) tryConnectAfterClaim();
-                        else if (claim.queue_position != null) showQueueOverlay({ reason: claim.reason, queue_position: claim.queue_position, queue_length: claim.queue_length });
+                        else showQueueOverlay({ reason: claim.reason || 'Desktop in use.', queue_position: claim.queue_position, queue_length: claim.queue_length });
                     });
                 }
             }).catch(function () {});

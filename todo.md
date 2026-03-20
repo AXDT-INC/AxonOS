@@ -21,5 +21,6 @@
 - [x] Wallet pay (AXGT/ETH) + auto poll verify-deposit (Option C)
 - [x] Wallet pay: optional amount inputs (≥ server min), Min reset, BigInt validation (`novnc-theme/vnc.html`)
 - [x] Send ETH from wallet: explicit `gas: 0x5208` (21000) — fixes MetaMask/RPC “gas limit too high (cap 16777216, tx 21000000)” on PublicNode-style caps
+- [x] Queue overlay: `try_claim_session` + `join_queue` return `queue_length`; poll refreshes overlay when desktop held by another wallet (`vnc.html` + `session_manager.py`)
 - [x] **websockify (6080) parity with gate**: `verify-wallet` issues `auth_token` when signed but 0 prepaid; `/api/config` includes revenue wallet + deposit policy; `POST /api/auth/verify-deposit` on 6080 (fixes tunnel-on-6080 “Could not complete sign-in” + missing top-up UI)
 - [ ] Phase 4: End-to-end runtime test checklist
