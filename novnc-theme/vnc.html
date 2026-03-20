@@ -798,11 +798,23 @@ document.addEventListener("DOMContentLoaded", function() {
 
     function joinQueue() {
         const wallet = window.verifiedWalletAddress;
-        if (!wallet) return Promise.resolve({ joined: false });
-        return axonosFetch({
+        if (!wallet) return Promise.resolve({ joined: false, reason: 'Wallet not connected.' });
+        const url = new URL('/api/queue/join', window.location.origin).toString();
+        const headers = { 'Content-Type': 'application/json' };
+        if (window.verifiedWalletAddress) headers['X-Wallet-Address'] = window.verifiedWalletAddress;
+        if (window.verifiedWalletAuthToken) headers['X-AXGT-Auth-Token'] = window.verifiedWalletAuthToken;
+        return fetch(url, {
             method: 'POST',
-            url: new URL('/api/queue/join', window.location.origin).toString(),
+            credentials: 'include',
+            headers: headers,
             body: JSON.stringify({ wallet_address: wallet })
+        }).then(function (resp) {
+            return resp.json().then(function (data) {
+                if (typeof data !== 'object' || data === null) data = {};
+                data._httpStatus = resp.status;
+                data._ok = resp.ok;
+                return data;
+            });
         });
     }
 
@@ -1654,13 +1666,47 @@ document.addEventListener("DOMContentLoaded", function() {
     var leaveQueueBtn = document.getElementById('axonos_queue_leave_btn');
     if (joinQueueBtn) {
         joinQueueBtn.addEventListener('click', function () {
+            var prevLabel = joinQueueBtn.textContent;
+            joinQueueBtn.disabled = true;
+            joinQueueBtn.textContent = 'Joining…';
             joinQueue().then(function (r) {
-                if (r.joined || r.queue_position) {
-                    showQueueOverlay({ reason: 'You are in the queue.', queue_position: r.queue_position, queue_length: r.queue_length });
-                    if (joinQueueBtn) joinQueueBtn.style.display = 'none';
+                var joinedOk = r.joined === true || r.joined === 'true';
+                var hasPos = r.queue_position != null && r.queue_position !== '';
+                if (joinedOk || hasPos) {
+                    showQueueOverlay({
+                        reason: 'You are in the queue. We will connect when the desktop is free.',
+                        queue_position: r.queue_position,
+                        queue_length: r.queue_length
+                    });
+                    joinQueueBtn.style.display = 'none';
                     if (leaveQueueBtn) leaveQueueBtn.style.display = '';
                     startQueuePolling();
+                    return;
                 }
+                var errLine = r.reason || r.error || (r._ok === false && r._httpStatus ? ('Request failed (HTTP ' + r._httpStatus + ')') : '') || 'Could not join the queue.';
+                var baseMsg = 'Desktop is in use by another researcher.';
+                sessionStatus().then(function (st) {
+                    showQueueOverlay({
+                        reason: baseMsg + '\n\n' + errLine,
+                        queue_position: st.queue_position != null ? st.queue_position : r.queue_position,
+                        queue_length: st.queue_length != null ? st.queue_length : r.queue_length
+                    });
+                }).catch(function () {
+                    showQueueOverlay({
+                        reason: baseMsg + '\n\n' + errLine,
+                        queue_position: r.queue_position,
+                        queue_length: r.queue_length
+                    });
+                });
+            }).catch(function () {
+                showQueueOverlay({
+                    reason: 'Desktop is in use by another researcher.\n\nNetwork error — could not reach the server to join the queue.',
+                    queue_position: null,
+                    queue_length: null
+                });
+            }).then(function () {
+                joinQueueBtn.disabled = false;
+                joinQueueBtn.textContent = prevLabel;
             });
         });
     }

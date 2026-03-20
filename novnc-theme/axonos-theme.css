@@ -580,6 +580,7 @@ input[type="password"]::placeholder {
     font-size: 1rem;
     line-height: 1.5;
     opacity: 0.95;
+    white-space: pre-line;
 }
 .axonos-queue-overlay__row {
     margin: 8px 0;
