@@ -1025,6 +1025,7 @@ input[type="password"]#noVNC_password_input {
 .axonos-wallet-picker-back:hover {
   color: #fff;
 }
+.axonos-continue-btn {
   display: inline-block;
   padding: 12px 28px !important;
   font-size: 1rem !important;
@@ -1448,6 +1449,65 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   text-transform: uppercase;
   letter-spacing: 2px;
   font-family: "Orbitron", monospace;
+}
+
+/* Network environment (mainnet vs testnet) — driven by /api/config axgt_chain_id; see vnc.html applyAxonosNetworkEnvironmentUi */
+.axonos-network-banner {
+  font-size: 0.82rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  margin: 0 auto 12px;
+  max-width: 36rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: 999px;
+  line-height: 1.35;
+  font-family: "Orbitron", system-ui, sans-serif;
+}
+
+.axonos-network-banner--hidden {
+  display: none !important;
+}
+
+.axonos-network-banner--mainnet {
+  color: rgba(180, 255, 210, 0.92);
+  background: rgba(46, 139, 87, 0.2);
+  border: 1px solid rgba(100, 200, 140, 0.35);
+}
+
+.axonos-network-banner--testnet {
+  color: rgba(255, 220, 160, 0.98);
+  background: rgba(180, 100, 20, 0.25);
+  border: 1px solid rgba(255, 180, 80, 0.45);
+  box-shadow: 0 0 20px rgba(255, 160, 60, 0.12);
+}
+
+.axonos-network-banner--other {
+  color: rgba(255, 200, 160, 0.95);
+  background: rgba(120, 60, 30, 0.3);
+  border: 1px solid rgba(255, 140, 80, 0.4);
+}
+
+.axonos-wallet-network-line {
+  font-size: 0.82rem;
+  margin: 0.5rem 0 0;
+  line-height: 1.35;
+  font-weight: 500;
+}
+
+.axonos-wallet-network-line--hidden {
+  display: none !important;
+}
+
+.axonos-wallet-network-line--mainnet {
+  color: rgba(160, 220, 180, 0.95);
+}
+
+.axonos-wallet-network-line--testnet {
+  color: rgba(255, 200, 120, 0.98);
+}
+
+.axonos-wallet-network-line--other {
+  color: rgba(255, 180, 130, 0.95);
 }
 
 /* Particle Animation Background */

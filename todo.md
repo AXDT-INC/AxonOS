@@ -28,4 +28,5 @@
 - [x] Queue overlay: unified styled Join / Leave buttons (gold border, dark gradient, hover/disabled) — `axonos-theme.css`
 - [x] Leave queue + Launch: clear stale `UI.rfb` / retry path (`ui.js` connect) + `axonosResetDesktopGateForRetry()` after leave — fixes 1006 / “Failed to connect” loop
 - [x] **Launch must `POST /api/session/claim` before WebSocket** — gate rejects WS if not session owner (was 1006 after leave queue + Launch); `axonosOnSessionClaimDenied` → queue overlay (`ui.js` + `vnc.html`)
+- [x] noVNC landing + wallet dialog: network environment banner from `/api/config` `axgt_chain_id` (mainnet vs testnet); operator notes in `vnc.html` + `env.example`
 - [ ] Phase 4: End-to-end runtime test checklist

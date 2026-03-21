@@ -283,6 +283,8 @@ Copyright (C) 2019 The noVNC Authors
                 <div class="axonos-particles"></div>
                 <h1 class="axonos-main-title">Axon<span class="axonos-highlight">OS</span></h1>
                 <p class="axonos-tagline">GPU-Native Scientific Computing Platform</p>
+                <!-- Network banner: filled by applyAxonosNetworkEnvironmentUi() from /api/config axgt_chain_id (server AXGT_CHAIN_ID). -->
+                <p id="axonos_landing_network" class="axonos-network-banner axonos-network-banner--hidden" aria-live="polite"></p>
                 <div class="axonos-dna-animation"></div>
             </div>
             
@@ -352,6 +354,8 @@ Copyright (C) 2019 The noVNC Authors
         <div class="axonos-wallet-card__title">
             <h2>Connect your wallet to continue</h2>
             <p class="axonos-wallet-card__hints" id="axonos-dlg-credit-hints">Loading rates…</p>
+            <!-- Same network line as landing; reminds users before sending AXGT/ETH. -->
+            <p id="axonos_wallet_network_line" class="axonos-wallet-network-line axonos-wallet-network-line--hidden" aria-live="polite"></p>
         </div>
         <div class="axonos-wallet-card__contract axonos-wallet-card__contract--revenue">
             <span class="axonos-wallet-card__contract-label">Deposit AXGT or ETH here</span>
@@ -921,6 +925,115 @@ document.addEventListener("DOMContentLoaded", function() {
     const switchNetworkBtn = document.getElementById('axonos_switch_network_btn');
     const STATE_IDS = ['axonos_wallet_state_disconnected', 'axonos_wallet_state_choose_wallet', 'axonos_wallet_state_checking', 'axonos_wallet_state_verified', 'axonos_wallet_state_insufficient', 'axonos_wallet_state_connect_error', 'axonos_wallet_state_no_wallet', 'axonos_wallet_state_rejected', 'axonos_wallet_state_wrong_network'];
     let axonosConfig = { axgt_contract_address: '', axgt_revenue_wallet: '', axgt_chain_id: null, axgt_min_deposit: '100', eth_min_deposit: '0.0005', axgt_token_decimals: 18, credit_per_100_axgt: 60, eth_credit_per_eth: 120000, min_axgt_minutes: 60, min_eth_minutes: 60 };
+
+    /**
+     * Mainnet vs testnet labels (landing + wallet dialog)
+     * ----------------------------------------------------
+     * Source of truth: `axgt_chain_id` from GET `/api/config` — must match server env `AXGT_CHAIN_ID`.
+     *
+     * Switching this deployment from Sepolia (or any testnet) to Ethereum mainnet:
+     *   1. In the server environment set `AXGT_CHAIN_ID=1`, and point `AXGT_RPC_URL`,
+     *      `AXGT_CONTRACT_ADDRESS`, `AXGT_REVENUE_WALLET` at mainnet values.
+     *   2. Redeploy/restart the gate — this UI updates automatically (no edit to strings below required
+     *      unless you add a new chain to KNOWN_CHAINS).
+     *   3. Search this file for hardcoded mainnet-only links (e.g. Uniswap "Get AXGT" in prerequisites,
+     *      `getAxgt.href` in loadAxonOSConfig) and align them with mainnet swap URLs / chain params.
+     *   4. Update operator docs and `env.example` so staging vs production envs stay clear.
+     */
+    var AXONOS_KNOWN_CHAIN_ENV = {
+        '1': { kind: 'mainnet', label: 'Ethereum mainnet' },
+        '11155111': { kind: 'testnet', label: 'Sepolia testnet', caution: 'Test token · not real funds' },
+        '5': { kind: 'testnet', label: 'Goerli testnet (deprecated)', caution: 'Test token · not real funds' },
+        '17000': { kind: 'testnet', label: 'Holesky testnet', caution: 'Test token · not real funds' },
+        '84532': { kind: 'testnet', label: 'Base Sepolia testnet', caution: 'Test token · not real funds' },
+        '31337': { kind: 'testnet', label: 'Local dev chain', caution: 'Local · not real funds' }
+    };
+
+    function axonosNetworkEnvironmentFromChainId(chainIdStr) {
+        var raw = chainIdStr != null ? String(chainIdStr).trim() : '';
+        if (!raw) {
+            return { chainId: '', kind: 'unset', landingText: '', walletText: '' };
+        }
+        var n = parseInt(raw, 10);
+        if (isNaN(n)) {
+            return { chainId: '', kind: 'unset', landingText: '', walletText: '' };
+        }
+        var id = String(n);
+        var known = AXONOS_KNOWN_CHAIN_ENV[id];
+        if (known) {
+            if (known.kind === 'mainnet') {
+                return {
+                    chainId: id,
+                    kind: 'mainnet',
+                    landingText: known.label + ' · Real AXGT / ETH deposits',
+                    walletText: 'Network: ' + known.label + ' — use the same network in your wallet before paying.'
+                };
+            }
+            return {
+                chainId: id,
+                kind: 'testnet',
+                landingText: known.label + (known.caution ? ' — ' + known.caution : ''),
+                walletText: known.label + (known.caution ? ' — ' + known.caution : '') + ' Use test ETH / test AXGT only.'
+            };
+        }
+        // Non-mainnet ID not in the map: still warn (operator may use a custom test/staging chain).
+        return {
+            chainId: id,
+            kind: 'other',
+            landingText: 'Chain ID ' + id + ' — confirm with the operator before sending funds',
+            walletText: 'Chain ID ' + id + ' — confirm this deployment’s network before depositing.'
+        };
+    }
+
+    function applyAxonosNetworkEnvironmentUi(chainIdStr) {
+        var land = document.getElementById('axonos_landing_network');
+        var walletLine = document.getElementById('axonos_wallet_network_line');
+        if (!land) return;
+        land.classList.remove(
+            'axonos-network-banner--hidden',
+            'axonos-network-banner--mainnet',
+            'axonos-network-banner--testnet',
+            'axonos-network-banner--other'
+        );
+        if (walletLine) {
+            walletLine.classList.remove(
+                'axonos-wallet-network-line--hidden',
+                'axonos-wallet-network-line--mainnet',
+                'axonos-wallet-network-line--testnet',
+                'axonos-wallet-network-line--other'
+            );
+        }
+        // If /api/config failed, keep banners hidden (see loadAxonOSConfig catch).
+        if (chainIdStr === null || chainIdStr === undefined) {
+            land.classList.add('axonos-network-banner--hidden');
+            land.textContent = '';
+            if (walletLine) {
+                walletLine.classList.add('axonos-wallet-network-line--hidden');
+                walletLine.textContent = '';
+            }
+            return;
+        }
+        // Match etherscanBase default: missing chain id → treat as mainnet (see loadAxonOSConfig).
+        var effective = (String(chainIdStr).trim() !== '') ? String(chainIdStr) : '1';
+        var env = axonosNetworkEnvironmentFromChainId(effective);
+        if (!env.chainId) {
+            land.classList.add('axonos-network-banner--hidden');
+            land.textContent = '';
+            if (walletLine) {
+                walletLine.classList.add('axonos-wallet-network-line--hidden');
+                walletLine.textContent = '';
+            }
+            return;
+        }
+        var mod = env.kind === 'mainnet' ? 'mainnet' : (env.kind === 'other' ? 'other' : 'testnet');
+        land.classList.add('axonos-network-banner--' + mod);
+        land.textContent = env.landingText;
+        if (walletLine) {
+            walletLine.classList.add('axonos-wallet-network-line--' + mod);
+            walletLine.textContent = env.walletText;
+        }
+    }
+
     function formatCreditMinutes(m) {
         if (m == null || (typeof m === 'number' && isNaN(m))) return '—';
         var x = Number(m);
@@ -1004,6 +1117,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 if (contractShortEl) contractShortEl.textContent = short;
                 var getAxgt = document.getElementById('axonos_get_axgt_btn');
                 if (getAxgt && addr) {
+                    // Mainnet swap URL; when AXGT_CHAIN_ID is a testnet, consider `chain=sepolia` (or your DEX) — see block comment on axonosNetworkEnvironmentFromChainId.
                     getAxgt.href = 'https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=' + encodeURIComponent(addr.toLowerCase());
                 }
                 var prereqMin = document.getElementById('axonos_prereq_min_axgt');
@@ -1048,8 +1162,11 @@ document.addEventListener("DOMContentLoaded", function() {
                 var base = etherscanBase(chainId);
                 if (contractEtherscanEl && addr) contractEtherscanEl.href = base + '/address/' + addr;
                 if (revenueEtherscanEl && rev && /^0x[a-fA-F0-9]{40}$/.test(rev)) revenueEtherscanEl.href = base + '/address/' + rev;
+                // Landing + wallet network banner (AXGT_CHAIN_ID / axgt_chain_id). Pass through; null only on fetch failure.
+                applyAxonosNetworkEnvironmentUi(axonosConfig.axgt_chain_id != null && String(axonosConfig.axgt_chain_id).trim() !== '' ? axonosConfig.axgt_chain_id : '1');
             })
             .catch(function () {
+                applyAxonosNetworkEnvironmentUi(null);
                 if (contractShortEl) contractShortEl.textContent = '(not configured)';
                 if (revenueShortEl) revenueShortEl.textContent = '(error)';
                 var dh = document.getElementById('axonos-dlg-credit-hints');
