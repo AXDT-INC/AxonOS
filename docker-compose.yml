@@ -51,8 +51,8 @@ services:
     # Theme/wallpaper applied from startup.sh after 35s delay
     command: ["/startup.sh"]
     ports:
-      - "${AXONOS_PUBLISH_NOVNC:-16080}:6080"
-      - "${AXONOS_PUBLISH_GATE:-18889}:8889"
+      - "${AXONOS_PUBLISH_NOVNC:-6080}:6080"
+      - "${AXONOS_PUBLISH_GATE:-8889}:8889"
     deploy:
       resources:
         reservations:
