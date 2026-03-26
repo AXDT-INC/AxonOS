@@ -42,6 +42,7 @@ services:
       args:
         PASSWORD: ${AXONOS_VNC_PASSWORD}
     container_name: axonos_deposit_preview
+    shm_size: "32gb"
     env_file: .env
     environment:
       AXGT_CHALLENGE_DB_URL: postgresql://${POSTGRES_USER:-axonos_gate}:${POSTGRES_PASSWORD:-axonos_gate_secret}@postgres:5432/${POSTGRES_DB:-axonos_gate}
