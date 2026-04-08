@@ -874,6 +874,10 @@ document.addEventListener("DOMContentLoaded", function() {
         });
         startQueuePolling();
     };
+    // Called from ui.js on explicit disconnect / teardown to prevent stale "false queue" UI.
+    window.axonosHideQueueOverlay = function () {
+        hideQueueOverlay();
+    };
 
     function tryConnectAfterClaim() {
         hideQueueOverlay();

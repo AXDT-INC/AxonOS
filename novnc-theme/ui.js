@@ -1071,6 +1071,39 @@ const UI = {
         });
     },
 
+    /** POST /api/session/release — best effort on user-triggered disconnect. */
+    _axonosReleaseSessionBestEffort() {
+        const wallet = window.verifiedWalletAddress;
+        if (!wallet) return Promise.resolve(false);
+
+        const url = new URL('/api/session/release', window.location.origin).toString();
+        const headers = {
+            'Content-Type': 'application/json',
+            'X-Wallet-Address': wallet,
+        };
+        if (window.verifiedWalletAuthToken) {
+            headers['X-AXGT-Auth-Token'] = window.verifiedWalletAuthToken;
+        }
+
+        const request = fetch(url, {
+            method: 'POST',
+            credentials: 'include',
+            headers,
+            body: JSON.stringify({ wallet_address: wallet }),
+        }).then((r) => {
+            const ct = (r.headers.get('content-type') || '');
+            if (!ct.includes('application/json')) return {};
+            return r.json();
+        }).then((data) => data && data.released === true)
+          .catch(() => false);
+
+        // Don't block disconnect indefinitely if the release endpoint is slow/unreachable.
+        const timeout = new Promise((resolve) => {
+            setTimeout(() => resolve(false), 1500);
+        });
+        return Promise.race([request, timeout]);
+    },
+
     _axonosCreateRfbConnection(password, includeQueryAuthToken) {
         let url;
         url = UI.getSetting('encrypt') ? 'wss' : 'ws';
@@ -1201,8 +1234,6 @@ const UI = {
     },
 
     disconnect() {
-        UI.rfb.disconnect();
-
         UI.connected = false;
 
         // Disable automatic reconnecting
@@ -1210,7 +1241,34 @@ const UI = {
 
         UI.updateVisualState('disconnecting');
 
-        // Don't display the connection settings until we're actually disconnected
+        // Clear any stale queue overlay/poller immediately on explicit disconnect.
+        if (typeof window.axonosHideQueueOverlay === 'function') {
+            try {
+                window.axonosHideQueueOverlay();
+            } catch (err) {
+                Log.Warn("AxonOS queue overlay reset failed: " + err);
+            }
+        }
+
+        const doDisconnect = () => {
+            if (UI.rfb && typeof UI.rfb.disconnect === 'function') {
+                try {
+                    UI.rfb.disconnect();
+                } catch (err) {
+                    Log.Warn("AxonOS disconnect failed: " + err);
+                    UI.updateVisualState('disconnected');
+                    UI.openControlbar();
+                    UI.openConnectPanel();
+                }
+            } else {
+                UI.updateVisualState('disconnected');
+                UI.openControlbar();
+                UI.openConnectPanel();
+            }
+        };
+
+        // Best-effort server-side release first so reconnect doesn't get trapped behind stale ownership.
+        UI._axonosReleaseSessionBestEffort().finally(doDisconnect);
     },
 
     reconnect() {
@@ -1273,6 +1331,14 @@ const UI = {
         UI.connected = false;
 
         UI.rfb = undefined;
+
+        if (typeof window.axonosHideQueueOverlay === 'function') {
+            try {
+                window.axonosHideQueueOverlay();
+            } catch (err) {
+                Log.Warn("AxonOS queue overlay reset failed: " + err);
+            }
+        }
 
         if (UI._axgtStatusPollId) {
             clearInterval(UI._axgtStatusPollId);
