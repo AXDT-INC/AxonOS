@@ -307,6 +307,8 @@ Copyright (C) 2019 The noVNC Authors
                         <li>Prepaid <strong>desktop minutes</strong>: each <strong id="axonos_prereq_min_axgt">—</strong> <strong>AXGT</strong> (min. deposit) → <strong id="axonos_prereq_axgt_min_label">—</strong> · each <strong id="axonos_prereq_min_eth">—</strong> <strong>ETH</strong> (min.) → <strong id="axonos_prereq_eth_min_label">—</strong>. Send to revenue wallet, then submit tx hash or use in-page pay (<a href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=0x6112c3509a8a787df576028450febb3786a2274d" target="_blank" rel="noopener noreferrer">Get AXGT</a>)</li>
                         <li>You'll <strong>sign a one-time message</strong> (no gas, no transaction)</li>
                         <li><strong>One desktop at a time</strong> — if in use, you can join the queue</li>
+                        <li>While you're <strong>connected</strong>, prepaid <strong>minutes count</strong> for your reserved session, including <strong>idle time</strong> if this browser tab keeps running.</li>
+                        <li>Use <strong>Disconnect</strong> in the left sidebar when you're done to end your session promptly for you and others; closing the tab or browser only may <strong>delay release</strong> until the session timeout.</li>
                     </ul>
                 </div>
                 <div id="noVNC_connect_button" class="axonos-enhanced-connect">
@@ -1136,7 +1138,8 @@ document.addEventListener("DOMContentLoaded", function() {
                 var dlgHints = document.getElementById('axonos-dlg-credit-hints');
                 if (dlgHints) {
                     var ethPer1 = (cpe >= 1e6) ? String(Math.round(cpe)) : String(Math.round(cpe * 1e6) / 1e6);
-                    dlgHints.innerHTML = '<strong>100 AXGT</strong> → <strong>' + cp100 + '</strong> min · <strong>1 ETH</strong> → <strong>' + ethPer1 + '</strong> min · Min. top-up: <strong>' + minDeposit + '</strong> AXGT (~' + formatCreditMinutes(maMin) + ') or <strong>' + minEth + '</strong> ETH (~' + formatCreditMinutes(meMin) + '). Enter any amount ≥ min or paste your tx hash.';
+                    dlgHints.innerHTML = '<strong>100 AXGT</strong> → <strong>' + cp100 + '</strong> min · <strong>1 ETH</strong> → <strong>' + ethPer1 + '</strong> min · Min. top-up: <strong>' + minDeposit + '</strong> AXGT (~' + formatCreditMinutes(maMin) + ') or <strong>' + minEth + '</strong> ETH (~' + formatCreditMinutes(meMin) + '). Enter any amount ≥ min or paste your tx hash.' +
+                        '<span class="axonos-wallet-card__hints-session">While connected, minutes count for your session (idle included if this tab stays open). Use <strong>Disconnect</strong> when finished; closing the tab only may delay releasing the desktop.</span>';
                 }
                 var insRates = document.getElementById('axonos_insufficient_credit_rates');
                 if (insRates) {
@@ -1174,7 +1177,10 @@ document.addEventListener("DOMContentLoaded", function() {
                 if (contractShortEl) contractShortEl.textContent = '(not configured)';
                 if (revenueShortEl) revenueShortEl.textContent = '(error)';
                 var dh = document.getElementById('axonos-dlg-credit-hints');
-                if (dh) dh.textContent = 'Connect wallet to see live rates from server, or check operator docs (100 AXGT → 60 min typical).';
+                if (dh) {
+                    dh.innerHTML = 'Connect wallet to see live rates from server, or check operator docs (100 AXGT → 60 min typical).' +
+                        '<span class="axonos-wallet-card__hints-session">While connected, minutes count for your session (idle included if this tab stays open). Use <strong>Disconnect</strong> when finished.</span>';
+                }
             });
     })();
 

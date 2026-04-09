@@ -826,6 +826,15 @@ input[type="password"]#noVNC_password_input {
   font-size: 0.85rem;
   margin: 0;
 }
+.axonos-wallet-card__hints-session {
+  display: block;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.65);
+}
 .axonos-wallet-card__contract {
   display: flex;
   align-items: center;
