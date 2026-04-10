@@ -302,7 +302,7 @@ Copyright (C) 2019 The noVNC Authors
                     <p class="axonos-prerequisites__title">To sign in you need:</p>
                     <ul class="axonos-prerequisites__list">
                         <li>An <strong>EVM wallet</strong> (e.g. <a href="https://metamask.io" target="_blank" rel="noopener noreferrer">MetaMask</a>)</li>
-                        <li>Prepaid <strong>desktop minutes</strong>: each <strong id="axonos_prereq_min_axgt">—</strong> <strong>AXGT</strong> (min. deposit) → <strong id="axonos_prereq_axgt_min_label">—</strong> · each <strong id="axonos_prereq_min_eth">—</strong> <strong>ETH</strong> (min.) → <strong id="axonos_prereq_eth_min_label">—</strong>. Send to revenue wallet, then submit tx hash or use in-page pay (<a href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=0x6112c3509a8a787df576028450febb3786a2274d" target="_blank" rel="noopener noreferrer">Get AXGT</a>)</li>
+                        <li id="axonos_prereq_deposit_line">Prepaid <strong>desktop minutes</strong>: each <strong id="axonos_prereq_min_axgt">—</strong> <strong>AXGT</strong> (min. deposit) → <strong id="axonos_prereq_axgt_min_label">—</strong> · each <strong id="axonos_prereq_min_eth">—</strong> <strong>ETH</strong> (min.) → <strong id="axonos_prereq_eth_min_label">—</strong>. Send to revenue wallet, then submit tx hash or use in-page pay (<a href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=0x6112c3509a8a787df576028450febb3786a2274d" target="_blank" rel="noopener noreferrer">Get AXGT</a>)</li>
                         <li>You'll <strong>sign a one-time message</strong> (no gas, no transaction)</li>
                         <li><strong>One desktop at a time</strong> — if in use, you can join the queue</li>
                         <li>While you're <strong>connected</strong>, prepaid <strong>minutes count</strong> for your reserved session, including <strong>idle time</strong> if this browser tab keeps running.</li>
@@ -358,7 +358,7 @@ Copyright (C) 2019 The noVNC Authors
             <p id="axonos_wallet_network_line" class="axonos-wallet-network-line axonos-wallet-network-line--hidden" aria-live="polite"></p>
         </div>
         <div class="axonos-wallet-card__contract axonos-wallet-card__contract--revenue">
-            <span class="axonos-wallet-card__contract-label">Deposit AXGT or ETH here</span>
+            <span id="axonos_revenue_deposit_label" class="axonos-wallet-card__contract-label">Deposit AXGT or ETH here</span>
             <code id="axonos-revenue-short" title="Revenue wallet">—</code>
             <button type="button" id="axonos_revenue_copy_btn" class="axonos-contract-copy-btn" title="Copy revenue address">Copy</button>
             <a id="axonos_revenue_etherscan" href="#" target="_blank" rel="noopener noreferrer" class="axonos-contract-etherscan">Etherscan</a>
@@ -973,11 +973,14 @@ document.addEventListener("DOMContentLoaded", function() {
                     walletText: 'Network: ' + known.label + ' — use the same network in your wallet before paying.'
                 };
             }
+            var testnetFundsLine = axonosConfig.eth_deposits_enabled
+                ? ' Use test AXGT / test ETH only.'
+                : ' Use test AXGT only.';
             return {
                 chainId: id,
                 kind: 'testnet',
                 landingText: known.label + (known.caution ? ' — ' + known.caution : ''),
-                walletText: known.label + (known.caution ? ' — ' + known.caution : '') + ' Use test ETH / test AXGT only.'
+                walletText: known.label + (known.caution ? ' — ' + known.caution : '') + testnetFundsLine
             };
         }
         // Non-mainnet ID not in the map: still warn (operator may use a custom test/staging chain).
@@ -1056,15 +1059,11 @@ document.addEventListener("DOMContentLoaded", function() {
         var ethRow = (ethSendBtn && typeof ethSendBtn.closest === 'function')
             ? ethSendBtn.closest('.axonos-pay-deposit-row')
             : null;
-        var prereqEth = document.getElementById('axonos_prereq_min_eth');
-        var prereqEthLabel = document.getElementById('axonos_prereq_eth_min_label');
 
         if (ethAmountInput) ethAmountInput.disabled = !enabled;
         if (ethMinBtn) ethMinBtn.disabled = !enabled;
         if (ethSendBtn) ethSendBtn.disabled = !enabled;
         if (ethRow) ethRow.style.display = enabled ? '' : 'none';
-        if (prereqEth) prereqEth.textContent = enabled ? prereqEth.textContent : 'disabled';
-        if (prereqEthLabel) prereqEthLabel.textContent = enabled ? prereqEthLabel.textContent : 'ETH top-ups disabled';
     }
 
     /** Collect available wallet providers (EIP-6963, then window.ethereum.providers, then single ethereum). */
@@ -1147,6 +1146,8 @@ document.addEventListener("DOMContentLoaded", function() {
                 var prereqMin = document.getElementById('axonos_prereq_min_axgt');
                 var prereqMinEth = document.getElementById('axonos_prereq_min_eth');
                 var insufficientCreditTitle = document.getElementById('axonos_insufficient_credit_title');
+                var prereqDepositLine = document.getElementById('axonos_prereq_deposit_line');
+                var revenueDepositLabel = document.getElementById('axonos_revenue_deposit_label');
                 if (prereqMin) prereqMin.textContent = minDeposit;
                 if (prereqMinEth) prereqMinEth.textContent = ethEnabled ? minEth : 'disabled';
                 var prereqAxgtMin = document.getElementById('axonos_prereq_axgt_min_label');
@@ -1175,6 +1176,14 @@ document.addEventListener("DOMContentLoaded", function() {
                     insufficientCreditTitle.textContent = ethEnabled
                         ? ('You need prepaid credit: min. ' + minDeposit + ' AXGT or ' + minEth + ' ETH per top-up')
                         : ('You need prepaid credit: min. ' + minDeposit + ' AXGT per top-up');
+                }
+                if (revenueDepositLabel) {
+                    revenueDepositLabel.textContent = ethEnabled ? 'Deposit AXGT or ETH here' : 'Deposit AXGT here';
+                }
+                if (prereqDepositLine) {
+                    prereqDepositLine.innerHTML = ethEnabled
+                        ? ('Prepaid <strong>desktop minutes</strong>: each <strong id="axonos_prereq_min_axgt">' + minDeposit + '</strong> <strong>AXGT</strong> (min. deposit) → <strong id="axonos_prereq_axgt_min_label">' + formatCreditMinutes(maMin) + ' desktop time</strong> · each <strong id="axonos_prereq_min_eth">' + minEth + '</strong> <strong>ETH</strong> (min.) → <strong id="axonos_prereq_eth_min_label">' + formatCreditMinutes(meMin) + ' desktop time</strong>. Send to revenue wallet, then submit tx hash or use in-page pay (<a href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=' + encodeURIComponent((addr || '').toLowerCase()) + '" target="_blank" rel="noopener noreferrer">Get AXGT</a>)')
+                        : ('Prepaid <strong>desktop minutes</strong>: each <strong id="axonos_prereq_min_axgt">' + minDeposit + '</strong> <strong>AXGT</strong> (min. deposit) → <strong id="axonos_prereq_axgt_min_label">' + formatCreditMinutes(maMin) + ' desktop time</strong>. ETH top-ups are currently disabled. Send AXGT to the revenue wallet, then submit tx hash or use in-page AXGT pay.');
                 }
                 var payAxgtIn = document.getElementById('axonos_pay_axgt_amount');
                 var payEthIn = document.getElementById('axonos_pay_eth_amount');
