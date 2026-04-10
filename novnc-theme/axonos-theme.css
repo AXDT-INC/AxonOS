@@ -1624,8 +1624,8 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   text-align: center;
   margin: 25px 0;
   padding: 20px;
-  background: rgba(46, 139, 87, 0.05);
-  border: 1px solid rgba(46, 139, 87, 0.2);
+  background: rgba(94, 129, 172, 0.08);
+  border: 1px solid rgba(136, 169, 212, 0.25);
   border-radius: 10px;
 }
 
@@ -1718,7 +1718,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 
 /* Enhanced Connect Button */
 .axonos-enhanced-connect {
-  background: linear-gradient(135deg, var(--axonos-primary), var(--axonos-secondary)) !important;
+  background: linear-gradient(135deg, #4f6f94, #3d5f85) !important;
   border: none !important;
   border-radius: 20px !important;
   padding: 18px !important;
@@ -1728,7 +1728,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   position: relative;
   overflow: hidden;
   box-shadow: 
-    0 12px 40px rgba(46, 139, 87, 0.4),
+    0 12px 40px rgba(70, 98, 136, 0.42),
     0 4px 16px rgba(0, 0, 0, 0.3),
     inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
   backdrop-filter: blur(10px);
@@ -1750,11 +1750,11 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 .axonos-enhanced-connect:hover {
-  background: linear-gradient(135deg, var(--axonos-hover), var(--axonos-primary)) !important;
+  background: linear-gradient(135deg, #5f82ad, #4a6f99) !important;
   transform: translateY(-5px) scale(1.03) !important;
   box-shadow: 
-    0 20px 60px rgba(46, 139, 87, 0.5),
-    0 0 80px rgba(50, 205, 50, 0.4),
+    0 20px 60px rgba(84, 120, 168, 0.5),
+    0 0 80px rgba(126, 172, 224, 0.28),
     0 8px 32px rgba(0, 0, 0, 0.4),
     inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
 }
@@ -1829,7 +1829,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 .axonos-feature-icon {
   font-size: 2rem;
   margin-bottom: 10px;
-  filter: drop-shadow(0 0 8px var(--axonos-primary));
+  filter: drop-shadow(0 0 8px rgba(126, 172, 224, 0.45));
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   display: inline-block;
 }
@@ -1878,14 +1878,14 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 
 /* Connect Dialog Container Enhancement */
 #noVNC_connect_dlg {
-  background: linear-gradient(135deg, rgba(28, 28, 28, 0.95), rgba(44, 44, 44, 0.95)) !important;
-  border: 2px solid var(--axonos-primary) !important;
-  border-radius: 20px !important;
+  background: linear-gradient(145deg, rgba(18, 24, 34, 0.92), rgba(12, 18, 28, 0.9)) !important;
+  border: none !important;
+  border-radius: 24px !important;
   padding: 40px !important;
   box-shadow: 
-    0 20px 60px rgba(0, 0, 0, 0.5),
-    0 0 100px rgba(46, 139, 87, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
+    0 22px 70px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(160, 185, 220, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
   backdrop-filter: blur(10px);
   max-width: 600px;
   max-height: calc(100vh - 40px);
@@ -1970,8 +1970,8 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 @keyframes loading-glow {
-  0%, 100% { box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 100px rgba(46, 139, 87, 0.2); }
-  50% { box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 100px rgba(46, 139, 87, 0.4); }
+  0%, 100% { box-shadow: 0 22px 70px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(160, 185, 220, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.08); }
+  50% { box-shadow: 0 26px 82px rgba(0, 0, 0, 0.62), 0 0 0 1px rgba(190, 215, 255, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
 }
 
 /* AxonOS Connection Loading Animation */
