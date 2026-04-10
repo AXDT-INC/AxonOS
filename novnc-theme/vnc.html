@@ -1163,7 +1163,7 @@ document.addEventListener("DOMContentLoaded", function() {
                     var rateHint = ethEnabled
                         ? ('<strong>100 AXGT</strong> → <strong>' + cp100 + '</strong> min · <strong>1 ETH</strong> → <strong>' + ethPer1 + '</strong> min')
                         : ('<strong>100 AXGT</strong> → <strong>' + cp100 + '</strong> min · ETH top-ups disabled');
-                    dlgHints.innerHTML = rateHint + ' · Min. top-up: ' + topupHint + '. Enter any amount ≥ min or paste your tx hash.' +
+                    dlgHints.innerHTML = rateHint + ' · Min. top-up: ' + topupHint + '. Enter any amount ≥ 100 AXGT or paste your tx hash.' +
                         '<span class="axonos-wallet-card__hints-session">While connected, minutes count for your session (idle included if this tab stays open). Use <strong>Disconnect</strong> when finished; closing the tab only may delay releasing the desktop.</span>';
                 }
                 var insRates = document.getElementById('axonos_insufficient_credit_rates');
