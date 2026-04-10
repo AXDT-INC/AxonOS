@@ -1876,10 +1876,13 @@ input#noVNC_setting_path:-webkit-autofill:focus {
     0 0 100px rgba(46, 139, 87, 0.2),
     inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
   backdrop-filter: blur(10px);
+  box-sizing: border-box;
+  width: min(540px, calc(100vw - 48px));
   max-width: 540px;
   margin: 0 auto;
   position: relative;
   z-index: 10;
+  overflow: hidden;
 }
 
 /* Mobile notice: hidden on desktop, shown on small viewports */
@@ -1948,6 +1951,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   #noVNC_connect_dlg {
     padding: 25px !important;
     margin: 10px;
+    width: calc(100vw - 20px);
   }
 }
 
