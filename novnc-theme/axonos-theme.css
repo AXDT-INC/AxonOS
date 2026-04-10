@@ -1750,11 +1750,11 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 .axonos-enhanced-connect:hover {
-  background: linear-gradient(135deg, #26708a 0%, #4a4fa3 100%) !important;
+  background: linear-gradient(135deg, #0f2a4d 0%, #1a3b6b 100%) !important;
   transform: translateY(-5px) scale(1.03) !important;
   box-shadow: 
-    0 20px 60px rgba(66, 92, 164, 0.52),
-    0 0 80px rgba(96, 142, 208, 0.24),
+    0 20px 60px rgba(20, 44, 84, 0.58),
+    0 0 80px rgba(54, 96, 168, 0.2),
     0 8px 32px rgba(0, 0, 0, 0.4),
     inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
 }
