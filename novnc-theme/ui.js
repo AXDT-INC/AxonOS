@@ -330,10 +330,14 @@ const UI = {
     },
 
     addMachineHandlers() {
-        document.getElementById("noVNC_restart_session_button")
-            .addEventListener('click', UI.restartDesktopSession);
-        document.getElementById("noVNC_power_button")
-            .addEventListener('click', UI.togglePowerPanel);
+        const restartButton = document.getElementById("noVNC_restart_session_button");
+        if (restartButton) {
+            restartButton.addEventListener('click', UI.restartDesktopSession);
+        }
+        const powerButton = document.getElementById("noVNC_power_button");
+        if (powerButton) {
+            powerButton.addEventListener('click', UI.togglePowerPanel);
+        }
     },
 
     addConnectionControlHandlers() {
@@ -349,14 +353,19 @@ const UI = {
     },
 
     addClipboardHandlers() {
-        document.getElementById("noVNC_clipboard_button")
-            .addEventListener('click', UI.toggleClipboardPanel);
-        document.getElementById("noVNC_clipboard_text")
-            .addEventListener('change', UI.clipboardSend);
-        document.getElementById("noVNC_clipboard_text")
-            .addEventListener('input', UI.clipboardSend);
-        document.getElementById("noVNC_clipboard_clear_button")
-            .addEventListener('click', UI.clipboardClear);
+        const clipboardButton = document.getElementById("noVNC_clipboard_button");
+        if (clipboardButton) {
+            clipboardButton.addEventListener('click', UI.toggleClipboardPanel);
+        }
+        const clipboardText = document.getElementById("noVNC_clipboard_text");
+        if (clipboardText) {
+            clipboardText.addEventListener('change', UI.clipboardSend);
+            clipboardText.addEventListener('input', UI.clipboardSend);
+        }
+        const clipboardClearButton = document.getElementById("noVNC_clipboard_clear_button");
+        if (clipboardClearButton) {
+            clipboardClearButton.addEventListener('click', UI.clipboardClear);
+        }
         document.addEventListener('paste', UI.handleLocalClipboardPaste, true);
     },
 
