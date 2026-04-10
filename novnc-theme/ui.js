@@ -330,12 +330,8 @@ const UI = {
     },
 
     addMachineHandlers() {
-        document.getElementById("noVNC_shutdown_button")
-            .addEventListener('click', () => UI.rfb.machineShutdown());
-        document.getElementById("noVNC_reboot_button")
-            .addEventListener('click', () => UI.rfb.machineReboot());
-        document.getElementById("noVNC_reset_button")
-            .addEventListener('click', () => UI.rfb.machineReset());
+        document.getElementById("noVNC_restart_session_button")
+            .addEventListener('click', UI.restartDesktopSession);
         document.getElementById("noVNC_power_button")
             .addEventListener('click', UI.togglePowerPanel);
     },
@@ -1032,11 +1028,59 @@ const UI = {
         }
     },
 
+    restartDesktopSession() {
+        if (!UI.connected) return;
+        const wallet = window.verifiedWalletAddress;
+        if (!wallet) {
+            UI.showStatus(_("Wallet verification required"), 'error');
+            return;
+        }
+
+        const confirmed = window.confirm(
+            _("Restart desktop session now? Open apps in the remote desktop may close.")
+        );
+        if (!confirmed) return;
+
+        UI.showStatus(_("Restarting desktop session..."), 'normal', 2500);
+
+        const url = new URL('/api/session/restart', window.location.origin).toString();
+        const headers = {
+            'Content-Type': 'application/json',
+            'X-Wallet-Address': wallet,
+        };
+        if (window.verifiedWalletAuthToken) {
+            headers['X-AXGT-Auth-Token'] = window.verifiedWalletAuthToken;
+        }
+
+        fetch(url, {
+            method: 'POST',
+            credentials: 'include',
+            headers,
+            body: JSON.stringify({ wallet_address: wallet }),
+        }).then((response) => {
+            const ct = (response.headers.get('content-type') || '');
+            if (!ct.includes('application/json')) {
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                return {};
+            }
+            return response.json();
+        }).then((data) => {
+            if (!data || data.restarted !== true) {
+                const reason = data && data.reason ? String(data.reason) : _('Restart was not accepted');
+                throw new Error(reason);
+            }
+            UI.closePowerPanel();
+            UI.showStatus(_("Desktop session restart requested"), 'normal');
+            if (UI.rfb) UI.rfb.focus();
+        }).catch((err) => {
+            Log.Error("Desktop restart request failed: " + err);
+            UI.showStatus(_("Could not restart desktop session"), 'error');
+        });
+    },
+
     // Disable/enable power button
     updatePowerButton() {
-        if (UI.connected &&
-            UI.rfb.capabilities.power &&
-            !UI.rfb.viewOnly) {
+        if (UI.connected && !UI.rfb.viewOnly) {
             document.getElementById('noVNC_power_button')
                 .classList.remove("noVNC_hidden");
         } else {

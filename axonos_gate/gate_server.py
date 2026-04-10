@@ -63,6 +63,7 @@ try:
         join_queue,
         leave_queue,
         release_session,
+        restart_desktop_session,
         session_status,
         try_claim_session,
     )
@@ -76,6 +77,7 @@ except ImportError:
             join_queue,
             leave_queue,
             release_session,
+            restart_desktop_session,
             session_status,
             try_claim_session,
         )
@@ -588,6 +590,22 @@ def api_session_release():
     if auth_err:
         return auth_err
     return jsonify(release_session(wallet_address))
+
+
+@app.route('/api/session/restart', methods=['POST', 'OPTIONS'])
+def api_session_restart():
+    if request.method == 'OPTIONS':
+        return '', 200
+    if not _session_mgr_available:
+        return jsonify({"restarted": False, "error": "Session manager unavailable"}), 503
+    data = request.get_json() or {}
+    wallet_address = (data.get('wallet_address') or '').strip()
+    if not wallet_address or not validate_wallet_address(wallet_address):
+        return jsonify({"restarted": False, "error": "Valid wallet_address required"}), 400
+    auth_err = _require_auth_token(wallet_address)
+    if auth_err:
+        return auth_err
+    return jsonify(restart_desktop_session(wallet_address))
 
 
 @app.route('/api/queue/join', methods=['POST', 'OPTIONS'])

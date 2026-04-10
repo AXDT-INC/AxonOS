@@ -86,6 +86,7 @@ try:
         join_queue,
         leave_queue,
         release_session,
+        restart_desktop_session,
         session_status,
         try_claim_session,
     )
@@ -99,6 +100,7 @@ except ImportError:
             join_queue,
             leave_queue,
             release_session,
+            restart_desktop_session,
             session_status,
             try_claim_session,
         )
@@ -684,6 +686,17 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
                 return self._send_json(401, {'released': False, 'error': 'Valid auth token required'})
             result = release_session(wallet_address)
+            return self._send_json(200, result)
+
+        if _session_mgr_available and self.path.startswith('/api/session/restart'):
+            data = self._read_json_body()
+            wallet_address = (data.get('wallet_address') or '').strip()
+            if not wallet_address or not validate_wallet_address(wallet_address):
+                return self._send_json(400, {'restarted': False, 'error': 'Valid wallet_address required'})
+            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+            if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
+                return self._send_json(401, {'restarted': False, 'error': 'Valid auth token required'})
+            result = restart_desktop_session(wallet_address)
             return self._send_json(200, result)
 
         if _session_mgr_available and self.path.startswith('/api/queue/join'):

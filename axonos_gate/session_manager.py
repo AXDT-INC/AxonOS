@@ -609,6 +609,37 @@ def release_session(wallet_address: str) -> Dict[str, Any]:
         conn.close()
 
 
+def restart_desktop_session(wallet_address: str) -> Dict[str, Any]:
+    """Restart desktop services for the active session owner without releasing ownership."""
+    wallet = wallet_address.lower()
+    if not _init_once():
+        return {"restarted": False, "reason": "Session DB unavailable"}
+    conn = _get_connection()
+    if not conn:
+        return {"restarted": False, "reason": "Session DB unavailable"}
+    try:
+        with conn.cursor() as cur:
+            now = time.time()
+            ended = _expire_stale_session(cur, now)
+            active = _get_active_row(cur)
+        conn.commit()
+        if ended:
+            _on_session_ended(ended[0], ended[1])
+        if not active:
+            return {"restarted": False, "reason": "No active session"}
+        if active["wallet_address"] != wallet:
+            return {"restarted": False, "reason": "Only the active session owner can restart"}
+        _run_reset_script()
+        logger.info("session_manager: desktop restart requested by %s", _mask(wallet))
+        return {"restarted": True, "session_id": active["id"]}
+    except Exception as exc:
+        conn.rollback()
+        logger.warning("restart_desktop_session failed: %s", exc)
+        return {"restarted": False, "reason": "Internal error"}
+    finally:
+        conn.close()
+
+
 def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
     """Return current session and queue state visible to *wallet_address*."""
     wallet = wallet_address.lower() if wallet_address else None
