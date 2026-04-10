@@ -1649,6 +1649,8 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 /* Connect wrapper: tooltip shown on hover */
 .axonos-connect-wrapper {
   position: relative;
+  display: flex;
+  justify-content: center;
 }
 
 .axonos-prerequisites-tooltip {
@@ -1657,10 +1659,9 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   bottom: calc(100% - 42px);
   transform: translateX(-50%);
   margin-bottom: 0;
-  max-width: 420px;
-  min-width: 320px;
-  max-height: min(46vh, 520px);
-  overflow-y: auto;
+  width: min(92vw, 460px);
+  max-width: 460px;
+  min-width: 0;
   padding: 14px 18px;
   background: rgba(28, 28, 28, 0.98);
   border: 1px solid rgba(70, 130, 180, 0.5);
