@@ -1721,8 +1721,8 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   background: linear-gradient(135deg, var(--axonos-primary), var(--axonos-secondary)) !important;
   border: none !important;
   border-radius: 20px !important;
-  padding: 25px !important;
-  margin: 35px 0 !important;
+  padding: 18px !important;
+  margin: 24px 0 !important;
   cursor: pointer !important;
   transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1) !important;
   position: relative;
@@ -1763,11 +1763,11 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   background: transparent !important;
   border: none !important;
   border-radius: 10px !important;
-  padding: 15px;
+  padding: 10px;
   backdrop-filter: none;
 }
 
@@ -1781,7 +1781,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 .axonos-connect-icon {
-  font-size: 2rem;
+  font-size: 1.7rem;
   animation: rocket-pulse 2s infinite ease-in-out;
 }
 
@@ -1791,7 +1791,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 .axonos-connect-text {
-  font-size: 1.4rem !important;
+  font-size: 1.2rem !important;
   font-weight: 700 !important;
   color: var(--axonos-light) !important;
   text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
@@ -1800,7 +1800,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 .axonos-connect-subtext {
-  font-size: 0.9rem;
+  font-size: 0.8rem;
   color: rgba(245, 245, 245, 0.8);
   font-weight: 300;
 }
