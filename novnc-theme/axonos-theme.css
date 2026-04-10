@@ -1867,10 +1867,12 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   font-weight: 500;
 }
 
-/* Prevent the flex-centered dialog from clipping above the viewport when
-   content grows (typewriter animation, network banner reveal, etc.). */
+/* Override upstream .noVNC_center flex centering: use align-items:stretch +
+   margin:auto on child so the dialog scrolls instead of clipping when it
+   exceeds the viewport height (typewriter anim, network banner, etc.). */
 .noVNC_center:has(#noVNC_connect_dlg) {
-  overflow: auto;
+  align-items: stretch;
+  overflow-y: auto;
   padding: 20px;
 }
 
@@ -1886,7 +1888,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
     inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
   backdrop-filter: blur(10px);
   max-width: 600px;
-  margin: 0 auto;
+  margin: auto;
   position: relative;
   z-index: 10;
 }
