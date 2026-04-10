@@ -1888,6 +1888,8 @@ input#noVNC_setting_path:-webkit-autofill:focus {
     inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
   backdrop-filter: blur(10px);
   max-width: 600px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
   margin: auto;
   position: relative;
   z-index: 10;
