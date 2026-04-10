@@ -75,24 +75,24 @@ html.noVNC_connected #noVNC_container {
 
 /* Control bar styling */
 #noVNC_control_bar {
-  background: linear-gradient(180deg, #15b8d6 0%, #6b5cff 100%) !important;
-  border: 2px solid rgba(157, 142, 255, 0.8);
-  box-shadow: 0 6px 22px rgba(76, 120, 255, 0.35) !important;
+  background: linear-gradient(180deg, #0f4f63 0%, #2d2f6f 100%) !important;
+  border: 2px solid rgba(104, 120, 196, 0.68);
+  box-shadow: 0 6px 22px rgba(42, 58, 122, 0.42) !important;
 }
 
 #noVNC_control_bar.noVNC_open {
-  box-shadow: 0 10px 28px rgba(88, 132, 255, 0.45) !important;
+  box-shadow: 0 10px 28px rgba(54, 74, 148, 0.5) !important;
 }
 
 /* Control bar handle */
 #noVNC_control_bar_handle {
-  background: linear-gradient(180deg, #28d7ee 0%, #7a66ff 100%) !important;
-  border: 1px solid rgba(185, 173, 255, 0.85);
-  box-shadow: 0 4px 14px rgba(96, 140, 255, 0.4) !important;
+  background: linear-gradient(180deg, #166a82 0%, #3f428f 100%) !important;
+  border: 1px solid rgba(128, 141, 212, 0.72);
+  box-shadow: 0 4px 14px rgba(52, 73, 152, 0.45) !important;
 }
 
 #noVNC_control_bar_handle:hover {
-  background: linear-gradient(180deg, #46e9ff 0%, #8c7bff 100%) !important;
+  background: linear-gradient(180deg, #1f7d98 0%, #5359ad 100%) !important;
 }
 
 /* Panel headings */
@@ -1718,7 +1718,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 
 /* Enhanced Connect Button */
 .axonos-enhanced-connect {
-  background: linear-gradient(135deg, #4f6f94, #3d5f85) !important;
+  background: linear-gradient(135deg, #1c5a6d 0%, #34397f 100%) !important;
   border: none !important;
   border-radius: 20px !important;
   padding: 18px !important;
@@ -1728,7 +1728,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   position: relative;
   overflow: hidden;
   box-shadow: 
-    0 12px 40px rgba(70, 98, 136, 0.42),
+    0 12px 40px rgba(42, 68, 120, 0.42),
     0 4px 16px rgba(0, 0, 0, 0.3),
     inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
   backdrop-filter: blur(10px);
@@ -1750,11 +1750,11 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 .axonos-enhanced-connect:hover {
-  background: linear-gradient(135deg, #5f82ad, #4a6f99) !important;
+  background: linear-gradient(135deg, #26708a 0%, #4a4fa3 100%) !important;
   transform: translateY(-5px) scale(1.03) !important;
   box-shadow: 
-    0 20px 60px rgba(84, 120, 168, 0.5),
-    0 0 80px rgba(126, 172, 224, 0.28),
+    0 20px 60px rgba(66, 92, 164, 0.52),
+    0 0 80px rgba(96, 142, 208, 0.24),
     0 8px 32px rgba(0, 0, 0, 0.4),
     inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
 }
