@@ -2115,6 +2115,9 @@ const UI = {
     },
 
     sendCtrlAltDel() {
+        if (!UI.rfb || typeof UI.rfb.sendCtrlAltDel !== 'function') {
+            return;
+        }
         UI.rfb.sendCtrlAltDel();
         // See below
         UI.rfb.focus();
@@ -2122,6 +2125,9 @@ const UI = {
     },
 
     sendKey(keysym, code, down) {
+        if (!UI.rfb || typeof UI.rfb.sendKey !== 'function') {
+            return;
+        }
         UI.rfb.sendKey(keysym, code, down);
 
         // Move focus to the screen in order to be able to use the
