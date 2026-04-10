@@ -64,6 +64,11 @@ const UI = {
     inhibitReconnect: true,
     reconnectCallback: null,
     reconnectPassword: null,
+    clipboardAutoSyncEnabled: false,
+    clipboardAutoPollId: null,
+    clipboardLastRemoteText: "",
+    clipboardLastLocalText: "",
+    clipboardApplyingRemoteText: false,
 
     prime() {
         const initResult = (typeof WebUtil.initSettings === 'function')
@@ -352,8 +357,107 @@ const UI = {
             .addEventListener('click', UI.toggleClipboardPanel);
         document.getElementById("noVNC_clipboard_text")
             .addEventListener('change', UI.clipboardSend);
+        document.getElementById("noVNC_clipboard_text")
+            .addEventListener('input', UI.clipboardSend);
         document.getElementById("noVNC_clipboard_clear_button")
             .addEventListener('click', UI.clipboardClear);
+        document.addEventListener('paste', UI.handleLocalClipboardPaste, true);
+    },
+
+    clipboardHasBrowserPermission() {
+        return !!(navigator && navigator.clipboard && typeof navigator.clipboard.readText === 'function');
+    },
+
+    clipboardLooksSelectableTarget(target) {
+        if (!target) return false;
+        const tag = target.tagName ? target.tagName.toLowerCase() : '';
+        if (tag === 'textarea') return true;
+        if (tag === 'input') {
+            const type = (target.type || '').toLowerCase();
+            return type === '' || type === 'text' || type === 'search' || type === 'url' ||
+                type === 'tel' || type === 'email' || type === 'password';
+        }
+        return target.isContentEditable === true;
+    },
+
+    setClipboardTextarea(text) {
+        const clipboardInput = document.getElementById('noVNC_clipboard_text');
+        if (clipboardInput.value === text) return;
+        UI.clipboardApplyingRemoteText = true;
+        clipboardInput.value = text;
+        UI.clipboardApplyingRemoteText = false;
+    },
+
+    syncClipboardPanelValueFromLocal() {
+        if (!UI.clipboardHasBrowserPermission()) return Promise.resolve(false);
+        return navigator.clipboard.readText()
+            .then((text) => {
+                if (typeof text !== 'string') return false;
+                UI.clipboardLastLocalText = text;
+                UI.setClipboardTextarea(text);
+                return true;
+            })
+            .catch(() => false);
+    },
+
+    pushRemoteClipboardToLocal(text) {
+        if (!UI.clipboardHasBrowserPermission()) return Promise.resolve(false);
+        return navigator.clipboard.writeText(text)
+            .then(() => {
+                UI.clipboardLastLocalText = text;
+                return true;
+            })
+            .catch(() => false);
+    },
+
+    pullLocalClipboardToRemote() {
+        if (!UI.connected || !UI.rfb || !UI.clipboardHasBrowserPermission()) {
+            return Promise.resolve(false);
+        }
+        return navigator.clipboard.readText()
+            .then((text) => {
+                if (typeof text !== 'string') return false;
+                if (text === UI.clipboardLastLocalText || text === UI.clipboardLastRemoteText) {
+                    return false;
+                }
+                UI.clipboardLastLocalText = text;
+                UI.clipboardLastRemoteText = text;
+                UI.setClipboardTextarea(text);
+                UI.rfb.clipboardPasteFrom(text);
+                return true;
+            })
+            .catch(() => false);
+    },
+
+    startClipboardAutoSync() {
+        UI.stopClipboardAutoSync();
+        UI.clipboardAutoSyncEnabled = UI.clipboardHasBrowserPermission();
+        UI.syncClipboardPanelValueFromLocal();
+        if (!UI.clipboardAutoSyncEnabled) return;
+        UI.pullLocalClipboardToRemote();
+        UI.clipboardAutoPollId = window.setInterval(UI.pullLocalClipboardToRemote, 1500);
+    },
+
+    stopClipboardAutoSync() {
+        UI.clipboardAutoSyncEnabled = false;
+        if (UI.clipboardAutoPollId) {
+            clearInterval(UI.clipboardAutoPollId);
+            UI.clipboardAutoPollId = null;
+        }
+    },
+
+    handleLocalClipboardPaste(e) {
+        if (!UI.connected || !UI.rfb) return;
+        const active = document.activeElement;
+        if (UI.clipboardLooksSelectableTarget(active)) return;
+        const clipData = e.clipboardData || window.clipboardData;
+        if (!clipData) return;
+        const text = clipData.getData('text/plain');
+        if (!text || text === UI.clipboardLastRemoteText) return;
+        UI.clipboardLastLocalText = text;
+        UI.clipboardLastRemoteText = text;
+        UI.setClipboardTextarea(text);
+        UI.rfb.clipboardPasteFrom(text);
     },
 
     // Add a call to save settings when the element changes,
@@ -976,19 +1080,29 @@ const UI = {
     },
 
     clipboardReceive(e) {
-        Log.Debug(">> UI.clipboardReceive: " + e.detail.text.substr(0, 40) + "...");
-        document.getElementById('noVNC_clipboard_text').value = e.detail.text;
+        const text = (e && e.detail && typeof e.detail.text === 'string') ? e.detail.text : "";
+        Log.Debug(">> UI.clipboardReceive: " + text.substr(0, 40) + "...");
+        UI.clipboardLastRemoteText = text;
+        UI.setClipboardTextarea(text);
+        UI.pushRemoteClipboardToLocal(text);
         Log.Debug("<< UI.clipboardReceive");
     },
 
     clipboardClear() {
-        document.getElementById('noVNC_clipboard_text').value = "";
+        UI.clipboardLastRemoteText = "";
+        UI.clipboardLastLocalText = "";
+        UI.setClipboardTextarea("");
+        UI.pushRemoteClipboardToLocal("");
         UI.rfb.clipboardPasteFrom("");
     },
 
     clipboardSend() {
         const text = document.getElementById('noVNC_clipboard_text').value;
+        if (UI.clipboardApplyingRemoteText) return;
         Log.Debug(">> UI.clipboardSend: " + text.substr(0, 40) + "...");
+        UI.clipboardLastRemoteText = text;
+        UI.clipboardLastLocalText = text;
+        UI.pushRemoteClipboardToLocal(text);
         UI.rfb.clipboardPasteFrom(text);
         Log.Debug("<< UI.clipboardSend");
     },
@@ -1306,6 +1420,7 @@ const UI = {
         }
         UI.showStatus(msg);
         UI.updateVisualState('connected');
+        UI.startClipboardAutoSync();
 
         // Start AXGT usage polling when connected with a verified wallet
         if (window.verifiedWalletAddress) {
@@ -1329,6 +1444,7 @@ const UI = {
         // the server, we need to do it here as well since
         // UI.disconnect() won't be used in those cases.
         UI.connected = false;
+        UI.stopClipboardAutoSync();
 
         UI.rfb = undefined;
 
