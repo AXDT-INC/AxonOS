@@ -105,21 +105,21 @@ html.noVNC_connected #noVNC_container {
 
 /* Connect button */
 #noVNC_connect_button {
-  background: linear-gradient(135deg, var(--axonos-primary), var(--axonos-secondary)) !important;
-  border: 2px solid var(--axonos-accent);
+  background: linear-gradient(135deg, #1c5a6d 0%, #34397f 100%) !important;
+  border: none;
   color: var(--axonos-light) !important;
-  box-shadow: 0 4px 15px var(--axonos-shadow) !important;
+  box-shadow: 0 4px 15px rgba(42, 68, 120, 0.42) !important;
 }
 
 #noVNC_connect_button:hover {
-  background: linear-gradient(135deg, var(--axonos-hover), var(--axonos-primary)) !important;
+  background: linear-gradient(135deg, #0f2a4d 0%, #1a3b6b 100%) !important;
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px var(--axonos-shadow) !important;
+  box-shadow: 0 6px 20px rgba(20, 44, 84, 0.58) !important;
 }
 
 #noVNC_connect_button div {
-  border: 1px solid var(--axonos-accent) !important;
-  background: linear-gradient(to top, var(--axonos-primary), var(--axonos-secondary)) !important;
+  border: none !important;
+  background: transparent !important;
 }
 
 /* Panels */
