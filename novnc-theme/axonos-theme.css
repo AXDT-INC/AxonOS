@@ -1495,6 +1495,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   text-transform: uppercase;
   letter-spacing: 2px;
   font-family: "Orbitron", monospace;
+  min-height: 1.6em;
 }
 
 /* Network environment (mainnet vs testnet) — driven by /api/config axgt_chain_id; see vnc.html applyAxonosNetworkEnvironmentUi */
@@ -1511,7 +1512,8 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 .axonos-network-banner--hidden {
-  display: none !important;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .axonos-network-banner--mainnet {
@@ -1863,6 +1865,13 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   color: var(--axonos-accent);
   font-size: 0.9rem;
   font-weight: 500;
+}
+
+/* Prevent the flex-centered dialog from clipping above the viewport when
+   content grows (typewriter animation, network banner reveal, etc.). */
+.noVNC_center:has(#noVNC_connect_dlg) {
+  overflow: auto;
+  padding: 20px;
 }
 
 /* Connect Dialog Container Enhancement */
