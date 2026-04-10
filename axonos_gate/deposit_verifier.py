@@ -27,6 +27,13 @@ DEFAULT_ETH_MIN_DEPOSIT = Decimal("0.0005")
 DEFAULT_ETH_CREDIT_PER_ETH_MINUTES = 120000.0
 
 
+def _eth_deposits_enabled() -> bool:
+    raw = (os.getenv("AXGT_ENABLE_ETH_DEPOSITS") or "").strip().lower()
+    if not raw:
+        return True
+    return raw in ("1", "true", "yes", "on")
+
+
 def _rpc(url: str, method: str, params: List[Any]) -> Optional[Any]:
     payload = {"jsonrpc": "2.0", "method": method, "params": params, "id": 1}
     try:
@@ -307,6 +314,9 @@ def verify_deposit(
         except (ValueError, TypeError):
             value_wei = 0
         if value_wei > 0:
+            if not _eth_deposits_enabled():
+                deposit_ledger.record_verification_reject(wallet, notes="ETH deposits disabled by AXGT_ENABLE_ETH_DEPOSITS")
+                return fail("ETH deposits are currently disabled")
             eth_amount = Decimal(value_wei) / Decimal(10 ** 18)
             min_eth = _min_eth_deposit()
             if eth_amount >= min_eth:

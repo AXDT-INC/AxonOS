@@ -29,4 +29,5 @@
 - [x] Leave queue + Launch: clear stale `UI.rfb` / retry path (`ui.js` connect) + `axonosResetDesktopGateForRetry()` after leave — fixes 1006 / “Failed to connect” loop
 - [x] **Launch must `POST /api/session/claim` before WebSocket** — gate rejects WS if not session owner (was 1006 after leave queue + Launch); `axonosOnSessionClaimDenied` → queue overlay (`ui.js` + `vnc.html`)
 - [x] noVNC landing + wallet dialog: network environment banner from `/api/config` `axgt_chain_id` (mainnet vs testnet); operator notes in `vnc.html` + `env.example`
+- [x] ETH deposit feature flag: `AXGT_ENABLE_ETH_DEPOSITS` gates backend crediting + `/api/config` and hides ETH top-up controls in wallet UI (`deposit_verifier.py`, `axgt_verifier.py`, `gate_server.py`, `websockify_gate.py`, `vnc.html`)
 - [ ] Phase 4: End-to-end runtime test checklist

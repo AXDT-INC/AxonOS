@@ -928,7 +928,7 @@ document.addEventListener("DOMContentLoaded", function() {
     const retryConnectBtn = document.getElementById('axonos_retry_connect_btn');
     const switchNetworkBtn = document.getElementById('axonos_switch_network_btn');
     const STATE_IDS = ['axonos_wallet_state_disconnected', 'axonos_wallet_state_choose_wallet', 'axonos_wallet_state_checking', 'axonos_wallet_state_verified', 'axonos_wallet_state_insufficient', 'axonos_wallet_state_connect_error', 'axonos_wallet_state_no_wallet', 'axonos_wallet_state_rejected', 'axonos_wallet_state_wrong_network'];
-    let axonosConfig = { axgt_contract_address: '', axgt_revenue_wallet: '', axgt_chain_id: null, axgt_min_deposit: '100', eth_min_deposit: '0.0005', axgt_token_decimals: 18, credit_per_100_axgt: 60, eth_credit_per_eth: 120000, min_axgt_minutes: 60, min_eth_minutes: 60 };
+    let axonosConfig = { axgt_contract_address: '', axgt_revenue_wallet: '', axgt_chain_id: null, axgt_min_deposit: '100', eth_deposits_enabled: true, eth_min_deposit: '0.0005', axgt_token_decimals: 18, credit_per_100_axgt: 60, eth_credit_per_eth: 120000, min_axgt_minutes: 60, min_eth_minutes: 60 };
 
     /**
      * Mainnet vs testnet labels (landing + wallet dialog)
@@ -1049,6 +1049,24 @@ document.addEventListener("DOMContentLoaded", function() {
     }
     var selectedEthereumProvider = null;
 
+    function setEthDepositUiEnabled(enabled) {
+        var ethAmountInput = document.getElementById('axonos_pay_eth_amount');
+        var ethMinBtn = document.getElementById('axonos_pay_eth_min_btn');
+        var ethSendBtn = document.getElementById('axonos_pay_eth_btn');
+        var ethRow = (ethSendBtn && typeof ethSendBtn.closest === 'function')
+            ? ethSendBtn.closest('.axonos-pay-deposit-row')
+            : null;
+        var prereqEth = document.getElementById('axonos_prereq_min_eth');
+        var prereqEthLabel = document.getElementById('axonos_prereq_eth_min_label');
+
+        if (ethAmountInput) ethAmountInput.disabled = !enabled;
+        if (ethMinBtn) ethMinBtn.disabled = !enabled;
+        if (ethSendBtn) ethSendBtn.disabled = !enabled;
+        if (ethRow) ethRow.style.display = enabled ? '' : 'none';
+        if (prereqEth) prereqEth.textContent = enabled ? prereqEth.textContent : 'disabled';
+        if (prereqEthLabel) prereqEthLabel.textContent = enabled ? prereqEthLabel.textContent : 'ETH top-ups disabled';
+    }
+
     /** Collect available wallet providers (EIP-6963, then window.ethereum.providers, then single ethereum). */
     function getWalletProviders() {
         return new Promise(function (resolve) {
@@ -1100,6 +1118,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 var minDeposit = (cfg && (cfg.axgt_min_deposit != null || cfg.axgt_min_hold_amount != null))
                     ? String(cfg.axgt_min_deposit ?? cfg.axgt_min_hold_amount) : '100';
                 var minEth = (cfg && cfg.eth_min_deposit != null) ? String(cfg.eth_min_deposit) : '0.0005';
+                var ethEnabled = !cfg || cfg.eth_deposits_enabled !== false;
                 var cp100 = (cfg && cfg.axgt_credit_per_100_axgt_minutes != null) ? Number(cfg.axgt_credit_per_100_axgt_minutes) : 60;
                 var cpe = (cfg && cfg.eth_credit_per_eth_minutes != null) ? Number(cfg.eth_credit_per_eth_minutes) : 120000;
                 var maMin = (cfg && cfg.min_axgt_deposit_minutes != null) ? Number(cfg.min_axgt_deposit_minutes) : (Number(minDeposit) / 100) * cp100;
@@ -1108,6 +1127,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 axonosConfig.axgt_revenue_wallet = rev;
                 axonosConfig.axgt_chain_id = (cfg && cfg.axgt_chain_id) ? String(cfg.axgt_chain_id) : null;
                 axonosConfig.axgt_min_deposit = minDeposit;
+                axonosConfig.eth_deposits_enabled = !!ethEnabled;
                 axonosConfig.eth_min_deposit = minEth;
                 axonosConfig.credit_per_100_axgt = cp100;
                 axonosConfig.eth_credit_per_eth = cpe;
@@ -1128,23 +1148,33 @@ document.addEventListener("DOMContentLoaded", function() {
                 var prereqMinEth = document.getElementById('axonos_prereq_min_eth');
                 var insufficientCreditTitle = document.getElementById('axonos_insufficient_credit_title');
                 if (prereqMin) prereqMin.textContent = minDeposit;
-                if (prereqMinEth) prereqMinEth.textContent = minEth;
+                if (prereqMinEth) prereqMinEth.textContent = ethEnabled ? minEth : 'disabled';
                 var prereqAxgtMin = document.getElementById('axonos_prereq_axgt_min_label');
                 var prereqEthMin = document.getElementById('axonos_prereq_eth_min_label');
                 if (prereqAxgtMin) prereqAxgtMin.textContent = formatCreditMinutes(maMin) + ' desktop time';
-                if (prereqEthMin) prereqEthMin.textContent = formatCreditMinutes(meMin) + ' desktop time';
+                if (prereqEthMin) prereqEthMin.textContent = ethEnabled ? (formatCreditMinutes(meMin) + ' desktop time') : 'ETH top-ups disabled';
                 var dlgHints = document.getElementById('axonos-dlg-credit-hints');
                 if (dlgHints) {
                     var ethPer1 = (cpe >= 1e6) ? String(Math.round(cpe)) : String(Math.round(cpe * 1e6) / 1e6);
-                    dlgHints.innerHTML = '<strong>100 AXGT</strong> → <strong>' + cp100 + '</strong> min · <strong>1 ETH</strong> → <strong>' + ethPer1 + '</strong> min · Min. top-up: <strong>' + minDeposit + '</strong> AXGT (~' + formatCreditMinutes(maMin) + ') or <strong>' + minEth + '</strong> ETH (~' + formatCreditMinutes(meMin) + '). Enter any amount ≥ min or paste your tx hash.' +
+                    var topupHint = ethEnabled
+                        ? ('<strong>' + minDeposit + '</strong> AXGT (~' + formatCreditMinutes(maMin) + ') or <strong>' + minEth + '</strong> ETH (~' + formatCreditMinutes(meMin) + ')')
+                        : ('<strong>' + minDeposit + '</strong> AXGT (~' + formatCreditMinutes(maMin) + ')');
+                    var rateHint = ethEnabled
+                        ? ('<strong>100 AXGT</strong> → <strong>' + cp100 + '</strong> min · <strong>1 ETH</strong> → <strong>' + ethPer1 + '</strong> min')
+                        : ('<strong>100 AXGT</strong> → <strong>' + cp100 + '</strong> min · ETH top-ups disabled');
+                    dlgHints.innerHTML = rateHint + ' · Min. top-up: ' + topupHint + '. Enter any amount ≥ min or paste your tx hash.' +
                         '<span class="axonos-wallet-card__hints-session">While connected, minutes count for your session (idle included if this tab stays open). Use <strong>Disconnect</strong> when finished; closing the tab only may delay releasing the desktop.</span>';
                 }
                 var insRates = document.getElementById('axonos_insufficient_credit_rates');
                 if (insRates) {
-                    insRates.textContent = 'Same rates: 100 AXGT → ' + cp100 + ' min; min ' + minDeposit + ' AXGT → ~' + formatCreditMinutes(maMin) + '; min ' + minEth + ' ETH → ~' + formatCreditMinutes(meMin) + '.';
+                    insRates.textContent = ethEnabled
+                        ? ('Same rates: 100 AXGT → ' + cp100 + ' min; min ' + minDeposit + ' AXGT → ~' + formatCreditMinutes(maMin) + '; min ' + minEth + ' ETH → ~' + formatCreditMinutes(meMin) + '.')
+                        : ('Same rates: 100 AXGT → ' + cp100 + ' min; min ' + minDeposit + ' AXGT → ~' + formatCreditMinutes(maMin) + '. ETH top-ups are currently disabled.');
                 }
                 if (insufficientCreditTitle) {
-                    insufficientCreditTitle.textContent = 'You need prepaid credit: min. ' + minDeposit + ' AXGT or ' + minEth + ' ETH per top-up';
+                    insufficientCreditTitle.textContent = ethEnabled
+                        ? ('You need prepaid credit: min. ' + minDeposit + ' AXGT or ' + minEth + ' ETH per top-up')
+                        : ('You need prepaid credit: min. ' + minDeposit + ' AXGT per top-up');
                 }
                 var payAxgtIn = document.getElementById('axonos_pay_axgt_amount');
                 var payEthIn = document.getElementById('axonos_pay_eth_amount');
@@ -1156,6 +1186,7 @@ document.addEventListener("DOMContentLoaded", function() {
                     payEthIn.placeholder = 'min ' + minEth;
                     if (!payEthIn.dataset.axonosUserAmount) payEthIn.value = minEth;
                 }
+                setEthDepositUiEnabled(ethEnabled);
                 function etherscanBase(chainId) {
                     if (chainId === '1') return 'https://etherscan.io';
                     if (chainId === '11155111') return 'https://sepolia.etherscan.io';
@@ -1604,6 +1635,11 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 
     function axonosPayEthFromWallet() {
+        if (!axonosConfig.eth_deposits_enabled) {
+            var disabledMsgEl = document.getElementById('axonos_verify_deposit_msg');
+            if (disabledMsgEl) disabledMsgEl.textContent = 'ETH top-ups are currently disabled.';
+            return;
+        }
         var eth = selectedEthereumProvider || window.ethereum;
         var wallet = verifiedWalletAddress;
         var tok = window.verifiedWalletAuthToken;

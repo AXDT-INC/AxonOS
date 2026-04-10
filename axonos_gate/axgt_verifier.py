@@ -49,6 +49,13 @@ DEFAULT_ETH_MIN_DEPOSIT = "0.0005"
 DEFAULT_ETH_CREDIT_PER_ETH_MINUTES = 120000.0  # 1 ETH → 120k min; 0.0005 ETH → 60 min
 
 
+def eth_deposits_enabled() -> bool:
+    raw = (os.getenv("AXGT_ENABLE_ETH_DEPOSITS") or "").strip().lower()
+    if not raw:
+        return True
+    return raw in ("1", "true", "yes", "on")
+
+
 def mask_wallet_address(address: str) -> str:
     if not address or len(address) < 10:
         return "***"
@@ -518,14 +525,19 @@ def _min_eth_deposit_credit_minutes() -> float:
 
 def get_credit_policy() -> Dict[str, Any]:
     """Deposit-credit policy: min deposit (AXGT/ETH), credit rates, warning threshold."""
+    eth_enabled = eth_deposits_enabled()
+    eth_min = _get_eth_min_deposit_display()
+    eth_rate = _get_eth_credit_per_eth_minutes()
+    eth_min_minutes = round(_min_eth_deposit_credit_minutes(), 4) if eth_enabled else None
     return {
         "min_deposit": _get_min_deposit_display(),
         "credit_per_100_axgt_minutes": _get_credit_per_100_axgt_minutes(),
-        "eth_min_deposit": _get_eth_min_deposit_display(),
-        "eth_credit_per_eth_minutes": _get_eth_credit_per_eth_minutes(),
+        "eth_deposits_enabled": eth_enabled,
+        "eth_min_deposit": eth_min,
+        "eth_credit_per_eth_minutes": eth_rate,
         "warning_threshold_minutes": _get_warning_threshold_minutes(),
         "min_axgt_deposit_minutes": round(_min_axgt_deposit_credit_minutes(), 4),
-        "min_eth_deposit_minutes": round(_min_eth_deposit_credit_minutes(), 4),
+        "min_eth_deposit_minutes": eth_min_minutes,
     }
 
 
@@ -583,9 +595,14 @@ def get_wallet_access_status(wallet_address: str, consume_usage: bool = False) -
         "reason": None,
     }
     if not verified:
-        response["reason"] = (
-            "No prepaid credit. Deposit AXGT/ETH to the revenue wallet and submit the transaction hash to get usage minutes."
-        )
+        if eth_deposits_enabled():
+            response["reason"] = (
+                "No prepaid credit. Deposit AXGT/ETH to the revenue wallet and submit the transaction hash to get usage minutes."
+            )
+        else:
+            response["reason"] = (
+                "No prepaid credit. Deposit AXGT to the revenue wallet and submit the transaction hash to get usage minutes."
+            )
     elif remaining <= warning_threshold:
         response["reason"] = (
             f"Warning: less than {warning_threshold} minutes of prepaid credit remaining."
