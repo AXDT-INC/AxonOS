@@ -75,24 +75,24 @@ html.noVNC_connected #noVNC_container {
 
 /* Control bar styling */
 #noVNC_control_bar {
-  background-color: var(--axonos-primary) !important;
-  border: 2px solid var(--axonos-secondary);
-  box-shadow: 0 4px 15px var(--axonos-shadow) !important;
+  background: linear-gradient(180deg, #15b8d6 0%, #6b5cff 100%) !important;
+  border: 2px solid rgba(157, 142, 255, 0.8);
+  box-shadow: 0 6px 22px rgba(76, 120, 255, 0.35) !important;
 }
 
 #noVNC_control_bar.noVNC_open {
-  box-shadow: 0 6px 20px var(--axonos-shadow) !important;
+  box-shadow: 0 10px 28px rgba(88, 132, 255, 0.45) !important;
 }
 
 /* Control bar handle */
 #noVNC_control_bar_handle {
-  background-color: var(--axonos-secondary) !important;
-  border: 1px solid var(--axonos-primary);
-  box-shadow: 0 3px 10px var(--axonos-shadow) !important;
+  background: linear-gradient(180deg, #28d7ee 0%, #7a66ff 100%) !important;
+  border: 1px solid rgba(185, 173, 255, 0.85);
+  box-shadow: 0 4px 14px rgba(96, 140, 255, 0.4) !important;
 }
 
 #noVNC_control_bar_handle:hover {
-  background-color: var(--axonos-hover) !important;
+  background: linear-gradient(180deg, #46e9ff 0%, #8c7bff 100%) !important;
 }
 
 /* Panel headings */
