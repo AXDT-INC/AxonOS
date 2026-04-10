@@ -1870,19 +1870,16 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   background: linear-gradient(135deg, rgba(28, 28, 28, 0.95), rgba(44, 44, 44, 0.95)) !important;
   border: 2px solid var(--axonos-primary) !important;
   border-radius: 20px !important;
-  padding: 36px !important;
+  padding: 40px !important;
   box-shadow: 
     0 20px 60px rgba(0, 0, 0, 0.5),
     0 0 100px rgba(46, 139, 87, 0.2),
     inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
   backdrop-filter: blur(10px);
-  box-sizing: border-box;
-  width: min(540px, calc(100vw - 48px));
-  max-width: 540px;
+  max-width: 600px;
   margin: 0 auto;
   position: relative;
   z-index: 10;
-  overflow: hidden;
 }
 
 /* Mobile notice: hidden on desktop, shown on small viewports */
@@ -1951,7 +1948,6 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   #noVNC_connect_dlg {
     padding: 25px !important;
     margin: 10px;
-    width: calc(100vw - 20px);
   }
 }
 
