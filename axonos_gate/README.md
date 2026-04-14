@@ -115,9 +115,48 @@ Heartbeats trigger incremental billing; when remaining minutes reach zero the se
 - `axgt_verifier.py`: Challenge/signature verification; deposit-credit access (reads from deposit ledger).
 - `deposit_ledger.py`: Postgres-backed deposits, ledger, verified-deposits; billing and admin helpers.
 - `deposit_verifier.py`: Tx-hash verification (RPC, Transfer events, confirmations); credits via deposit_ledger.
-- `session_manager.py`: Single active session, queue, heartbeat-based billing (calls deposit_ledger.deduct_usage).
+- `session_manager.py`: Session scheduler + queue + heartbeat-based billing (calls deposit_ledger.deduct_usage). Supports private-beta single-session mode and feature-gated public-beta multi-session mode with exclusive GPU allocation.
 - `gate_server.py`: HTTP API and WebSocket proxy (port **8889** by default).
 - `websockify_gate.py`: noVNC + WebSocket on **6080**; serves the same `/api/config`, `/api/auth/*` (challenge, verify-wallet, wallet-status, **verify-deposit**), and session/queue POSTs so a tunnel to 6080 alone can sign in and top up without hitting 8889.
+
+## Public Beta Concurrency Architecture (v1)
+
+Feature-gated by:
+
+- `AXGT_MULTI_SESSION_ENABLED=true`
+- `AXGT_GPU_PROFILES_ENABLED=true`
+
+Optional user-container mode:
+
+- `AXGT_USER_CONTAINER_ENABLED=true`
+
+### What changed
+
+- Session records now include `requested_profile`, `gpu_ids`, `container_id`, and `allocation_status`.
+- Queue records are profile-aware (`requested_profile`, `requested_gpus`, `queue_reason`).
+- Claim/queue APIs accept `requested_profile` (`small|medium|large`).
+- Session status includes active sessions, assigned GPU IDs, requested profile, allocation/queue status, and queue reason.
+
+### Scheduler policy
+
+- Profiles are fixed: `small=1`, `medium=2`, `large=4` GPUs.
+- Allocation is **exclusive per physical GPU ID**; a GPU ID can be present in at most one active session.
+- If enough free GPUs exist, scheduler assigns exact count from free GPU IDs.
+- If not enough GPUs are free, request is queued with reason `insufficient free GPUs for requested profile`.
+
+### Queue policy
+
+- Queue is FIFO but **schedulability-aware**:
+  - Earlier queued requests only block later ones if they are currently schedulable.
+  - Large unschedulable requests do not block smaller requests that can run safely.
+- This preserves practical throughput while maintaining fairness when requests are runnable.
+
+### GPU exclusivity guarantee
+
+- Active allocations are tracked as explicit GPU ID sets per session.
+- Scheduler derives free GPUs as `configured_gpus - union(active_session_gpu_ids)`.
+- New session can only be created from free IDs; overlapping GPU IDs are not allowed.
+- GPU IDs are released immediately when session ends (release, timeout, credit exhaustion, or container failure).
 
 ## Security
 

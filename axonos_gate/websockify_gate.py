@@ -565,6 +565,9 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 "axgt_warning_threshold_minutes": policy.get("warning_threshold_minutes"),
                 "min_axgt_deposit_minutes": policy.get("min_axgt_deposit_minutes"),
                 "min_eth_deposit_minutes": policy.get("min_eth_deposit_minutes"),
+                "multi_session_enabled": (os.getenv("AXGT_MULTI_SESSION_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")),
+                "gpu_profiles_enabled": (os.getenv("AXGT_GPU_PROFILES_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")),
+                "gpu_profiles": {"small": 1, "medium": 2, "large": 4},
             }
             return self._send_json(200, payload)
 
@@ -659,12 +662,13 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         if _session_mgr_available and self.path.startswith('/api/session/claim'):
             data = self._read_json_body()
             wallet_address = (data.get('wallet_address') or '').strip()
+            requested_profile = (data.get('requested_profile') or '').strip() or None
             if not wallet_address or not validate_wallet_address(wallet_address):
                 return self._send_json(400, {'granted': False, 'error': 'Valid wallet_address required'})
             auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
             if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
                 return self._send_json(401, {'granted': False, 'error': 'Valid auth token required'})
-            result = try_claim_session(wallet_address)
+            result = try_claim_session(wallet_address, requested_profile=requested_profile)
             return self._send_json(200, result)
 
         if _session_mgr_available and self.path.startswith('/api/session/heartbeat'):
@@ -703,12 +707,13 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         if _session_mgr_available and self.path.startswith('/api/queue/join'):
             data = self._read_json_body()
             wallet_address = (data.get('wallet_address') or '').strip()
+            requested_profile = (data.get('requested_profile') or '').strip() or None
             if not wallet_address or not validate_wallet_address(wallet_address):
                 return self._send_json(400, {'joined': False, 'error': 'Valid wallet_address required'})
             auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
             if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
                 return self._send_json(401, {'joined': False, 'error': 'Valid auth token required'})
-            result = join_queue(wallet_address)
+            result = join_queue(wallet_address, requested_profile=requested_profile)
             return self._send_json(200, result)
 
         if _session_mgr_available and self.path.startswith('/api/queue/leave'):

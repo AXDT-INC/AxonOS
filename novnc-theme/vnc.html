@@ -298,6 +298,14 @@ Copyright (C) 2019 The noVNC Authors
             
             <!-- Connect Button; prerequisites shown on hover to save vertical space -->
             <div class="axonos-connect-wrapper">
+                <div style="display:flex;align-items:center;justify-content:center;gap:0.5rem;margin:0.5rem 0 0.85rem 0;">
+                    <label for="axonos_profile_select" style="font-size:0.9rem;opacity:0.9;">GPU Profile:</label>
+                    <select id="axonos_profile_select" style="background:#121212;color:#f5f5f5;border:1px solid rgba(255,255,255,0.25);border-radius:6px;padding:0.35rem 0.6rem;">
+                        <option value="small">Small (1 GPU)</option>
+                        <option value="medium">Medium (2 GPUs)</option>
+                        <option value="large">Large (4 GPUs)</option>
+                    </select>
+                </div>
                 <div id="axonos_prerequisites_tooltip" class="axonos-prerequisites-tooltip" aria-label="Requirements to sign in" role="tooltip">
                     <p class="axonos-prerequisites__title">To sign in you need:</p>
                     <ul class="axonos-prerequisites__list">
@@ -788,10 +796,11 @@ document.addEventListener("DOMContentLoaded", function() {
     function claimSession() {
         const wallet = window.verifiedWalletAddress;
         if (!wallet) return Promise.resolve({ granted: false });
+        const requestedProfile = getRequestedProfile();
         return axonosFetch({
             method: 'POST',
             url: new URL('/api/session/claim', window.location.origin).toString(),
-            body: JSON.stringify({ wallet_address: wallet })
+            body: JSON.stringify({ wallet_address: wallet, requested_profile: requestedProfile })
         });
     }
 
@@ -805,6 +814,7 @@ document.addEventListener("DOMContentLoaded", function() {
     function joinQueue() {
         const wallet = window.verifiedWalletAddress;
         if (!wallet) return Promise.resolve({ joined: false, reason: 'Wallet not connected.' });
+        const requestedProfile = getRequestedProfile();
         const url = new URL('/api/queue/join', window.location.origin).toString();
         const headers = { 'Content-Type': 'application/json' };
         if (window.verifiedWalletAddress) headers['X-Wallet-Address'] = window.verifiedWalletAddress;
@@ -813,7 +823,7 @@ document.addEventListener("DOMContentLoaded", function() {
             method: 'POST',
             credentials: 'include',
             headers: headers,
-            body: JSON.stringify({ wallet_address: wallet })
+            body: JSON.stringify({ wallet_address: wallet, requested_profile: requestedProfile })
         }).then(function (resp) {
             return resp.json().then(function (data) {
                 if (typeof data !== 'object' || data === null) data = {};
@@ -844,7 +854,7 @@ document.addEventListener("DOMContentLoaded", function() {
         if (!overlay) return;
         overlay.classList.remove('axonos-queue-overlay--hidden');
         overlay.setAttribute('aria-hidden', 'false');
-        if (msgEl) msgEl.textContent = (data && data.reason) ? data.reason : 'Another researcher is currently using the desktop.';
+        if (msgEl) msgEl.textContent = (data && data.reason) ? data.reason : 'Waiting for GPU allocation.';
         if (posEl) {
             posEl.textContent = (data && data.queue_position != null && data.queue_position !== '')
                 ? String(data.queue_position)
@@ -866,6 +876,15 @@ document.addEventListener("DOMContentLoaded", function() {
             axonosQueuePollId = null;
         }
     }
+
+    function getRequestedProfile() {
+        var el = document.getElementById('axonos_profile_select');
+        var val = el ? String(el.value || '').toLowerCase() : 'small';
+        if (val !== 'small' && val !== 'medium' && val !== 'large') return 'small';
+        return val;
+    }
+
+    window.axonosGetRequestedProfile = getRequestedProfile;
 
     function axonosHasQueuePosition(v) {
         return v != null && v !== '';

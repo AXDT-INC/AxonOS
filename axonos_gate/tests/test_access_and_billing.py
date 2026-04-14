@@ -108,7 +108,7 @@ class TestBillingAndSession(unittest.TestCase):
         cur = MagicMock()
         cur.fetchone.side_effect = [
             None,                          # _expire_stale_session RETURNING
-            (1, 1000.0, 2000.0, 500.0),   # SELECT id, last_billed_at, expires_at, started_at
+            (1, 1000.0, 2000.0, 500.0, "small", "0", "shared-desktop"),   # SELECT session row
             (2000.0,),                     # UPDATE RETURNING expires_at
         ]
         conn.cursor.return_value = cur
@@ -123,6 +123,25 @@ class TestBillingAndSession(unittest.TestCase):
         call_args = mock_deduct.call_args[0]
         self.assertEqual(call_args[1], "0x1234567890123456789012345678901234567890".lower())
         self.assertGreater(call_args[2], 0)
+
+    def test_gpu_allocation_no_overlap(self):
+        from axonos_gate import session_manager
+        active_rows = [
+            {"gpu_ids": [0], "wallet_address": "0xaaa"},
+            {"gpu_ids": [2, 3], "wallet_address": "0xbbb"},
+        ]
+        with patch.dict(os.environ, {"AXGT_GPU_DEVICE_IDS": "0,1,2,3"}):
+            alloc = session_manager._choose_allocation(active_rows, 1)
+        self.assertEqual(alloc, [1])
+
+    def test_gpu_allocation_insufficient_capacity(self):
+        from axonos_gate import session_manager
+        active_rows = [
+            {"gpu_ids": [0, 1, 2], "wallet_address": "0xaaa"},
+        ]
+        with patch.dict(os.environ, {"AXGT_GPU_DEVICE_IDS": "0,1,2,3"}):
+            alloc = session_manager._choose_allocation(active_rows, 2)
+        self.assertIsNone(alloc)
 
 
 if __name__ == "__main__":

@@ -1213,6 +1213,9 @@ const UI = {
         if (!wallet) {
             return Promise.resolve({ granted: false, reason: 'No wallet' });
         }
+        const requestedProfile = (typeof window.axonosGetRequestedProfile === 'function')
+            ? window.axonosGetRequestedProfile()
+            : 'small';
         const url = new URL('/api/session/claim', window.location.origin).toString();
         const headers = {
             'Content-Type': 'application/json',
@@ -1225,7 +1228,7 @@ const UI = {
             method: 'POST',
             credentials: 'include',
             headers,
-            body: JSON.stringify({ wallet_address: wallet }),
+            body: JSON.stringify({ wallet_address: wallet, requested_profile: requestedProfile }),
         }).then((r) => {
             const ct = (r.headers.get('content-type') || '');
             if (!ct.includes('application/json')) {
@@ -1384,11 +1387,16 @@ const UI = {
             if (!granted) {
                 UI.updateVisualState('disconnected');
                 const reason = (claim && claim.reason) ? String(claim.reason) : _('Could not claim desktop session.');
-                UI.showStatus(reason, 'error');
+                UI.showStatus(reason, 'warn');
                 if (typeof window.axonosOnSessionClaimDenied === 'function') {
                     window.axonosOnSessionClaimDenied(claim || {});
                 }
                 return;
+            }
+            if (Array.isArray(claim.assigned_gpu_ids) && claim.assigned_gpu_ids.length > 0) {
+                UI.showStatus(`Session active on GPU(s): ${claim.assigned_gpu_ids.join(',')}`, 'normal', 2500);
+            } else if (claim && claim.allocation_status === 'allocating') {
+                UI.showStatus(_('Allocating GPUs...'), 'normal', 2000);
             }
             UI.closeConnectPanel();
             UI.updateVisualState('connecting');

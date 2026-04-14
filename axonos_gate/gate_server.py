@@ -392,6 +392,9 @@ def api_config():
         'axgt_warning_threshold_minutes': policy.get("warning_threshold_minutes"),
         'min_axgt_deposit_minutes': policy.get("min_axgt_deposit_minutes"),
         'min_eth_deposit_minutes': policy.get("min_eth_deposit_minutes"),
+        'multi_session_enabled': (os.getenv("AXGT_MULTI_SESSION_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")),
+        'gpu_profiles_enabled': (os.getenv("AXGT_GPU_PROFILES_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")),
+        'gpu_profiles': {'small': 1, 'medium': 2, 'large': 4},
     })
 
 
@@ -553,12 +556,13 @@ def api_session_claim():
         return jsonify({"granted": False, "error": "Session manager unavailable"}), 503
     data = request.get_json() or {}
     wallet_address = (data.get('wallet_address') or '').strip()
+    requested_profile = (data.get('requested_profile') or '').strip() or None
     if not wallet_address or not validate_wallet_address(wallet_address):
         return jsonify({"granted": False, "error": "Valid wallet_address required"}), 400
     auth_err = _require_auth_token(wallet_address)
     if auth_err:
         return auth_err
-    return jsonify(try_claim_session(wallet_address))
+    return jsonify(try_claim_session(wallet_address, requested_profile=requested_profile))
 
 
 @app.route('/api/session/heartbeat', methods=['POST', 'OPTIONS'])
@@ -617,12 +621,13 @@ def api_queue_join():
         return jsonify({"joined": False, "error": "Session manager unavailable"}), 503
     data = request.get_json() or {}
     wallet_address = (data.get('wallet_address') or '').strip()
+    requested_profile = (data.get('requested_profile') or '').strip() or None
     if not wallet_address or not validate_wallet_address(wallet_address):
         return jsonify({"joined": False, "error": "Valid wallet_address required"}), 400
     auth_err = _require_auth_token(wallet_address)
     if auth_err:
         return auth_err
-    return jsonify(join_queue(wallet_address))
+    return jsonify(join_queue(wallet_address, requested_profile=requested_profile))
 
 
 @app.route('/api/queue/leave', methods=['POST', 'OPTIONS'])
