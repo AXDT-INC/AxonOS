@@ -8,7 +8,6 @@ with exclusive full-GPU allocation and per-session container lifecycle hooks.
 
 import logging
 import os
-import shlex
 import subprocess
 import time
 from threading import Lock
@@ -44,10 +43,6 @@ def _multi_session_enabled() -> bool:
 
 def _gpu_profiles_enabled() -> bool:
     return _truthy("AXGT_GPU_PROFILES_ENABLED", False)
-
-
-def _container_mode_enabled() -> bool:
-    return _truthy("AXGT_USER_CONTAINER_ENABLED", False)
 
 
 def _default_profile() -> str:
@@ -172,6 +167,18 @@ def _import_deposit_ledger():
         except ImportError:
             import deposit_ledger
     return deposit_ledger
+
+
+def _import_session_launcher():
+    """Works when loaded as package, as axonos_gate.*, or flat on sys.path."""
+    try:
+        from . import session_launcher
+    except ImportError:
+        try:
+            from axonos_gate import session_launcher
+        except ImportError:
+            import session_launcher
+    return session_launcher
 
 
 def _ensure_tables(conn) -> None:
@@ -509,61 +516,19 @@ def _on_session_ended(wallet_address: str, session_id: int) -> None:
     _run_reset_script()
 
 
-def _container_name_for_session(session_id: int) -> str:
-    return f"axgt-session-{session_id}"
-
-
 def _cleanup_session_container(session_id: int) -> None:
-    if not _container_mode_enabled():
-        return
-    name = _container_name_for_session(session_id)
-    try:
-        subprocess.run(
-            ["docker", "rm", "-f", name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    except Exception as exc:
-        logger.warning("session_manager: container cleanup failed for %s: %s", name, exc)
+    launcher = _import_session_launcher()
+    launcher.stop_session(session_id=session_id, container_id=None)
 
 
 def _spawn_session_container(session_id: int, wallet: str, profile: str, gpu_ids: List[int]) -> Tuple[bool, Optional[str], Optional[str]]:
-    if not _container_mode_enabled():
-        # Compatibility mode: existing shared desktop stays in place.
-        return True, "shared-desktop", None
-    image = (os.getenv("AXGT_SESSION_CONTAINER_IMAGE") or "").strip()
-    if not image:
-        return False, None, "AXGT_SESSION_CONTAINER_IMAGE is required in container mode"
-    gpu_spec = ",".join(str(i) for i in gpu_ids)
-    name = _container_name_for_session(session_id)
-    cmd: List[str] = [
-        "docker", "run", "-d", "--rm",
-        "--name", name,
-        "--gpus", f"device={gpu_spec}",
-        "-e", f"AXGT_SESSION_ID={session_id}",
-        "-e", f"AXGT_WALLET_ADDRESS={wallet}",
-        "-e", f"AXGT_REQUESTED_PROFILE={profile}",
-        "-e", f"AXGT_ASSIGNED_GPU_IDS={gpu_spec}",
-    ]
-    extra_raw = (os.getenv("AXGT_SESSION_CONTAINER_EXTRA_ARGS") or "").strip()
-    if extra_raw:
-        cmd.extend(shlex.split(extra_raw))
-    cmd.append(image)
-    run_cmd = (os.getenv("AXGT_SESSION_CONTAINER_COMMAND") or "").strip()
-    if run_cmd:
-        cmd.extend(shlex.split(run_cmd))
-    try:
-        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, text=True).strip()
-        container_id = out.splitlines()[-1][:64] if out else None
-        return True, container_id, None
-    except subprocess.CalledProcessError as exc:
-        msg = (exc.output or "").strip() or str(exc)
-        logger.warning("session_manager: failed to spawn session container: %s", msg)
-        return False, None, msg
-    except Exception as exc:
-        logger.warning("session_manager: failed to spawn session container: %s", exc)
-        return False, None, str(exc)
+    launcher = _import_session_launcher()
+    return launcher.launch_session(
+        session_id=session_id,
+        wallet=wallet,
+        profile=profile,
+        gpu_ids=gpu_ids,
+    )
 
 
 def _queue_blocks_allocation(cur, wallet: str, requested_gpus: int, rows: List[Dict[str, Any]]) -> bool:

@@ -18,6 +18,29 @@
 name: axonos-deposit-preview
 
 services:
+  axonos-launcher:
+    build:
+      context: .
+      dockerfile: docker/launcher/Dockerfile
+    container_name: axonos_session_launcher
+    environment:
+      AXGT_SESSION_LAUNCHER_BIND_HOST: 0.0.0.0
+      AXGT_SESSION_LAUNCHER_BIND_PORT: ${AXGT_SESSION_LAUNCHER_BIND_PORT:-8090}
+      AXGT_SESSION_LAUNCHER_TOKEN: ${AXGT_SESSION_LAUNCHER_TOKEN:-change-me-launcher-token}
+      AXGT_HOST_SESSION_CONTAINER_IMAGE: ${AXGT_HOST_SESSION_CONTAINER_IMAGE:-axonos:deposit-preview}
+      AXGT_HOST_SESSION_CONTAINER_NETWORK: ${AXGT_HOST_SESSION_CONTAINER_NETWORK:-axonos-deposit-preview_default}
+      AXGT_HOST_SESSION_CONTAINER_COMMAND: ${AXGT_HOST_SESSION_CONTAINER_COMMAND:-/startup.sh}
+      AXGT_HOST_SESSION_CONTAINER_EXTRA_ARGS: ${AXGT_HOST_SESSION_CONTAINER_EXTRA_ARGS:-}
+      AXGT_HOST_SESSION_ENV_PASSTHROUGH: ${AXGT_HOST_SESSION_ENV_PASSTHROUGH:-AXGT_CHAIN_ID,AXGT_RPC_URL,AXGT_CONTRACT_ADDRESS,AXGT_REVENUE_WALLET,AXGT_CHALLENGE_DB_URL,AXGT_MIN_DEPOSIT,AXGT_CREDIT_PER_100_AXGT_MINUTES,ETH_MIN_DEPOSIT,ETH_CREDIT_PER_ETH_MINUTES,AXGT_ENABLE_ETH_DEPOSITS}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=2).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   postgres:
     image: postgres:15-alpine
     container_name: axonos_postgres_deposit_preview
@@ -46,8 +69,14 @@ services:
     env_file: .env
     environment:
       AXGT_CHALLENGE_DB_URL: postgresql://${POSTGRES_USER:-axonos_gate}:${POSTGRES_PASSWORD:-axonos_gate_secret}@postgres:5432/${POSTGRES_DB:-axonos_gate}
+      AXGT_USER_CONTAINER_ENABLED: ${AXGT_USER_CONTAINER_ENABLED:-true}
+      AXGT_SESSION_LAUNCHER_MODE: ${AXGT_SESSION_LAUNCHER_MODE:-http}
+      AXGT_SESSION_LAUNCHER_URL: ${AXGT_SESSION_LAUNCHER_URL:-http://axonos-launcher:8090}
+      AXGT_SESSION_LAUNCHER_TOKEN: ${AXGT_SESSION_LAUNCHER_TOKEN:-change-me-launcher-token}
     depends_on:
       postgres:
+        condition: service_healthy
+      axonos-launcher:
         condition: service_healthy
     # Theme/wallpaper applied from startup.sh after 35s delay
     command: ["/startup.sh"]

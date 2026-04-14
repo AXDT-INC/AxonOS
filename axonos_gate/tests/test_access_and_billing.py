@@ -144,5 +144,20 @@ class TestBillingAndSession(unittest.TestCase):
         self.assertIsNone(alloc)
 
 
+class TestSessionLauncher(unittest.TestCase):
+    def test_noop_mode_returns_named_container(self):
+        from axonos_gate import session_launcher
+        with patch.dict(os.environ, {"AXGT_USER_CONTAINER_ENABLED": "true", "AXGT_SESSION_LAUNCHER_MODE": "noop"}):
+            ok, container_id, err = session_launcher.launch_session(
+                session_id=7,
+                wallet="0x1234567890123456789012345678901234567890",
+                profile="small",
+                gpu_ids=[0],
+            )
+        self.assertTrue(ok)
+        self.assertEqual(container_id, "axgt-session-7")
+        self.assertIsNone(err)
+
+
 if __name__ == "__main__":
     unittest.main()
