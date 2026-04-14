@@ -64,6 +64,11 @@ const UI = {
     inhibitReconnect: true,
     reconnectCallback: null,
     reconnectPassword: null,
+    clipboardAutoSyncEnabled: false,
+    clipboardAutoPollId: null,
+    clipboardLastRemoteText: "",
+    clipboardLastLocalText: "",
+    clipboardApplyingRemoteText: false,
 
     prime() {
         const initResult = (typeof WebUtil.initSettings === 'function')
@@ -325,14 +330,14 @@ const UI = {
     },
 
     addMachineHandlers() {
-        document.getElementById("noVNC_shutdown_button")
-            .addEventListener('click', () => UI.rfb.machineShutdown());
-        document.getElementById("noVNC_reboot_button")
-            .addEventListener('click', () => UI.rfb.machineReboot());
-        document.getElementById("noVNC_reset_button")
-            .addEventListener('click', () => UI.rfb.machineReset());
-        document.getElementById("noVNC_power_button")
-            .addEventListener('click', UI.togglePowerPanel);
+        const restartButton = document.getElementById("noVNC_restart_session_button");
+        if (restartButton) {
+            restartButton.addEventListener('click', UI.restartDesktopSession);
+        }
+        const powerButton = document.getElementById("noVNC_power_button");
+        if (powerButton) {
+            powerButton.addEventListener('click', UI.togglePowerPanel);
+        }
     },
 
     addConnectionControlHandlers() {
@@ -348,12 +353,116 @@ const UI = {
     },
 
     addClipboardHandlers() {
-        document.getElementById("noVNC_clipboard_button")
-            .addEventListener('click', UI.toggleClipboardPanel);
-        document.getElementById("noVNC_clipboard_text")
-            .addEventListener('change', UI.clipboardSend);
-        document.getElementById("noVNC_clipboard_clear_button")
-            .addEventListener('click', UI.clipboardClear);
+        const clipboardButton = document.getElementById("noVNC_clipboard_button");
+        if (clipboardButton) {
+            clipboardButton.addEventListener('click', UI.toggleClipboardPanel);
+        }
+        const clipboardText = document.getElementById("noVNC_clipboard_text");
+        if (clipboardText) {
+            clipboardText.addEventListener('change', UI.clipboardSend);
+            clipboardText.addEventListener('input', UI.clipboardSend);
+        }
+        const clipboardClearButton = document.getElementById("noVNC_clipboard_clear_button");
+        if (clipboardClearButton) {
+            clipboardClearButton.addEventListener('click', UI.clipboardClear);
+        }
+        document.addEventListener('paste', UI.handleLocalClipboardPaste, true);
+    },
+
+    clipboardHasBrowserPermission() {
+        return !!(navigator && navigator.clipboard && typeof navigator.clipboard.readText === 'function');
+    },
+
+    clipboardLooksSelectableTarget(target) {
+        if (!target) return false;
+        const tag = target.tagName ? target.tagName.toLowerCase() : '';
+        if (tag === 'textarea') return true;
+        if (tag === 'input') {
+            const type = (target.type || '').toLowerCase();
+            return type === '' || type === 'text' || type === 'search' || type === 'url' ||
+                type === 'tel' || type === 'email' || type === 'password';
+        }
+        return target.isContentEditable === true;
+    },
+
+    setClipboardTextarea(text) {
+        const clipboardInput = document.getElementById('noVNC_clipboard_text');
+        if (clipboardInput.value === text) return;
+        UI.clipboardApplyingRemoteText = true;
+        clipboardInput.value = text;
+        UI.clipboardApplyingRemoteText = false;
+    },
+
+    syncClipboardPanelValueFromLocal() {
+        if (!UI.clipboardHasBrowserPermission()) return Promise.resolve(false);
+        return navigator.clipboard.readText()
+            .then((text) => {
+                if (typeof text !== 'string') return false;
+                UI.clipboardLastLocalText = text;
+                UI.setClipboardTextarea(text);
+                return true;
+            })
+            .catch(() => false);
+    },
+
+    pushRemoteClipboardToLocal(text) {
+        if (!UI.clipboardHasBrowserPermission()) return Promise.resolve(false);
+        return navigator.clipboard.writeText(text)
+            .then(() => {
+                UI.clipboardLastLocalText = text;
+                return true;
+            })
+            .catch(() => false);
+    },
+
+    pullLocalClipboardToRemote() {
+        if (!UI.connected || !UI.rfb || !UI.clipboardHasBrowserPermission()) {
+            return Promise.resolve(false);
+        }
+        return navigator.clipboard.readText()
+            .then((text) => {
+                if (typeof text !== 'string') return false;
+                if (text === UI.clipboardLastLocalText || text === UI.clipboardLastRemoteText) {
+                    return false;
+                }
+                UI.clipboardLastLocalText = text;
+                UI.clipboardLastRemoteText = text;
+                UI.setClipboardTextarea(text);
+                UI.rfb.clipboardPasteFrom(text);
+                return true;
+            })
+            .catch(() => false);
+    },
+
+    startClipboardAutoSync() {
+        UI.stopClipboardAutoSync();
+        UI.clipboardAutoSyncEnabled = UI.clipboardHasBrowserPermission();
+        UI.syncClipboardPanelValueFromLocal();
+        if (!UI.clipboardAutoSyncEnabled) return;
+        UI.pullLocalClipboardToRemote();
+        UI.clipboardAutoPollId = window.setInterval(UI.pullLocalClipboardToRemote, 1500);
+    },
+
+    stopClipboardAutoSync() {
+        UI.clipboardAutoSyncEnabled = false;
+        if (UI.clipboardAutoPollId) {
+            clearInterval(UI.clipboardAutoPollId);
+            UI.clipboardAutoPollId = null;
+        }
+    },
+
+    handleLocalClipboardPaste(e) {
+        if (!UI.connected || !UI.rfb) return;
+        const active = document.activeElement;
+        if (UI.clipboardLooksSelectableTarget(active)) return;
+        const clipData = e.clipboardData || window.clipboardData;
+        if (!clipData) return;
+        const text = clipData.getData('text/plain');
+        if (!text || text === UI.clipboardLastRemoteText) return;
+        UI.clipboardLastLocalText = text;
+        UI.clipboardLastRemoteText = text;
+        UI.setClipboardTextarea(text);
+        UI.rfb.clipboardPasteFrom(text);
     },
 
     // Add a call to save settings when the element changes,
@@ -928,11 +1037,59 @@ const UI = {
         }
     },
 
+    restartDesktopSession() {
+        if (!UI.connected) return;
+        const wallet = window.verifiedWalletAddress;
+        if (!wallet) {
+            UI.showStatus(_("Wallet verification required"), 'error');
+            return;
+        }
+
+        const confirmed = window.confirm(
+            _("Restart desktop session now? Open apps in the remote desktop may close.")
+        );
+        if (!confirmed) return;
+
+        UI.showStatus(_("Restarting desktop session..."), 'normal', 2500);
+
+        const url = new URL('/api/session/restart', window.location.origin).toString();
+        const headers = {
+            'Content-Type': 'application/json',
+            'X-Wallet-Address': wallet,
+        };
+        if (window.verifiedWalletAuthToken) {
+            headers['X-AXGT-Auth-Token'] = window.verifiedWalletAuthToken;
+        }
+
+        fetch(url, {
+            method: 'POST',
+            credentials: 'include',
+            headers,
+            body: JSON.stringify({ wallet_address: wallet }),
+        }).then((response) => {
+            const ct = (response.headers.get('content-type') || '');
+            if (!ct.includes('application/json')) {
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                return {};
+            }
+            return response.json();
+        }).then((data) => {
+            if (!data || data.restarted !== true) {
+                const reason = data && data.reason ? String(data.reason) : _('Restart was not accepted');
+                throw new Error(reason);
+            }
+            UI.closePowerPanel();
+            UI.showStatus(_("Desktop session restart requested"), 'normal');
+            if (UI.rfb) UI.rfb.focus();
+        }).catch((err) => {
+            Log.Error("Desktop restart request failed: " + err);
+            UI.showStatus(_("Could not restart desktop session"), 'error');
+        });
+    },
+
     // Disable/enable power button
     updatePowerButton() {
-        if (UI.connected &&
-            UI.rfb.capabilities.power &&
-            !UI.rfb.viewOnly) {
+        if (UI.connected && !UI.rfb.viewOnly) {
             document.getElementById('noVNC_power_button')
                 .classList.remove("noVNC_hidden");
         } else {
@@ -976,19 +1133,29 @@ const UI = {
     },
 
     clipboardReceive(e) {
-        Log.Debug(">> UI.clipboardReceive: " + e.detail.text.substr(0, 40) + "...");
-        document.getElementById('noVNC_clipboard_text').value = e.detail.text;
+        const text = (e && e.detail && typeof e.detail.text === 'string') ? e.detail.text : "";
+        Log.Debug(">> UI.clipboardReceive: " + text.substr(0, 40) + "...");
+        UI.clipboardLastRemoteText = text;
+        UI.setClipboardTextarea(text);
+        UI.pushRemoteClipboardToLocal(text);
         Log.Debug("<< UI.clipboardReceive");
     },
 
     clipboardClear() {
-        document.getElementById('noVNC_clipboard_text').value = "";
+        UI.clipboardLastRemoteText = "";
+        UI.clipboardLastLocalText = "";
+        UI.setClipboardTextarea("");
+        UI.pushRemoteClipboardToLocal("");
         UI.rfb.clipboardPasteFrom("");
     },
 
     clipboardSend() {
         const text = document.getElementById('noVNC_clipboard_text').value;
+        if (UI.clipboardApplyingRemoteText) return;
         Log.Debug(">> UI.clipboardSend: " + text.substr(0, 40) + "...");
+        UI.clipboardLastRemoteText = text;
+        UI.clipboardLastLocalText = text;
+        UI.pushRemoteClipboardToLocal(text);
         UI.rfb.clipboardPasteFrom(text);
         Log.Debug("<< UI.clipboardSend");
     },
@@ -1009,10 +1176,162 @@ const UI = {
             .classList.remove("noVNC_open");
     },
 
+    /**
+     * Clear error banner, pending reconnect timer, and reconnect inhibition so the next
+     * "Launch GPU-Native Desktop" can proceed. Mirrors the intent of the credit-exhaustion
+     * path (reset gate) but without clearing wallet auth — use after leaving the queue or
+     * when recovering from a failed WS (e.g. 1006) before retrying.
+     */
+    axonosResetDesktopGateForRetry() {
+        UI.hideStatus();
+        if (UI.reconnectCallback !== null) {
+            clearTimeout(UI.reconnectCallback);
+            UI.reconnectCallback = null;
+        }
+        UI.inhibitReconnect = false;
+        if (typeof UI.rfb !== 'undefined' && UI.rfb) {
+            try {
+                UI.rfb.disconnect();
+            } catch (e) { /* ignore */ }
+            UI.rfb = undefined;
+            UI.connected = false;
+        }
+        if (UI._axgtStatusPollId) {
+            clearInterval(UI._axgtStatusPollId);
+            UI._axgtStatusPollId = null;
+        }
+        const overlay = document.getElementById('axonos_usage_overlay');
+        if (!overlay || !overlay.classList.contains('axonos-usage-overlay--locked')) {
+            UI._axgtUpdateUsageOverlay('hidden');
+        }
+        UI.updateVisualState('disconnected');
+    },
+
+    /** POST /api/session/claim — required by AxonOS gate before WebSocket upgrade. */
+    _axonosFetchSessionClaim() {
+        const wallet = window.verifiedWalletAddress;
+        if (!wallet) {
+            return Promise.resolve({ granted: false, reason: 'No wallet' });
+        }
+        const url = new URL('/api/session/claim', window.location.origin).toString();
+        const headers = {
+            'Content-Type': 'application/json',
+            'X-Wallet-Address': wallet,
+        };
+        if (window.verifiedWalletAuthToken) {
+            headers['X-AXGT-Auth-Token'] = window.verifiedWalletAuthToken;
+        }
+        return fetch(url, {
+            method: 'POST',
+            credentials: 'include',
+            headers,
+            body: JSON.stringify({ wallet_address: wallet }),
+        }).then((r) => {
+            const ct = (r.headers.get('content-type') || '');
+            if (!ct.includes('application/json')) {
+                if (!r.ok) {
+                    throw new Error('HTTP ' + r.status);
+                }
+                return {};
+            }
+            return r.json();
+        });
+    },
+
+    /** POST /api/session/release — best effort on user-triggered disconnect. */
+    _axonosReleaseSessionBestEffort() {
+        const wallet = window.verifiedWalletAddress;
+        if (!wallet) return Promise.resolve(false);
+
+        const url = new URL('/api/session/release', window.location.origin).toString();
+        const headers = {
+            'Content-Type': 'application/json',
+            'X-Wallet-Address': wallet,
+        };
+        if (window.verifiedWalletAuthToken) {
+            headers['X-AXGT-Auth-Token'] = window.verifiedWalletAuthToken;
+        }
+
+        const request = fetch(url, {
+            method: 'POST',
+            credentials: 'include',
+            headers,
+            body: JSON.stringify({ wallet_address: wallet }),
+        }).then((r) => {
+            const ct = (r.headers.get('content-type') || '');
+            if (!ct.includes('application/json')) return {};
+            return r.json();
+        }).then((data) => data && data.released === true)
+          .catch(() => false);
+
+        // Don't block disconnect indefinitely if the release endpoint is slow/unreachable.
+        const timeout = new Promise((resolve) => {
+            setTimeout(() => resolve(false), 1500);
+        });
+        return Promise.race([request, timeout]);
+    },
+
+    _axonosCreateRfbConnection(password, includeQueryAuthToken) {
+        let url;
+        url = UI.getSetting('encrypt') ? 'wss' : 'ws';
+        url += '://' + UI.getSetting('host');
+        if (UI.getSetting('port')) {
+            url += ':' + UI.getSetting('port');
+        }
+        url += '/' + UI.getSetting('path');
+
+        const verifiedWallet = window.verifiedWalletAddress || null;
+        const verifiedAuthToken = window.verifiedWalletAuthToken || null;
+        if (verifiedWallet) {
+            const sep = url.includes('?') ? '&' : '?';
+            url += sep + 'wallet=' + encodeURIComponent(verifiedWallet);
+            if (includeQueryAuthToken && verifiedAuthToken) {
+                url += '&auth_token=' + encodeURIComponent(verifiedAuthToken);
+            }
+        }
+
+        UI.rfb = new RFB(document.getElementById('noVNC_container'), url,
+            { shared: UI.getSetting('shared'),
+                repeaterID: UI.getSetting('repeaterID'),
+                credentials: { password: password } });
+        UI.rfb.addEventListener("connect", UI.connectFinished);
+        UI.rfb.addEventListener("disconnect", UI.disconnectFinished);
+        UI.rfb.addEventListener("credentialsrequired", UI.credentials);
+        UI.rfb.addEventListener("securityfailure", UI.securityFailed);
+        UI.rfb.addEventListener("capabilities", UI.updatePowerButton);
+        UI.rfb.addEventListener("clipboard", UI.clipboardReceive);
+        UI.rfb.addEventListener("bell", UI.bell);
+        UI.rfb.addEventListener("desktopname", UI.updateDesktopName);
+        UI.rfb.clipViewport = UI.getSetting('view_clip');
+        UI.rfb.scaleViewport = UI.getSetting('resize') === 'scale';
+        UI.rfb.resizeSession = UI.getSetting('resize') === 'remote';
+        UI.rfb.qualityLevel = parseInt(UI.getSetting('quality'));
+        UI.rfb.compressionLevel = parseInt(UI.getSetting('compression'));
+        UI.rfb.showDotCursor = UI.getSetting('show_dot');
+
+        UI.updateViewOnly();
+    },
+
     connect(event, password) {
 
-        // Ignore when rfb already exists
-        if (typeof UI.rfb !== 'undefined') {
+        // Stale RFB from a failed WebSocket (1006): disconnect may not always fire before
+        // retry — hard-reset client state and recurse (short delay lets the stack unwind).
+        if (typeof UI.rfb !== 'undefined' && UI.rfb) {
+            if (UI.connected) {
+                return;
+            }
+            Log.Info("AxonOS: hard reset stale RFB before connect");
+            const passwordArg = typeof password === 'undefined'
+                ? (UI.reconnectPassword ?? WebUtil.getConfigVar('password'))
+                : password;
+            try {
+                UI.rfb.disconnect();
+            } catch (err) {
+                Log.Warn("AxonOS stale RFB disconnect: " + err);
+            }
+            UI.rfb = undefined;
+            UI.connected = false;
+            setTimeout(() => UI.connect(event, passwordArg), 50);
             return;
         }
         
@@ -1039,8 +1358,6 @@ const UI = {
         }
 
         const host = UI.getSetting('host');
-        const port = UI.getSetting('port');
-        const path = UI.getSetting('path');
 
         if (typeof password === 'undefined') {
             password = WebUtil.getConfigVar('password');
@@ -1059,57 +1376,31 @@ const UI = {
             return;
         }
 
-        UI.closeConnectPanel();
-
-        UI.updateVisualState('connecting');
-
-        let url;
-
-        url = UI.getSetting('encrypt') ? 'wss' : 'ws';
-
-        url += '://' + host;
-        if (port) {
-            url += ':' + port;
-        }
-        url += '/' + path;
-        
-        // Always include wallet in query string (browser WebSocket cannot set custom headers).
-        // Auth token is preferably sent as HttpOnly cookie; include as query only when requested.
-        const verifiedWallet = window.verifiedWalletAddress || null;
-        const verifiedAuthToken = window.verifiedWalletAuthToken || null;
-        if (verifiedWallet) {
-            const separator = url.includes('?') ? '&' : '?';
-            url += separator + 'wallet=' + encodeURIComponent(verifiedWallet);
-            if (includeQueryAuthToken && verifiedAuthToken) {
-                url += '&auth_token=' + encodeURIComponent(verifiedAuthToken);
+        // AxonOS gate rejects WebSocket upgrade unless this wallet owns the active session
+        // (see websockify_gate / gate_server). Launch previously skipped claim if the user
+        // left the queue and clicked connect — server returned 403 / abnormal close (1006).
+        UI._axonosFetchSessionClaim().then((claim) => {
+            const granted = claim && (claim.granted === true || claim.granted === 'true');
+            if (!granted) {
+                UI.updateVisualState('disconnected');
+                const reason = (claim && claim.reason) ? String(claim.reason) : _('Could not claim desktop session.');
+                UI.showStatus(reason, 'error');
+                if (typeof window.axonosOnSessionClaimDenied === 'function') {
+                    window.axonosOnSessionClaimDenied(claim || {});
+                }
+                return;
             }
-        }
-
-        UI.rfb = new RFB(document.getElementById('noVNC_container'), url,
-                         { shared: UI.getSetting('shared'),
-                           repeaterID: UI.getSetting('repeaterID'),
-                           credentials: { password: password } });
-        UI.rfb.addEventListener("connect", UI.connectFinished);
-        UI.rfb.addEventListener("disconnect", UI.disconnectFinished);
-        UI.rfb.addEventListener("credentialsrequired", UI.credentials);
-        UI.rfb.addEventListener("securityfailure", UI.securityFailed);
-        UI.rfb.addEventListener("capabilities", UI.updatePowerButton);
-        UI.rfb.addEventListener("clipboard", UI.clipboardReceive);
-        UI.rfb.addEventListener("bell", UI.bell);
-        UI.rfb.addEventListener("desktopname", UI.updateDesktopName);
-        UI.rfb.clipViewport = UI.getSetting('view_clip');
-        UI.rfb.scaleViewport = UI.getSetting('resize') === 'scale';
-        UI.rfb.resizeSession = UI.getSetting('resize') === 'remote';
-        UI.rfb.qualityLevel = parseInt(UI.getSetting('quality'));
-        UI.rfb.compressionLevel = parseInt(UI.getSetting('compression'));
-        UI.rfb.showDotCursor = UI.getSetting('show_dot');
-
-        UI.updateViewOnly(); // requires UI.rfb
+            UI.closeConnectPanel();
+            UI.updateVisualState('connecting');
+            UI._axonosCreateRfbConnection(password, includeQueryAuthToken);
+        }).catch((err) => {
+            Log.Error('AxonOS session claim failed: ' + err);
+            UI.updateVisualState('disconnected');
+            UI.showStatus(_('Could not claim desktop session. Check network.'), 'error');
+        });
     },
 
     disconnect() {
-        UI.rfb.disconnect();
-
         UI.connected = false;
 
         // Disable automatic reconnecting
@@ -1117,7 +1408,34 @@ const UI = {
 
         UI.updateVisualState('disconnecting');
 
-        // Don't display the connection settings until we're actually disconnected
+        // Clear any stale queue overlay/poller immediately on explicit disconnect.
+        if (typeof window.axonosHideQueueOverlay === 'function') {
+            try {
+                window.axonosHideQueueOverlay();
+            } catch (err) {
+                Log.Warn("AxonOS queue overlay reset failed: " + err);
+            }
+        }
+
+        const doDisconnect = () => {
+            if (UI.rfb && typeof UI.rfb.disconnect === 'function') {
+                try {
+                    UI.rfb.disconnect();
+                } catch (err) {
+                    Log.Warn("AxonOS disconnect failed: " + err);
+                    UI.updateVisualState('disconnected');
+                    UI.openControlbar();
+                    UI.openConnectPanel();
+                }
+            } else {
+                UI.updateVisualState('disconnected');
+                UI.openControlbar();
+                UI.openConnectPanel();
+            }
+        };
+
+        // Best-effort server-side release first so reconnect doesn't get trapped behind stale ownership.
+        UI._axonosReleaseSessionBestEffort().finally(doDisconnect);
     },
 
     reconnect() {
@@ -1155,6 +1473,7 @@ const UI = {
         }
         UI.showStatus(msg);
         UI.updateVisualState('connected');
+        UI.startClipboardAutoSync();
 
         // Start AXGT usage polling when connected with a verified wallet
         if (window.verifiedWalletAddress) {
@@ -1178,8 +1497,17 @@ const UI = {
         // the server, we need to do it here as well since
         // UI.disconnect() won't be used in those cases.
         UI.connected = false;
+        UI.stopClipboardAutoSync();
 
         UI.rfb = undefined;
+
+        if (typeof window.axonosHideQueueOverlay === 'function') {
+            try {
+                window.axonosHideQueueOverlay();
+            } catch (err) {
+                Log.Warn("AxonOS queue overlay reset failed: " + err);
+            }
+        }
 
         if (UI._axgtStatusPollId) {
             clearInterval(UI._axgtStatusPollId);
@@ -1261,8 +1589,17 @@ const UI = {
                 const threshold = typeof data.warning_threshold_minutes === 'number' ? data.warning_threshold_minutes : 10;
                 const reason = (data.reason && String(data.reason)) || '';
                 if (locked) {
-                    UI._axgtUpdateUsageOverlay('locked',
-                        'Usage credit exhausted. Add more AXGT to unlock access.');
+                    // Credit exhausted: treat as signed-out-for-desktop so the next
+                    // "Launch GPU-Native Desktop" goes back through the normal
+                    // verify/top-up flow instead of trying to reuse a stale session.
+                    if (typeof window !== 'undefined') {
+                        window.axonosAllowVncConnect = false;
+                        window.verifiedWalletAuthToken = null;
+                    }
+                    UI._axgtUpdateUsageOverlay(
+                        'locked',
+                        'Usage credit exhausted. Add more AXGT/ETH to unlock access.'
+                    );
                     if (UI.rfb && typeof UI.rfb.disconnect === 'function') {
                         UI.inhibitReconnect = true;
                         UI.rfb.disconnect();
@@ -1331,24 +1668,14 @@ const UI = {
             }
         }
 
-        // Wallet not verified yet: show wallet verification dialog instead of password
-        // Hide username/password blocks, show wallet block
+        // Wallet not verified yet: show wallet verification dialog (state-driven UI)
         const usernameBlock = document.getElementById("noVNC_username_block");
         const passwordBlock = document.getElementById("noVNC_password_block");
-        const walletBlock = document.getElementById("noVNC_wallet_block");
-        
         if (usernameBlock) usernameBlock.classList.add("noVNC_hidden");
         if (passwordBlock) passwordBlock.classList.add("noVNC_hidden");
-        if (walletBlock) walletBlock.classList.remove("noVNC_hidden");
-        
+
         document.getElementById('noVNC_credentials_dlg')
             .classList.add('noVNC_open');
-
-        // Focus on wallet input
-        const walletInput = document.getElementById('noVNC_wallet_input');
-        if (walletInput) {
-            setTimeout(() => walletInput.focus(), 100);
-        }
 
         Log.Warn("Wallet verification required");
         UI.showStatus(_("AXGT wallet verification required"), "warning");
@@ -1788,6 +2115,9 @@ const UI = {
     },
 
     sendCtrlAltDel() {
+        if (!UI.rfb || typeof UI.rfb.sendCtrlAltDel !== 'function') {
+            return;
+        }
         UI.rfb.sendCtrlAltDel();
         // See below
         UI.rfb.focus();
@@ -1795,6 +2125,9 @@ const UI = {
     },
 
     sendKey(keysym, code, down) {
+        if (!UI.rfb || typeof UI.rfb.sendKey !== 'function') {
+            return;
+        }
         UI.rfb.sendKey(keysym, code, down);
 
         // Move focus to the screen in order to be able to use the

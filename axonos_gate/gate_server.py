@@ -48,6 +48,14 @@ except ImportError:
         sys.exit(1)
 
 try:
+    from deposit_verifier import verify_deposit
+except ImportError:
+    try:
+        from axonos_gate.deposit_verifier import verify_deposit
+    except ImportError:
+        verify_deposit = None
+
+try:
     from session_manager import (
         get_active_session,
         heartbeat as session_heartbeat,
@@ -55,6 +63,7 @@ try:
         join_queue,
         leave_queue,
         release_session,
+        restart_desktop_session,
         session_status,
         try_claim_session,
     )
@@ -68,6 +77,7 @@ except ImportError:
             join_queue,
             leave_queue,
             release_session,
+            restart_desktop_session,
             session_status,
             try_claim_session,
         )
@@ -155,6 +165,9 @@ def _gate_pg_init_once() -> bool:
 def _issue_gate_auth_token(wallet_address: str) -> tuple[str, int]:
     now_ts = time.time()
     token = secrets.token_urlsafe(32)
+    wallet_norm = (wallet_address or "").strip().lower()
+    if not wallet_norm:
+        raise RuntimeError("Wallet address required")
     if not _gate_pg_init_once():
         raise RuntimeError("Auth token DB unavailable")
     conn = _gate_pg_get_connection()
@@ -170,7 +183,7 @@ def _issue_gate_auth_token(wallet_address: str) -> tuple[str, int]:
                 f"""INSERT INTO {_AUTH_TABLE}
                     (token, wallet_address, issued_at, expires_at, status, grace_until)
                     VALUES (%s, %s, %s, %s, 'current', %s)""",
-                (token, wallet_address, now_ts, now_ts + _AUTH_TOKEN_TTL, now_ts + _AUTH_TOKEN_TTL),
+                (token, wallet_norm, now_ts, now_ts + _AUTH_TOKEN_TTL, now_ts + _AUTH_TOKEN_TTL),
             )
         conn.commit()
     except Exception as e:
@@ -186,6 +199,9 @@ def _is_gate_auth_token_valid(token: str, wallet_address: str) -> bool:
     if not token:
         return False
     now_ts = time.time()
+    wallet_norm = (wallet_address or "").strip().lower()
+    if not wallet_norm:
+        return False
     if not _gate_pg_init_once():
         return False
     conn = _gate_pg_get_connection()
@@ -196,7 +212,7 @@ def _is_gate_auth_token_valid(token: str, wallet_address: str) -> bool:
             cur.execute(
                 f"""SELECT status, expires_at, grace_until FROM {_AUTH_TABLE}
                     WHERE token = %s AND wallet_address = %s""",
-                (token, wallet_address),
+                (token, wallet_norm),
             )
             row = cur.fetchone()
             if not row:
@@ -225,7 +241,7 @@ def after_request(response):
     if origin:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Vary"] = "Origin"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Wallet-Address"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Wallet-Address, X-AXGT-Auth-Token"
         response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
     return response
 
@@ -268,19 +284,29 @@ def verify_wallet():
             return jsonify({'verified': False, 'error': 'Wallet signature verification failed.'}), 401
 
         status = get_wallet_access_status(wallet_address, consume_usage=False)
-        status['wallet_address'] = wallet_address
-        if status.get('verified'):
+        status["wallet_address"] = wallet_address
+        # Auth token = wallet ownership (for verify-deposit, session APIs). Desktop/VNC still requires prepaid minutes.
+        try:
             token, ttl = _issue_gate_auth_token(wallet_address)
-            status['auth_token'] = token
-            status['auth_token_expires_in_seconds'] = ttl
-            logger.info("Wallet verified: %s", mask_wallet_address(wallet_address))
+            status["auth_token"] = token
+            status["auth_token_expires_in_seconds"] = ttl
+        except Exception as ex:
+            logger.warning("Auth token issue failed for %s: %s", mask_wallet_address(wallet_address), ex)
+            return jsonify(
+                {
+                    "verified": False,
+                    "error": "Auth database unavailable; cannot complete sign-in.",
+                    "wallet_address": wallet_address,
+                }
+            ), 503
+        if status.get("verified"):
+            logger.info("Wallet verified (prepaid): %s", mask_wallet_address(wallet_address))
             return jsonify(status)
-        logger.info("Wallet verification failed after signature check: %s", mask_wallet_address(wallet_address))
-        return jsonify({
-            'verified': False,
-            'error': status.get('reason') or 'No access available for this wallet'
-        })
-            
+        logger.info("Wallet signed in, no prepaid credit: %s", mask_wallet_address(wallet_address))
+        denied = dict(status)
+        denied["verified"] = False
+        denied["error"] = status.get("reason") or "No access available for this wallet"
+        return jsonify(denied)
     except Exception as e:
         logger.error(f"Error in verify_wallet: {e}", exc_info=True)
         return jsonify({'verified': False, 'error': 'Internal server error'}), 500
@@ -319,21 +345,183 @@ def wallet_status():
     return jsonify(status)
 
 
+@app.route('/api/auth/verify-deposit', methods=['POST', 'OPTIONS'])
+def api_verify_deposit():
+    """Verify AXGT deposit by tx hash. Requires authenticated wallet (auth token)."""
+    if request.method == 'OPTIONS':
+        return '', 200
+    if verify_deposit is None:
+        return jsonify({"verified": False, "error": "Deposit verification unavailable"}), 503
+    data = request.get_json()
+    if not data:
+        return jsonify({"verified": False, "error": "JSON body required"}), 400
+    wallet_address = (data.get("wallet_address") or "").strip()
+    tx_hash = (data.get("tx_hash") or "").strip()
+    if not wallet_address or not validate_wallet_address(wallet_address):
+        return jsonify({"verified": False, "error": "Valid wallet_address required"}), 400
+    if not tx_hash:
+        return jsonify({"verified": False, "error": "tx_hash required"}), 400
+    auth_err = _require_auth_token(wallet_address)
+    if auth_err:
+        return auth_err
+    result = verify_deposit(authenticated_wallet=wallet_address, tx_hash=tx_hash)
+    if result.get("verified"):
+        return jsonify(result)
+    return jsonify(result), 400
+
+
 @app.route('/api/config', methods=['GET'])
 def api_config():
     policy = get_credit_policy()
+    _dec_raw = (os.getenv("AXGT_TOKEN_DECIMALS") or "").strip()
+    try:
+        _td = int(_dec_raw) if _dec_raw else 18
+        axgt_token_decimals = max(0, min(255, _td))
+    except ValueError:
+        axgt_token_decimals = 18
     return jsonify({
         'axgt_contract_address': (os.getenv("AXGT_CONTRACT_ADDRESS") or "").strip() or None,
         'axgt_chain_id': (os.getenv("AXGT_CHAIN_ID") or "").strip() or None,
-        'axgt_min_hold_amount': policy.get("min_hold_amount"),
+        'axgt_revenue_wallet': (os.getenv("AXGT_REVENUE_WALLET") or "").strip() or None,
+        'axgt_token_decimals': axgt_token_decimals,
+        'axgt_min_deposit': policy.get("min_deposit"),
         'axgt_credit_per_100_axgt_minutes': policy.get("credit_per_100_axgt_minutes"),
+        'eth_deposits_enabled': policy.get("eth_deposits_enabled"),
+        'eth_min_deposit': policy.get("eth_min_deposit"),
+        'eth_credit_per_eth_minutes': policy.get("eth_credit_per_eth_minutes"),
         'axgt_warning_threshold_minutes': policy.get("warning_threshold_minutes"),
+        'min_axgt_deposit_minutes': policy.get("min_axgt_deposit_minutes"),
+        'min_eth_deposit_minutes': policy.get("min_eth_deposit_minutes"),
     })
+
+
+def _require_admin():
+    """Require AXGT_ADMIN_SECRET. Returns None on success, or (response, status)."""
+    secret = (os.getenv("AXGT_ADMIN_SECRET") or "").strip()
+    if not secret:
+        return jsonify({"error": "Admin API disabled"}), 503
+    provided = (request.headers.get("X-AXGT-Admin-Secret") or request.args.get("admin_secret") or "").strip()
+    if provided != secret:
+        return jsonify({"error": "Unauthorized"}), 401
+    return None
+
+
+@app.route('/api/admin/credit-minutes', methods=['POST', 'OPTIONS'])
+def api_admin_credit_minutes():
+    if request.method == 'OPTIONS':
+        return '', 200
+    err = _require_admin()
+    if err:
+        return err
+    try:
+        from axonos_gate import deposit_ledger
+    except ImportError:
+        import deposit_ledger
+    data = request.get_json() or {}
+    wallet = (data.get("wallet_address") or "").strip()
+    minutes = data.get("minutes")
+    notes = (data.get("notes") or "").strip() or None
+    if not wallet or not validate_wallet_address(wallet):
+        return jsonify({"ok": False, "error": "Valid wallet_address required"}), 400
+    try:
+        minutes = float(minutes)
+        if minutes <= 0:
+            raise ValueError("minutes must be positive")
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Positive minutes required"}), 400
+    ok, remaining, error = deposit_ledger.credit_wallet_minutes(wallet, minutes, notes=notes, created_by="admin_api")
+    if not ok:
+        return jsonify({"ok": False, "error": error}), 400
+    return jsonify({"ok": True, "remaining_minutes": remaining})
+
+
+@app.route('/api/admin/refund-minutes', methods=['POST', 'OPTIONS'])
+def api_admin_refund_minutes():
+    if request.method == 'OPTIONS':
+        return '', 200
+    err = _require_admin()
+    if err:
+        return err
+    try:
+        from axonos_gate import deposit_ledger
+    except ImportError:
+        import deposit_ledger
+    data = request.get_json() or {}
+    wallet = (data.get("wallet_address") or "").strip()
+    minutes = data.get("minutes")
+    notes = (data.get("notes") or "").strip() or None
+    if not wallet or not validate_wallet_address(wallet):
+        return jsonify({"ok": False, "error": "Valid wallet_address required"}), 400
+    try:
+        minutes = float(minutes)
+        if minutes <= 0:
+            raise ValueError("minutes must be positive")
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Positive minutes required"}), 400
+    ok, remaining, error = deposit_ledger.refund_wallet_minutes(wallet, minutes, notes=notes, created_by="admin_api")
+    if not ok:
+        return jsonify({"ok": False, "error": error}), 400
+    return jsonify({"ok": True, "remaining_minutes": remaining})
+
+
+@app.route('/api/admin/adjust-balance', methods=['POST', 'OPTIONS'])
+def api_admin_adjust_balance():
+    if request.method == 'OPTIONS':
+        return '', 200
+    err = _require_admin()
+    if err:
+        return err
+    try:
+        from axonos_gate import deposit_ledger
+    except ImportError:
+        import deposit_ledger
+    data = request.get_json() or {}
+    wallet = (data.get("wallet_address") or "").strip()
+    minutes_delta = data.get("minutes_delta")
+    notes = (data.get("notes") or "").strip() or None
+    if not wallet or not validate_wallet_address(wallet):
+        return jsonify({"ok": False, "error": "Valid wallet_address required"}), 400
+    try:
+        minutes_delta = float(minutes_delta)
+        if minutes_delta == 0:
+            raise ValueError("minutes_delta must be non-zero")
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Non-zero minutes_delta required"}), 400
+    ok, remaining, error = deposit_ledger.adjust_wallet_balance(wallet, minutes_delta, notes=notes, created_by="admin_api")
+    if not ok:
+        return jsonify({"ok": False, "error": error}), 400
+    return jsonify({"ok": True, "remaining_minutes": remaining})
+
+
+@app.route('/api/admin/ledger', methods=['GET', 'OPTIONS'])
+def api_admin_ledger():
+    if request.method == 'OPTIONS':
+        return '', 200
+    err = _require_admin()
+    if err:
+        return err
+    try:
+        from axonos_gate import deposit_ledger
+    except ImportError:
+        import deposit_ledger
+    wallet = (request.args.get("wallet_address") or "").strip()
+    if not wallet or not validate_wallet_address(wallet):
+        return jsonify({"error": "Valid wallet_address required"}), 400
+    limit = request.args.get("limit", "100")
+    try:
+        limit = min(500, max(1, int(limit)))
+    except ValueError:
+        limit = 100
+    entries = deposit_ledger.get_wallet_ledger(wallet, limit=limit)
+    return jsonify({"wallet_address": wallet, "ledger": entries})
 
 
 def _require_auth_token(wallet_address: str):
     """Validate auth token from cookie / header / query. Returns None on success, or (response, status)."""
     from flask import request as _req
+    wallet_norm = (wallet_address or "").strip().lower()
+    if not wallet_norm:
+        return jsonify({"error": "Valid wallet_address required"}), 400
     token = None
     cookie_val = _req.cookies.get(os.getenv("AXGT_AUTH_COOKIE_NAME", "axgt_auth_token").strip())
     if cookie_val:
@@ -342,7 +530,7 @@ def _require_auth_token(wallet_address: str):
         token = (_req.headers.get("X-AXGT-Auth-Token") or "").strip() or None
     if not token:
         token = (_req.args.get("auth_token") or "").strip() or None
-    if not token or not _is_gate_auth_token_valid(token, wallet_address):
+    if not token or not _is_gate_auth_token_valid(token, wallet_norm):
         return jsonify({"error": "Valid auth token required"}), 401
     return None
 
@@ -405,6 +593,22 @@ def api_session_release():
     return jsonify(release_session(wallet_address))
 
 
+@app.route('/api/session/restart', methods=['POST', 'OPTIONS'])
+def api_session_restart():
+    if request.method == 'OPTIONS':
+        return '', 200
+    if not _session_mgr_available:
+        return jsonify({"restarted": False, "error": "Session manager unavailable"}), 503
+    data = request.get_json() or {}
+    wallet_address = (data.get('wallet_address') or '').strip()
+    if not wallet_address or not validate_wallet_address(wallet_address):
+        return jsonify({"restarted": False, "error": "Valid wallet_address required"}), 400
+    auth_err = _require_auth_token(wallet_address)
+    if auth_err:
+        return auth_err
+    return jsonify(restart_desktop_session(wallet_address))
+
+
 @app.route('/api/queue/join', methods=['POST', 'OPTIONS'])
 def api_queue_join():
     if request.method == 'OPTIONS':
@@ -460,6 +664,26 @@ def _extract_wallet_and_token_from_environ(environ):
     return wallet, token
 
 
+def _extract_auth_cookie_from_environ(environ) -> str | None:
+    """Best-effort parse auth token from Cookie header for WebSocket upgrades."""
+    cookie_header = environ.get("HTTP_COOKIE") or ""
+    if not cookie_header:
+        return None
+    cookie_name = (os.getenv("AXGT_AUTH_COOKIE_NAME", "axgt_auth_token") or "").strip()
+    if not cookie_name:
+        cookie_name = "axgt_auth_token"
+    # Minimal cookie parser: "a=b; c=d" → tokens
+    parts = [p.strip() for p in cookie_header.split(";") if p.strip()]
+    for p in parts:
+        if "=" not in p:
+            continue
+        k, v = p.split("=", 1)
+        if k.strip() == cookie_name:
+            val = v.strip()
+            return val or None
+    return None
+
+
 def _handle_websockify_proxy(environ, start_response):
     """Handle /websockify WebSocket: validate wallet+token, proxy to websockify_gate on 6080."""
     ws = environ.get('wsgi.websocket')
@@ -468,6 +692,9 @@ def _handle_websockify_proxy(environ, start_response):
         return [b'WebSocket expected']
 
     wallet, auth_token = _extract_wallet_and_token_from_environ(environ)
+    if not auth_token:
+        # Prefer HttpOnly cookie when present (default production mode).
+        auth_token = _extract_auth_cookie_from_environ(environ)
     if not wallet or not validate_wallet_address(wallet):
         try:
             ws.close(code=403, reason='Invalid or missing wallet')
@@ -475,14 +702,15 @@ def _handle_websockify_proxy(environ, start_response):
             pass
         return []
 
-    if not auth_token or not _is_gate_auth_token_valid(auth_token, wallet):
+    wallet_norm = wallet.strip().lower()
+    if not auth_token or not _is_gate_auth_token_valid(auth_token, wallet_norm):
         try:
             ws.close(code=403, reason='Invalid or expired auth token')
         except Exception:
             pass
         return []
 
-    status = get_wallet_access_status(wallet, consume_usage=False)
+    status = get_wallet_access_status(wallet_norm, consume_usage=False)
     if not status.get('verified'):
         try:
             ws.close(code=403, reason=status.get('reason') or 'Access denied')
@@ -490,7 +718,7 @@ def _handle_websockify_proxy(environ, start_response):
             pass
         return []
 
-    if _session_mgr_available and not is_session_owner(wallet):
+    if _session_mgr_available and not is_session_owner(wallet_norm):
         try:
             ws.close(code=403, reason='Session not owned by this wallet')
         except Exception:
@@ -498,7 +726,7 @@ def _handle_websockify_proxy(environ, start_response):
         return []
 
     websockify_port = int(os.getenv('WEBSOCKIFY_PORT', '6080'))
-    backend_url = f'ws://127.0.0.1:{websockify_port}/websockify?wallet={wallet}'
+    backend_url = f'ws://127.0.0.1:{websockify_port}/websockify?wallet={wallet_norm}'
 
     try:
         import gevent

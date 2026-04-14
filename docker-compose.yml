@@ -1,27 +1,32 @@
-# AxonOS – noVNC + AXGT gate (single service, GPU, port 6080)
+# AxonOS – noVNC + AXGT gate (deposit-credit branch / parallel test stack)
+#
+# This file is tuned to run ALONGSIDE a main-branch stack on the same host:
+#   - Published ports default to 16080 (noVNC) and 18889 (gate) — main uses 6080/8889.
+#   - Project name + container names + volume are isolated from a default "axonos" compose.
+#   - Image tag axonos:deposit-preview so `docker compose build` does not overwrite axonos:latest.
 #
 # Build and run (from repo root, with .env present):
 #   docker compose build
 #   docker compose up -d
 #
-# Or one-shot: docker compose up -d --build
+# Access test UI: http://HOST:16080/vnc.html  —  gate / tunnel: port 18889
 #
-# Access: http://localhost:6080/vnc.html (or your host/tunnel URL)
-# VNC password and AXGT config come from .env (see env.example).
+# Override ports (e.g. match main): AXONOS_PUBLISH_NOVNC=6080 AXONOS_PUBLISH_GATE=8889 docker compose up -d
 #
-# Optional: set AXGT_CHALLENGE_DB_URL (e.g. from postgres service below) so the
-# challenge registry is shared across multiple AxonOS backends (no sticky sessions needed).
+# AXGT_CHALLENGE_DB_URL is set on the axonos service to this stack's postgres only.
+
+name: axonos-deposit-preview
 
 services:
   postgres:
     image: postgres:15-alpine
-    container_name: axonos_postgres
+    container_name: axonos_postgres_deposit_preview
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-axonos_gate}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-axonos_gate_secret}
       POSTGRES_DB: ${POSTGRES_DB:-axonos_gate}
     volumes:
-      - axonos_postgres_data:/var/lib/postgresql/data
+      - axonos_postgres_data_deposit_preview:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-axonos_gate} -d ${POSTGRES_DB:-axonos_gate}"]
@@ -30,13 +35,14 @@ services:
       retries: 5
 
   axonos:
-    image: axonos:latest
+    image: axonos:deposit-preview
     build:
       context: .
       dockerfile: Dockerfile
       args:
         PASSWORD: ${AXONOS_VNC_PASSWORD}
-    container_name: axonos
+    container_name: axonos_deposit_preview
+    shm_size: "32gb"
     env_file: .env
     environment:
       AXGT_CHALLENGE_DB_URL: postgresql://${POSTGRES_USER:-axonos_gate}:${POSTGRES_PASSWORD:-axonos_gate_secret}@postgres:5432/${POSTGRES_DB:-axonos_gate}
@@ -46,8 +52,8 @@ services:
     # Theme/wallpaper applied from startup.sh after 35s delay
     command: ["/startup.sh"]
     ports:
-      - "6080:6080"
-      - "8889:8889"
+      - "${AXONOS_PUBLISH_NOVNC:-6080}:6080"
+      - "${AXONOS_PUBLISH_GATE:-8889}:8889"
     deploy:
       resources:
         reservations:
@@ -58,4 +64,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  axonos_postgres_data: {}
+  axonos_postgres_data_deposit_preview: {}

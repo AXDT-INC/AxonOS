@@ -75,24 +75,24 @@ html.noVNC_connected #noVNC_container {
 
 /* Control bar styling */
 #noVNC_control_bar {
-  background-color: var(--axonos-primary) !important;
-  border: 2px solid var(--axonos-secondary);
-  box-shadow: 0 4px 15px var(--axonos-shadow) !important;
+  background: linear-gradient(180deg, #0f4f63 0%, #2d2f6f 100%) !important;
+  border: 2px solid rgba(104, 120, 196, 0.68);
+  box-shadow: 0 6px 22px rgba(42, 58, 122, 0.42) !important;
 }
 
 #noVNC_control_bar.noVNC_open {
-  box-shadow: 0 6px 20px var(--axonos-shadow) !important;
+  box-shadow: 0 10px 28px rgba(54, 74, 148, 0.5) !important;
 }
 
 /* Control bar handle */
 #noVNC_control_bar_handle {
-  background-color: var(--axonos-secondary) !important;
-  border: 1px solid var(--axonos-primary);
-  box-shadow: 0 3px 10px var(--axonos-shadow) !important;
+  background: linear-gradient(180deg, #166a82 0%, #3f428f 100%) !important;
+  border: 1px solid rgba(128, 141, 212, 0.72);
+  box-shadow: 0 4px 14px rgba(52, 73, 152, 0.45) !important;
 }
 
 #noVNC_control_bar_handle:hover {
-  background-color: var(--axonos-hover) !important;
+  background: linear-gradient(180deg, #1f7d98 0%, #5359ad 100%) !important;
 }
 
 /* Panel headings */
@@ -105,21 +105,21 @@ html.noVNC_connected #noVNC_container {
 
 /* Connect button */
 #noVNC_connect_button {
-  background: linear-gradient(135deg, var(--axonos-primary), var(--axonos-secondary)) !important;
-  border: 2px solid var(--axonos-accent);
+  background: linear-gradient(135deg, #1c5a6d 0%, #34397f 100%) !important;
+  border: none;
   color: var(--axonos-light) !important;
-  box-shadow: 0 4px 15px var(--axonos-shadow) !important;
+  box-shadow: 0 4px 15px rgba(42, 68, 120, 0.42) !important;
 }
 
 #noVNC_connect_button:hover {
-  background: linear-gradient(135deg, var(--axonos-hover), var(--axonos-primary)) !important;
+  background: linear-gradient(135deg, #0f2a4d 0%, #1a3b6b 100%) !important;
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px var(--axonos-shadow) !important;
+  box-shadow: 0 6px 20px rgba(20, 44, 84, 0.58) !important;
 }
 
 #noVNC_connect_button div {
-  border: 1px solid var(--axonos-accent) !important;
-  background: linear-gradient(to top, var(--axonos-primary), var(--axonos-secondary)) !important;
+  border: none !important;
+  background: transparent !important;
 }
 
 /* Panels */
@@ -580,6 +580,7 @@ input[type="password"]::placeholder {
     font-size: 1rem;
     line-height: 1.5;
     opacity: 0.95;
+    white-space: pre-line;
 }
 .axonos-queue-overlay__row {
     margin: 8px 0;
@@ -595,12 +596,63 @@ input[type="password"]::placeholder {
     justify-content: center;
     flex-wrap: wrap;
 }
+
+/* Queue actions: match modal gold frame, readable on dark (Join + Leave use the same chrome) */
 .axonos-queue-overlay__btn {
     margin: 0;
+    min-width: 11rem;
+    padding: 12px 22px !important;
+    font-size: 0.95rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.04em;
+    text-transform: none;
+    border-radius: 8px !important;
+    cursor: pointer;
+    color: var(--axonos-light) !important;
+    background: linear-gradient(145deg, rgba(46, 139, 87, 0.35) 0%, rgba(28, 28, 28, 0.95) 45%, #141414 100%) !important;
+    border: 2px solid var(--axonos-accent) !important;
+    box-shadow:
+        0 0 0 1px rgba(255, 215, 0, 0.15),
+        0 4px 14px rgba(0, 0, 0, 0.45),
+        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    transition:
+        transform 0.15s ease,
+        box-shadow 0.15s ease,
+        border-color 0.15s ease,
+        filter 0.15s ease;
 }
-.axonos-queue-overlay__btn--secondary {
-    background: transparent;
-    border-color: rgba(255, 255, 255, 0.4);
+
+.axonos-queue-overlay__btn:hover:not(:disabled) {
+    border-color: #ffe066 !important;
+    box-shadow:
+        0 0 0 1px rgba(255, 215, 0, 0.35),
+        0 6px 20px rgba(255, 215, 0, 0.12),
+        0 8px 24px rgba(0, 0, 0, 0.5),
+        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    transform: translateY(-1px);
+    filter: brightness(1.05);
+}
+
+.axonos-queue-overlay__btn:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow:
+        0 2px 8px rgba(0, 0, 0, 0.4),
+        inset 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+.axonos-queue-overlay__btn:focus-visible {
+    outline: 2px solid var(--axonos-accent);
+    outline-offset: 3px;
+}
+
+.axonos-queue-overlay__btn:disabled {
+    cursor: not-allowed !important;
+    opacity: 0.72;
+    filter: grayscale(0.15);
+    transform: none;
+    box-shadow:
+        0 2px 8px rgba(0, 0, 0, 0.35),
+        inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 /* Fix all credential form inputs */
@@ -635,6 +687,69 @@ input[type="password"]::placeholder {
   background: linear-gradient(135deg, var(--axonos-hover), var(--axonos-primary)) !important;
   transform: translateY(-1px) !important;
   box-shadow: 0 4px 15px var(--axonos-shadow) !important;
+}
+
+/* Connect Wallet button - primary action in wallet dialog */
+.axonos-connect-wallet-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+/* Lock label color: generic `button` rules elsewhere in the page (e.g. noVNC/base CSS) can
+   override our gradient buttons; !important keeps copy readable on the purple background. */
+.axonos-connect-wallet-btn,
+.axonos-connect-wallet-btn:visited {
+  color: #f8fafc !important;
+  -webkit-text-fill-color: #f8fafc !important;
+}
+
+.axonos-connect-wallet-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 24px !important;
+  font-size: 1rem !important;
+  font-weight: 600 !important;
+  white-space: nowrap;
+  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 50%, #4338ca 100%) !important;
+  border: 2px solid rgba(255, 255, 255, 0.2) !important;
+  border-radius: 10px !important;
+  cursor: pointer !important;
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4) !important;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease !important;
+}
+
+.axonos-connect-wallet-btn::before {
+  content: "";
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23F5F5F5' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='5' width='20' height='14' rx='2'/%3E%3Cpath d='M2 10h20'/%3E%3Cpath d='M16 14h.01'/%3E%3C/svg%3E") center/contain no-repeat;
+  flex-shrink: 0;
+}
+
+.axonos-connect-wallet-btn:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5) !important;
+  border-color: rgba(255, 255, 255, 0.35) !important;
+  background: linear-gradient(135deg, #818cf8 0%, #6366f1 50%, #4f46e5 100%) !important;
+}
+
+.axonos-connect-wallet-btn:active {
+  transform: translateY(0) !important;
+  box-shadow: 0 2px 10px rgba(99, 102, 241, 0.4) !important;
+}
+
+.axonos-connected-wallet-hint {
+  margin-left: 0;
+  opacity: 0.9;
+  font-size: 13px;
+  color: var(--axonos-accent);
+  font-weight: 500;
 }
 
 /* Force password field dark theme - override all defaults */
@@ -690,6 +805,283 @@ input[type="password"]#noVNC_password_input {
 #noVNC_credentials_dlg label {
   color: var(--axonos-light) !important;
   font-weight: bold !important;
+}
+
+/* Wallet card – state-driven connect/verify UI */
+.axonos-wallet-card {
+  padding: 24px !important;
+}
+.axonos-wallet-card__title {
+  text-align: center;
+  margin-bottom: 12px;
+}
+.axonos-wallet-card__title h2 {
+  color: var(--axonos-accent);
+  font-size: 1.35rem;
+  margin: 0 0 6px 0;
+  font-family: 'Orbitron', sans-serif;
+}
+.axonos-wallet-card__hints {
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.85rem;
+  margin: 0;
+}
+.axonos-wallet-card__hints-session {
+  display: block;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.65);
+}
+.axonos-wallet-card__contract {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-bottom: 20px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+.axonos-wallet-card__contract-label {
+  color: var(--axonos-accent);
+  font-weight: 600;
+}
+.axonos-wallet-card__contract code {
+  font-family: ui-monospace, monospace;
+  color: var(--axonos-light);
+  background: none;
+  padding: 0;
+}
+.axonos-contract-copy-btn {
+  padding: 4px 10px !important;
+  font-size: 0.8rem !important;
+  background: var(--axonos-secondary) !important;
+  color: var(--axonos-light) !important;
+  border: 1px solid var(--axonos-accent) !important;
+  border-radius: 6px !important;
+  cursor: pointer !important;
+}
+.axonos-contract-copy-btn:hover {
+  background: var(--axonos-primary) !important;
+}
+.axonos-contract-etherscan {
+  color: var(--axonos-accent);
+  text-decoration: none;
+  margin-left: auto;
+}
+.axonos-contract-etherscan:hover {
+  text-decoration: underline;
+}
+.axonos-wallet-card__status {
+  min-height: 140px;
+}
+.axonos-wallet-state {
+  text-align: center;
+  padding: 12px 0;
+}
+.axonos-wallet-state--hidden {
+  display: none !important;
+}
+.axonos-wallet-state__help,
+.axonos-wallet-state__msg {
+  color: var(--axonos-light);
+  margin: 0 0 14px 0;
+  font-size: 0.95rem;
+}
+.axonos-wallet-state__spinner {
+  width: 32px;
+  height: 32px;
+  margin: 0 auto 12px;
+  border: 3px solid rgba(255, 255, 255, 0.2);
+  border-top-color: var(--axonos-accent);
+  border-radius: 50%;
+  animation: axonos-spin 0.8s linear infinite;
+}
+@keyframes axonos-spin {
+  to { transform: rotate(360deg); }
+}
+.axonos-wallet-state__icon {
+  width: 40px;
+  height: 40px;
+  margin: 0 auto 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.axonos-wallet-state__icon--success {
+  background: rgba(34, 197, 94, 0.25);
+  border: 2px solid #22c55e;
+}
+.axonos-wallet-state__icon--success::after {
+  content: "";
+  display: block;
+  width: 12px;
+  height: 6px;
+  margin: 14px 0 0 10px;
+  border-left: 2px solid #22c55e;
+  border-bottom: 2px solid #22c55e;
+  transform: rotate(-45deg);
+}
+.axonos-wallet-state__icon--warning {
+  background: rgba(234, 179, 8, 0.25);
+  border: 2px solid #eab308;
+}
+.axonos-wallet-state__icon--warning::after {
+  content: "!";
+  display: block;
+  text-align: center;
+  line-height: 36px;
+  font-weight: bold;
+  color: #eab308;
+  font-size: 1.2rem;
+}
+.axonos-wallet-state__title {
+  font-weight: 600;
+  color: var(--axonos-light);
+  margin: 0 0 6px 0;
+  font-size: 1rem;
+}
+.axonos-wallet-state__address {
+  font-family: ui-monospace, monospace;
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.85);
+  margin: 0 0 4px 0;
+}
+.axonos-wallet-state__balance {
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.75);
+  margin: 0 0 14px 0;
+}
+.axonos-wallet-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+.axonos-wallet-picker-list .axonos-connect-wallet-btn {
+  width: 100%;
+  justify-content: center;
+}
+.axonos-wallet-state__back {
+  margin: 14px 0 0 0;
+}
+
+/* Prepaid deposit rows: label + amount + [Min | Send] stays aligned; Gradio-safe text color */
+.axonos-pay-deposit-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.45rem;
+  width: 100%;
+}
+.axonos-pay-deposit-row:last-child {
+  margin-bottom: 0;
+}
+.axonos-pay-row-label {
+  flex: 0 0 2.75rem;
+  font-size: 0.85em;
+  font-weight: 600;
+  color: #f5f5f5 !important;
+  -webkit-text-fill-color: #f5f5f5 !important;
+  text-align: left;
+}
+.axonos-pay-amount-input {
+  flex: 1 1 5.5rem;
+  min-width: 4.5rem;
+  max-width: 9.5rem;
+  box-sizing: border-box;
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.35);
+  color: #f5f5f5 !important;
+  -webkit-text-fill-color: #f5f5f5 !important;
+  font-size: 0.88rem;
+}
+.axonos-pay-deposit-actions {
+  display: inline-flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 0.4rem;
+  align-items: center;
+  flex-shrink: 0;
+}
+.axonos-pay-min-btn {
+  margin: 0 !important;
+  padding: 0.35rem 0.55rem !important;
+  font-size: 0.8rem !important;
+  opacity: 0.95;
+}
+.axonos-pay-send-btn {
+  margin: 0 !important;
+  padding: 0.4rem 0.7rem !important;
+  font-size: 0.8rem !important;
+  opacity: 0.98;
+}
+.axonos-wallet-picker-back {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.9rem;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+.axonos-wallet-picker-back:hover {
+  color: #fff;
+}
+.axonos-continue-btn {
+  display: inline-block;
+  padding: 12px 28px !important;
+  font-size: 1rem !important;
+  font-weight: 600 !important;
+  color: #fff !important;
+  background: linear-gradient(135deg, #16a34a 0%, #15803d 100%) !important;
+  border: 2px solid rgba(255, 255, 255, 0.2) !important;
+  border-radius: 10px !important;
+  cursor: pointer !important;
+  transition: transform 0.15s ease, box-shadow 0.15s ease !important;
+}
+.axonos-continue-btn:hover {
+  transform: translateY(-1px) !important;
+  box-shadow: 0 4px 14px rgba(34, 197, 94, 0.4) !important;
+}
+.axonos-get-axgt-btn,
+.axonos-install-metamask-btn {
+  display: inline-block;
+  padding: 10px 20px !important;
+  font-size: 0.95rem !important;
+  font-weight: 600 !important;
+  color: var(--axonos-light) !important;
+  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%) !important;
+  border: 2px solid rgba(255, 255, 255, 0.2) !important;
+  border-radius: 8px !important;
+  text-decoration: none !important;
+  cursor: pointer !important;
+  transition: transform 0.15s ease !important;
+}
+.axonos-get-axgt-btn:hover,
+.axonos-install-metamask-btn:hover {
+  transform: translateY(-1px) !important;
+}
+.axonos-switch-network-btn {
+  display: inline-block;
+  padding: 10px 20px !important;
+  font-size: 0.95rem !important;
+  font-weight: 600 !important;
+  color: var(--axonos-light) !important;
+  background: linear-gradient(135deg, #ea580c 0%, #c2410c 100%) !important;
+  border: 2px solid rgba(255, 255, 255, 0.2) !important;
+  border-radius: 8px !important;
+  cursor: pointer !important;
+  transition: transform 0.15s ease !important;
+}
+.axonos-switch-network-btn:hover {
+  transform: translateY(-1px) !important;
 }
 
 /* Settings panel dark theme styling */
@@ -1020,6 +1412,43 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   margin-bottom: 8px !important;
 }
 
+/* Power panel: single restart action UX polish */
+#noVNC_power {
+  min-width: 260px !important;
+  padding-bottom: 12px !important;
+}
+
+#noVNC_power .noVNC_heading {
+  margin-bottom: 10px !important;
+}
+
+#noVNC_restart_session_button {
+  display: block !important;
+  width: calc(100% - 20px) !important;
+  margin: 0 10px 2px 10px !important;
+  padding: 10px 12px !important;
+  border: 1px solid var(--axonos-secondary) !important;
+  border-radius: 8px !important;
+  background: linear-gradient(135deg, rgba(46, 139, 87, 0.25), rgba(70, 130, 180, 0.25)) !important;
+  color: var(--axonos-light) !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  text-align: center !important;
+  cursor: pointer !important;
+  transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.2s ease !important;
+}
+
+#noVNC_restart_session_button:hover {
+  border-color: var(--axonos-accent) !important;
+  background: linear-gradient(135deg, rgba(50, 205, 50, 0.28), rgba(70, 130, 180, 0.35)) !important;
+  transform: translateY(-1px);
+}
+
+#noVNC_restart_session_button:focus-visible {
+  outline: 2px solid var(--axonos-accent) !important;
+  outline-offset: 2px !important;
+}
+
 /* AxonOS Enhanced Login UI Styles */
 
 /* Vision Header Styling */
@@ -1066,6 +1495,67 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   text-transform: uppercase;
   letter-spacing: 2px;
   font-family: "Orbitron", monospace;
+  min-height: 1.6em;
+}
+
+/* Network environment (mainnet vs testnet) — driven by /api/config axgt_chain_id; see vnc.html applyAxonosNetworkEnvironmentUi */
+.axonos-network-banner {
+  font-size: 0.82rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  margin: 0 auto 12px;
+  max-width: 36rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: 999px;
+  line-height: 1.35;
+  font-family: "Orbitron", system-ui, sans-serif;
+}
+
+.axonos-network-banner--hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.axonos-network-banner--mainnet {
+  color: rgba(180, 255, 210, 0.92);
+  background: rgba(46, 139, 87, 0.2);
+  border: 1px solid rgba(100, 200, 140, 0.35);
+}
+
+.axonos-network-banner--testnet {
+  color: rgba(255, 220, 160, 0.98);
+  background: rgba(180, 100, 20, 0.25);
+  border: 1px solid rgba(255, 180, 80, 0.45);
+  box-shadow: 0 0 20px rgba(255, 160, 60, 0.12);
+}
+
+.axonos-network-banner--other {
+  color: rgba(255, 200, 160, 0.95);
+  background: rgba(120, 60, 30, 0.3);
+  border: 1px solid rgba(255, 140, 80, 0.4);
+}
+
+.axonos-wallet-network-line {
+  font-size: 0.82rem;
+  margin: 0.5rem 0 0;
+  line-height: 1.35;
+  font-weight: 500;
+}
+
+.axonos-wallet-network-line--hidden {
+  display: none !important;
+}
+
+.axonos-wallet-network-line--mainnet {
+  color: rgba(160, 220, 180, 0.95);
+}
+
+.axonos-wallet-network-line--testnet {
+  color: rgba(255, 200, 120, 0.98);
+}
+
+.axonos-wallet-network-line--other {
+  color: rgba(255, 180, 130, 0.95);
 }
 
 /* Particle Animation Background */
@@ -1134,8 +1624,8 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   text-align: center;
   margin: 25px 0;
   padding: 20px;
-  background: rgba(46, 139, 87, 0.05);
-  border: 1px solid rgba(46, 139, 87, 0.2);
+  background: rgba(94, 129, 172, 0.08);
+  border: 1px solid rgba(136, 169, 212, 0.25);
   border-radius: 10px;
 }
 
@@ -1161,16 +1651,19 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 /* Connect wrapper: tooltip shown on hover */
 .axonos-connect-wrapper {
   position: relative;
+  display: flex;
+  justify-content: center;
 }
 
 .axonos-prerequisites-tooltip {
   position: absolute;
   left: 50%;
-  bottom: 100%;
+  bottom: calc(100% - 42px);
   transform: translateX(-50%);
-  margin-bottom: 12px;
-  max-width: 420px;
-  min-width: 320px;
+  margin-bottom: 0;
+  width: min(92vw, 460px);
+  max-width: 460px;
+  min-width: 0;
   padding: 14px 18px;
   background: rgba(28, 28, 28, 0.98);
   border: 1px solid rgba(70, 130, 180, 0.5);
@@ -1225,17 +1718,17 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 
 /* Enhanced Connect Button */
 .axonos-enhanced-connect {
-  background: linear-gradient(135deg, var(--axonos-primary), var(--axonos-secondary)) !important;
+  background: linear-gradient(135deg, #1c5a6d 0%, #34397f 100%) !important;
   border: none !important;
   border-radius: 20px !important;
-  padding: 25px !important;
-  margin: 35px 0 !important;
+  padding: 18px !important;
+  margin: 24px 0 !important;
   cursor: pointer !important;
   transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1) !important;
   position: relative;
   overflow: hidden;
   box-shadow: 
-    0 12px 40px rgba(46, 139, 87, 0.4),
+    0 12px 40px rgba(42, 68, 120, 0.42),
     0 4px 16px rgba(0, 0, 0, 0.3),
     inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
   backdrop-filter: blur(10px);
@@ -1257,11 +1750,11 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 .axonos-enhanced-connect:hover {
-  background: linear-gradient(135deg, var(--axonos-hover), var(--axonos-primary)) !important;
+  background: linear-gradient(135deg, #0f2a4d 0%, #1a3b6b 100%) !important;
   transform: translateY(-5px) scale(1.03) !important;
   box-shadow: 
-    0 20px 60px rgba(46, 139, 87, 0.5),
-    0 0 80px rgba(50, 205, 50, 0.4),
+    0 20px 60px rgba(20, 44, 84, 0.58),
+    0 0 80px rgba(54, 96, 168, 0.2),
     0 8px 32px rgba(0, 0, 0, 0.4),
     inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
 }
@@ -1270,11 +1763,11 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   background: transparent !important;
   border: none !important;
   border-radius: 10px !important;
-  padding: 15px;
+  padding: 10px;
   backdrop-filter: none;
 }
 
@@ -1288,7 +1781,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 .axonos-connect-icon {
-  font-size: 2rem;
+  font-size: 1.7rem;
   animation: rocket-pulse 2s infinite ease-in-out;
 }
 
@@ -1298,7 +1791,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 .axonos-connect-text {
-  font-size: 1.4rem !important;
+  font-size: 1.2rem !important;
   font-weight: 700 !important;
   color: var(--axonos-light) !important;
   text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
@@ -1307,7 +1800,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 .axonos-connect-subtext {
-  font-size: 0.9rem;
+  font-size: 0.8rem;
   color: rgba(245, 245, 245, 0.8);
   font-weight: 300;
 }
@@ -1336,7 +1829,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 .axonos-feature-icon {
   font-size: 2rem;
   margin-bottom: 10px;
-  filter: drop-shadow(0 0 8px var(--axonos-primary));
+  filter: drop-shadow(0 0 8px rgba(126, 172, 224, 0.45));
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   display: inline-block;
 }
@@ -1374,19 +1867,30 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   font-weight: 500;
 }
 
+/* Override upstream .noVNC_center flex centering: use align-items:stretch +
+   margin:auto on child so the dialog scrolls instead of clipping when it
+   exceeds the viewport height (typewriter anim, network banner, etc.). */
+.noVNC_center:has(#noVNC_connect_dlg) {
+  align-items: stretch;
+  overflow-y: auto;
+  padding: 20px;
+}
+
 /* Connect Dialog Container Enhancement */
 #noVNC_connect_dlg {
-  background: linear-gradient(135deg, rgba(28, 28, 28, 0.95), rgba(44, 44, 44, 0.95)) !important;
-  border: 2px solid var(--axonos-primary) !important;
-  border-radius: 20px !important;
+  background: linear-gradient(145deg, rgba(18, 24, 34, 0.92), rgba(12, 18, 28, 0.9)) !important;
+  border: none !important;
+  border-radius: 24px !important;
   padding: 40px !important;
   box-shadow: 
-    0 20px 60px rgba(0, 0, 0, 0.5),
-    0 0 100px rgba(46, 139, 87, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
+    0 22px 70px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(160, 185, 220, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
   backdrop-filter: blur(10px);
   max-width: 600px;
-  margin: 0 auto;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  margin: auto;
   position: relative;
   z-index: 10;
 }
@@ -1466,8 +1970,8 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 @keyframes loading-glow {
-  0%, 100% { box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 100px rgba(46, 139, 87, 0.2); }
-  50% { box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 100px rgba(46, 139, 87, 0.4); }
+  0%, 100% { box-shadow: 0 22px 70px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(160, 185, 220, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.08); }
+  50% { box-shadow: 0 26px 82px rgba(0, 0, 0, 0.62), 0 0 0 1px rgba(190, 215, 255, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
 }
 
 /* AxonOS Connection Loading Animation */

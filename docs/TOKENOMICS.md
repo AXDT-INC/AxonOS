@@ -2,52 +2,55 @@
 
 *Note: AxonOS Desktop Tokenomics is under development and subject to progressive community feedback*
 
-This document describes the token-based access model for AxonOS: how AXGT is used to gate and meter desktop access without debiting balances on-chain.
+This document describes the **prepaid deposit-credit** access model for AxonOS: how users deposit **AXGT** or **native ETH** to a revenue wallet, submit a transaction hash for verification, and receive usage minutes. Sessions consume minutes via heartbeat-based incremental billing; no on-chain transfers occur during use.
 
 ## Principles
 
-### Hold-based access, not spend-based
+### Deposit-credit access, not hold-based
 
-Access is gated by **holding** a minimum amount of AXGT in an Ethereum wallet. Users do **not** send or transfer AXGT to use the platform. The balance is read on-chain (ERC-20 `balanceOf`); usage is metered **off-chain** in a server-side ledger. This approach:
+Access is gated by **prepaid credit**: users **deposit** AXGT or native ETH to a configured **revenue wallet**, then submit the **transaction hash** to the backend. The backend verifies the tx on-chain (confirmations, amount, sender/recipient) and credits usage minutes in a server-side ledger. Usage is deducted **incrementally** on each session heartbeat. When remaining minutes reach zero, access is denied until the user deposits again. This approach:
 
-- **Reduces fees**: No on-chain transfers for every session or minute.
-- **Aligns incentives**: Holding more AXGT grants more capacity; long-term holders get more utility.
-- **Preserves custody**: Users keep their tokens in their own wallet at all times.
+- **Reduces per-session fees**: One deposit can fund many minutes; no on-chain transfer per session or per minute.
+- **Trustless verification**: Only on-chain data (tx, receipt, logs) is used to credit minutes; no trust in client-reported amounts.
+- **Clear accounting**: Postgres-backed deposit ledger and audit ledger; all balance changes are logged.
+- **Dual currency**: Users can fund access with AXGT or native ETH (configurable minimums and credit rates).
 
 ### No trial period
 
-Access is strictly conditional on holding the required AXGT threshold. There is no time-limited free trial; the only path to access is holding and proving ownership of AXGT.
+Access is strictly conditional on having **remaining_minutes > 0** from at least one verified deposit. There is no time-limited free trial; the only path to access is depositing (AXGT or ETH) to the revenue wallet and submitting the tx hash for verification.
 
 ---
 
 ## Access rules
 
-### Minimum hold
+### Minimum deposit per credit event
 
-- A wallet must hold at least **100 AXGT** (configurable via `AXGT_MIN_HOLD_AMOUNT`) to be eligible for access.
-- The balance is checked on Ethereum mainnet against the official AXGT contract.
+- **AXGT**: Each deposit must be at least **100 AXGT** (configurable via `AXGT_MIN_DEPOSIT`) to the revenue wallet. The backend verifies ERC-20 `Transfer` events to the revenue wallet and credits minutes.
+- **ETH**: Each **native ETH** transfer to the revenue wallet of at least **0.0005 ETH** by default (`ETH_MIN_DEPOSIT`), tuned so the minimum ETH top-up credits roughly the same minutes as the minimum AXGT top-up at typical DEX rates; configurable.
 
-### Linear capacity (credit)
+### Credit rates
 
-- Capacity is **linear in held AXGT**: every **100 AXGT** held grants **60 minutes** of total usable credit (default; configurable via `AXGT_CREDIT_PER_100_AXGT_MINUTES`).
-- Examples:
-  - 100 AXGT → 60 minutes total.
-  - 200 AXGT → 120 minutes total.
-  - 500 AXGT → 300 minutes total.
-- Capacity is a **ceiling** on usage; it does not refill over time. Once a wallet has consumed minutes up to that ceiling, access locks until the user holds more AXGT (increasing the ceiling).
+- **AXGT**: Every **100 AXGT** deposited grants **60 minutes** of usage (default; configurable via `AXGT_CREDIT_PER_100_AXGT_MINUTES`).
+- **ETH**: Minutes scale linearly with wei sent. Default **120,000 minutes per 1 ETH** (`ETH_CREDIT_PER_ETH_MINUTES`), so **0.0005 ETH** (min deposit) → **60 minutes** — parity with **100 AXGT** at ~200k AXGT/ETH.
 
-### Usage metering (off-chain)
+Examples:
 
-- **Consumed minutes** are tracked per wallet in a persistent, off-chain usage ledger (e.g. a JSON file or future DB).
-- Tracking is **global per wallet**: the same address shares one usage total across all sessions and devices.
-- Elapsed time while connected is attributed to that wallet; the ledger is updated when the client polls wallet-status or when connections are gated.
-- The ledger is **not** a blockchain; it is an operational store that can be backed up, audited, or migrated.
+- 100 AXGT deposit → 60 minutes credited.
+- 0.0005 ETH deposit → 60 minutes credited (defaults).
+- 1 ETH deposit → 120,000 minutes credited (defaults).
+- Credits are **additive**: multiple deposits increase total credited minutes; unused minutes persist until consumed.
+
+### Usage metering (heartbeat-based)
+
+- **Consumed minutes** are tracked per wallet in a **Postgres-backed** deposit ledger (`axgt_deposits`). An **audit ledger** (`axgt_ledger`) records every balance change (deposit_credit, usage_deduction, refund, admin_adjustment, etc.).
+- **Billing is incremental**: on each session **heartbeat**, the server bills elapsed time since the last billing checkpoint and deducts it from `remaining_minutes`. Tracking is **global per wallet** across sessions and devices.
+- **Replay protection**: Each transaction hash is credited at most once (`axgt_verified_deposits` table).
 
 ### Lock and warning
 
-- When **remaining minutes** (capacity minus consumed) reach **0**, the wallet is **locked out**: no new connections until the user holds more AXGT (raising capacity).
-- A **warning** is shown when remaining minutes fall at or below a threshold (e.g. **10 minutes**). The in-session overlay prompts the user to add more AXGT to avoid lockout.
-- After lockout, the UI directs the user to verify again (e.g. after acquiring more AXGT); no on-chain “refill” transaction is required—the system re-reads the updated balance.
+- When **remaining_minutes** reach **0**, the session is **terminated** and the wallet is **locked out** until the user makes another verified deposit.
+- A **warning** is shown when remaining minutes fall at or below a threshold (e.g. **10 minutes**; `AXGT_WARNING_THRESHOLD_MINUTES`). The UI prompts the user to deposit again to avoid lockout.
+- After lockout, the user must deposit (AXGT or ETH) to the revenue wallet and submit the new transaction hash via `POST /api/auth/verify-deposit` to receive additional minutes.
 
 ---
 
@@ -55,18 +58,18 @@ Access is strictly conditional on holding the required AXGT threshold. There is 
 
 ### Sign-to-verify
 
-- Access is contingent on **proving ownership** of the wallet. Users must sign a challenge (EIP-191 `personal_sign`) issued by the server; the server verifies the signature before granting a session.
+- Access to the API (including verify-deposit and session claim) is contingent on **proving ownership** of the wallet. Users must sign a challenge (EIP-191 `personal_sign`) issued by the server; the server verifies the signature before issuing an auth token.
 - Unsigned verification is not accepted; there is no “paste address only” path to access.
 
 ### One-time, wallet-bound challenges
 
 - Each challenge is bound to a specific wallet and contains a **one-time nonce**. Challenges cannot be reused or replayed for another wallet.
-- This prevents signature replay and ensures that only the holder of the private key for the claimed address can obtain access.
+- This prevents signature replay and ensures that only the holder of the private key for the claimed address can obtain access and submit deposit tx hashes for that wallet.
 
-### Session tokens
+### Session tokens and verify-deposit
 
-- On successful verification, the server issues a **short-lived auth token** (e.g. 5 minutes). WebSocket and API access (e.g. wallet-status) require this token.
-- Tokens are carried via **HttpOnly cookie** by default; an optional query-parameter fallback exists for environments where cookies are not forwarded on WebSocket upgrades (e.g. some tunnels).
+- On successful verification, the server issues a **short-lived auth token** (e.g. 5 minutes). WebSocket, wallet-status, and **verify-deposit** require this token (cookie or header).
+- **Verify-deposit** (`POST /api/auth/verify-deposit`) requires the auth token; the `wallet_address` in the body must match the authenticated session. Only then does the server credit minutes for the submitted tx hash.
 - Tokens **rotate** near expiry (with a short grace overlap) to limit exposure while avoiding unnecessary disconnects during refresh.
 
 ---
@@ -74,11 +77,11 @@ Access is strictly conditional on holding the required AXGT threshold. There is 
 ## User flow (summary)
 
 1. User opens the AxonOS noVNC page and connects their wallet (e.g. MetaMask).
-2. User signs the one-time challenge to prove ownership.
-3. Server checks on-chain balance and off-chain usage; if the wallet holds ≥ minimum AXGT and has remaining capacity, the server issues an auth token and returns status (remaining minutes, etc.).
-4. User is connected to the desktop (WebSocket gated by token + wallet).
-5. During the session, the client polls wallet-status; the server updates consumed minutes and returns remaining time. If remaining ≤ warning threshold, the UI shows a warning overlay; if remaining = 0, the session is locked and the user is prompted to add more AXGT and verify again.
-6. To regain access after lockout, the user adds AXGT (or already holds more), then verifies again; the system re-reads balance and computes a new capacity.
+2. User signs the one-time challenge to prove ownership; server issues an auth token.
+3. If the wallet has **no prepaid credit** (remaining_minutes = 0), the UI shows requirements: deposit at least X AXGT or Y ETH to the revenue wallet, then submit the transaction hash.
+4. User deposits AXGT or ETH to the **revenue wallet** (any wallet or DEX). User submits the **transaction hash** via the verify-deposit API (or future UI). Server verifies the tx on-chain and credits minutes.
+5. User claims a session; during the session the client sends **heartbeats**. Each heartbeat triggers incremental billing: elapsed time since last checkpoint is deducted from remaining_minutes.
+6. When remaining_minutes reach **0**, the session is terminated and access is denied. User must deposit again and submit a new tx hash to regain access.
 
 ---
 
@@ -86,10 +89,14 @@ Access is strictly conditional on holding the required AXGT threshold. There is 
 
 | Concept | Default | Env / config |
 |--------|---------|--------------|
-| Minimum hold | 100 AXGT | `AXGT_MIN_HOLD_AMOUNT` |
-| Minutes per 100 AXGT | 60 | `AXGT_CREDIT_PER_100_AXGT_MINUTES` |
+| Min AXGT per deposit | 100 AXGT | `AXGT_MIN_DEPOSIT` |
+| Minutes per 100 AXGT deposited | 60 | `AXGT_CREDIT_PER_100_AXGT_MINUTES` |
+| Min ETH per deposit | 0.0005 ETH | `ETH_MIN_DEPOSIT` |
+| Minutes per 1 ETH deposited | 120000 | `ETH_CREDIT_PER_ETH_MINUTES` |
 | Warning threshold | 10 minutes | `AXGT_WARNING_THRESHOLD_MINUTES` |
-| Usage ledger path | `/var/lib/axonos_gate/usage.json` | `AXGT_USAGE_DB_PATH` |
+| Min block confirmations before credit | 6 | `AXGT_DEPOSIT_MIN_CONFIRMATIONS` |
+| Revenue wallet | — | `AXGT_REVENUE_WALLET` (required for deposit verification) |
+| Deposit/ledger DB | — | `AXGT_CHALLENGE_DB_URL` (Postgres; required for deposit-credit billing) |
 | Auth token TTL | 300 s | `AXGT_AUTH_TOKEN_TTL_SECONDS` |
 | Challenge TTL | 180 s | `AXGT_CHALLENGE_TTL_SECONDS` |
 
@@ -99,4 +106,4 @@ Access is strictly conditional on holding the required AXGT threshold. There is 
 
 - **AxonDAO**: [https://axondao.io](https://axondao.io)
 - **AXGT contract (Ethereum mainnet)**: `0x6112C3509A8a787df576028450FebB3786A2274d`
-- **Implementation**: `axonos_gate/` (verifier, websockify gate, gate server); see `axonos_gate/README.md` for API and deployment details.
+- **Implementation**: `axonos_gate/` — `axgt_verifier.py` (challenge/signature + deposit-credit access), `deposit_ledger.py` (Postgres deposits, ledger, billing), `deposit_verifier.py` (tx-hash verification for AXGT and ETH), `session_manager.py` (heartbeat billing), `gate_server.py` (HTTP API and WebSocket proxy). See `axonos_gate/README.md` for API, schema, and deployment details.

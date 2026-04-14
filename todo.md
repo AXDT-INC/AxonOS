@@ -14,5 +14,20 @@
   - [x] Frontend queue overlay + auto-claim after wallet verify (Feature 3)
   - [x] Desktop reset script between session transitions (Feature 2 Option A)
 - [x] Phase 2: Frontend Connect Wallet + strict sign-to-verify + status polling/overlay
-- [ ] Phase 3: Deployment helpers (`docker-compose.yml`) and docs touch-up
+- [x] Phase 3: Deployment helpers — parallel compose (16080/18889, deposit-preview image/volume)
+- [x] Phase 3b: Docs + UX — ETH/AXGT parity defaults (0.0005 ETH ≈ 100 AXGT min tier); `/api/config` + vnc copy for credit rates
+- [x] Wallet UI: revenue address from `/api/config`, tx-hash → verify-deposit; auth token after sign even with 0 prepaid
+- [x] Fix `verify-wallet` 500: `get_wallet_access_status` must `import deposit_ledger` when gate runs with flat `/axonos_gate` on `sys.path` (not `axonos_gate` package)
+- [x] Wallet pay (AXGT/ETH) + auto poll verify-deposit (Option C)
+- [x] Wallet pay: optional amount inputs (≥ server min), Min reset, BigInt validation (`novnc-theme/vnc.html`)
+- [x] Send ETH from wallet: explicit `gas: 0x5208` (21000) — fixes MetaMask/RPC “gas limit too high (cap 16777216, tx 21000000)” on PublicNode-style caps
+- [x] Queue overlay: `try_claim_session` + `join_queue` return `queue_length`; poll refreshes overlay when desktop held by another wallet (`vnc.html` + `session_manager.py`)
+- [x] Join Queue button: show errors (reason/error/HTTP), Joining… state, `white-space: pre-line` for multi-line message; `joinQueue()` uses fetch + `_ok`/`_httpStatus` (was silent on failure)
+- [x] **websockify (6080) parity with gate**: `verify-wallet` issues `auth_token` when signed but 0 prepaid; `/api/config` includes revenue wallet + deposit policy; `POST /api/auth/verify-deposit` on 6080 (fixes tunnel-on-6080 “Could not complete sign-in” + missing top-up UI)
+- [x] Queue join: `deposit_ledger` import + unique index migration on `axgt_queue` (fixes ON CONFLICT / Internal error); user-facing reason + vnc copy without raw "Internal error"
+- [x] Queue overlay: unified styled Join / Leave buttons (gold border, dark gradient, hover/disabled) — `axonos-theme.css`
+- [x] Leave queue + Launch: clear stale `UI.rfb` / retry path (`ui.js` connect) + `axonosResetDesktopGateForRetry()` after leave — fixes 1006 / “Failed to connect” loop
+- [x] **Launch must `POST /api/session/claim` before WebSocket** — gate rejects WS if not session owner (was 1006 after leave queue + Launch); `axonosOnSessionClaimDenied` → queue overlay (`ui.js` + `vnc.html`)
+- [x] noVNC landing + wallet dialog: network environment banner from `/api/config` `axgt_chain_id` (mainnet vs testnet); operator notes in `vnc.html` + `env.example`
+- [x] ETH deposit feature flag: `AXGT_ENABLE_ETH_DEPOSITS` gates backend crediting + `/api/config` and hides ETH top-up controls in wallet UI (`deposit_verifier.py`, `axgt_verifier.py`, `gate_server.py`, `websockify_gate.py`, `vnc.html`)
 - [ ] Phase 4: End-to-end runtime test checklist
