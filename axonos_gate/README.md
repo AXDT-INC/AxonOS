@@ -116,6 +116,8 @@ Heartbeats trigger incremental billing; when remaining minutes reach zero the se
 - `deposit_ledger.py`: Postgres-backed deposits, ledger, verified-deposits; billing and admin helpers.
 - `deposit_verifier.py`: Tx-hash verification (RPC, Transfer events, confirmations); credits via deposit_ledger.
 - `session_manager.py`: Session scheduler + queue + heartbeat-based billing (calls deposit_ledger.deduct_usage). Supports private-beta single-session mode and feature-gated public-beta multi-session mode with exclusive GPU allocation.
+- `session_launcher.py`: Adapter client for session runtime orchestration (`docker_cli` / `http` / `noop`).
+- `session_launcher_service.py`: Host-side launcher API for non-nested deployments (`POST /launch`, `POST /stop`).
 - `gate_server.py`: HTTP API and WebSocket proxy (port **8889** by default).
 - `websockify_gate.py`: noVNC + WebSocket on **6080**; serves the same `/api/config`, `/api/auth/*` (challenge, verify-wallet, wallet-status, **verify-deposit**), and session/queue POSTs so a tunnel to 6080 alone can sign in and top up without hitting 8889.
 
@@ -136,6 +138,7 @@ Optional user-container mode:
 - Queue records are profile-aware (`requested_profile`, `requested_gpus`, `queue_reason`).
 - Claim/queue APIs accept `requested_profile` (`small|medium|large`).
 - Session status includes active sessions, assigned GPU IDs, requested profile, allocation/queue status, and queue reason.
+- Session runtime orchestration uses a launcher adapter (`session_launcher.py`) so scheduling is decoupled from container runtime.
 
 ### Scheduler policy
 
@@ -157,6 +160,23 @@ Optional user-container mode:
 - Scheduler derives free GPUs as `configured_gpus - union(active_session_gpu_ids)`.
 - New session can only be created from free IDs; overlapping GPU IDs are not allowed.
 - GPU IDs are released immediately when session ends (release, timeout, credit exhaustion, or container failure).
+
+### Launcher adapter (Mode B)
+
+`session_manager.py` delegates user-session launch/stop to `session_launcher.py`:
+
+- `AXGT_SESSION_LAUNCHER_MODE=docker_cli` (default): local `docker run` / `docker rm -f`.
+- `AXGT_SESSION_LAUNCHER_MODE=http`: call external launcher service:
+  - `POST {AXGT_SESSION_LAUNCHER_URL}/launch`
+  - `POST {AXGT_SESSION_LAUNCHER_URL}/stop`
+  - optional bearer auth via `AXGT_SESSION_LAUNCHER_TOKEN`.
+- `AXGT_SESSION_LAUNCHER_MODE=noop`: scheduler-only dry run (no runtime spawn/stop).
+
+This Mode B split is the recommended production path when AxonOS itself is already running in a container and should not directly control host Docker.
+
+See also: `docs/HOST_LAUNCHER.md` for end-to-end non-nested deployment.
+
+Compose note: `docker-compose.yml` includes a dedicated `axonos-launcher` service (HTTP launcher) so you can manage the full stack via compose while keeping Docker control isolated from the main gate container.
 
 ## Security
 

@@ -36,4 +36,7 @@
   - [x] Profile-aware queue (`small=1`, `medium=2`, `large=4`)
   - [x] API payload support for `requested_profile` in claim/join
   - [x] Frontend profile selector + queue/allocation status messaging
+  - [x] Mode B launcher adapter (`session_launcher.py`) with `http`/`docker_cli`/`noop`
+  - [x] Host launcher service (`session_launcher_service.py`) + deployment doc
+  - [x] Compose-managed launcher service (`axonos-launcher`) for one-command ops
   - [ ] Runtime validation with real concurrent wallets + GPU inventory

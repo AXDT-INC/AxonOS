@@ -1,0 +1,169 @@
+"""
+Session container launcher adapters.
+
+Mode B architecture: session_manager delegates launch/cleanup to this module so
+runtime-specific orchestration (Docker socket, host-side launcher service, etc.)
+is configurable without changing scheduler logic.
+"""
+
+import json
+import logging
+import os
+import shlex
+import subprocess
+import urllib.error
+import urllib.request
+from typing import List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
+
+
+def _truthy(name: str, default: bool = False) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in ("1", "true", "yes", "on")
+
+
+def _container_mode_enabled() -> bool:
+    return _truthy("AXGT_USER_CONTAINER_ENABLED", False)
+
+
+def _container_name_for_session(session_id: int) -> str:
+    return f"axgt-session-{session_id}"
+
+
+def _launcher_mode() -> str:
+    return (os.getenv("AXGT_SESSION_LAUNCHER_MODE") or "docker_cli").strip().lower()
+
+
+def launch_session(session_id: int, wallet: str, profile: str, gpu_ids: List[int]) -> Tuple[bool, Optional[str], Optional[str]]:
+    """Launch user session runtime; returns (ok, container_id, error)."""
+    if not _container_mode_enabled():
+        return True, "shared-desktop", None
+    mode = _launcher_mode()
+    if mode == "http":
+        return _launch_via_http(session_id, wallet, profile, gpu_ids)
+    if mode == "noop":
+        # Useful when validating scheduler/queue logic without runtime orchestration.
+        return True, _container_name_for_session(session_id), None
+    return _launch_via_docker_cli(session_id, wallet, profile, gpu_ids)
+
+
+def stop_session(session_id: int, container_id: Optional[str]) -> None:
+    """Cleanup user session runtime resources."""
+    if not _container_mode_enabled():
+        return
+    mode = _launcher_mode()
+    if mode == "http":
+        _stop_via_http(session_id, container_id)
+        return
+    if mode == "noop":
+        return
+    _stop_via_docker_cli(session_id, container_id)
+
+
+def _launch_via_docker_cli(session_id: int, wallet: str, profile: str, gpu_ids: List[int]) -> Tuple[bool, Optional[str], Optional[str]]:
+    image = (os.getenv("AXGT_SESSION_CONTAINER_IMAGE") or "").strip()
+    if not image:
+        return False, None, "AXGT_SESSION_CONTAINER_IMAGE is required in docker_cli mode"
+    gpu_spec = ",".join(str(i) for i in gpu_ids)
+    name = _container_name_for_session(session_id)
+    cmd: List[str] = [
+        "docker", "run", "-d", "--rm",
+        "--name", name,
+        "--gpus", f"device={gpu_spec}",
+        "-e", f"AXGT_SESSION_ID={session_id}",
+        "-e", f"AXGT_WALLET_ADDRESS={wallet}",
+        "-e", f"AXGT_REQUESTED_PROFILE={profile}",
+        "-e", f"AXGT_ASSIGNED_GPU_IDS={gpu_spec}",
+    ]
+    extra_raw = (os.getenv("AXGT_SESSION_CONTAINER_EXTRA_ARGS") or "").strip()
+    if extra_raw:
+        cmd.extend(shlex.split(extra_raw))
+    cmd.append(image)
+    run_cmd = (os.getenv("AXGT_SESSION_CONTAINER_COMMAND") or "").strip()
+    if run_cmd:
+        cmd.extend(shlex.split(run_cmd))
+    try:
+        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, text=True).strip()
+        container_id = out.splitlines()[-1][:64] if out else name
+        return True, container_id, None
+    except subprocess.CalledProcessError as exc:
+        msg = (exc.output or "").strip() or str(exc)
+        logger.warning("session_launcher: docker run failed: %s", msg)
+        return False, None, msg
+    except Exception as exc:
+        logger.warning("session_launcher: docker run failed: %s", exc)
+        return False, None, str(exc)
+
+
+def _stop_via_docker_cli(session_id: int, container_id: Optional[str]) -> None:
+    target = (container_id or "").strip() or _container_name_for_session(session_id)
+    try:
+        subprocess.run(
+            ["docker", "rm", "-f", target],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except Exception as exc:
+        logger.warning("session_launcher: docker cleanup failed for %s: %s", target, exc)
+
+
+def _launch_via_http(session_id: int, wallet: str, profile: str, gpu_ids: List[int]) -> Tuple[bool, Optional[str], Optional[str]]:
+    base_url = (os.getenv("AXGT_SESSION_LAUNCHER_URL") or "").strip().rstrip("/")
+    if not base_url:
+        return False, None, "AXGT_SESSION_LAUNCHER_URL is required in http mode"
+    payload = {
+        "session_id": session_id,
+        "wallet_address": wallet,
+        "requested_profile": profile,
+        "assigned_gpu_ids": gpu_ids,
+    }
+    status, data, err = _http_json("POST", f"{base_url}/launch", payload)
+    if err:
+        return False, None, err
+    if status >= 400:
+        return False, None, (data.get("error") if isinstance(data, dict) else f"http {status}")
+    if not isinstance(data, dict) or not data.get("ok"):
+        return False, None, (data.get("error") if isinstance(data, dict) else "launcher rejected request")
+    container_id = (data.get("container_id") or _container_name_for_session(session_id))
+    return True, str(container_id), None
+
+
+def _stop_via_http(session_id: int, container_id: Optional[str]) -> None:
+    base_url = (os.getenv("AXGT_SESSION_LAUNCHER_URL") or "").strip().rstrip("/")
+    if not base_url:
+        return
+    payload = {"session_id": session_id, "container_id": container_id}
+    _http_json("POST", f"{base_url}/stop", payload)
+
+
+def _http_json(method: str, url: str, payload: dict) -> Tuple[int, object, Optional[str]]:
+    token = (os.getenv("AXGT_SESSION_LAUNCHER_TOKEN") or "").strip()
+    timeout_raw = (os.getenv("AXGT_SESSION_LAUNCHER_TIMEOUT_SECONDS") or "").strip()
+    try:
+        timeout_s = float(timeout_raw) if timeout_raw else 10.0
+    except ValueError:
+        timeout_s = 10.0
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url=url, method=method, data=body)
+    req.add_header("Content-Type", "application/json")
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            raw = resp.read().decode("utf-8").strip()
+            data = json.loads(raw) if raw else {}
+            return int(resp.status), data, None
+    except urllib.error.HTTPError as exc:
+        try:
+            raw = exc.read().decode("utf-8").strip()
+            data = json.loads(raw) if raw else {"error": f"http {exc.code}"}
+        except Exception:
+            data = {"error": f"http {exc.code}"}
+        return int(exc.code), data, None
+    except Exception as exc:
+        logger.warning("session_launcher: http call failed %s %s: %s", method, url, exc)
+        return 0, {}, str(exc)
