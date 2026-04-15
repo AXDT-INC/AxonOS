@@ -1139,9 +1139,15 @@ document.addEventListener("DOMContentLoaded", function() {
                 var short = addr ? (addr.slice(0, 6) + '\u2026' + addr.slice(-4)) : '(not configured)';
                 if (contractShortEl) contractShortEl.textContent = short;
                 var getAxgt = document.getElementById('axonos_get_axgt_btn');
-                if (getAxgt && addr) {
-                    // Mainnet swap URL; when AXGT_CHAIN_ID is a testnet, consider `chain=sepolia` (or your DEX) — see block comment on axonosNetworkEnvironmentFromChainId.
-                    getAxgt.href = 'https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=' + encodeURIComponent(addr.toLowerCase());
+                var envInfo = axonosNetworkEnvironmentFromChainId(axonosConfig.axgt_chain_id != null ? axonosConfig.axgt_chain_id : '1');
+                var isTestnetEnv = envInfo.kind === 'testnet';
+                var axgtCtaUrl = isTestnetEnv
+                    ? 'https://testnet-faucet.oci.axondao.io/'
+                    : ('https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=' + encodeURIComponent((addr || '').toLowerCase()));
+                var axgtCtaLabel = isTestnetEnv ? 'Get Test AXGT' : 'Get AXGT / Uniswap';
+                if (getAxgt) {
+                    getAxgt.href = axgtCtaUrl;
+                    getAxgt.textContent = axgtCtaLabel;
                 }
                 var prereqMin = document.getElementById('axonos_prereq_min_axgt');
                 var prereqMinEth = document.getElementById('axonos_prereq_min_eth');
@@ -1182,7 +1188,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 }
                 if (prereqDepositLine) {
                     prereqDepositLine.innerHTML = ethEnabled
-                        ? ('Prepaid <strong>desktop minutes</strong>: each <strong id="axonos_prereq_min_axgt">' + minDeposit + '</strong> <strong>AXGT</strong> (min. deposit) → <strong id="axonos_prereq_axgt_min_label">' + formatCreditMinutes(maMin) + ' desktop time</strong> · each <strong id="axonos_prereq_min_eth">' + minEth + '</strong> <strong>ETH</strong> (min.) → <strong id="axonos_prereq_eth_min_label">' + formatCreditMinutes(meMin) + ' desktop time</strong>. Send to revenue wallet, then submit tx hash or use in-page pay (<a href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=' + encodeURIComponent((addr || '').toLowerCase()) + '" target="_blank" rel="noopener noreferrer">Get AXGT</a>)')
+                        ? ('Prepaid <strong>desktop minutes</strong>: each <strong id="axonos_prereq_min_axgt">' + minDeposit + '</strong> <strong>AXGT</strong> (min. deposit) → <strong id="axonos_prereq_axgt_min_label">' + formatCreditMinutes(maMin) + ' desktop time</strong> · each <strong id="axonos_prereq_min_eth">' + minEth + '</strong> <strong>ETH</strong> (min.) → <strong id="axonos_prereq_eth_min_label">' + formatCreditMinutes(meMin) + ' desktop time</strong>. Send to revenue wallet, then submit tx hash or use in-page pay (<a href="' + axgtCtaUrl + '" target="_blank" rel="noopener noreferrer">' + axgtCtaLabel + '</a>)')
                         : ('Prepaid <strong>desktop minutes</strong>: each <strong id="axonos_prereq_min_axgt">' + minDeposit + '</strong> <strong>AXGT</strong> (min. deposit) → <strong id="axonos_prereq_axgt_min_label">' + formatCreditMinutes(maMin) + ' desktop time</strong>. ETH top-ups are currently disabled. Send AXGT to the revenue wallet, then submit tx hash or use in-page AXGT pay.');
                 }
                 var payAxgtIn = document.getElementById('axonos_pay_axgt_amount');
