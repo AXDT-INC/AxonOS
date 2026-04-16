@@ -1941,6 +1941,17 @@ document.addEventListener("DOMContentLoaded", function() {
         if (!dlg) return;
         var obs = new MutationObserver(function () {
             if (!dlg.classList.contains('noVNC_open')) return;
+            var hasActiveVerifiedSession =
+                !!window.axonosAllowVncConnect &&
+                !!window.verifiedWalletAddress &&
+                !!window.verifiedWalletAuthToken;
+            if (hasActiveVerifiedSession) {
+                setWalletUIState('axonos_wallet_state_verified', {
+                    address: window.verifiedWalletAddress,
+                    balanceDisplay: 'Connected'
+                });
+                return;
+            }
             setWalletUIState('axonos_wallet_state_disconnected');
             var lastWallet = null;
             try { lastWallet = localStorage.getItem('axonos_last_wallet'); } catch (e) {}
