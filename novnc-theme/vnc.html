@@ -1071,6 +1071,31 @@ document.addEventListener("DOMContentLoaded", function() {
     }
     var selectedEthereumProvider = null;
 
+    function getSafeWindowEthereum() {
+        try {
+            return window.ethereum || null;
+        } catch (e) {
+            console.warn('Wallet provider access failed:', e);
+            return null;
+        }
+    }
+
+    function getSafeProviderList(eth) {
+        if (!eth) return [];
+        try {
+            if (Array.isArray(eth.providers)) return eth.providers;
+        } catch (e) {
+            console.warn('Wallet provider list access failed:', e);
+        }
+        return [];
+    }
+
+    function resolveEthereumProvider(provider) {
+        var eth = provider || selectedEthereumProvider || getSafeWindowEthereum();
+        if (!eth || typeof eth.request !== 'function') return null;
+        return eth;
+    }
+
     function setEthDepositUiEnabled(enabled) {
         var ethAmountInput = document.getElementById('axonos_pay_eth_amount');
         var ethMinBtn = document.getElementById('axonos_pay_eth_min_btn');
@@ -1098,10 +1123,11 @@ document.addEventListener("DOMContentLoaded", function() {
                     resolve(list);
                     return;
                 }
-                if (window.ethereum && typeof window.ethereum.request === 'function') {
-                    var prov = window.ethereum;
-                    if (Array.isArray(prov.providers) && prov.providers.length > 0) {
-                        prov.providers.forEach(function (p, i) {
+                var prov = getSafeWindowEthereum();
+                if (prov && typeof prov.request === 'function') {
+                    var providerList = getSafeProviderList(prov);
+                    if (providerList.length > 0) {
+                        providerList.forEach(function (p, i) {
                             if (p && typeof p.request === 'function') {
                                 var name = (p.providerInfo && p.providerInfo.name) || (p.isMetaMask ? 'MetaMask' : 'Wallet ' + (i + 1));
                                 list.push({ provider: p, name: name });
@@ -1121,7 +1147,11 @@ document.addEventListener("DOMContentLoaded", function() {
                 }
             }
             window.addEventListener('eip6963:announceProvider', onAnnounce);
-            window.dispatchEvent(new Event('eip6963:requestProvider'));
+            try {
+                window.dispatchEvent(new Event('eip6963:requestProvider'));
+            } catch (e) {
+                console.warn('Wallet discovery event failed:', e);
+            }
             setTimeout(finish, 400);
         });
     }
@@ -1270,7 +1300,7 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 
     async function requestConnectedWallet(provider) {
-        var eth = provider || selectedEthereumProvider || window.ethereum;
+        var eth = resolveEthereumProvider(provider);
         if (!eth || typeof eth.request !== 'function') {
             throw new Error('No wallet provider detected');
         }
@@ -1311,7 +1341,11 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 
     function runVerify(walletAddress, provider) {
-        var eth = provider || selectedEthereumProvider || window.ethereum;
+        var eth = resolveEthereumProvider(provider);
+        if (!eth) {
+            setWalletUIState('axonos_wallet_state_no_wallet');
+            return;
+        }
         setWalletUIState('axonos_wallet_state_checking');
         var challengeUrl = new URL('/api/auth/challenge', window.location.origin);
         challengeUrl.searchParams.set('wallet_address', walletAddress);
@@ -1616,7 +1650,7 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 
     function axonosPayAxgtFromWallet() {
-        var eth = selectedEthereumProvider || window.ethereum;
+        var eth = resolveEthereumProvider();
         var wallet = verifiedWalletAddress;
         var tok = window.verifiedWalletAuthToken;
         var msgEl = document.getElementById('axonos_verify_deposit_msg');
@@ -1674,7 +1708,7 @@ document.addEventListener("DOMContentLoaded", function() {
             if (disabledMsgEl) disabledMsgEl.textContent = 'ETH top-ups are currently disabled.';
             return;
         }
-        var eth = selectedEthereumProvider || window.ethereum;
+        var eth = resolveEthereumProvider();
         var wallet = verifiedWalletAddress;
         var tok = window.verifiedWalletAuthToken;
         var msgEl = document.getElementById('axonos_verify_deposit_msg');
@@ -1810,7 +1844,7 @@ document.addEventListener("DOMContentLoaded", function() {
     if (pickerBackBtn) pickerBackBtn.addEventListener('click', function () { setWalletUIState('axonos_wallet_state_disconnected'); });
     if (switchNetworkBtn) {
         switchNetworkBtn.addEventListener('click', function () {
-            var eth = selectedEthereumProvider || window.ethereum;
+            var eth = resolveEthereumProvider();
             if (!eth || typeof eth.request !== 'function') return;
             var chainIdHex = axonosConfig.axgt_chain_id ? '0x' + parseInt(axonosConfig.axgt_chain_id, 10).toString(16) : '0x1';
             eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: chainIdHex }] })
@@ -1931,8 +1965,9 @@ document.addEventListener("DOMContentLoaded", function() {
         });
     }
 
-    if (window.ethereum && typeof window.ethereum.on === 'function') {
-        window.ethereum.on('accountsChanged', function (accounts) {
+    var walletEventsProvider = getSafeWindowEthereum();
+    if (walletEventsProvider && typeof walletEventsProvider.on === 'function') {
+        walletEventsProvider.on('accountsChanged', function (accounts) {
             if (!Array.isArray(accounts) || accounts.length === 0) {
                 verifiedWalletAddress = null;
                 window.verifiedWalletAddress = null;
@@ -1963,8 +1998,9 @@ document.addEventListener("DOMContentLoaded", function() {
             setWalletUIState('axonos_wallet_state_disconnected');
             var lastWallet = null;
             try { lastWallet = localStorage.getItem('axonos_last_wallet'); } catch (e) {}
-            if (lastWallet && window.ethereum && typeof window.ethereum.request === 'function') {
-                window.ethereum.request({ method: 'eth_accounts' }).then(function (accounts) {
+            var reconnectEth = resolveEthereumProvider();
+            if (lastWallet && reconnectEth && typeof reconnectEth.request === 'function') {
+                reconnectEth.request({ method: 'eth_accounts' }).then(function (accounts) {
                     var account = Array.isArray(accounts) && accounts[0] ? String(accounts[0]).trim() : '';
                     if (account && account.toLowerCase() === lastWallet.toLowerCase() && /^0x[a-fA-F0-9]{40}$/.test(account)) {
                         runVerify(account);
