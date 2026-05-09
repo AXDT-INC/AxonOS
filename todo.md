@@ -40,6 +40,7 @@
   - [x] Host launcher service (`session_launcher_service.py`) + deployment doc
   - [x] Compose-managed launcher service (`axonos-launcher`) for one-command ops
   - [ ] Runtime validation with real concurrent wallets + GPU inventory
+    - [ ] Queue dedupe smoke (`ed68d69`): two-wallet contention covering 30 s throttle, in-flight guard, fast path, network-error retry, profile carry-through (Small/Medium/Large)
 - [x] Branch sync (main → public-beta, 2026-05-09):
   - [x] Cherry-pick `327131b` — harden noVNC wallet provider detection (TronLink/injected proxy guard)
   - [x] Cherry-pick `e7160f2` — preserve verified session when credentials dialog reopens
