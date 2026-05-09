@@ -40,3 +40,8 @@
   - [x] Host launcher service (`session_launcher_service.py`) + deployment doc
   - [x] Compose-managed launcher service (`axonos-launcher`) for one-command ops
   - [ ] Runtime validation with real concurrent wallets + GPU inventory
+- [x] Branch sync (main → public-beta, 2026-05-09):
+  - [x] Cherry-pick `327131b` — harden noVNC wallet provider detection (TronLink/injected proxy guard)
+  - [x] Cherry-pick `e7160f2` — preserve verified session when credentials dialog reopens
+  - [x] Port `ae08db9` queue auto-join dedupe into public-beta's profile-aware claim-denied path (adapted in `ed68d69`, not cherry-picked, due to multi-session architecture introduced by `f75b634`)
+  - [x] **Skip** `6b8d77e` (AXGT CTA testnet faucet flow) — intentionally not ported; functional duplicate of `34b49a3` already on public-beta with different variable names (`getAxgtHref`/`getAxgtLabel` vs `axgtCtaUrl`/`axgtCtaLabel`). Both implement env-driven mainnet-vs-testnet CTA from `AXGT_CHAIN_ID`; mainnet deployments will render Uniswap automatically.
