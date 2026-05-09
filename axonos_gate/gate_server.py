@@ -13,7 +13,12 @@ from urllib.parse import parse_qs, urlparse
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 
-from security_utils import cors_origin_for_request, get_rate_limiter_from_env, parse_cors_allowlist
+from security_utils import (
+    SimpleRateLimiter,
+    cors_origin_for_request,
+    get_rate_limiter_from_env,
+    parse_cors_allowlist,
+)
 
 # Add /axonos_gate to path for imports
 _script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -84,6 +89,19 @@ except ImportError:
         _session_mgr_available = True
     except ImportError:
         _session_mgr_available = False
+
+try:
+    from webrtc import config as webrtc_config
+    from webrtc import service as webrtc_service
+except ImportError:
+    try:
+        from axonos_gate.webrtc import config as webrtc_config
+        from axonos_gate.webrtc import service as webrtc_service
+    except ImportError:
+        webrtc_config = None
+        webrtc_service = None
+
+_webrtc_sig_limiter = None
 
 logging.basicConfig(
     level=logging.INFO,
@@ -242,7 +260,7 @@ def after_request(response):
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Vary"] = "Origin"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Wallet-Address, X-AXGT-Auth-Token"
-        response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     return response
 
 @app.route('/api/auth/verify-wallet', methods=['POST', 'OPTIONS'])
@@ -397,6 +415,14 @@ def api_config():
         'multi_session_enabled': (os.getenv("AXGT_MULTI_SESSION_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")),
         'gpu_profiles_enabled': (os.getenv("AXGT_GPU_PROFILES_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")),
         'gpu_profiles': {'small': 1, 'medium': 2, 'large': 4},
+        **(
+            webrtc_config.public_config()
+            if webrtc_config is not None
+            else {
+                "webrtc_enabled": False,
+                "webrtc_fallback_enabled": True,
+            }
+        ),
     })
 
 
@@ -723,6 +749,205 @@ def api_queue_leave():
     if auth_err:
         return auth_err
     return jsonify(leave_queue(wallet_address))
+
+
+def _webrtc_sig_allow(wallet_key: str) -> bool:
+    """Rate-limit WebRTC signaling per client IP + wallet bucket."""
+    global _webrtc_sig_limiter
+    if webrtc_config is None:
+        return True
+    n = webrtc_config.rate_limit_per_minute()
+    if n <= 0:
+        return True
+    if _webrtc_sig_limiter is None:
+        _webrtc_sig_limiter = SimpleRateLimiter(limit=n, window_seconds=60)
+    ip = (request.headers.get("X-Forwarded-For") or request.remote_addr or "unknown").split(",")[0].strip()
+    return _webrtc_sig_limiter.allow(f"{ip}|{wallet_key or '_'}")
+
+
+@app.route('/api/webrtc/config', methods=['GET', 'OPTIONS'])
+def api_webrtc_config():
+    if request.method == 'OPTIONS':
+        return '', 200
+    if webrtc_service is None:
+        return jsonify({"ok": False, "error": "WebRTC module unavailable"}), 503
+    st, payload = webrtc_service.handle_config_public()
+    return jsonify(payload), st
+
+
+@app.route('/api/webrtc/session', methods=['POST', 'OPTIONS'])
+def api_webrtc_session():
+    if request.method == 'OPTIONS':
+        return '', 200
+    if webrtc_service is None or webrtc_config is None:
+        return jsonify({"ok": False, "error": "WebRTC module unavailable"}), 503
+    data = request.get_json() or {}
+    wallet = (data.get("wallet_address") or "").strip()
+    if not wallet or not validate_wallet_address(wallet):
+        return jsonify({"ok": False, "error": "Valid wallet_address required"}), 400
+    auth_err = _require_auth_token(wallet)
+    if auth_err:
+        return auth_err
+    wn = wallet.lower()
+    if not _webrtc_sig_allow(wn):
+        return jsonify({"ok": False, "error": "Rate limit exceeded"}), 429
+    owner = _session_mgr_available and is_session_owner(wn)
+    st, payload = webrtc_service.handle_create_session(wn, True, owner)
+    return jsonify(payload), st
+
+
+@app.route('/api/webrtc/offer', methods=['POST', 'OPTIONS'])
+def api_webrtc_offer():
+    if request.method == 'OPTIONS':
+        return '', 200
+    if webrtc_service is None:
+        return jsonify({"ok": False, "error": "WebRTC module unavailable"}), 503
+    data = request.get_json() or {}
+    wallet = (data.get("wallet_address") or "").strip()
+    sid = (data.get("session_id") or "").strip()
+    if not wallet or not validate_wallet_address(wallet):
+        return jsonify({"ok": False, "error": "Valid wallet_address required"}), 400
+    auth_err = _require_auth_token(wallet)
+    if auth_err:
+        return auth_err
+    wn = wallet.lower()
+    if not _webrtc_sig_allow(wn):
+        return jsonify({"ok": False, "error": "Rate limit exceeded"}), 429
+    owner = _session_mgr_available and is_session_owner(wn)
+    tok_ok = True
+    st, payload = webrtc_service.handle_post_offer(sid, wn, tok_ok, owner, data)
+    return jsonify(payload), st
+
+
+@app.route('/api/webrtc/status', methods=['GET', 'OPTIONS'])
+def api_webrtc_status():
+    if request.method == 'OPTIONS':
+        return '', 200
+    if webrtc_service is None:
+        return jsonify({"ok": False, "error": "WebRTC module unavailable"}), 503
+    sid = (request.args.get("session_id") or "").strip()
+    wallet = (request.args.get("wallet_address") or request.headers.get("X-Wallet-Address") or "").strip()
+    if not sid or not wallet or not validate_wallet_address(wallet):
+        return jsonify({"ok": False, "error": "session_id and wallet_address required"}), 400
+    auth_err = _require_auth_token(wallet)
+    if auth_err:
+        return auth_err
+    wn = wallet.lower()
+    tok_ok = True
+    st, payload = webrtc_service.handle_get_status(sid, wn, tok_ok)
+    return jsonify(payload), st
+
+
+@app.route('/api/webrtc/ice', methods=['POST', 'OPTIONS'])
+def api_webrtc_ice():
+    if request.method == 'OPTIONS':
+        return '', 200
+    if webrtc_service is None:
+        return jsonify({"ok": False, "error": "WebRTC module unavailable"}), 503
+    data = request.get_json()
+    wallet = ""
+    if isinstance(data, dict):
+        wallet = (data.get("wallet_address") or "").strip()
+    if not wallet or not validate_wallet_address(wallet):
+        return jsonify({"ok": False, "error": "Valid wallet_address required"}), 400
+    auth_err = _require_auth_token(wallet)
+    if auth_err:
+        return auth_err
+    sid = ""
+    if isinstance(data, dict):
+        sid = (data.get("session_id") or "").strip()
+    if not sid:
+        return jsonify({"ok": False, "error": "session_id required"}), 400
+    wn = wallet.lower()
+    if not _webrtc_sig_allow(wn):
+        return jsonify({"ok": False, "error": "Rate limit exceeded"}), 429
+    st, payload = webrtc_service.handle_post_client_ice(sid, wn, True, data)
+    return jsonify(payload), st
+
+
+@app.route('/api/webrtc/metrics', methods=['POST', 'OPTIONS'])
+def api_webrtc_metrics():
+    if request.method == 'OPTIONS':
+        return '', 200
+    if webrtc_service is None:
+        return jsonify({"ok": False, "error": "WebRTC module unavailable"}), 503
+    data = request.get_json() or {}
+    wallet = (data.get("wallet_address") or "").strip()
+    sid = (data.get("session_id") or "").strip()
+    if not wallet or not validate_wallet_address(wallet) or not sid:
+        return jsonify({"ok": False, "error": "wallet_address and session_id required"}), 400
+    auth_err = _require_auth_token(wallet)
+    if auth_err:
+        return auth_err
+    st, payload = webrtc_service.handle_post_client_metrics(sid, wallet.lower(), True, data)
+    return jsonify(payload), st
+
+
+@app.route('/api/webrtc/close', methods=['POST', 'OPTIONS'])
+def api_webrtc_close():
+    if request.method == 'OPTIONS':
+        return '', 200
+    if webrtc_service is None:
+        return jsonify({"ok": False, "error": "WebRTC module unavailable"}), 503
+    data = request.get_json() or {}
+    wallet = (data.get("wallet_address") or "").strip()
+    sid = (data.get("session_id") or "").strip()
+    if not wallet or not validate_wallet_address(wallet) or not sid:
+        return jsonify({"ok": False, "error": "wallet_address and session_id required"}), 400
+    auth_err = _require_auth_token(wallet)
+    if auth_err:
+        return auth_err
+    st, payload = webrtc_service.handle_close(sid, wallet.lower(), True)
+    return jsonify(payload), st
+
+
+@app.route('/api/webrtc/agent/next', methods=['GET', 'OPTIONS'])
+def api_webrtc_agent_next():
+    if request.method == 'OPTIONS':
+        return '', 200
+    if webrtc_service is None:
+        return '', 503
+    key = (request.headers.get("X-AxonOS-WebRTC-Agent-Key") or "").strip()
+    st, payload = webrtc_service.handle_agent_next(key)
+    if st == 204:
+        return '', 204
+    return jsonify(payload), st
+
+
+@app.route('/api/webrtc/agent/row', methods=['GET', 'OPTIONS'])
+def api_webrtc_agent_row():
+    if request.method == 'OPTIONS':
+        return '', 200
+    if webrtc_service is None:
+        return jsonify({"ok": False}), 503
+    key = (request.headers.get("X-AxonOS-WebRTC-Agent-Key") or "").strip()
+    sid = (request.args.get("session_id") or "").strip()
+    st, payload = webrtc_service.handle_agent_row(key, sid)
+    return jsonify(payload), st
+
+
+@app.route('/api/webrtc/agent/answer', methods=['POST', 'OPTIONS'])
+def api_webrtc_agent_answer():
+    if request.method == 'OPTIONS':
+        return '', 200
+    if webrtc_service is None:
+        return jsonify({"ok": False, "error": "WebRTC module unavailable"}), 503
+    key = (request.headers.get("X-AxonOS-WebRTC-Agent-Key") or "").strip()
+    data = request.get_json() or {}
+    st, payload = webrtc_service.handle_agent_answer(key, data)
+    return jsonify(payload), st
+
+
+@app.route('/api/webrtc/agent/fail', methods=['POST', 'OPTIONS'])
+def api_webrtc_agent_fail():
+    if request.method == 'OPTIONS':
+        return '', 200
+    if webrtc_service is None:
+        return jsonify({"ok": False}), 503
+    key = (request.headers.get("X-AxonOS-WebRTC-Agent-Key") or "").strip()
+    data = request.get_json() or {}
+    st, payload = webrtc_service.handle_agent_fail(key, data)
+    return jsonify(payload), st
 
 
 @app.route('/')
