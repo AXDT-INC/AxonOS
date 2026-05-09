@@ -1400,7 +1400,28 @@ const UI = {
             }
             UI.closeConnectPanel();
             UI.updateVisualState('connecting');
-            UI._axonosCreateRfbConnection(password, includeQueryAuthToken);
+            (async () => {
+                let usedWebRtc = false;
+                const cfgPeek = await fetch('./api/config', { credentials: 'include' })
+                    .then((r) => r.json())
+                    .catch(() => ({}));
+                if (cfgPeek.webrtc_enabled) {
+                    try {
+                        const mod = await import('./webrtc/axonos-webrtc.js');
+                        usedWebRtc = await mod.connectAxonOSWebRTC({ UI });
+                    } catch (weErr) {
+                        Log.Warn('AxonOS WebRTC path failed: ' + weErr);
+                    }
+                    if (!usedWebRtc && cfgPeek.webrtc_fallback_enabled === false) {
+                        UI.updateVisualState('disconnected');
+                        UI.showStatus(_('WebRTC connection is required but failed. Check STUN/TURN or try again.'), 'error');
+                        return;
+                    }
+                }
+                if (!usedWebRtc) {
+                    UI._axonosCreateRfbConnection(password, includeQueryAuthToken);
+                }
+            })();
         }).catch((err) => {
             Log.Error('AxonOS session claim failed: ' + err);
             UI.updateVisualState('disconnected');
@@ -1426,6 +1447,17 @@ const UI = {
         }
 
         const doDisconnect = () => {
+            if (typeof window.axonosWebRtcTeardown === 'function') {
+                Promise.resolve(window.axonosWebRtcTeardown()).finally(() => {
+                    window.axonosWebRtcTeardown = null;
+                    doDisconnectRfb();
+                });
+                return;
+            }
+            doDisconnectRfb();
+        };
+
+        const doDisconnectRfb = () => {
             if (UI.rfb && typeof UI.rfb.disconnect === 'function') {
                 try {
                     UI.rfb.disconnect();

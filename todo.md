@@ -53,3 +53,12 @@
   - [x] vnc.html: AXGT discount tier card (base ETH / wallet AXGT balance / tier / discount % / final ETH); ETH-only by default; copy switched to "Pay with ETH, save with AXGT"
   - [x] Tests: 28-case `test_discount.py` covering all tier boundaries, RPC failure fallback, env overrides, and end-to-end ETH+AXGT verifier paths; existing deposit/ledger/access tests still pass
   - [x] Docs: rewrote `docs/TOKENOMICS.md` for ETH-first + tier system + deployment/testing checklist; updated `env.example` with tier-config knobs
+
+- [ ] **WebRTC desktop streaming (2026)** — implementation landed; runtime validation on full GPU stack pending
+  - [x] `axonos_gate/webrtc/` — config, Postgres signaling store, metrics logging, REST handlers
+  - [x] Gate + websockify: `/api/webrtc/*` (session, offer, status, ice, metrics, close) + agent endpoints; `/api/config` exposes WebRTC flags
+  - [x] `webrtc_agent_main.py` — aiortc + mss capture + supervisord `webrtc-agent` program
+  - [x] Frontend `novnc-theme/app/webrtc/axonos-webrtc.js` + `ui.js` try-before-RFB; disconnect tears down WebRTC
+  - [x] `docs/WEBRTC.md`, `env.example`, `docker-compose.yml` env wiring + launcher passthrough for session containers
+  - [x] `axonos_gate/tests/test_webrtc_config.py` (unittest)
+  - [ ] Compose E2E: negotiate WebRTC, verify video + input + fallback + unauthorized signaling denial

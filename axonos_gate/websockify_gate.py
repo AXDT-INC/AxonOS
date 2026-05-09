@@ -17,7 +17,12 @@ from threading import Lock
 from urllib.parse import parse_qs, urlparse
 
 # Local security helpers (same directory)
-from security_utils import cors_origin_for_request, get_rate_limiter_from_env, parse_cors_allowlist
+from security_utils import (
+    SimpleRateLimiter,
+    cors_origin_for_request,
+    get_rate_limiter_from_env,
+    parse_cors_allowlist,
+)
 
 # Add system Python path for Ubuntu 22.04 packages (websockify) FIRST
 if '/usr/lib/python3/dist-packages' not in sys.path:
@@ -108,6 +113,17 @@ except ImportError:
     except ImportError:
         _session_mgr_available = False
 
+try:
+    from webrtc import config as webrtc_config
+    from webrtc import service as webrtc_service
+except ImportError:
+    try:
+        from axonos_gate.webrtc import config as webrtc_config
+        from axonos_gate.webrtc import service as webrtc_service
+    except ImportError:
+        webrtc_config = None
+        webrtc_service = None
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -116,6 +132,21 @@ logger = logging.getLogger(__name__)
 
 _allow_any, _allowlist = parse_cors_allowlist(os.getenv("AXGT_CORS_ORIGINS"))
 _rate_limiter = get_rate_limiter_from_env()
+
+_webrtc_sig_ws = None
+
+
+def _webrtc_ws_rate_allow(wallet_key: str, headers, client_ip: str) -> bool:
+    global _webrtc_sig_ws
+    if webrtc_config is None:
+        return True
+    n = webrtc_config.rate_limit_per_minute()
+    if n <= 0:
+        return True
+    if _webrtc_sig_ws is None:
+        _webrtc_sig_ws = SimpleRateLimiter(limit=n, window_seconds=60)
+    ip = (headers.get("X-Forwarded-For") or client_ip or "unknown").split(",")[0].strip()
+    return _webrtc_sig_ws.allow(f"{ip}|{wallet_key or '_'}")
 
 
 _auth_lock = Lock()
@@ -521,6 +552,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             or self.path.startswith('/api/config')
             or self.path.startswith('/api/session/')
             or self.path.startswith('/api/queue/')
+            or self.path.startswith('/api/webrtc/')
         ):
             self.send_response(200)
             origin = cors_origin_for_request(
@@ -544,7 +576,9 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         return super().do_OPTIONS()
 
     def do_GET(self):
-        if self.path.startswith('/api/config'):
+        from urllib.parse import urlparse as _up_cfg
+
+        if _up_cfg(self.path).path == '/api/config':
             policy = get_credit_policy()
             _dec_raw = (os.getenv("AXGT_TOKEN_DECIMALS") or "").strip()
             try:
@@ -571,6 +605,15 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 "gpu_profiles_enabled": (os.getenv("AXGT_GPU_PROFILES_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")),
                 "gpu_profiles": {"small": 1, "medium": 2, "large": 4},
             }
+            if webrtc_config is not None:
+                payload.update(webrtc_config.public_config())
+            else:
+                payload.update(
+                    {
+                        "webrtc_enabled": False,
+                        "webrtc_fallback_enabled": True,
+                    }
+                )
             return self._send_json(200, payload)
 
         if self.path.startswith('/api/discount/quote'):
@@ -705,6 +748,54 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             status['auth_token_expires_in_seconds'] = remaining
             return self._send_json(200, status)
 
+        from urllib.parse import parse_qs, urlparse
+
+        pu = urlparse(self.path)
+        ponly = pu.path
+
+        if webrtc_service and ponly.startswith('/api/webrtc/config'):
+            st, pl = webrtc_service.handle_config_public()
+            return self._send_json(st, pl)
+
+        if webrtc_service and ponly.startswith('/api/webrtc/status'):
+            qs = parse_qs(pu.query)
+            sid = (qs.get('session_id') or [''])[0].strip()
+            wallet = (qs.get('wallet_address') or [''])[0].strip() or (self.headers.get('X-Wallet-Address') or '').strip()
+            if not sid or not wallet or not validate_wallet_address(wallet):
+                return self._send_json(400, {'ok': False, 'error': 'session_id and wallet_address required'})
+            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+            if not auth_token or not _is_auth_token_valid(auth_token, wallet):
+                return self._send_json(401, {'ok': False, 'error': 'Valid auth token required'})
+            wn = wallet.lower()
+            st, pl = webrtc_service.handle_get_status(sid, wn, True)
+            return self._send_json(st, pl)
+
+        if webrtc_service and ponly.startswith('/api/webrtc/agent/next'):
+            key = (self.headers.get('X-AxonOS-WebRTC-Agent-Key') or '').strip()
+            st, pl = webrtc_service.handle_agent_next(key)
+            if st == 204:
+                self.send_response(204)
+                origin = cors_origin_for_request(
+                    self.headers.get("Origin"),
+                    self.headers.get("Host"),
+                    _allow_any,
+                    _allowlist,
+                )
+                if origin:
+                    self.send_header('Access-Control-Allow-Origin', origin)
+                    self.send_header('Vary', 'Origin')
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+                return
+            return self._send_json(st, pl)
+
+        if webrtc_service and ponly.startswith('/api/webrtc/agent/row'):
+            key = (self.headers.get('X-AxonOS-WebRTC-Agent-Key') or '').strip()
+            qs = parse_qs(pu.query)
+            sid = (qs.get('session_id') or [''])[0].strip()
+            st, pl = webrtc_service.handle_agent_row(key, sid)
+            return self._send_json(st, pl)
+
         # ---- Session / Queue read endpoints ----
         if _session_mgr_available and self.path.startswith('/api/session/status'):
             wallet_address = _extract_wallet_from_path_and_headers(self.path, self.headers)
@@ -725,6 +816,92 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             return {}
 
     def do_POST(self):
+        from urllib.parse import urlparse
+
+        pu = urlparse(self.path)
+        ponly = pu.path
+        client_ip = self.client_address[0] if getattr(self, "client_address", None) else "unknown"
+
+        if webrtc_service and ponly.startswith("/api/webrtc/"):
+            data = self._read_json_body()
+
+            if ponly == "/api/webrtc/session":
+                wallet = (data.get("wallet_address") or "").strip()
+                if not wallet or not validate_wallet_address(wallet):
+                    return self._send_json(400, {"ok": False, "error": "Valid wallet_address required"})
+                auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+                if not auth_token or not _is_auth_token_valid(auth_token, wallet):
+                    return self._send_json(401, {"ok": False, "error": "Valid auth token required"})
+                wn = wallet.lower()
+                if not _webrtc_ws_rate_allow(wn, self.headers, client_ip):
+                    return self._send_json(429, {"ok": False, "error": "Rate limit exceeded"})
+                owner = _session_mgr_available and is_session_owner(wn)
+                st, pl = webrtc_service.handle_create_session(wn, True, owner)
+                return self._send_json(st, pl)
+
+            if ponly == "/api/webrtc/offer":
+                wallet = (data.get("wallet_address") or "").strip()
+                sid = (data.get("session_id") or "").strip()
+                if not wallet or not validate_wallet_address(wallet):
+                    return self._send_json(400, {"ok": False, "error": "Valid wallet_address required"})
+                auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+                if not auth_token or not _is_auth_token_valid(auth_token, wallet):
+                    return self._send_json(401, {"ok": False, "error": "Valid auth token required"})
+                wn = wallet.lower()
+                if not _webrtc_ws_rate_allow(wn, self.headers, client_ip):
+                    return self._send_json(429, {"ok": False, "error": "Rate limit exceeded"})
+                owner = _session_mgr_available and is_session_owner(wn)
+                st, pl = webrtc_service.handle_post_offer(sid, wn, True, owner, data)
+                return self._send_json(st, pl)
+
+            if ponly == "/api/webrtc/ice":
+                wallet = (data.get("wallet_address") or "").strip()
+                sid = (data.get("session_id") or "").strip()
+                if not wallet or not validate_wallet_address(wallet) or not sid:
+                    return self._send_json(400, {"ok": False, "error": "wallet_address and session_id required"})
+                auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+                if not auth_token or not _is_auth_token_valid(auth_token, wallet):
+                    return self._send_json(401, {"ok": False, "error": "Valid auth token required"})
+                wn = wallet.lower()
+                if not _webrtc_ws_rate_allow(wn, self.headers, client_ip):
+                    return self._send_json(429, {"ok": False, "error": "Rate limit exceeded"})
+                st, pl = webrtc_service.handle_post_client_ice(sid, wn, True, data)
+                return self._send_json(st, pl)
+
+            if ponly == "/api/webrtc/metrics":
+                wallet = (data.get("wallet_address") or "").strip()
+                sid = (data.get("session_id") or "").strip()
+                if not wallet or not validate_wallet_address(wallet) or not sid:
+                    return self._send_json(400, {"ok": False, "error": "wallet_address and session_id required"})
+                auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+                if not auth_token or not _is_auth_token_valid(auth_token, wallet):
+                    return self._send_json(401, {"ok": False, "error": "Valid auth token required"})
+                st, pl = webrtc_service.handle_post_client_metrics(sid, wallet.lower(), True, data)
+                return self._send_json(st, pl)
+
+            if ponly == "/api/webrtc/close":
+                wallet = (data.get("wallet_address") or "").strip()
+                sid = (data.get("session_id") or "").strip()
+                if not wallet or not validate_wallet_address(wallet) or not sid:
+                    return self._send_json(400, {"ok": False, "error": "wallet_address and session_id required"})
+                auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+                if not auth_token or not _is_auth_token_valid(auth_token, wallet):
+                    return self._send_json(401, {"ok": False, "error": "Valid auth token required"})
+                st, pl = webrtc_service.handle_close(sid, wallet.lower(), True)
+                return self._send_json(st, pl)
+
+            if ponly == "/api/webrtc/agent/answer":
+                key = (self.headers.get("X-AxonOS-WebRTC-Agent-Key") or "").strip()
+                st, pl = webrtc_service.handle_agent_answer(key, data)
+                return self._send_json(st, pl)
+
+            if ponly == "/api/webrtc/agent/fail":
+                key = (self.headers.get("X-AxonOS-WebRTC-Agent-Key") or "").strip()
+                st, pl = webrtc_service.handle_agent_fail(key, data)
+                return self._send_json(st, pl)
+
+            return self._send_json(404, {"ok": False, "error": "Unknown WebRTC path"})
+
         # ---- Session / Queue write endpoints ----
         if _session_mgr_available and self.path.startswith('/api/session/claim'):
             data = self._read_json_body()
