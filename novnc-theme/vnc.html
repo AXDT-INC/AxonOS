@@ -310,7 +310,7 @@ Copyright (C) 2019 The noVNC Authors
                     <p class="axonos-prerequisites__title">To sign in you need:</p>
                     <ul class="axonos-prerequisites__list">
                         <li>An <strong>EVM wallet</strong> (e.g. <a href="https://metamask.io" target="_blank" rel="noopener noreferrer">MetaMask</a>)</li>
-                        <li id="axonos_prereq_deposit_line">Prepaid <strong>desktop minutes</strong>: each <strong id="axonos_prereq_min_axgt">—</strong> <strong>AXGT</strong> (min. deposit) → <strong id="axonos_prereq_axgt_min_label">—</strong> · each <strong id="axonos_prereq_min_eth">—</strong> <strong>ETH</strong> (min.) → <strong id="axonos_prereq_eth_min_label">—</strong>. Send to revenue wallet, then submit tx hash or use in-page pay (<a href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=0x6112c3509a8a787df576028450febb3786a2274d" target="_blank" rel="noopener noreferrer">Get AXGT</a>)</li>
+                        <li id="axonos_prereq_deposit_line"><strong>Pay with ETH, save with AXGT</strong>: each <strong id="axonos_prereq_min_eth">—</strong> <strong>ETH</strong> (min.) → <strong id="axonos_prereq_eth_min_label">—</strong>. <strong>AXGT holders</strong> automatically get a tiered discount on the ETH price (<a href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=0x6112c3509a8a787df576028450febb3786a2274d" target="_blank" rel="noopener noreferrer">Get AXGT</a>)</li>
                         <li>You'll <strong>sign a one-time message</strong> (no gas, no transaction)</li>
                         <li><strong>One desktop at a time</strong> — if in use, you can join the queue</li>
                         <li>While you're <strong>connected</strong>, prepaid <strong>minutes count</strong> for your reserved session, including <strong>idle time</strong> if this browser tab keeps running.</li>
@@ -400,12 +400,29 @@ Copyright (C) 2019 The noVNC Authors
             </div>
             <div id="axonos_wallet_state_insufficient" class="axonos-wallet-state axonos-wallet-state--hidden">
                 <div class="axonos-wallet-state__icon axonos-wallet-state__icon--warning" aria-hidden="true"></div>
-                <p class="axonos-wallet-state__title" id="axonos_insufficient_credit_title">You need prepaid credit: min. 100 AXGT or 0.0005 ETH per top-up</p>
+                <p class="axonos-wallet-state__title" id="axonos_insufficient_credit_title">Pay with ETH, save with AXGT</p>
                 <p class="axonos-wallet-state__help" id="axonos_insufficient_credit_rates" style="margin-top:0.35rem;font-size:0.88em;opacity:0.92;">—</p>
-                <p id="axonos_wallet_insufficient_balance" class="axonos-wallet-state__balance">Wallet AXGT balance (info only): —</p>
-                <p class="axonos-wallet-state__help" style="margin-top:0.75rem;font-size:0.9em;opacity:0.9;">Pay from wallet (amount ≥ minimum below; larger adds more time). Or send elsewhere and paste the tx hash.</p>
+                <p id="axonos_wallet_insufficient_balance" class="axonos-wallet-state__balance">Wallet AXGT balance: —</p>
+
+                <!-- AXGT holder discount panel: server-quoted; client cannot manipulate. -->
+                <div id="axonos_discount_panel" class="axonos-discount-panel" style="margin:0.6rem auto 0.4rem;width:100%;max-width:30rem;border:1px solid rgba(255,255,255,0.18);border-radius:10px;padding:0.7rem 0.9rem;background:rgba(0,0,0,0.22);text-align:left;font-size:0.9rem;line-height:1.45;">
+                    <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:0.4rem;">
+                        <strong>AXGT discount tier</strong>
+                        <span id="axonos_discount_status" style="font-size:0.78rem;opacity:0.7;">Loading on-chain balance…</span>
+                    </div>
+                    <ul style="list-style:none;padding:0;margin:0.45rem 0 0.2rem;">
+                        <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span style="opacity:0.78;">Base ETH price</span><strong id="axonos_discount_base_eth">—</strong></li>
+                        <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span style="opacity:0.78;">Wallet AXGT balance</span><strong id="axonos_discount_balance">—</strong></li>
+                        <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span style="opacity:0.78;">Eligible tier</span><strong id="axonos_discount_tier">—</strong></li>
+                        <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span style="opacity:0.78;">Discount</span><strong id="axonos_discount_percent" style="color:#7adf8a;">—</strong></li>
+                        <li style="display:flex;justify-content:space-between;gap:0.5rem;border-top:1px dashed rgba(255,255,255,0.18);margin-top:0.35rem;padding-top:0.35rem;"><span>Final ETH payable</span><strong id="axonos_discount_final_eth" style="color:#ffd166;">—</strong></li>
+                    </ul>
+                    <p id="axonos_discount_warn" class="axonos-wallet-state__msg" style="font-size:0.78rem;min-height:0;margin:0.35rem 0 0;color:#f0a878;display:none;">RPC balance check failed — paying full ETH price (no discount applied).</p>
+                </div>
+
+                <p class="axonos-wallet-state__help" style="margin:0.55rem 0 0.35rem;font-size:0.9em;opacity:0.9;">Send the discounted ETH amount above. Larger amounts add proportionally more desktop minutes. You can also send manually from another wallet/DEX and paste the tx hash.</p>
                 <div class="axonos-pay-deposit-rows" style="margin:0.5rem 0;width:100%;max-width:28rem;margin-left:auto;margin-right:auto;">
-                    <div class="axonos-pay-deposit-row">
+                    <div class="axonos-pay-deposit-row" id="axonos_pay_axgt_row" style="display:none;">
                         <span class="axonos-pay-row-label">AXGT</span>
                         <input type="text" id="axonos_pay_axgt_amount" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="AXGT amount" class="axonos-pay-amount-input" />
                         <div class="axonos-pay-deposit-actions">
@@ -417,8 +434,8 @@ Copyright (C) 2019 The noVNC Authors
                         <span class="axonos-pay-row-label">ETH</span>
                         <input type="text" id="axonos_pay_eth_amount" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="ETH amount" class="axonos-pay-amount-input" />
                         <div class="axonos-pay-deposit-actions">
-                            <button type="button" id="axonos_pay_eth_min_btn" class="axonos-connect-wallet-btn axonos-pay-min-btn">Min</button>
-                            <button type="button" id="axonos_pay_eth_btn" class="axonos-connect-wallet-btn axonos-pay-send-btn">Send ETH</button>
+                            <button type="button" id="axonos_pay_eth_min_btn" class="axonos-connect-wallet-btn axonos-pay-min-btn">Discounted</button>
+                            <button type="button" id="axonos_pay_eth_btn" class="axonos-connect-wallet-btn axonos-pay-send-btn">Pay with ETH</button>
                         </div>
                     </div>
                 </div>
@@ -1009,7 +1026,9 @@ document.addEventListener("DOMContentLoaded", function() {
     const retryConnectBtn = document.getElementById('axonos_retry_connect_btn');
     const switchNetworkBtn = document.getElementById('axonos_switch_network_btn');
     const STATE_IDS = ['axonos_wallet_state_disconnected', 'axonos_wallet_state_choose_wallet', 'axonos_wallet_state_checking', 'axonos_wallet_state_verified', 'axonos_wallet_state_insufficient', 'axonos_wallet_state_connect_error', 'axonos_wallet_state_no_wallet', 'axonos_wallet_state_rejected', 'axonos_wallet_state_wrong_network'];
-    let axonosConfig = { axgt_contract_address: '', axgt_revenue_wallet: '', axgt_chain_id: null, axgt_min_deposit: '100', eth_deposits_enabled: true, eth_min_deposit: '0.0005', axgt_token_decimals: 18, credit_per_100_axgt: 60, eth_credit_per_eth: 120000, min_axgt_minutes: 60, min_eth_minutes: 60 };
+    let axonosConfig = { axgt_contract_address: '', axgt_revenue_wallet: '', axgt_chain_id: null, axgt_min_deposit: '100', eth_deposits_enabled: true, eth_min_deposit: '0.0005', axgt_token_decimals: 18, credit_per_100_axgt: 60, eth_credit_per_eth: 120000, min_axgt_minutes: 60, min_eth_minutes: 60, axgt_direct_deposits_enabled: false, axgt_discount_tiers: [] };
+    /** Latest discount quote from the server. Refreshed on wallet verify and after a deposit. */
+    let axonosLastDiscountQuote = null;
 
     /**
      * Mainnet vs testnet labels (landing + wallet dialog)
@@ -1245,6 +1264,10 @@ document.addEventListener("DOMContentLoaded", function() {
                 axonosConfig.min_eth_minutes = meMin;
                 axonosConfig.axgt_token_decimals = (cfg && (cfg.axgt_token_decimals != null)) ? parseInt(cfg.axgt_token_decimals, 10) : 18;
                 if (isNaN(axonosConfig.axgt_token_decimals) || axonosConfig.axgt_token_decimals < 0) axonosConfig.axgt_token_decimals = 18;
+                axonosConfig.axgt_direct_deposits_enabled = !!(cfg && cfg.axgt_direct_deposits_enabled);
+                axonosConfig.axgt_discount_tiers = (cfg && Array.isArray(cfg.axgt_discount_tiers)) ? cfg.axgt_discount_tiers : [];
+                var axgtRow = document.getElementById('axonos_pay_axgt_row');
+                if (axgtRow) axgtRow.style.display = axonosConfig.axgt_direct_deposits_enabled ? '' : 'none';
                 var revShort = rev && /^0x[a-fA-F0-9]{40}$/.test(rev) ? (rev.slice(0, 6) + '\u2026' + rev.slice(-4)) : '(set AXGT_REVENUE_WALLET)';
                 if (revenueShortEl) revenueShortEl.textContent = revShort;
                 var short = addr ? (addr.slice(0, 6) + '\u2026' + addr.slice(-4)) : '(not configured)';
@@ -1274,33 +1297,34 @@ document.addEventListener("DOMContentLoaded", function() {
                 var dlgHints = document.getElementById('axonos-dlg-credit-hints');
                 if (dlgHints) {
                     var ethPer1 = (cpe >= 1e6) ? String(Math.round(cpe)) : String(Math.round(cpe * 1e6) / 1e6);
-                    var topupHint = ethEnabled
-                        ? ('<strong>' + minDeposit + '</strong> AXGT (~' + formatCreditMinutes(maMin) + ') or <strong>' + minEth + '</strong> ETH (~' + formatCreditMinutes(meMin) + ')')
-                        : ('<strong>' + minDeposit + '</strong> AXGT (~' + formatCreditMinutes(maMin) + ')');
+                    var axgtDirect = !!axonosConfig.axgt_direct_deposits_enabled;
                     var rateHint = ethEnabled
-                        ? ('<strong>100 AXGT</strong> → <strong>' + cp100 + '</strong> min · <strong>1 ETH</strong> → <strong>' + ethPer1 + '</strong> min')
-                        : ('<strong>100 AXGT</strong> → <strong>' + cp100 + '</strong> min · ETH top-ups disabled');
-                    dlgHints.innerHTML = rateHint + ' · Min. top-up: ' + topupHint + '. Enter any amount ≥ 100 AXGT or paste your tx hash.' +
+                        ? ('<strong>1 ETH</strong> → <strong>' + ethPer1 + '</strong> min · <strong>min ' + minEth + ' ETH</strong> → ~' + formatCreditMinutes(meMin))
+                        : 'ETH top-ups disabled';
+                    var discountHint = '<strong>AXGT holders save</strong> on the ETH price — connect your wallet to see your tier, balance, and final ETH payable.';
+                    var legacyHint = axgtDirect
+                        ? (' · Legacy AXGT direct: ' + cp100 + ' min per 100 AXGT')
+                        : '';
+                    dlgHints.innerHTML = rateHint + legacyHint + '. ' + discountHint +
                         '<span class="axonos-wallet-card__hints-session">While connected, minutes count for your session (idle included if this tab stays open). Use <strong>Disconnect</strong> when finished; closing the tab only may delay releasing the desktop.</span>';
                 }
                 var insRates = document.getElementById('axonos_insufficient_credit_rates');
                 if (insRates) {
+                    var ethPer1Ins = (cpe >= 1e6) ? String(Math.round(cpe)) : String(Math.round(cpe * 1e6) / 1e6);
                     insRates.textContent = ethEnabled
-                        ? ('Same rates: 100 AXGT → ' + cp100 + ' min; min ' + minDeposit + ' AXGT → ~' + formatCreditMinutes(maMin) + '; min ' + minEth + ' ETH → ~' + formatCreditMinutes(meMin) + '.')
-                        : ('Same rates: 100 AXGT → ' + cp100 + ' min; min ' + minDeposit + ' AXGT → ~' + formatCreditMinutes(maMin) + '. ETH top-ups are currently disabled.');
+                        ? ('Pay with ETH: 1 ETH → ' + ethPer1Ins + ' min; min ' + minEth + ' ETH → ~' + formatCreditMinutes(meMin) + '. AXGT holders get a tiered discount on the ETH price.')
+                        : 'ETH payments are currently disabled. Contact the operator.';
                 }
                 if (insufficientCreditTitle) {
-                    insufficientCreditTitle.textContent = ethEnabled
-                        ? ('You need prepaid credit: min. ' + minDeposit + ' AXGT or ' + minEth + ' ETH per top-up')
-                        : ('You need prepaid credit: min. ' + minDeposit + ' AXGT per top-up');
+                    insufficientCreditTitle.textContent = 'Pay with ETH, save with AXGT';
                 }
                 if (revenueDepositLabel) {
-                    revenueDepositLabel.textContent = ethEnabled ? 'Deposit AXGT or ETH here' : 'Deposit AXGT here';
+                    revenueDepositLabel.textContent = 'Pay ETH here · AXGT for discounts';
                 }
                 if (prereqDepositLine) {
                     prereqDepositLine.innerHTML = ethEnabled
-                        ? ('Prepaid <strong>desktop minutes</strong>: each <strong id="axonos_prereq_min_axgt">' + minDeposit + '</strong> <strong>AXGT</strong> (min. deposit) → <strong id="axonos_prereq_axgt_min_label">' + formatCreditMinutes(maMin) + ' desktop time</strong> · each <strong id="axonos_prereq_min_eth">' + minEth + '</strong> <strong>ETH</strong> (min.) → <strong id="axonos_prereq_eth_min_label">' + formatCreditMinutes(meMin) + ' desktop time</strong>. Send to revenue wallet, then submit tx hash or use in-page pay (<a href="' + getAxgtHref + '" target="_blank" rel="noopener noreferrer">' + getAxgtLabel + '</a>)')
-                        : ('Prepaid <strong>desktop minutes</strong>: each <strong id="axonos_prereq_min_axgt">' + minDeposit + '</strong> <strong>AXGT</strong> (min. deposit) → <strong id="axonos_prereq_axgt_min_label">' + formatCreditMinutes(maMin) + ' desktop time</strong>. ETH top-ups are currently disabled. Send AXGT to the revenue wallet, then submit tx hash or use in-page AXGT pay.');
+                        ? ('Prepaid <strong>desktop minutes</strong>: <strong>min ' + minEth + ' ETH</strong> → <strong id="axonos_prereq_eth_min_label">' + formatCreditMinutes(meMin) + ' desktop time</strong>. <strong>AXGT holders save</strong> on the ETH price (connect wallet to see your tier). Send ETH to the revenue wallet, or use the in-page Pay with ETH button (<a href="' + getAxgtHref + '" target="_blank" rel="noopener noreferrer">' + getAxgtLabel + '</a>)')
+                        : 'ETH payments are currently disabled. Contact the operator for a manual top-up path.';
                 }
                 var payAxgtIn = document.getElementById('axonos_pay_axgt_amount');
                 var payEthIn = document.getElementById('axonos_pay_eth_amount');
@@ -1384,6 +1408,74 @@ document.addEventListener("DOMContentLoaded", function() {
             }
         }
         return account;
+    }
+
+    /**
+     * Refresh the discount panel for ``walletAddress`` by hitting
+     * ``GET /api/discount/quote``. The server is the sole source of truth:
+     * it re-fetches the on-chain AXGT balance and applies the configured tier
+     * table, so the client cannot manipulate the discount.
+     *
+     * On RPC failure the panel still renders (with no discount) and surfaces
+     * a small warning so the user knows to retry — payment is never blocked
+     * just because we couldn't read the holder's balance.
+     */
+    function refreshDiscountQuote(walletAddress) {
+        var statusEl = document.getElementById('axonos_discount_status');
+        var baseEl = document.getElementById('axonos_discount_base_eth');
+        var balEl = document.getElementById('axonos_discount_balance');
+        var tierEl = document.getElementById('axonos_discount_tier');
+        var pctEl = document.getElementById('axonos_discount_percent');
+        var finalEl = document.getElementById('axonos_discount_final_eth');
+        var warnEl = document.getElementById('axonos_discount_warn');
+        var ethInput = document.getElementById('axonos_pay_eth_amount');
+        if (!walletAddress || !/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) {
+            return Promise.resolve(null);
+        }
+        if (statusEl) statusEl.textContent = 'Loading on-chain balance…';
+        if (warnEl) warnEl.style.display = 'none';
+        var url = new URL('/api/discount/quote', window.location.origin);
+        url.searchParams.set('wallet_address', walletAddress);
+        return fetch(url.toString(), { method: 'GET', headers: { 'X-Wallet-Address': walletAddress }, credentials: 'include' })
+            .then(function (r) { return r.text().then(function (t) { try { return { ok: r.ok, status: r.status, data: t ? JSON.parse(t) : {} }; } catch (e) { return { ok: false, status: r.status, data: {} }; } }); })
+            .then(function (res) {
+                var d = res.data || {};
+                if (!d.ok) {
+                    if (statusEl) statusEl.textContent = 'Could not load discount.';
+                    if (warnEl) {
+                        warnEl.textContent = (d.error || 'Discount lookup failed') + ' — paying full ETH price.';
+                        warnEl.style.display = '';
+                    }
+                    return null;
+                }
+                axonosLastDiscountQuote = d;
+                if (baseEl) baseEl.textContent = String(d.base_eth || '—') + ' ETH';
+                if (balEl) balEl.textContent = (d.axgt_balance != null ? String(d.axgt_balance) : '0') + ' AXGT';
+                if (tierEl) tierEl.textContent = (d.tier_label || ('Tier ' + (d.tier_index != null ? d.tier_index : 0))) + (d.tier_min_axgt != null ? ' (≥ ' + d.tier_min_axgt + ' AXGT)' : '');
+                if (pctEl) pctEl.textContent = (d.discount_percent != null ? Number(d.discount_percent) : 0) + '%';
+                if (finalEl) finalEl.textContent = String(d.final_eth || d.base_eth || '—') + ' ETH';
+                if (statusEl) statusEl.textContent = d.balance_check_ok ? 'On-chain balance verified' : 'On-chain check failed — no discount';
+                if (warnEl) {
+                    if (d.balance_check_ok === false) {
+                        warnEl.textContent = (d.balance_check_error ? ('RPC error: ' + d.balance_check_error) : 'RPC balance check failed') + ' — paying full ETH price (no discount applied).';
+                        warnEl.style.display = '';
+                    } else {
+                        warnEl.style.display = 'none';
+                    }
+                }
+                if (ethInput && !ethInput.dataset.axonosUserAmount) {
+                    ethInput.value = String(d.final_eth || d.base_eth || axonosConfig.eth_min_deposit || '0.0005');
+                }
+                return d;
+            })
+            .catch(function () {
+                if (statusEl) statusEl.textContent = 'Could not load discount.';
+                if (warnEl) {
+                    warnEl.textContent = 'Network error during discount lookup — paying full ETH price.';
+                    warnEl.style.display = '';
+                }
+                return null;
+            });
     }
 
     function axonosReadFetchJson(r) {
@@ -1521,6 +1613,7 @@ document.addEventListener("DOMContentLoaded", function() {
             var vmsg = document.getElementById('axonos_verify_deposit_msg');
             if (vmsg) vmsg.textContent = '';
             setWalletUIState('axonos_wallet_state_insufficient', { balanceDisplay: balanceDisplay });
+            refreshDiscountQuote(walletAddress);
         })
         .catch(function (error) {
             verifiedWalletAddress = null;
@@ -1786,13 +1879,20 @@ document.addEventListener("DOMContentLoaded", function() {
             if (msgEl) msgEl.textContent = 'Revenue wallet not configured (AXGT_REVENUE_WALLET).';
             return;
         }
-        var minEthStr = String(axonosConfig.eth_min_deposit || '0.0005');
+        // Effective minimum: discount-adjusted if we have a fresh server quote
+        // (the backend re-checks it again on credit). Falls back to the base
+        // ETH_MIN_DEPOSIT when no quote is available — never undercut the base.
+        var baseMinEth = String(axonosConfig.eth_min_deposit || '0.0005');
+        var minEthStr = baseMinEth;
+        if (axonosLastDiscountQuote && axonosLastDiscountQuote.final_eth) {
+            minEthStr = String(axonosLastDiscountQuote.final_eth);
+        }
         var ethEl = document.getElementById('axonos_pay_eth_amount');
         var rawEth = (ethEl && String(ethEl.value || '').trim()) ? String(ethEl.value).trim() : minEthStr;
         var minW = axonosHumanEthToWei(minEthStr);
         var amtW = axonosHumanEthToWei(rawEth);
         if (minW == null || amtW == null || amtW < minW || amtW === BigInt(0)) {
-            if (msgEl) msgEl.textContent = 'Enter ETH amount ≥ minimum (' + minEthStr + ').';
+            if (msgEl) msgEl.textContent = 'Enter ETH amount ≥ minimum (' + minEthStr + ' ETH after AXGT discount; base ' + baseMinEth + ' ETH).';
             return;
         }
         var h = amtW.toString(16);
@@ -1951,10 +2051,23 @@ document.addEventListener("DOMContentLoaded", function() {
     });
     if (payEthMinBtn) payEthMinBtn.addEventListener('click', function () {
         var el = document.getElementById('axonos_pay_eth_amount');
-        if (el) {
-            el.value = String(axonosConfig.eth_min_deposit || '0.0005');
+        if (!el) return;
+        var wallet = window.verifiedWalletAddress || verifiedWalletAddress;
+        // Prefer the server-quoted discounted price; fall back to last quote, then to base min.
+        function applyValue(v) {
+            el.value = String(v);
             delete el.dataset.axonosUserAmount;
         }
+        var promise = wallet ? refreshDiscountQuote(wallet) : Promise.resolve(null);
+        promise.then(function (q) {
+            if (q && (q.final_eth || q.base_eth)) {
+                applyValue(q.final_eth || q.base_eth);
+            } else if (axonosLastDiscountQuote && (axonosLastDiscountQuote.final_eth || axonosLastDiscountQuote.base_eth)) {
+                applyValue(axonosLastDiscountQuote.final_eth || axonosLastDiscountQuote.base_eth);
+            } else {
+                applyValue(axonosConfig.eth_min_deposit || '0.0005');
+            }
+        });
     });
     ['axonos_pay_axgt_amount', 'axonos_pay_eth_amount'].forEach(function (id) {
         var el = document.getElementById(id);

@@ -1,104 +1,277 @@
-# AXGT Tokenomics Vision for AxonOS Desktop
+# AXGT Tokenomics for AxonOS Desktop — ETH-first model
 
-*Note: AxonOS Desktop Tokenomics is under development and subject to progressive community feedback*
+*Note: AxonOS Desktop tokenomics is under development and subject to progressive community feedback.*
 
-This document describes the **prepaid deposit-credit** access model for AxonOS: how users deposit **AXGT** or **native ETH** to a revenue wallet, submit a transaction hash for verification, and receive usage minutes. Sessions consume minutes via heartbeat-based incremental billing; no on-chain transfers occur during use.
+This document describes the **ETH-first, AXGT-discount** access model for AxonOS:
+
+- **ETH** is the only direct payment currency for compute/session credits.
+- **AXGT** is no longer a mandatory payment token. Instead, holders of AXGT
+  receive a **usage discount** on the ETH price, scaled by their on-chain
+  AXGT balance.
+- Wallet ownership is still proven by an EIP-191 signed challenge before any
+  payment or session is accepted.
+
+> "Pay with ETH, save with AXGT."
 
 ## Principles
 
-### Deposit-credit access, not hold-based
+### ETH-only payment, AXGT-as-discount
 
-Access is gated by **prepaid credit**: users **deposit** AXGT or native ETH to a configured **revenue wallet**, then submit the **transaction hash** to the backend. The backend verifies the tx on-chain (confirmations, amount, sender/recipient) and credits usage minutes in a server-side ledger. Usage is deducted **incrementally** on each session heartbeat. When remaining minutes reach zero, access is denied until the user deposits again. This approach:
+Access is gated by **prepaid credit** denominated in minutes. Users **deposit
+native ETH** to a configured **revenue wallet** and submit the **transaction
+hash** for verification. The backend:
 
-- **Reduces per-session fees**: One deposit can fund many minutes; no on-chain transfer per session or per minute.
-- **Trustless verification**: Only on-chain data (tx, receipt, logs) is used to credit minutes; no trust in client-reported amounts.
-- **Clear accounting**: Postgres-backed deposit ledger and audit ledger; all balance changes are logged.
-- **Dual currency**: Users can fund access with AXGT or native ETH (configurable minimums and credit rates).
+1. Verifies the tx on-chain (confirmations, sender = authenticated wallet,
+   recipient = revenue wallet, value).
+2. Re-fetches the sender's **AXGT balance** on Ethereum mainnet via direct
+   JSON-RPC `balanceOf` against the configured AXGT contract.
+3. Resolves the **eligible tier** from the configured tier table.
+4. Applies a **discount-adjusted minimum** (`base_min_eth × (1 − discount)`)
+   and **discount-adjusted credit rate** (`credit_per_eth ÷ (1 − discount)`).
+5. Credits minutes in a server-side ledger.
+
+Direct AXGT deposits are **disabled by default**. Operators can opt back in
+for legacy / migration use cases by setting `AXGT_ENABLE_AXGT_DEPOSITS=true`,
+in which case the legacy minutes-per-100-AXGT path is preserved alongside
+ETH.
 
 ### No trial period
 
-Access is strictly conditional on having **remaining_minutes > 0** from at least one verified deposit. There is no time-limited free trial; the only path to access is depositing (AXGT or ETH) to the revenue wallet and submitting the tx hash for verification.
+Access is strictly conditional on having **remaining_minutes > 0** from at
+least one verified ETH deposit. There is no time-limited free trial.
 
 ---
 
-## Access rules
+## Discount tier system
 
-### Minimum deposit per credit event
+Default tiers (all values in **whole AXGT units**; balances are floored
+before the lookup so `99.999 AXGT` is Tier 0):
 
-- **AXGT**: Each deposit must be at least **100 AXGT** (configurable via `AXGT_MIN_DEPOSIT`) to the revenue wallet. The backend verifies ERC-20 `Transfer` events to the revenue wallet and credits minutes.
-- **ETH**: Each **native ETH** transfer to the revenue wallet of at least **0.0005 ETH** by default (`ETH_MIN_DEPOSIT`), tuned so the minimum ETH top-up credits roughly the same minutes as the minimum AXGT top-up at typical DEX rates; configurable.
+| Tier   | AXGT balance              | Discount on ETH price |
+| ------ | ------------------------- | --------------------- |
+| Tier 0 | 0 – 99                    | 0%                    |
+| Tier 1 | 100 – 999                 | 5%                    |
+| Tier 2 | 1,000 – 9,999             | 10%                   |
+| Tier 3 | 10,000 – 99,999           | 15%                   |
+| Tier 4 | 100,000+                  | 25%                   |
 
-### Credit rates
+Tiers are **operator-configurable** via environment variables (see
+`env.example` for full reference). Three formats are supported, in this
+order of precedence:
 
-- **AXGT**: Every **100 AXGT** deposited grants **60 minutes** of usage (default; configurable via `AXGT_CREDIT_PER_100_AXGT_MINUTES`).
-- **ETH**: Minutes scale linearly with wei sent. Default **120,000 minutes per 1 ETH** (`ETH_CREDIT_PER_ETH_MINUTES`), so **0.0005 ETH** (min deposit) → **60 minutes** — parity with **100 AXGT** at ~200k AXGT/ETH.
+1. `AXGT_DISCOUNT_TIERS_JSON` — full JSON array of tier objects:
 
-Examples:
+   ```json
+   [
+     {"min_axgt": 0,      "discount_percent": 0,  "label": "Tier 0"},
+     {"min_axgt": 100,    "discount_percent": 5,  "label": "Tier 1"},
+     {"min_axgt": 1000,   "discount_percent": 10, "label": "Tier 2"}
+   ]
+   ```
 
-- 100 AXGT deposit → 60 minutes credited.
-- 0.0005 ETH deposit → 60 minutes credited (defaults).
-- 1 ETH deposit → 120,000 minutes credited (defaults).
-- Credits are **additive**: multiple deposits increase total credited minutes; unused minutes persist until consumed.
+2. `AXGT_DISCOUNT_TIERS_FILE` — path to a JSON file with the same shape
+   (or `{ "tiers": [...] }`).
 
-### Usage metering (heartbeat-based)
+3. `AXGT_DISCOUNT_TIERS` — compact form `min:percent[,min:percent...]`,
+   e.g. `0:0,100:5,1000:10,10000:15,100000:25`.
 
-- **Consumed minutes** are tracked per wallet in a **Postgres-backed** deposit ledger (`axgt_deposits`). An **audit ledger** (`axgt_ledger`) records every balance change (deposit_credit, usage_deduction, refund, admin_adjustment, etc.).
-- **Billing is incremental**: on each session **heartbeat**, the server bills elapsed time since the last billing checkpoint and deducts it from `remaining_minutes`. Tracking is **global per wallet** across sessions and devices.
-- **Replay protection**: Each transaction hash is credited at most once (`axgt_verified_deposits` table).
+If all overrides are unset or malformed, the defaults above are used.
+Malformed overrides are logged at WARNING and the system falls back to
+defaults rather than failing closed.
 
-### Lock and warning
+### Trust model
 
-- When **remaining_minutes** reach **0**, the session is **terminated** and the wallet is **locked out** until the user makes another verified deposit.
-- A **warning** is shown when remaining minutes fall at or below a threshold (e.g. **10 minutes**; `AXGT_WARNING_THRESHOLD_MINUTES`). The UI prompts the user to deposit again to avoid lockout.
-- After lockout, the user must deposit (AXGT or ETH) to the revenue wallet and submit the new transaction hash via `POST /api/auth/verify-deposit` to receive additional minutes.
+- The discount **must always be calculated server-side** before any payment
+  is finalised. The frontend displays the quote returned by the backend
+  (`GET /api/discount/quote`) but never derives a discount from a balance
+  it has fetched itself.
+- At credit time the backend **re-fetches** the AXGT balance and **re-resolves
+  the tier** independently of any client-supplied input. The client cannot
+  influence which tier a wallet ends up in.
+- On RPC failure during the quote or credit step, the system **defaults
+  safely to no discount**. A user with a failing RPC simply pays the full
+  base ETH price; payment is never blocked outright.
 
 ---
 
-## Wallet ownership and security
+## Pricing math
 
-### Sign-to-verify
+Let:
 
-- Access to the API (including verify-deposit and session claim) is contingent on **proving ownership** of the wallet. Users must sign a challenge (EIP-191 `personal_sign`) issued by the server; the server verifies the signature before issuing an auth token.
-- Unsigned verification is not accepted; there is no “paste address only” path to access.
+- `B` = base ETH minimum deposit (`ETH_MIN_DEPOSIT`, default `0.0005`)
+- `R` = base credit rate in minutes per ETH (`ETH_CREDIT_PER_ETH_MINUTES`,
+  default `120000`)
+- `d` = discount fraction for the resolved tier (e.g. `0.25` for Tier 4)
 
-### One-time, wallet-bound challenges
+Then:
 
-- Each challenge is bound to a specific wallet and contains a **one-time nonce**. Challenges cannot be reused or replayed for another wallet.
-- This prevents signature replay and ensures that only the holder of the private key for the claimed address can obtain access and submit deposit tx hashes for that wallet.
+- **Discounted minimum payable**: `B × (1 − d)` — e.g. `0.0005 × 0.75 = 0.000375 ETH`
+- **Effective credit rate**: `R ÷ (1 − d)` — e.g. `120000 ÷ 0.75 = 160000 min/ETH`
+- **Minutes credited for an ETH deposit `e`**: `e × R ÷ (1 − d)`
 
-### Session tokens and verify-deposit
+This means a Tier 4 holder paying `0.000375 ETH` receives the same 60 minutes
+that a Tier 0 holder receives for `0.0005 ETH`. Larger payments scale
+linearly: a Tier 4 holder paying `0.0075 ETH` (10× the discounted min)
+receives 1,200 minutes.
 
-- On successful verification, the server issues a **short-lived auth token** (e.g. 5 minutes). WebSocket, wallet-status, and **verify-deposit** require this token (cookie or header).
-- **Verify-deposit** (`POST /api/auth/verify-deposit`) requires the auth token; the `wallet_address` in the body must match the authenticated session. Only then does the server credit minutes for the submitted tx hash.
-- Tokens **rotate** near expiry (with a short grace overlap) to limit exposure while avoiding unnecessary disconnects during refresh.
+### Examples
+
+| AXGT balance | Tier   | Base ETH | Final ETH    | Minutes |
+| ------------ | ------ | -------- | ------------ | ------- |
+| 0            | Tier 0 | 0.0005   | 0.000500     | 60      |
+| 250          | Tier 1 | 0.0005   | 0.000475     | 60      |
+| 5,000        | Tier 2 | 0.0005   | 0.000450     | 60      |
+| 50,000       | Tier 3 | 0.0005   | 0.000425     | 60      |
+| 500,000      | Tier 4 | 0.0005   | 0.000375     | 60      |
+
+Replay protection (`axgt_verified_deposits`) and the audit ledger
+(`axgt_ledger`) carry over from the previous deposit-credit model unchanged.
 
 ---
 
 ## User flow (summary)
 
-1. User opens the AxonOS noVNC page and connects their wallet (e.g. MetaMask).
-2. User signs the one-time challenge to prove ownership; server issues an auth token.
-3. If the wallet has **no prepaid credit** (remaining_minutes = 0), the UI shows requirements: deposit at least X AXGT or Y ETH to the revenue wallet, then submit the transaction hash.
-4. User deposits AXGT or ETH to the **revenue wallet** (any wallet or DEX). User submits the **transaction hash** via the verify-deposit API (or future UI). Server verifies the tx on-chain and credits minutes.
-5. User claims a session; during the session the client sends **heartbeats**. Each heartbeat triggers incremental billing: elapsed time since last checkpoint is deducted from remaining_minutes.
-6. When remaining_minutes reach **0**, the session is terminated and access is denied. User must deposit again and submit a new tx hash to regain access.
+1. User opens AxonOS noVNC and connects their EVM wallet (e.g. MetaMask).
+2. User signs the one-time challenge to prove ownership; server issues an
+   auth token.
+3. UI shows:
+   - **Base ETH price** (`ETH_MIN_DEPOSIT` by default)
+   - **Connected wallet AXGT balance** (server-fetched via `balanceOf`)
+   - **Eligible tier** + **discount percentage**
+   - **Final ETH amount payable**
+4. User clicks **Pay with ETH** — the wallet sends the discount-adjusted ETH
+   amount to the revenue wallet. Manual flow (paste tx hash from another
+   wallet/DEX) is also supported.
+5. Server verifies the tx on-chain, **re-checks** the AXGT balance, applies
+   the discount-adjusted credit rate, and credits minutes.
+6. While connected, minutes are deducted incrementally on session
+   heartbeats. When `remaining_minutes` reaches 0, the session is terminated
+   and the user must top up again.
 
 ---
 
-## Configuration (reference)
+## API surface
 
-| Concept | Default | Env / config |
-|--------|---------|--------------|
-| Min AXGT per deposit | 100 AXGT | `AXGT_MIN_DEPOSIT` |
-| Minutes per 100 AXGT deposited | 60 | `AXGT_CREDIT_PER_100_AXGT_MINUTES` |
-| Min ETH per deposit | 0.0005 ETH | `ETH_MIN_DEPOSIT` |
-| Minutes per 1 ETH deposited | 120000 | `ETH_CREDIT_PER_ETH_MINUTES` |
-| Warning threshold | 10 minutes | `AXGT_WARNING_THRESHOLD_MINUTES` |
-| Min block confirmations before credit | 6 | `AXGT_DEPOSIT_MIN_CONFIRMATIONS` |
-| Revenue wallet | — | `AXGT_REVENUE_WALLET` (required for deposit verification) |
-| Deposit/ledger DB | — | `AXGT_CHALLENGE_DB_URL` (Postgres; required for deposit-credit billing) |
-| Auth token TTL | 300 s | `AXGT_AUTH_TOKEN_TTL_SECONDS` |
-| Challenge TTL | 180 s | `AXGT_CHALLENGE_TTL_SECONDS` |
+### `GET /api/discount/quote`
+
+Query parameters:
+
+- `wallet_address` (required) — `0x…` wallet to quote.
+- `base_eth` (optional) — override the base ETH price; defaults to
+  `ETH_MIN_DEPOSIT`.
+
+Response (200 OK):
+
+```json
+{
+  "ok": true,
+  "wallet_address": "0xabc…",
+  "base_eth": "0.0005",
+  "final_eth": "0.000375",
+  "discount_percent": 25,
+  "tier_index": 4,
+  "tier_label": "Tier 4",
+  "tier_min_axgt": 100000,
+  "axgt_balance": "120000",
+  "axgt_balance_floor": 120000,
+  "balance_check_ok": true,
+  "balance_check_error": null,
+  "tiers": [ /* full tier table */ ],
+  "estimated_minutes": 60.0,
+  "eth_credit_per_eth_minutes": 120000.0
+}
+```
+
+`balance_check_ok=false` indicates an RPC failure; the response still
+returns a quote (with `discount_percent=0`) so the UI can render and let the
+user retry.
+
+### `GET /api/config`
+
+Now also exposes `axgt_discount_tiers` and `axgt_direct_deposits_enabled`.
+
+### `POST /api/auth/verify-deposit`
+
+Existing endpoint. Verifies a tx hash. The ETH path now includes a `tier`
+object in the response body capturing the discount applied at credit time:
+
+```json
+{
+  "verified": true,
+  "deposit_currency": "ETH",
+  "eth_amount": "0.000375",
+  "base_eth_min": "0.0005",
+  "applied_min_eth": "0.000375",
+  "tier": {
+    "tier_index": 4,
+    "tier_label": "Tier 4",
+    "tier_min_axgt": 100000,
+    "discount_percent": 25.0,
+    "axgt_balance_axgt": "120000",
+    "balance_check_ok": true,
+    "balance_check_error": null
+  },
+  "credited_minutes": 60.0,
+  "remaining_minutes": 60.0
+}
+```
+
+---
+
+## Configuration reference
+
+| Concept                                | Default     | Env / config                        |
+| -------------------------------------- | ----------- | ----------------------------------- |
+| AXGT contract (mainnet)                | —           | `AXGT_CONTRACT_ADDRESS` (use `0x6112C3509A8a787df576028450FebB3786A2274d`) |
+| Mainnet RPC URL (for `balanceOf`)      | —           | `AXGT_RPC_URL`                      |
+| Chain ID                               | 1           | `AXGT_CHAIN_ID`                     |
+| Revenue wallet                         | —           | `AXGT_REVENUE_WALLET`               |
+| Min ETH deposit                        | 0.0005 ETH  | `ETH_MIN_DEPOSIT`                   |
+| Minutes per 1 ETH                      | 120000      | `ETH_CREDIT_PER_ETH_MINUTES`        |
+| Discount tiers (compact form)          | 0:0,100:5,1000:10,10000:15,100000:25 | `AXGT_DISCOUNT_TIERS` |
+| Discount tiers (rich JSON)             | (defaults)  | `AXGT_DISCOUNT_TIERS_JSON`          |
+| Discount tiers (JSON file path)        | —           | `AXGT_DISCOUNT_TIERS_FILE`          |
+| Legacy AXGT direct deposits enabled    | false       | `AXGT_ENABLE_AXGT_DEPOSITS`         |
+| Legacy: minutes per 100 AXGT           | 60          | `AXGT_CREDIT_PER_100_AXGT_MINUTES`  |
+| Legacy: min AXGT per direct deposit    | 100         | `AXGT_MIN_DEPOSIT`                  |
+| Warning threshold                      | 10 minutes  | `AXGT_WARNING_THRESHOLD_MINUTES`    |
+| Min block confirmations before credit  | 6           | `AXGT_DEPOSIT_MIN_CONFIRMATIONS`    |
+| Auth token TTL                         | 300 s       | `AXGT_AUTH_TOKEN_TTL_SECONDS`       |
+| Challenge TTL                          | 180 s       | `AXGT_CHALLENGE_TTL_SECONDS`        |
+
+---
+
+## Deployment & testing
+
+The full app can be brought up via the bundled Docker Compose stack:
+
+```bash
+cp env.example .env
+# Edit .env: set AXONOS_VNC_PASSWORD, AXGT_RPC_URL (mainnet), AXGT_CONTRACT_ADDRESS,
+# AXGT_REVENUE_WALLET, optionally AXGT_DISCOUNT_TIERS for custom tiers.
+docker compose build
+docker compose up -d
+```
+
+Open `http://HOST:6080/vnc.html`. Verification steps:
+
+- Wallet connection works (EIP-6963 / `window.ethereum`).
+- Wallet AXGT balance is detected and printed in the **AXGT discount tier**
+  card on the wallet dialog.
+- Correct tier label + percentage shown.
+- ETH payable amount updates from base → final after the wallet connects.
+- Clicking **Pay with ETH** sends exactly the final discounted amount.
+- Users with no AXGT (Tier 0) still see the card and can pay full ETH.
+- After credit, `remaining_minutes` reflects discount-adjusted minutes
+  (e.g. a Tier 4 holder paying `0.000375 ETH` gets 60 minutes, the same as
+  a Tier 0 holder paying `0.0005 ETH`).
+
+Operator-side checks:
+
+- `GET /api/config` includes `axgt_discount_tiers`.
+- `GET /api/discount/quote?wallet_address=0x…` returns a fresh quote.
+- Logs include `balanceOf RPC` warnings on outages; the system continues
+  serving traffic with `balance_check_ok=false` and no discount.
 
 ---
 
@@ -106,4 +279,12 @@ Examples:
 
 - **AxonDAO**: [https://axondao.io](https://axondao.io)
 - **AXGT contract (Ethereum mainnet)**: `0x6112C3509A8a787df576028450FebB3786A2274d`
-- **Implementation**: `axonos_gate/` — `axgt_verifier.py` (challenge/signature + deposit-credit access), `deposit_ledger.py` (Postgres deposits, ledger, billing), `deposit_verifier.py` (tx-hash verification for AXGT and ETH), `session_manager.py` (heartbeat billing), `gate_server.py` (HTTP API and WebSocket proxy). See `axonos_gate/README.md` for API, schema, and deployment details.
+- **Implementation**:
+  - `axonos_gate/discount.py` — tier config + on-chain `balanceOf` + discount math.
+  - `axonos_gate/deposit_verifier.py` — ETH-first verification + discount-adjusted credit.
+  - `axonos_gate/axgt_verifier.py` — challenge/signature + credit policy.
+  - `axonos_gate/deposit_ledger.py` — Postgres deposit ledger + audit trail.
+  - `axonos_gate/gate_server.py` / `axonos_gate/websockify_gate.py` — HTTP API
+    (incl. `/api/config`, `/api/discount/quote`, `/api/auth/verify-deposit`).
+  - `novnc-theme/vnc.html` — wallet dialog with discount tier panel.
+  - `axonos_gate/tests/test_discount.py` — full tier + edge-case test suite.
