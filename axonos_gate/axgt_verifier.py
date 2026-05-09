@@ -523,12 +523,38 @@ def _min_eth_deposit_credit_minutes() -> float:
     return float(eth * rate)
 
 
+def _axgt_direct_deposits_enabled_flag() -> bool:
+    """Direct AXGT-as-payment deposits — opt-in for legacy compatibility only.
+
+    ETH-first tokenomics (the default) uses AXGT for *holder discounts* on ETH
+    payments and disables direct AXGT payment deposits.
+    """
+    raw = (os.getenv("AXGT_ENABLE_AXGT_DEPOSITS") or "").strip().lower()
+    if not raw:
+        return False
+    return raw in ("1", "true", "yes", "on")
+
+
 def get_credit_policy() -> Dict[str, Any]:
-    """Deposit-credit policy: min deposit (AXGT/ETH), credit rates, warning threshold."""
+    """Deposit-credit policy: min deposit (AXGT/ETH), credit rates, warning threshold, discount tiers."""
     eth_enabled = eth_deposits_enabled()
     eth_min = _get_eth_min_deposit_display()
     eth_rate = _get_eth_credit_per_eth_minutes()
     eth_min_minutes = round(_min_eth_deposit_credit_minutes(), 4) if eth_enabled else None
+    axgt_direct = _axgt_direct_deposits_enabled_flag()
+    discount_tiers: Any = []
+    try:
+        try:
+            from . import discount as _disc
+        except ImportError:
+            try:
+                from axonos_gate import discount as _disc
+            except ImportError:
+                import discount as _disc  # type: ignore[no-redef]
+        discount_tiers = _disc.public_tiers()
+    except Exception as exc:  # noqa: BLE001 — non-fatal: tiers are optional in policy
+        logger.warning("Failed to load discount tiers for credit policy: %s", exc)
+        discount_tiers = []
     return {
         "min_deposit": _get_min_deposit_display(),
         "credit_per_100_axgt_minutes": _get_credit_per_100_axgt_minutes(),
@@ -538,6 +564,8 @@ def get_credit_policy() -> Dict[str, Any]:
         "warning_threshold_minutes": _get_warning_threshold_minutes(),
         "min_axgt_deposit_minutes": round(_min_axgt_deposit_credit_minutes(), 4),
         "min_eth_deposit_minutes": eth_min_minutes,
+        "axgt_direct_deposits_enabled": axgt_direct,
+        "axgt_discount_tiers": discount_tiers,
     }
 
 

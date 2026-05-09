@@ -46,3 +46,10 @@
   - [x] Cherry-pick `e7160f2` — preserve verified session when credentials dialog reopens
   - [x] Port `ae08db9` queue auto-join dedupe into public-beta's profile-aware claim-denied path (adapted in `ed68d69`, not cherry-picked, due to multi-session architecture introduced by `f75b634`)
   - [x] **Skip** `6b8d77e` (AXGT CTA testnet faucet flow) — intentionally not ported; functional duplicate of `34b49a3` already on public-beta with different variable names (`getAxgtHref`/`getAxgtLabel` vs `axgtCtaUrl`/`axgtCtaLabel`). Both implement env-driven mainnet-vs-testnet CTA from `AXGT_CHAIN_ID`; mainnet deployments will render Uniswap automatically.
+- [x] **Tokenomics upgrade — ETH-first + AXGT discount tiers (2026-05-09)**:
+  - [x] New `axonos_gate/discount.py` with tier config (env JSON / file / compact), on-chain `balanceOf`, RPC-failure-safe defaults
+  - [x] `deposit_verifier.py` ETH path: server-side AXGT balance re-check + discount-adjusted min and credit rate; AXGT direct deposits gated behind `AXGT_ENABLE_AXGT_DEPOSITS` (default false)
+  - [x] `/api/config` exposes `axgt_discount_tiers`, `axgt_direct_deposits_enabled`; new `GET /api/discount/quote` on both gate (8889) and websockify (6080) backends
+  - [x] vnc.html: AXGT discount tier card (base ETH / wallet AXGT balance / tier / discount % / final ETH); ETH-only by default; copy switched to "Pay with ETH, save with AXGT"
+  - [x] Tests: 28-case `test_discount.py` covering all tier boundaries, RPC failure fallback, env overrides, and end-to-end ETH+AXGT verifier paths; existing deposit/ledger/access tests still pass
+  - [x] Docs: rewrote `docs/TOKENOMICS.md` for ETH-first + tier system + deployment/testing checklist; updated `env.example` with tier-config knobs

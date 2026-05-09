@@ -392,9 +392,88 @@ def api_config():
         'axgt_warning_threshold_minutes': policy.get("warning_threshold_minutes"),
         'min_axgt_deposit_minutes': policy.get("min_axgt_deposit_minutes"),
         'min_eth_deposit_minutes': policy.get("min_eth_deposit_minutes"),
+        'axgt_direct_deposits_enabled': policy.get("axgt_direct_deposits_enabled"),
+        'axgt_discount_tiers': policy.get("axgt_discount_tiers", []),
         'multi_session_enabled': (os.getenv("AXGT_MULTI_SESSION_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")),
         'gpu_profiles_enabled': (os.getenv("AXGT_GPU_PROFILES_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")),
         'gpu_profiles': {'small': 1, 'medium': 2, 'large': 4},
+    })
+
+
+@app.route('/api/discount/quote', methods=['GET', 'OPTIONS'])
+def api_discount_quote():
+    """Return the discount tier + final ETH price for a wallet's on-chain AXGT balance.
+
+    Query params:
+        wallet_address (required): 0x... wallet to quote.
+        base_eth (optional): override the base ETH price to discount; defaults to ETH_MIN_DEPOSIT.
+
+    The backend always re-fetches the AXGT balance on-chain (no client trust)
+    and resolves the tier from the server-side configuration. On RPC failure
+    the response sets balance_check_ok=False and falls back to no discount —
+    callers should display the result and let the user retry.
+    """
+    if request.method == 'OPTIONS':
+        return '', 200
+    wallet_address = (request.args.get('wallet_address') or request.headers.get('X-Wallet-Address') or '').strip()
+    if not wallet_address:
+        return jsonify({'ok': False, 'error': 'wallet_address is required'}), 400
+    if not validate_wallet_address(wallet_address):
+        return jsonify({'ok': False, 'error': 'Invalid wallet address format.'}), 400
+    try:
+        try:
+            from . import discount as _disc
+        except ImportError:
+            try:
+                from axonos_gate import discount as _disc
+            except ImportError:
+                import discount as _disc  # type: ignore[no-redef]
+    except ImportError:
+        return jsonify({'ok': False, 'error': 'Discount module unavailable'}), 503
+
+    from decimal import Decimal as _D, InvalidOperation as _IO
+    base_eth_raw = (request.args.get('base_eth') or '').strip()
+    policy = get_credit_policy()
+    if base_eth_raw:
+        try:
+            base_eth = _D(base_eth_raw)
+            if base_eth <= 0:
+                raise _IO("base_eth must be positive")
+        except (_IO, ValueError):
+            return jsonify({'ok': False, 'error': 'Invalid base_eth value'}), 400
+    else:
+        try:
+            base_eth = _D(str(policy.get('eth_min_deposit') or '0.0005'))
+        except (_IO, ValueError):
+            base_eth = _D('0.0005')
+
+    bal = _disc.fetch_axgt_balance(wallet_address)
+    floor_axgt = bal.floor_axgt() if bal.ok else 0
+    tier = _disc.resolve_tier(floor_axgt) if bal.ok else _disc.resolve_tier(0)
+    discount_pct_for_quote = tier.discount_percent if bal.ok else 0.0
+    final_eth = _disc.apply_discount(base_eth, discount_pct_for_quote)
+    eth_rate = _D(str(policy.get('eth_credit_per_eth_minutes') or 120000))
+    if discount_pct_for_quote >= 100:
+        effective_rate = eth_rate
+    else:
+        effective_rate = eth_rate / (_D('1') - _D(str(discount_pct_for_quote)) / _D('100'))
+    estimated_minutes = float(base_eth * effective_rate)
+    return jsonify({
+        'ok': True,
+        'wallet_address': wallet_address,
+        'base_eth': format(base_eth.normalize(), 'f') if base_eth > 0 else '0',
+        'final_eth': format(final_eth.normalize(), 'f') if final_eth > 0 else '0',
+        'discount_percent': discount_pct_for_quote,
+        'tier_index': tier.index,
+        'tier_label': tier.label,
+        'tier_min_axgt': tier.min_axgt,
+        'axgt_balance': format(bal.balance_axgt.normalize(), 'f') if bal.ok and bal.balance_axgt > 0 else '0',
+        'axgt_balance_floor': floor_axgt,
+        'balance_check_ok': bal.ok,
+        'balance_check_error': bal.error if not bal.ok else None,
+        'tiers': _disc.public_tiers(),
+        'estimated_minutes': round(estimated_minutes, 2),
+        'eth_credit_per_eth_minutes': float(policy.get('eth_credit_per_eth_minutes') or 120000),
     })
 
 
