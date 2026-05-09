@@ -783,6 +783,8 @@ document.addEventListener("DOMContentLoaded", function() {
 
     // Queue overlay polling (cleared when we connect or leave queue)
     let axonosQueuePollId = null;
+    let axonosQueueJoinInFlight = false;
+    let axonosLastAutoQueueJoinMs = 0;
 
     function axonosFetch(opts) {
         const headers = { 'Content-Type': 'application/json' };
@@ -884,14 +886,74 @@ document.addEventListener("DOMContentLoaded", function() {
 
     window.axonosGetRequestedProfile = getRequestedProfile;
 
-    /** Called from ui.js when Launch runs connect while session is not claimed (e.g. after queue leave). */
-    window.axonosOnSessionClaimDenied = function (claim) {
+    function axonosHasQueuePosition(v) {
+        return v != null && v !== '';
+    }
+
+    function handleSessionClaimDenied(claim, fallbackReason) {
+        var reason = (claim && claim.reason) ? claim.reason : (fallbackReason || 'Desktop in use.');
+        var hasPos = axonosHasQueuePosition(claim && claim.queue_position);
+        if (hasPos) {
+            showQueueOverlay({
+                reason: reason,
+                queue_position: claim.queue_position,
+                queue_length: claim && claim.queue_length != null ? claim.queue_length : null
+            });
+            startQueuePolling();
+            return;
+        }
+
+        // Avoid repeated auto-join spam when claim/status race in short bursts.
+        var now = Date.now();
+        var canAutoJoin = (now - axonosLastAutoQueueJoinMs) > 30000;
+        if (axonosQueueJoinInFlight || !canAutoJoin) {
+            showQueueOverlay({
+                reason: reason + ' Click Join queue to wait for availability.',
+                queue_position: null,
+                queue_length: claim && claim.queue_length != null ? claim.queue_length : null
+            });
+            startQueuePolling();
+            return;
+        }
+
+        axonosQueueJoinInFlight = true;
+        axonosLastAutoQueueJoinMs = now;
         showQueueOverlay({
-            reason: (claim && claim.reason) ? claim.reason : 'Desktop in use.',
-            queue_position: claim && claim.queue_position != null ? claim.queue_position : null,
+            reason: reason + ' Joining queue…',
+            queue_position: null,
             queue_length: claim && claim.queue_length != null ? claim.queue_length : null
         });
-        startQueuePolling();
+
+        joinQueue().then(function (r) {
+            var joinedOk = r && (r.joined === true || r.joined === 'true' || axonosHasQueuePosition(r.queue_position));
+            if (joinedOk) {
+                showQueueOverlay({
+                    reason: 'You are in the queue. We will connect when the desktop is free.',
+                    queue_position: r.queue_position,
+                    queue_length: r.queue_length
+                });
+            } else {
+                showQueueOverlay({
+                    reason: reason + ' Click Join queue to wait for availability.',
+                    queue_position: axonosHasQueuePosition(r && r.queue_position) ? r.queue_position : null,
+                    queue_length: r && r.queue_length != null ? r.queue_length : null
+                });
+            }
+        }).catch(function () {
+            showQueueOverlay({
+                reason: reason + ' Network error while joining queue. Click Join queue to retry.',
+                queue_position: null,
+                queue_length: null
+            });
+        }).then(function () {
+            axonosQueueJoinInFlight = false;
+            startQueuePolling();
+        });
+    }
+
+    /** Called from ui.js when Launch runs connect while session is not claimed (e.g. after queue leave). */
+    window.axonosOnSessionClaimDenied = function (claim) {
+        handleSessionClaimDenied(claim, 'Desktop in use.');
     };
     // Called from ui.js on explicit disconnect / teardown to prevent stale "false queue" UI.
     window.axonosHideQueueOverlay = function () {
@@ -927,7 +989,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 if (data.active === false || data.is_owner === true) {
                     claimSession().then(function (claim) {
                         if (claim.granted) tryConnectAfterClaim();
-                        else showQueueOverlay({ reason: claim.reason || 'Desktop in use.', queue_position: claim.queue_position, queue_length: claim.queue_length });
+                        else handleSessionClaimDenied(claim, 'Desktop in use.');
                     });
                 }
             }).catch(function () {});
@@ -1404,8 +1466,7 @@ document.addEventListener("DOMContentLoaded", function() {
                     if (claim.granted) {
                         tryConnectAfterClaim();
                     } else {
-                        showQueueOverlay({ reason: claim.reason || 'Desktop in use.', queue_position: claim.queue_position, queue_length: claim.queue_length });
-                        startQueuePolling();
+                        handleSessionClaimDenied(claim, 'Desktop in use.');
                         var credentialsDialog = document.getElementById('noVNC_credentials_dlg');
                         if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
                     }
@@ -1542,8 +1603,7 @@ document.addEventListener("DOMContentLoaded", function() {
         claimSession().then(function (claim) {
             if (claim.granted) tryConnectAfterClaim();
             else {
-                showQueueOverlay({ reason: claim.reason || 'Desktop in use.', queue_position: claim.queue_position, queue_length: claim.queue_length });
-                startQueuePolling();
+                handleSessionClaimDenied(claim, 'Desktop in use.');
                 var credentialsDialog = document.getElementById('noVNC_credentials_dlg');
                 if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
             }
