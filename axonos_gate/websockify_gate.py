@@ -520,11 +520,20 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
     - Gate WebSocket upgrades using wallet + short-lived auth token
     """
 
-    def _send_json(self, status_code: int, payload: dict, set_cookie: str | None = None):
+    def _send_json(
+        self,
+        status_code: int,
+        payload: dict,
+        set_cookie: str | None = None,
+        no_cache: bool = False,
+    ):
         body = json.dumps(payload).encode('utf-8')
         self.send_response(status_code)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Content-Length', str(len(body)))
+        if no_cache:
+            self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, private')
+            self.send_header('Pragma', 'no-cache')
         # CORS: default is same-origin (no wildcard). For unusual deployments set AXGT_CORS_ORIGINS.
         origin = cors_origin_for_request(
             self.headers.get("Origin"),
@@ -769,7 +778,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 return self._send_json(401, {'ok': False, 'error': 'Valid auth token required'})
             wn = wallet.lower()
             st, pl = webrtc_service.handle_get_status(sid, wn, True)
-            return self._send_json(st, pl)
+            return self._send_json(st, pl, no_cache=True)
 
         if webrtc_service and ponly.startswith('/api/webrtc/agent/next'):
             key = (self.headers.get('X-AxonOS-WebRTC-Agent-Key') or '').strip()

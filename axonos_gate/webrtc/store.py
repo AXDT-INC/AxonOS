@@ -179,9 +179,18 @@ def set_offer(session_id: str, wallet_norm: str, offer_sdp: str, offer_type: str
                 """,
                 (offer_sdp, offer_type, now, session_id, w, now),
             )
-            return cur.rowcount == 1
+            ok = cur.rowcount == 1
+        if ok:
+            c.commit()
+        else:
+            c.rollback()
+        return ok
     except Exception as e:
         logger.warning("webrtc set_offer failed: %s", e)
+        try:
+            c.rollback()
+        except Exception:
+            pass
         return False
     finally:
         c.close()
@@ -205,9 +214,18 @@ def set_answer(session_id: str, answer_sdp: str, answer_type: str) -> bool:
                 """,
                 (answer_sdp, answer_type, now, session_id, now),
             )
-            return cur.rowcount == 1
+            ok = cur.rowcount == 1
+        if ok:
+            c.commit()
+        else:
+            c.rollback()
+        return ok
     except Exception as e:
         logger.warning("webrtc set_answer failed: %s", e)
+        try:
+            c.rollback()
+        except Exception:
+            pass
         return False
     finally:
         c.close()
@@ -231,6 +249,7 @@ def append_client_ice(session_id: str, wallet_norm: str, candidates: list[dict[s
             )
             r = cur.fetchone()
             if not r:
+                c.rollback()
                 return False
             existing = _parse_json_list(r[0])
             existing.extend(candidates)
@@ -242,9 +261,18 @@ def append_client_ice(session_id: str, wallet_norm: str, candidates: list[dict[s
                 """,
                 (json.dumps(existing[-500:]), now, session_id, w),
             )
-            return cur.rowcount == 1
+            ok = cur.rowcount == 1
+        if ok:
+            c.commit()
+        else:
+            c.rollback()
+        return ok
     except Exception as e:
         logger.warning("webrtc append_client_ice failed: %s", e)
+        try:
+            c.rollback()
+        except Exception:
+            pass
         return False
     finally:
         c.close()
@@ -267,6 +295,7 @@ def append_server_ice(session_id: str, candidates: list[dict[str, Any]]) -> bool
             )
             r = cur.fetchone()
             if not r:
+                c.rollback()
                 return False
             existing = _parse_json_list(r[0])
             existing.extend(candidates)
@@ -278,9 +307,18 @@ def append_server_ice(session_id: str, candidates: list[dict[str, Any]]) -> bool
                 """,
                 (json.dumps(existing[-500:]), now, session_id),
             )
-            return cur.rowcount == 1
+            ok = cur.rowcount == 1
+        if ok:
+            c.commit()
+        else:
+            c.rollback()
+        return ok
     except Exception as e:
         logger.warning("webrtc append_server_ice failed: %s", e)
+        try:
+            c.rollback()
+        except Exception:
+            pass
         return False
     finally:
         c.close()
