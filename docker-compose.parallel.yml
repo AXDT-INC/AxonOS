@@ -1,0 +1,30 @@
+# Parallel stack (case B): run this clone alongside another AxonOS compose on the same host
+# (e.g. main from ~/AxonOS, public-beta from ~/AxonOS-prod).
+#
+# Prerequisites:
+#   - export COMPOSE_PROJECT_NAME=axonos-public-beta   # unique per 2nd stack; required below
+#   - In .env: AXONOS_PUBLISH_NOVNC=16080 AXONOS_PUBLISH_GATE=18889  (or other free host ports)
+#
+# Build + run:
+#   docker compose -f docker-compose.yml -f docker-compose.parallel.yml build
+#   docker compose -f docker-compose.yml -f docker-compose.parallel.yml up -d
+#
+# Session containers launched by the host launcher join this project's network:
+#   ${COMPOSE_PROJECT_NAME}_default
+
+services:
+  axonos-launcher:
+    container_name: axonos_session_launcher_public_beta
+    environment:
+      AXGT_HOST_SESSION_CONTAINER_IMAGE: axonos:public-beta
+      AXGT_HOST_SESSION_CONTAINER_NETWORK: ${COMPOSE_PROJECT_NAME:?Set COMPOSE_PROJECT_NAME for parallel stack, e.g. axonos-public-beta}_default
+
+  postgres:
+    container_name: axonos_postgres_public_beta
+
+  axonos:
+    container_name: axonos_deposit_preview_public_beta
+    image: axonos:public-beta
+    build:
+      tags:
+        - axonos:public-beta
