@@ -324,6 +324,11 @@ def _http_get_job(url: str, headers: dict[str, str]) -> tuple[int, dict[str, Any
             return 204, None
         logger.debug("GET error %s %s", e.code, body[:200])
         return e.code, None
+    except urllib.error.URLError as e:
+        # Common on startup: axgt-api sleeps 4s before gate_server binds 8889 — connection refused
+        # must not kill the agent process or supervisord will flap until the gate is up.
+        logger.debug("agent/next unreachable: %s", getattr(e, "reason", e) or e)
+        return -1, None
 
 
 async def main_loop() -> None:
@@ -340,6 +345,9 @@ async def main_loop() -> None:
             await asyncio.sleep(5)
             continue
         status, job = _http_get_job(poll_url, {_AXT: _agent_key()})
+        if status == -1:
+            await asyncio.sleep(0.75)
+            continue
         if status == 204 or job is None:
             await asyncio.sleep(0.35)
             continue
