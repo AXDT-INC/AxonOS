@@ -102,9 +102,15 @@ export async function connectAxonOSWebRTC(opts) {
         return false;
     }
 
+    /** When false, UI must not imply noVNC fallback; server blocks classic path. */
+    const webrtcFallbackOk = cfgRes.json.webrtc_fallback_enabled !== false;
+
     if (typeof RTCPeerConnection === 'undefined') {
-        if (cfgRes.json.webrtc_fallback_enabled !== false) {
+        if (webrtcFallbackOk) {
             _setBanner('WebRTC not supported in this browser — using classic stream.', 'fallback');
+            setTimeout(_hideBanner, 5000);
+        } else {
+            _setBanner('WebRTC not supported in this browser.', 'failed');
             setTimeout(_hideBanner, 5000);
         }
         return false;
@@ -176,7 +182,11 @@ export async function connectAxonOSWebRTC(opts) {
     });
     if (!offerRes.ok || !offerRes.json.ok) {
         await _cleanup(pc, video, sessionId, wallet);
-        _setBanner('WebRTC negotiation failed — falling back.', 'fallback');
+        if (webrtcFallbackOk) {
+            _setBanner('WebRTC negotiation failed — falling back.', 'fallback');
+        } else {
+            _setBanner('WebRTC negotiation failed.', 'failed');
+        }
         setTimeout(_hideBanner, 4000);
         return false;
     }
@@ -224,7 +234,11 @@ export async function connectAxonOSWebRTC(opts) {
 
     if (!answerApplied) {
         await _cleanup(pc, video, sessionId, wallet);
-        _setBanner('WebRTC timed out — falling back.', 'fallback');
+        if (webrtcFallbackOk) {
+            _setBanner('WebRTC timed out — falling back.', 'fallback');
+        } else {
+            _setBanner('WebRTC timed out.', 'failed');
+        }
         setTimeout(_hideBanner, 4000);
         return false;
     }
