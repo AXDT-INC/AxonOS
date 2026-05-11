@@ -70,6 +70,42 @@ def _normalize_sdp(sdp: str) -> str:
     return normalized.rstrip("\r\n") + "\r\n"
 
 
+def _xdotool_key(obj: dict[str, Any]) -> str:
+    key = str(obj.get("key") or "")
+    code = str(obj.get("code") or "")
+    by_key = {
+        " ": "space",
+        "Enter": "Return",
+        "Backspace": "BackSpace",
+        "Tab": "Tab",
+        "Escape": "Escape",
+        "Delete": "Delete",
+        "ArrowLeft": "Left",
+        "ArrowRight": "Right",
+        "ArrowUp": "Up",
+        "ArrowDown": "Down",
+        "Home": "Home",
+        "End": "End",
+        "PageUp": "Page_Up",
+        "PageDown": "Page_Down",
+        "Insert": "Insert",
+        "Shift": "Shift_L" if code != "ShiftRight" else "Shift_R",
+        "Control": "Control_L" if code != "ControlRight" else "Control_R",
+        "Alt": "Alt_L" if code != "AltRight" else "Alt_R",
+        "Meta": "Super_L" if code != "MetaRight" else "Super_R",
+        "CapsLock": "Caps_Lock",
+    }
+    if key in by_key:
+        return by_key[key]
+    if code.startswith("F") and code[1:].isdigit():
+        return code
+    if code.startswith("Numpad") and code[len("Numpad"):].isdigit():
+        return "KP_" + code[len("Numpad"):]
+    if len(key) == 1:
+        return key
+    return ""
+
+
 def _apply_input_json(raw: str) -> None:
     try:
         obj = json.loads(raw)
@@ -86,11 +122,26 @@ def _apply_input_json(raw: str) -> None:
             subprocess.run(["xdotool", "mousemove", str(int(x)), str(int(y))], check=False, timeout=2, env=env)
         elif t in ("click",):
             b = int(obj.get("button", 1))
+            if "x" in obj and "y" in obj:
+                x = float(obj.get("x", 0))
+                y = float(obj.get("y", 0))
+                subprocess.run(["xdotool", "mousemove", str(int(x)), str(int(y))], check=False, timeout=2, env=env)
             subprocess.run(["xdotool", "click", str(b)], check=False, timeout=2, env=env)
-        elif t in ("keydown", "key"):
+        elif t in ("key",):
             text = str(obj.get("key", ""))[:64]
             if text:
                 subprocess.run(["xdotool", "type", "--delay", "5", text], check=False, timeout=5, env=env)
+        elif t in ("keydown", "keyup"):
+            key_name = _xdotool_key(obj)
+            if not key_name:
+                return
+            if t == "keydown" and len(str(obj.get("key") or "")) == 1 and not any(
+                bool(obj.get(k)) for k in ("ctrlKey", "altKey", "metaKey")
+            ):
+                subprocess.run(["xdotool", "type", "--delay", "5", str(obj.get("key"))], check=False, timeout=5, env=env)
+                return
+            action = "keydown" if t == "keydown" else "keyup"
+            subprocess.run(["xdotool", action, key_name], check=False, timeout=2, env=env)
     except (OSError, ValueError, subprocess.TimeoutExpired) as e:
         logger.debug("input skip: %s", e)
 

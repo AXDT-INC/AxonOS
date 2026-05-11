@@ -301,19 +301,29 @@ export async function connectAxonOSWebRTC(opts) {
     let inputScaleY = 1;
     let vidW = 1;
     let vidH = 1;
+    let imageLeft = 0;
+    let imageTop = 0;
+    let imageWidth = 1;
+    let imageHeight = 1;
 
     const syncInputScale = () => {
         const rw = video.videoWidth || video.clientWidth || 1;
         const rh = video.videoHeight || video.clientHeight || 1;
         const cw = video.clientWidth || 1;
         const ch = video.clientHeight || 1;
+        const scale = Math.min(cw / rw, ch / rh);
+        imageWidth = rw * scale;
+        imageHeight = rh * scale;
+        imageLeft = (cw - imageWidth) / 2;
+        imageTop = (ch - imageHeight) / 2;
         vidW = rw;
         vidH = rh;
-        inputScaleX = rw / cw;
-        inputScaleY = rh / ch;
+        inputScaleX = rw / imageWidth;
+        inputScaleY = rh / imageHeight;
     };
 
     video.addEventListener('loadeddata', syncInputScale);
+    window.addEventListener('resize', syncInputScale);
 
     function sendInput(obj) {
         if (dc.readyState === 'open') {
@@ -321,15 +331,24 @@ export async function connectAxonOSWebRTC(opts) {
         }
     }
 
-    video.addEventListener('mousemove', (ev) => {
+    function pointerToRemote(ev) {
         const r = video.getBoundingClientRect();
-        const x = (ev.clientX - r.left) * inputScaleX;
-        const y = (ev.clientY - r.top) * inputScaleY;
-        sendInput({ t: 'move', x: Math.round(x), y: Math.round(y) });
+        const localX = Math.max(0, Math.min(imageWidth, ev.clientX - r.left - imageLeft));
+        const localY = Math.max(0, Math.min(imageHeight, ev.clientY - r.top - imageTop));
+        return {
+            x: Math.round(localX * inputScaleX),
+            y: Math.round(localY * inputScaleY),
+        };
+    }
+
+    video.addEventListener('mousemove', (ev) => {
+        ev.preventDefault();
+        sendInput({ t: 'move', ...pointerToRemote(ev) });
     });
     video.addEventListener('mousedown', (ev) => {
         ev.preventDefault();
-        sendInput({ t: 'click', button: ev.button + 1 });
+        video.focus();
+        sendInput({ t: 'click', button: ev.button + 1, ...pointerToRemote(ev) });
     });
     video.addEventListener('contextmenu', (ev) => {
         ev.preventDefault();
@@ -342,9 +361,38 @@ export async function connectAxonOSWebRTC(opts) {
         if (ev.target && ev.target.tagName === 'INPUT') {
             return;
         }
-        if (ev.key && ev.key.length === 1) {
+        if (ev.key) {
             ev.preventDefault();
-            sendInput({ t: 'key', key: ev.key });
+            sendInput({
+                t: 'keydown',
+                key: ev.key,
+                code: ev.code,
+                ctrlKey: ev.ctrlKey,
+                altKey: ev.altKey,
+                shiftKey: ev.shiftKey,
+                metaKey: ev.metaKey,
+                repeat: ev.repeat,
+            });
+        }
+    });
+    window.addEventListener('keyup', (ev) => {
+        if (!UI.connected) {
+            return;
+        }
+        if (ev.target && ev.target.tagName === 'INPUT') {
+            return;
+        }
+        if (ev.key) {
+            ev.preventDefault();
+            sendInput({
+                t: 'keyup',
+                key: ev.key,
+                code: ev.code,
+                ctrlKey: ev.ctrlKey,
+                altKey: ev.altKey,
+                shiftKey: ev.shiftKey,
+                metaKey: ev.metaKey,
+            });
         }
     });
 
