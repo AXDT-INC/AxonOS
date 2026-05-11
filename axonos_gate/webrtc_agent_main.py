@@ -19,6 +19,7 @@ import os
 import subprocess
 import sys
 import time
+from fractions import Fraction
 from typing import Any
 
 logging.basicConfig(
@@ -188,36 +189,47 @@ async def _run_session(job: dict[str, Any]) -> None:
             self._sct = mss.mss()
             self._mon = self._sct.monitors[1] if len(self._sct.monitors) > 1 else self._sct.monitors[0]
             self._last = 0.0
+            self._pts = 0
+            self._pts_step = max(1, int(90_000 / target_fps))
+            self._frames = 0
 
         async def recv(self) -> VideoFrame:  # type: ignore[override]
-            now = time.monotonic()
-            wait = interval - (now - self._last)
-            if wait > 0:
-                await asyncio.sleep(wait)
-            self._last = time.monotonic()
-            shot = self._sct.grab(self._mon)
-            arr = np.array(shot)[:, :, :3].copy()
-            h, w = arr.shape[:2]
-            if w > max_w and Image is not None:
-                nh = max(1, int(h * max_w / float(w)))
-                rgb = arr[:, :, ::-1]
-                im = Image.fromarray(rgb)
-                try:
-                    im = im.resize((max_w, nh), Image.Resampling.LANCZOS)  # Pillow 9+
-                except AttributeError:
-                    im = im.resize((max_w, nh), Image.LANCZOS)
-                rgb = np.asarray(im)
-            elif w > max_w:
-                step = w / max_w
-                idx = (np.arange(max_w) * step).astype(int)
-                arr = arr[:, idx, :]
-                rgb = arr[:, :, ::-1]
-            else:
-                rgb = arr[:, :, ::-1]
-            vf = VideoFrame.from_ndarray(rgb, format="rgb24")
-            vf.pts = int(time.time() * 90_000)
-            vf.time_base = 1 / 90_000
-            return vf
+            try:
+                now = time.monotonic()
+                wait = interval - (now - self._last)
+                if wait > 0:
+                    await asyncio.sleep(wait)
+                self._last = time.monotonic()
+                shot = self._sct.grab(self._mon)
+                arr = np.array(shot)[:, :, :3].copy()
+                h, w = arr.shape[:2]
+                if w > max_w and Image is not None:
+                    nh = max(1, int(h * max_w / float(w)))
+                    rgb = arr[:, :, ::-1]
+                    im = Image.fromarray(rgb)
+                    try:
+                        im = im.resize((max_w, nh), Image.Resampling.LANCZOS)  # Pillow 9+
+                    except AttributeError:
+                        im = im.resize((max_w, nh), Image.LANCZOS)
+                    rgb = np.asarray(im)
+                elif w > max_w:
+                    step = w / max_w
+                    idx = (np.arange(max_w) * step).astype(int)
+                    arr = arr[:, idx, :]
+                    rgb = arr[:, :, ::-1]
+                else:
+                    rgb = arr[:, :, ::-1]
+                vf = VideoFrame.from_ndarray(rgb, format="rgb24")
+                vf.pts = self._pts
+                vf.time_base = Fraction(1, 90_000)
+                self._pts += self._pts_step
+                self._frames += 1
+                if self._frames == 1 or self._frames % 150 == 0:
+                    logger.info("WebRTC captured frame session=%s size=%sx%s frames=%s", session_id[:16], w, h, self._frames)
+                return vf
+            except Exception:
+                logger.exception("WebRTC frame capture failed session=%s", session_id[:16])
+                raise
 
     pc.addTrack(ScreenVideoTrack())
     await pc.setRemoteDescription(RTCSessionDescription(sdp=offer_sdp, type=offer_type))
