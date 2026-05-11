@@ -62,6 +62,18 @@ sleep 3
 echo "Checking IPFS status..."
 su - aXonian -c 'ipfs id' || echo "IPFS still starting up..."
 
+# WebRTC screen-capture agent: avoid running it on the base gate desktop when per-session
+# containers provide the real user desktop (both agents dequeue the same Postgres queue and race).
+# Session runtimes set AXGT_SESSION_ID; respect explicit WEBRTC_AGENT_ENABLED if already set.
+if [ -z "${AXGT_SESSION_ID:-}" ] && [ -z "${WEBRTC_AGENT_ENABLED:-}" ]; then
+    _uc=$(echo "${AXGT_USER_CONTAINER_ENABLED:-}" | tr '[:upper:]' '[:lower:]')
+    if [ "${_uc}" = "true" ] || [ "${_uc}" = "1" ] || [ "${_uc}" = "yes" ]; then
+        export WEBRTC_AGENT_ENABLED=false
+    else
+        export WEBRTC_AGENT_ENABLED=true
+    fi
+fi
+
 # Start supervisord
 /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf &
 
