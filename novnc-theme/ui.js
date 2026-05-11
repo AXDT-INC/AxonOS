@@ -646,6 +646,17 @@ const UI = {
         document.getElementById('noVNC_status').classList.remove("noVNC_open");
     },
 
+    focusRemoteDesktop() {
+        if (UI.rfb && typeof UI.rfb.focus === 'function') {
+            UI.rfb.focus();
+            return;
+        }
+        const webrtcVideo = document.getElementById('axonos_webrtc_video');
+        if (webrtcVideo && typeof webrtcVideo.focus === 'function') {
+            webrtcVideo.focus();
+        }
+    },
+
     activateControlbar(event) {
         clearTimeout(UI.idleControlbarTimeout);
         // We manipulate the anchor instead of the actual control
@@ -680,7 +691,7 @@ const UI = {
         UI.closeAllPanels();
         document.getElementById('noVNC_control_bar')
             .classList.remove("noVNC_open");
-        UI.rfb.focus();
+        UI.focusRemoteDesktop();
     },
 
     toggleControlbar() {
@@ -1080,7 +1091,7 @@ const UI = {
             }
             UI.closePowerPanel();
             UI.showStatus(_("Desktop session restart requested"), 'normal');
-            if (UI.rfb) UI.rfb.focus();
+            UI.focusRemoteDesktop();
         }).catch((err) => {
             Log.Error("Desktop restart request failed: " + err);
             UI.showStatus(_("Could not restart desktop session"), 'error');
@@ -1526,7 +1537,7 @@ const UI = {
         }
 
         // Do this last because it can only be used on rendered elements
-        UI.rfb.focus();
+        UI.focusRemoteDesktop();
     },
 
     disconnectFinished(e) {
@@ -2160,7 +2171,7 @@ const UI = {
         }
         UI.rfb.sendCtrlAltDel();
         // See below
-        UI.rfb.focus();
+        UI.focusRemoteDesktop();
         UI.idleControlbar();
     },
 
@@ -2180,7 +2191,7 @@ const UI = {
             .classList.contains("noVNC_selected")) {
             document.getElementById('noVNC_keyboardinput').focus();
         } else {
-            UI.rfb.focus();
+            UI.focusRemoteDesktop();
         }
         // fade out the controlbar to highlight that
         // the focus has been moved to the screen
