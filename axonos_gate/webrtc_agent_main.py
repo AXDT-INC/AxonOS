@@ -356,9 +356,10 @@ async def main_loop() -> None:
             continue
         try:
             await _run_session(job)
-        except Exception:
+        except Exception as e:
             logger.exception("session error")
-            _agent_fail(str(job.get("session_id", "")), "exception")
+            detail = f"exception:{type(e).__name__}:{str(e)[:500]}"
+            _agent_fail(str(job.get("session_id", "")), detail)
 
 
 if __name__ == "__main__":
