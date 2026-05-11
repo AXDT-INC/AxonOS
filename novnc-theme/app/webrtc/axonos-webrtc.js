@@ -328,7 +328,11 @@ export async function connectAxonOSWebRTC(opts) {
         sendInput({ t: 'move', x: Math.round(x), y: Math.round(y) });
     });
     video.addEventListener('mousedown', (ev) => {
+        ev.preventDefault();
         sendInput({ t: 'click', button: ev.button + 1 });
+    });
+    video.addEventListener('contextmenu', (ev) => {
+        ev.preventDefault();
     });
 
     window.addEventListener('keydown', (ev) => {
