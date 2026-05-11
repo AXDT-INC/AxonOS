@@ -204,6 +204,28 @@ export async function connectAxonOSWebRTC(opts) {
             break;
         }
         const j = st.json;
+        if (j.state === 'failed' || j.last_error) {
+            await _cleanup(pc, video, sessionId, wallet);
+            const detail = (j.last_error && String(j.last_error).trim()) || 'signaling failed';
+            const msg = `WebRTC failed: ${detail}`;
+            if (webrtcFallbackOk) {
+                _setBanner(`${msg} — falling back.`, 'fallback');
+            } else {
+                _setBanner(msg, 'failed');
+            }
+            setTimeout(_hideBanner, 8000);
+            return false;
+        }
+        if (j.state === 'closed') {
+            await _cleanup(pc, video, sessionId, wallet);
+            if (webrtcFallbackOk) {
+                _setBanner('WebRTC session closed — falling back.', 'fallback');
+            } else {
+                _setBanner('WebRTC session closed.', 'failed');
+            }
+            setTimeout(_hideBanner, 5000);
+            return false;
+        }
         if (j.has_answer && j.answer && j.answer.sdp) {
             await pc.setRemoteDescription(
                 new RTCSessionDescription({ type: 'answer', sdp: j.answer.sdp })
