@@ -46,6 +46,7 @@ RUN apt update && apt install -y \
     gnome-icon-theme-symbolic \
     libgtk-3-bin \
     xdotool \
+    xclip \
     x11-xserver-utils \
     xautomation \
     scrot \

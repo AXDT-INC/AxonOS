@@ -106,6 +106,39 @@ def _xdotool_key(obj: dict[str, Any]) -> str:
     return ""
 
 
+def _set_x_clipboard(text: str, env: dict[str, str]) -> bool:
+    data = text.encode("utf-8", errors="ignore")
+    commands = (
+        ["xclip", "-selection", "clipboard"],
+        ["xclip", "-selection", "primary"],
+    )
+    ok = False
+    for cmd in commands:
+        try:
+            p = subprocess.run(cmd, input=data, check=False, timeout=3, env=env)
+            ok = ok or p.returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+    return ok
+
+
+def _get_x_clipboard(env: dict[str, str]) -> str:
+    try:
+        p = subprocess.run(
+            ["xclip", "-selection", "clipboard", "-o"],
+            check=False,
+            timeout=2,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        if p.returncode == 0:
+            return p.stdout.decode("utf-8", errors="ignore")
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return ""
+
+
 def _apply_input_json(raw: str) -> None:
     try:
         obj = json.loads(raw)
@@ -131,6 +164,11 @@ def _apply_input_json(raw: str) -> None:
             text = str(obj.get("key", ""))[:64]
             if text:
                 subprocess.run(["xdotool", "type", "--delay", "5", text], check=False, timeout=5, env=env)
+        elif t in ("clipboard", "paste"):
+            text = str(obj.get("text") or "")
+            _set_x_clipboard(text, env)
+            if t == "paste":
+                subprocess.run(["xdotool", "key", "--clearmodifiers", "ctrl+v"], check=False, timeout=2, env=env)
         elif t in ("keydown", "keyup"):
             key_name = _xdotool_key(obj)
             if not key_name:
@@ -221,11 +259,31 @@ async def _run_session(job: dict[str, Any]) -> None:
     def on_dc(channel) -> None:  # type: ignore[no-untyped-def]
         if channel.label != "axonos-input":
             return
+        clipboard_env = {**os.environ, "DISPLAY": _display()}
+        last_clipboard = ""
+
+        async def poll_remote_clipboard() -> None:
+            nonlocal last_clipboard
+            while pc.connectionState not in ("failed", "closed"):
+                try:
+                    text = await asyncio.to_thread(_get_x_clipboard, clipboard_env)
+                    if text and text != last_clipboard:
+                        last_clipboard = text
+                        channel.send(json.dumps({"t": "clipboard", "text": text}))
+                except Exception as e:
+                    logger.debug("clipboard poll: %s", e)
+                await asyncio.sleep(1.0)
+
+        clipboard_task = asyncio.create_task(poll_remote_clipboard())
 
         @channel.on("message")
         def on_msg(message) -> None:  # type: ignore[no-untyped-def]
             if isinstance(message, str):
                 _apply_input_json(message)
+
+        @channel.on("close")
+        def on_close() -> None:
+            clipboard_task.cancel()
 
     try:
         from PIL import Image  # type: ignore[import-untyped]

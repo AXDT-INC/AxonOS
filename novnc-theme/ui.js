@@ -417,6 +417,9 @@ const UI = {
 
     pasteClipboardToRemote(text) {
         if (!UI.rfb || typeof UI.rfb.clipboardPasteFrom !== 'function') {
+            if (typeof window.axonosWebRtcPasteClipboard === 'function') {
+                return window.axonosWebRtcPasteClipboard(text);
+            }
             return false;
         }
         UI.rfb.clipboardPasteFrom(text);

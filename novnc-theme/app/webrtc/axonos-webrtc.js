@@ -164,6 +164,13 @@ export async function connectAxonOSWebRTC(opts) {
 
     const pc = new RTCPeerConnection({ iceServers });
     const dc = pc.createDataChannel('axonos-input', { ordered: true });
+    window.axonosWebRtcPasteClipboard = (text) => {
+        if (dc.readyState !== 'open') {
+            return false;
+        }
+        dc.send(JSON.stringify({ t: 'clipboard', text: String(text || '') }));
+        return true;
+    };
 
     pc.addTransceiver('video', { direction: 'recvonly' });
     window.axonosWebRtcPc = pc;
@@ -348,6 +355,25 @@ export async function connectAxonOSWebRTC(opts) {
         }
     }
 
+    dc.onmessage = (ev) => {
+        let msg = null;
+        try {
+            msg = JSON.parse(ev.data);
+        } catch {
+            return;
+        }
+        if (!msg || msg.t !== 'clipboard' || typeof msg.text !== 'string') {
+            return;
+        }
+        if (UI && typeof UI.setClipboardTextarea === 'function') {
+            UI.clipboardLastRemoteText = msg.text;
+            UI.setClipboardTextarea(msg.text);
+        }
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            navigator.clipboard.writeText(msg.text).catch(() => {});
+        }
+    };
+
     function pointerToRemote(ev) {
         const r = video.getBoundingClientRect();
         const localX = Math.max(0, Math.min(imageWidth, ev.clientX - r.left - imageLeft));
@@ -476,6 +502,7 @@ export async function connectAxonOSWebRTC(opts) {
             clearInterval(metricsTimer);
         }
         await _cleanup(pc, video, sessionId, wallet);
+        window.axonosWebRtcPasteClipboard = null;
         window.axonosWebRtcTeardown = null;
     };
 
