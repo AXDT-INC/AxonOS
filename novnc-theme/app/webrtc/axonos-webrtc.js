@@ -145,7 +145,7 @@ export async function connectAxonOSWebRTC(opts) {
     video.playsInline = true;
     video.muted = true;
     video.tabIndex = 0;
-    video.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:5;cursor:none;';
+    video.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:5;cursor:default;';
 
     const pc = new RTCPeerConnection({ iceServers });
     const dc = pc.createDataChannel('axonos-input', { ordered: true });
