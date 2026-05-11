@@ -6,7 +6,7 @@ Environment:
   WEBRTC_AGENT_INTERNAL_KEY — shared secret with the gate (required)
   WEBRTC_GATE_INTERNAL_URL — gate base URL (default http://127.0.0.1:8889)
   WEBRTC_CAPTURE_DISPLAY — X display (default :0)
-  WEBRTC_CAPTURE_MAX_WIDTH — scale bound (default 1280)
+  WEBRTC_CAPTURE_MAX_WIDTH — scale bound (default 1920; matches the current session display)
   WEBRTC_CAPTURE_FPS — target FPS (default 15)
 """
 
@@ -48,11 +48,11 @@ def _display() -> str:
 
 
 def _max_width() -> int:
-    raw = (os.getenv("WEBRTC_CAPTURE_MAX_WIDTH") or "1280").strip()
+    raw = (os.getenv("WEBRTC_CAPTURE_MAX_WIDTH") or "1920").strip()
     try:
         return max(320, min(3840, int(raw)))
     except ValueError:
-        return 1280
+        return 1920
 
 
 def _fps() -> float:
