@@ -363,6 +363,12 @@ export async function connectAxonOSWebRTC(opts) {
                     packets_lost: pl,
                     connection_state: pc.connectionState,
                 }),
+            }).then((res) => {
+                // Metrics are optional; stop polling if auth has expired or rotated.
+                if ((res.status === 401 || res.status === 403) && metricsTimer) {
+                    clearInterval(metricsTimer);
+                    metricsTimer = null;
+                }
             });
         }).catch(() => {});
     };
