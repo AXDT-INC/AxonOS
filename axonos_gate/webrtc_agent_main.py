@@ -62,6 +62,13 @@ def _fps() -> float:
         return 15.0
 
 
+def _normalize_sdp(sdp: str) -> str:
+    """Keep SDP line endings in the strict CRLF form Chrome's parser expects."""
+    normalized = (sdp or "").replace("\r\n", "\n").replace("\r", "\n")
+    normalized = "\r\n".join(normalized.split("\n"))
+    return normalized.rstrip("\r\n") + "\r\n"
+
+
 def _apply_input_json(raw: str) -> None:
     try:
         obj = json.loads(raw)
@@ -276,7 +283,7 @@ async def _run_session(job: dict[str, Any]) -> None:
         _agent_fail(session_id, "no_local_description")
         return
 
-    payload = {"session_id": session_id, "sdp": sdp_local.sdp, "type": sdp_local.type}
+    payload = {"session_id": session_id, "sdp": _normalize_sdp(sdp_local.sdp), "type": sdp_local.type}
     async with aiohttp.ClientSession() as session:
         async with session.post(
             f"{gate}/api/webrtc/agent/answer",
