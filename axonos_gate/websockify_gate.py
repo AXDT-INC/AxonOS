@@ -638,6 +638,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                         import discount as _disc  # type: ignore[no-redef]
             except ImportError:
                 return self._send_json(503, {'ok': False, 'error': 'Discount module unavailable'})
+            policy = get_credit_policy()
             from decimal import Decimal as _D, InvalidOperation as _IO
             base_raw = (qs.get('base_eth', [''])[0] or '').strip()
             if base_raw:
