@@ -53,6 +53,14 @@ function _hideBanner() {
     }
 }
 
+function _normalizeSdp(sdp) {
+    return String(sdp || '')
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n')
+        .replace(/\n/g, '\r\n')
+        .replace(/(\r\n)+$/g, '') + '\r\n';
+}
+
 function _waitIceGathering(pc, ms) {
     return new Promise((resolve) => {
         if (pc.iceGatheringState === 'complete') {
@@ -227,8 +235,9 @@ export async function connectAxonOSWebRTC(opts) {
             return false;
         }
         if (j.has_answer && j.answer && j.answer.sdp) {
+            const answerSdp = _normalizeSdp(j.answer.sdp);
             await pc.setRemoteDescription(
-                new RTCSessionDescription({ type: 'answer', sdp: j.answer.sdp })
+                new RTCSessionDescription({ type: 'answer', sdp: answerSdp })
             );
             answerApplied = true;
         }
