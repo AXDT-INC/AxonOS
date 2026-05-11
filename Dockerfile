@@ -518,6 +518,7 @@ EXPOSE 9090/tcp
 COPY novnc-theme/axonos-theme.css /usr/share/novnc/app/styles/
 COPY novnc-theme/vnc.html /usr/share/novnc/
 COPY novnc-theme/ui.js /usr/share/novnc/app/
+COPY novnc-theme/app/webrtc/axonos-webrtc.js /usr/share/novnc/app/webrtc/axonos-webrtc.js
 COPY novnc-theme/icons/* /usr/share/novnc/app/images/icons/
 COPY novnc-theme/icon.png /usr/share/novnc/icon.png
 COPY novnc-theme/images/linux.svg /usr/share/novnc/app/images/linux.svg
