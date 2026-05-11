@@ -28,6 +28,7 @@ services:
       AXGT_SESSION_LAUNCHER_BIND_HOST: 0.0.0.0
       AXGT_SESSION_LAUNCHER_BIND_PORT: ${AXGT_SESSION_LAUNCHER_BIND_PORT:-8090}
       AXGT_SESSION_LAUNCHER_TOKEN: ${AXGT_SESSION_LAUNCHER_TOKEN:-change-me-launcher-token}
+      AXGT_CHALLENGE_DB_URL: postgresql://${POSTGRES_USER:-axonos_gate}:${POSTGRES_PASSWORD:-axonos_gate_secret}@postgres:5432/${POSTGRES_DB:-axonos_gate}
       # Session desktops must run the WebRTC capture agent; base gate stack disables it (see startup.sh).
       WEBRTC_AGENT_ENABLED: "true"
       AXGT_HOST_SESSION_CONTAINER_IMAGE: ${AXGT_HOST_SESSION_CONTAINER_IMAGE:-axonos:deposit-preview}
