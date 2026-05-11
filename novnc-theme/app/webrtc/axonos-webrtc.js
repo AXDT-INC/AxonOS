@@ -145,7 +145,22 @@ export async function connectAxonOSWebRTC(opts) {
     video.playsInline = true;
     video.muted = true;
     video.tabIndex = 0;
-    video.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:5;cursor:default;';
+    video.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:5;cursor:none;';
+
+    const cursor = document.createElement('div');
+    cursor.id = 'axonos_webrtc_cursor';
+    cursor.style.cssText = [
+        'position:absolute',
+        'left:0',
+        'top:0',
+        'width:18px',
+        'height:24px',
+        'z-index:6',
+        'pointer-events:none',
+        'transform:translate(-100px,-100px)',
+        'filter:drop-shadow(0 1px 1px #000)',
+    ].join(';');
+    cursor.innerHTML = '<svg width="18" height="24" viewBox="0 0 18 24" xmlns="http://www.w3.org/2000/svg"><path d="M1 1v18l5-5 3 8 3-1-3-8h7z" fill="white" stroke="black" stroke-width="1"/></svg>';
 
     const pc = new RTCPeerConnection({ iceServers });
     const dc = pc.createDataChannel('axonos-input', { ordered: true });
@@ -293,8 +308,10 @@ export async function connectAxonOSWebRTC(opts) {
 
     if (container) {
         container.appendChild(video);
+        container.appendChild(cursor);
     } else {
         document.body.appendChild(video);
+        document.body.appendChild(cursor);
     }
 
     let inputScaleX = 1;
@@ -335,6 +352,7 @@ export async function connectAxonOSWebRTC(opts) {
         const r = video.getBoundingClientRect();
         const localX = Math.max(0, Math.min(imageWidth, ev.clientX - r.left - imageLeft));
         const localY = Math.max(0, Math.min(imageHeight, ev.clientY - r.top - imageTop));
+        cursor.style.transform = `translate(${imageLeft + localX}px, ${imageTop + localY}px)`;
         return {
             x: Math.round(localX * inputScaleX),
             y: Math.round(localY * inputScaleY),
@@ -352,6 +370,9 @@ export async function connectAxonOSWebRTC(opts) {
     });
     video.addEventListener('contextmenu', (ev) => {
         ev.preventDefault();
+    });
+    video.addEventListener('mouseleave', () => {
+        cursor.style.transform = 'translate(-100px,-100px)';
     });
 
     window.addEventListener('keydown', (ev) => {
@@ -479,6 +500,10 @@ async function _cleanup(pc, video, sessionId, wallet) {
     }
     if (video && video.parentNode) {
         video.parentNode.removeChild(video);
+    }
+    const cursor = document.getElementById('axonos_webrtc_cursor');
+    if (cursor && cursor.parentNode) {
+        cursor.parentNode.removeChild(cursor);
     }
     _hideBanner();
 }
