@@ -261,6 +261,10 @@ def after_request(response):
         response.headers["Vary"] = "Origin"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Wallet-Address, X-AXGT-Auth-Token"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    # WebRTC status must never be cached (CDN/browser); stale JSON caused endless polling on wrong state.
+    if request.path.startswith("/api/webrtc/status"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+        response.headers["Pragma"] = "no-cache"
     return response
 
 @app.route('/api/auth/verify-wallet', methods=['POST', 'OPTIONS'])
