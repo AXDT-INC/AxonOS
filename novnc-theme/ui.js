@@ -415,8 +415,16 @@ const UI = {
             .catch(() => false);
     },
 
+    pasteClipboardToRemote(text) {
+        if (!UI.rfb || typeof UI.rfb.clipboardPasteFrom !== 'function') {
+            return false;
+        }
+        UI.rfb.clipboardPasteFrom(text);
+        return true;
+    },
+
     pullLocalClipboardToRemote() {
-        if (!UI.connected || !UI.rfb || !UI.clipboardHasBrowserPermission()) {
+        if (!UI.connected || !UI.clipboardHasBrowserPermission()) {
             return Promise.resolve(false);
         }
         return navigator.clipboard.readText()
@@ -428,8 +436,7 @@ const UI = {
                 UI.clipboardLastLocalText = text;
                 UI.clipboardLastRemoteText = text;
                 UI.setClipboardTextarea(text);
-                UI.rfb.clipboardPasteFrom(text);
-                return true;
+                return UI.pasteClipboardToRemote(text);
             })
             .catch(() => false);
     },
@@ -452,7 +459,7 @@ const UI = {
     },
 
     handleLocalClipboardPaste(e) {
-        if (!UI.connected || !UI.rfb) return;
+        if (!UI.connected) return;
         const active = document.activeElement;
         if (UI.clipboardLooksSelectableTarget(active)) return;
         const clipData = e.clipboardData || window.clipboardData;
@@ -462,7 +469,7 @@ const UI = {
         UI.clipboardLastLocalText = text;
         UI.clipboardLastRemoteText = text;
         UI.setClipboardTextarea(text);
-        UI.rfb.clipboardPasteFrom(text);
+        UI.pasteClipboardToRemote(text);
     },
 
     // Add a call to save settings when the element changes,
@@ -1157,7 +1164,7 @@ const UI = {
         UI.clipboardLastLocalText = "";
         UI.setClipboardTextarea("");
         UI.pushRemoteClipboardToLocal("");
-        UI.rfb.clipboardPasteFrom("");
+        UI.pasteClipboardToRemote("");
     },
 
     clipboardSend() {
@@ -1167,7 +1174,7 @@ const UI = {
         UI.clipboardLastRemoteText = text;
         UI.clipboardLastLocalText = text;
         UI.pushRemoteClipboardToLocal(text);
-        UI.rfb.clipboardPasteFrom(text);
+        UI.pasteClipboardToRemote(text);
         Log.Debug("<< UI.clipboardSend");
     },
 
