@@ -151,6 +151,18 @@ export async function connectAxonOSWebRTC(opts) {
     const dc = pc.createDataChannel('axonos-input', { ordered: true });
 
     pc.addTransceiver('video', { direction: 'recvonly' });
+    window.axonosWebRtcPc = pc;
+    window.axonosWebRtcVideo = video;
+
+    pc.ontrack = (ev) => {
+        console.log('AxonOS WebRTC track', ev.track && ev.track.kind, ev.streams);
+        if (ev.streams && ev.streams[0]) {
+            video.srcObject = ev.streams[0];
+        } else {
+            video.srcObject = new MediaStream([ev.track]);
+        }
+        video.play().catch((e) => console.warn('AxonOS WebRTC video.play failed', e));
+    };
 
     const pendingIce = [];
 
@@ -284,12 +296,6 @@ export async function connectAxonOSWebRTC(opts) {
     } else {
         document.body.appendChild(video);
     }
-
-    pc.ontrack = (ev) => {
-        if (ev.streams && ev.streams[0]) {
-            video.srcObject = ev.streams[0];
-        }
-    };
 
     let inputScaleX = 1;
     let inputScaleY = 1;
