@@ -145,10 +145,12 @@ def _set_x_clipboard(text: str, env: dict[str, str]) -> bool:
 
 
 def _get_x_clipboard(env: dict[str, str]) -> str:
-    # Some apps (e.g. xterm, certain GTK menus, vim) only populate PRIMARY on
-    # right-click → Copy / text-selection, while Ctrl+C always lands in
-    # CLIPBOARD. Check both and prefer CLIPBOARD when it has content so
-    # right-click copy in the remote desktop also propagates back to the host.
+    # Prefer CLIPBOARD (Ctrl+C / explicit right-click Copy in modern apps) but
+    # fall back to PRIMARY for the small set of apps (xterm, some legacy GTK
+    # menus) whose right-click Copy only populates PRIMARY. The CLIPBOARD-first
+    # order keeps text-selection PRIMARY from stomping the host clipboard once
+    # CLIPBOARD has any content, which it does for the rest of any normal
+    # session after the first explicit copy.
     for selection in ("clipboard", "primary"):
         try:
             p = subprocess.run(
