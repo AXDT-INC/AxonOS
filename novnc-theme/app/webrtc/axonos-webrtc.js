@@ -411,6 +411,25 @@ export async function connectAxonOSWebRTC(opts) {
         }
     }
 
+    // Push host clipboard into the remote X CLIPBOARD on user gestures. The
+    // 1.5 s `startClipboardAutoSync` interval covers the steady state, but it
+    // can lag user actions (e.g. user copies on host then immediately right-
+    // clicks in remote — the context menu would open before the next tick),
+    // and `navigator.clipboard.readText()` from setInterval also silently
+    // rejects when the document briefly loses focus. Tying a pull to the
+    // mousedown that OPENS the remote context menu (and to focus /
+    // visibilitychange when the tab returns to foreground) makes the X
+    // CLIPBOARD fresh by the time the user lands on "Paste".
+    function kickClipboardSync() {
+        if (typeof UI.pullLocalClipboardToRemote !== 'function') return;
+        try {
+            const p = UI.pullLocalClipboardToRemote();
+            if (p && typeof p.catch === 'function') {
+                p.catch(() => { /* readText can reject when document lost focus */ });
+            }
+        } catch { /* ignore */ }
+    }
+
     video.addEventListener('mousemove', (ev) => {
         ev.preventDefault();
         sendInput({ t: 'move', ...pointerToRemote(ev) });
@@ -418,6 +437,7 @@ export async function connectAxonOSWebRTC(opts) {
     video.addEventListener('mousedown', (ev) => {
         ev.preventDefault();
         focusPasteSink();
+        kickClipboardSync();
         sendInput({ t: 'click', button: ev.button + 1, ...pointerToRemote(ev) });
     });
     video.addEventListener('mouseenter', focusPasteSink);
@@ -426,6 +446,10 @@ export async function connectAxonOSWebRTC(opts) {
     });
     video.addEventListener('mouseleave', () => {
         cursor.style.transform = 'translate(-100px,-100px)';
+    });
+    window.addEventListener('focus', kickClipboardSync);
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') kickClipboardSync();
     });
 
     function pasteTextToRemote(text) {
