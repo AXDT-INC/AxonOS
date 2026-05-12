@@ -187,6 +187,28 @@ def _get_x_clipboard(env: dict[str, str]) -> str:
     return ""
 
 
+def _get_x_clipboard_for_browser_poll(env: dict[str, str]) -> str:
+    """CLIPBOARD only for WebRTC host sync — PRIMARY often mirrors icon labels / titles."""
+    if _truthy("WEBRTC_CLIPBOARD_POLL_PRIMARY"):
+        return _get_x_clipboard(env)
+    try:
+        p = subprocess.run(
+            ["xclip", "-selection", "clipboard", "-o"],
+            check=False,
+            timeout=2,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        if p.returncode == 0 and p.stdout:
+            text = p.stdout.decode("utf-8", errors="ignore")
+            if text:
+                return text
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return ""
+
+
 def _apply_input_json(raw: str) -> None:
     try:
         obj = json.loads(raw)
