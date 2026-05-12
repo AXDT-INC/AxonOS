@@ -168,6 +168,7 @@ def _apply_input_json(raw: str) -> None:
             text = str(obj.get("text") or "")
             _set_x_clipboard(text, env)
             if t == "paste":
+                time.sleep(0.08)
                 subprocess.run(["xdotool", "key", "--clearmodifiers", "ctrl+v"], check=False, timeout=2, env=env)
         elif t in ("keydown", "keyup"):
             key_name = _xdotool_key(obj)
