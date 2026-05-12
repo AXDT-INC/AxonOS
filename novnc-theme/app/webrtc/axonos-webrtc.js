@@ -401,15 +401,26 @@ export async function connectAxonOSWebRTC(opts) {
         };
     }
 
+    // Keeping pasteSink focused (rather than video) lets the browser deliver
+    // native paste events to it on Ctrl+V without needing clipboard permission.
+    function focusPasteSink() {
+        try {
+            pasteSink.focus({ preventScroll: true });
+        } catch {
+            try { pasteSink.focus(); } catch { /* ignore */ }
+        }
+    }
+
     video.addEventListener('mousemove', (ev) => {
         ev.preventDefault();
         sendInput({ t: 'move', ...pointerToRemote(ev) });
     });
     video.addEventListener('mousedown', (ev) => {
         ev.preventDefault();
-        video.focus();
+        focusPasteSink();
         sendInput({ t: 'click', button: ev.button + 1, ...pointerToRemote(ev) });
     });
+    video.addEventListener('mouseenter', focusPasteSink);
     video.addEventListener('contextmenu', (ev) => {
         ev.preventDefault();
     });
@@ -419,13 +430,6 @@ export async function connectAxonOSWebRTC(opts) {
 
     function pasteTextToRemote(text) {
         sendInput({ t: 'paste', text: String(text || '') });
-    }
-
-    function focusPasteSinkForRetry() {
-        pasteSink.value = '';
-        pasteSink.focus();
-        _setBanner('Clipboard permission needed. Press Ctrl+V again.', 'reconnecting');
-        setTimeout(_hideBanner, 2500);
     }
 
     function isLocalTextTarget(target) {
@@ -447,7 +451,10 @@ export async function connectAxonOSWebRTC(opts) {
         if (text) {
             ev.preventDefault();
             pasteTextToRemote(text);
-            video.focus();
+            // Drain the sink so subsequent pastes start clean and keep focus on
+            // pasteSink so future Ctrl+V keystrokes also receive paste events.
+            pasteSink.value = '';
+            focusPasteSink();
         }
     }, true);
 
@@ -460,21 +467,14 @@ export async function connectAxonOSWebRTC(opts) {
         }
         if (ev.key) {
             if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'v') {
-                ev.preventDefault();
-                if (navigator.clipboard && typeof navigator.clipboard.readText === 'function') {
-                    navigator.clipboard.readText()
-                        .then((text) => {
-                            if (text) {
-                                pasteTextToRemote(text);
-                            } else {
-                                focusPasteSinkForRetry();
-                            }
-                        })
-                        .catch(() => {
-                            focusPasteSinkForRetry();
-                        });
-                } else {
-                    focusPasteSinkForRetry();
+                // If pasteSink is focused (or we can focus it before the browser's
+                // paste action), let the browser dispatch a native paste event with
+                // clipboardData populated. The window paste listener forwards it to
+                // the remote desktop. This path needs no clipboard permission and
+                // therefore works even on freshly-rotated trycloudflare hostnames.
+                if (ev.target !== pasteSink) {
+                    pasteSink.value = '';
+                    focusPasteSink();
                 }
                 return;
             }
@@ -496,9 +496,6 @@ export async function connectAxonOSWebRTC(opts) {
             return;
         }
         if (isLocalTextTarget(ev.target)) {
-            if (ev.target === pasteSink) {
-                video.focus();
-            }
             return;
         }
         if (ev.key) {
@@ -563,9 +560,9 @@ export async function connectAxonOSWebRTC(opts) {
     UI.updateVisualState('connected');
     UI.showStatus('Connected (WebRTC)');
     try {
-        video.focus();
+        pasteSink.focus({ preventScroll: true });
     } catch {
-        /* ignore */
+        try { pasteSink.focus(); } catch { /* ignore */ }
     }
 
     window.axonosWebRtcTeardown = async () => {
