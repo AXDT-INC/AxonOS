@@ -441,7 +441,13 @@ const UI = {
         return navigator.clipboard.readText()
             .then((text) => {
                 if (typeof text !== 'string') return false;
-                if (text === UI.clipboardLastLocalText || text === UI.clipboardLastRemoteText) {
+                // Dedupe only on text we have already pushed to the remote.
+                // Skipping when `text === clipboardLastRemoteText` was wrong:
+                // `lastRemote` is updated by remote→host messages and can match
+                // the host OS clipboard without the remote X selection being in
+                // sync, which blocked pushes and matched "Paste sees old data
+                // until Ctrl+V" (Ctrl+V does not consult this check).
+                if (text === UI.clipboardLastLocalText) {
                     return false;
                 }
                 UI.setClipboardTextarea(text);
