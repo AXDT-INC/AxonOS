@@ -164,11 +164,11 @@ export async function connectAxonOSWebRTC(opts) {
 
     const pc = new RTCPeerConnection({ iceServers });
     const dc = pc.createDataChannel('axonos-input', { ordered: true });
-    window.axonosWebRtcPasteClipboard = (text) => {
+    window.axonosWebRtcPasteClipboard = (text, pasteNow) => {
         if (dc.readyState !== 'open') {
             return false;
         }
-        dc.send(JSON.stringify({ t: 'clipboard', text: String(text || '') }));
+        dc.send(JSON.stringify({ t: pasteNow ? 'paste' : 'clipboard', text: String(text || '') }));
         return true;
     };
 

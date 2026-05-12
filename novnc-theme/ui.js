@@ -415,10 +415,10 @@ const UI = {
             .catch(() => false);
     },
 
-    pasteClipboardToRemote(text) {
+    pasteClipboardToRemote(text, pasteNow) {
         if (!UI.rfb || typeof UI.rfb.clipboardPasteFrom !== 'function') {
             if (typeof window.axonosWebRtcPasteClipboard === 'function') {
-                return window.axonosWebRtcPasteClipboard(text);
+                return window.axonosWebRtcPasteClipboard(text, pasteNow === true);
             }
             return false;
         }
@@ -472,7 +472,7 @@ const UI = {
         UI.clipboardLastLocalText = text;
         UI.clipboardLastRemoteText = text;
         UI.setClipboardTextarea(text);
-        UI.pasteClipboardToRemote(text);
+        UI.pasteClipboardToRemote(text, true);
     },
 
     // Add a call to save settings when the element changes,
