@@ -315,7 +315,15 @@ async def _run_session(job: dict[str, Any]) -> None:
             nonlocal last_clipboard
             while pc.connectionState not in ("failed", "closed"):
                 try:
-                    text = await asyncio.to_thread(_get_x_clipboard, clipboard_env)
+                    # Use CLIPBOARD only here. `_get_x_clipboard` also reads PRIMARY;
+                    # on Xfce the desktop icon label (e.g. "New File") lives in PRIMARY
+                    # when the icon is selected. Pushing that to the browser runs
+                    # `navigator.clipboard.writeText`, which stomps the host OS
+                    # clipboard so `readText()` + host→remote sync paste "New File"
+                    # instead of what the user copied on the host. Explicit remote
+                    # copies still hit CLIPBOARD; PRIMARY-only apps can set
+                    # WEBRTC_CLIPBOARD_POLL_PRIMARY=1 to restore the old behavior.
+                    text = await asyncio.to_thread(_get_x_clipboard_for_browser_poll, clipboard_env)
                     if text and text != last_clipboard:
                         last_clipboard = text
                         channel.send(json.dumps({"t": "clipboard", "text": text}))
