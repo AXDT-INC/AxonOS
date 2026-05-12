@@ -401,6 +401,29 @@ export async function connectAxonOSWebRTC(opts) {
         cursor.style.transform = 'translate(-100px,-100px)';
     });
 
+    function fallbackClipboardText() {
+        const panel = document.getElementById('noVNC_clipboard_text');
+        return panel && typeof panel.value === 'string' ? panel.value : '';
+    }
+
+    function pasteTextToRemote(text) {
+        sendInput({ t: 'paste', text: String(text || '') });
+    }
+
+    window.addEventListener('paste', (ev) => {
+        if (!UI.connected) {
+            return;
+        }
+        if (ev.target && ev.target.tagName === 'INPUT') {
+            return;
+        }
+        const text = ev.clipboardData ? ev.clipboardData.getData('text/plain') : '';
+        if (text) {
+            ev.preventDefault();
+            pasteTextToRemote(text);
+        }
+    }, true);
+
     window.addEventListener('keydown', (ev) => {
         if (!UI.connected) {
             return;
@@ -414,20 +437,13 @@ export async function connectAxonOSWebRTC(opts) {
                 if (navigator.clipboard && typeof navigator.clipboard.readText === 'function') {
                     navigator.clipboard.readText()
                         .then((text) => {
-                            sendInput({ t: 'paste', text: String(text || '') });
+                            pasteTextToRemote(text || fallbackClipboardText());
                         })
                         .catch(() => {
-                            sendInput({
-                                t: 'keydown',
-                                key: ev.key,
-                                code: ev.code,
-                                ctrlKey: ev.ctrlKey,
-                                altKey: ev.altKey,
-                                shiftKey: ev.shiftKey,
-                                metaKey: ev.metaKey,
-                                repeat: ev.repeat,
-                            });
+                            pasteTextToRemote(fallbackClipboardText());
                         });
+                } else {
+                    pasteTextToRemote(fallbackClipboardText());
                 }
                 return;
             }
