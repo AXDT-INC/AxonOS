@@ -410,6 +410,27 @@ export async function connectAxonOSWebRTC(opts) {
         }
         if (ev.key) {
             ev.preventDefault();
+            if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'v') {
+                if (navigator.clipboard && typeof navigator.clipboard.readText === 'function') {
+                    navigator.clipboard.readText()
+                        .then((text) => {
+                            sendInput({ t: 'paste', text: String(text || '') });
+                        })
+                        .catch(() => {
+                            sendInput({
+                                t: 'keydown',
+                                key: ev.key,
+                                code: ev.code,
+                                ctrlKey: ev.ctrlKey,
+                                altKey: ev.altKey,
+                                shiftKey: ev.shiftKey,
+                                metaKey: ev.metaKey,
+                                repeat: ev.repeat,
+                            });
+                        });
+                }
+                return;
+            }
             sendInput({
                 t: 'keydown',
                 key: ev.key,
