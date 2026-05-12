@@ -162,6 +162,20 @@ export async function connectAxonOSWebRTC(opts) {
     ].join(';');
     cursor.innerHTML = '<svg width="18" height="24" viewBox="0 0 18 24" xmlns="http://www.w3.org/2000/svg"><path d="M1 1v18l5-5 3 8 3-1-3-8h7z" fill="white" stroke="black" stroke-width="1"/></svg>';
 
+    const pasteSink = document.createElement('textarea');
+    pasteSink.id = 'axonos_webrtc_paste_sink';
+    pasteSink.setAttribute('aria-hidden', 'true');
+    pasteSink.tabIndex = -1;
+    pasteSink.style.cssText = [
+        'position:fixed',
+        'left:-10000px',
+        'top:-10000px',
+        'width:1px',
+        'height:1px',
+        'opacity:0',
+        'pointer-events:none',
+    ].join(';');
+
     const pc = new RTCPeerConnection({ iceServers });
     const dc = pc.createDataChannel('axonos-input', { ordered: true });
     window.axonosWebRtcPasteClipboard = (text, pasteNow) => {
@@ -316,9 +330,11 @@ export async function connectAxonOSWebRTC(opts) {
     if (container) {
         container.appendChild(video);
         container.appendChild(cursor);
+        container.appendChild(pasteSink);
     } else {
         document.body.appendChild(video);
         document.body.appendChild(cursor);
+        document.body.appendChild(pasteSink);
     }
 
     let inputScaleX = 1;
@@ -410,17 +426,26 @@ export async function connectAxonOSWebRTC(opts) {
         sendInput({ t: 'paste', text: String(text || '') });
     }
 
+    function isLocalTextTarget(target) {
+        if (!target || target === pasteSink) {
+            return false;
+        }
+        const tag = target.tagName ? target.tagName.toLowerCase() : '';
+        return tag === 'input' || tag === 'textarea' || target.isContentEditable === true;
+    }
+
     window.addEventListener('paste', (ev) => {
         if (!UI.connected) {
             return;
         }
-        if (ev.target && ev.target.tagName === 'INPUT') {
+        if (isLocalTextTarget(ev.target)) {
             return;
         }
         const text = ev.clipboardData ? ev.clipboardData.getData('text/plain') : '';
         if (text) {
             ev.preventDefault();
             pasteTextToRemote(text);
+            video.focus();
         }
     }, true);
 
@@ -428,25 +453,24 @@ export async function connectAxonOSWebRTC(opts) {
         if (!UI.connected) {
             return;
         }
-        if (ev.target && ev.target.tagName === 'INPUT') {
+        if (isLocalTextTarget(ev.target)) {
             return;
         }
         if (ev.key) {
-            ev.preventDefault();
             if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'v') {
-                if (navigator.clipboard && typeof navigator.clipboard.readText === 'function') {
-                    navigator.clipboard.readText()
-                        .then((text) => {
-                            pasteTextToRemote(text || fallbackClipboardText());
-                        })
-                        .catch(() => {
-                            pasteTextToRemote(fallbackClipboardText());
-                        });
-                } else {
-                    pasteTextToRemote(fallbackClipboardText());
-                }
+                pasteSink.value = '';
+                pasteSink.focus();
+                // If the browser does not dispatch a paste event for this focus context,
+                // fall back to the last text visible in the clipboard panel.
+                setTimeout(() => {
+                    if (!pasteSink.value) {
+                        pasteTextToRemote(fallbackClipboardText());
+                        video.focus();
+                    }
+                }, 80);
                 return;
             }
+            ev.preventDefault();
             sendInput({
                 t: 'keydown',
                 key: ev.key,
@@ -463,7 +487,10 @@ export async function connectAxonOSWebRTC(opts) {
         if (!UI.connected) {
             return;
         }
-        if (ev.target && ev.target.tagName === 'INPUT') {
+        if (isLocalTextTarget(ev.target)) {
+            if (ev.target === pasteSink) {
+                video.focus();
+            }
             return;
         }
         if (ev.key) {
@@ -479,7 +506,6 @@ export async function connectAxonOSWebRTC(opts) {
             });
         }
     });
-
     let metricsTimer = null;
     const pollStats = () => {
         pc.getStats(null).then((report) => {
@@ -568,6 +594,10 @@ async function _cleanup(pc, video, sessionId, wallet) {
     const cursor = document.getElementById('axonos_webrtc_cursor');
     if (cursor && cursor.parentNode) {
         cursor.parentNode.removeChild(cursor);
+    }
+    const pasteSink = document.getElementById('axonos_webrtc_paste_sink');
+    if (pasteSink && pasteSink.parentNode) {
+        pasteSink.parentNode.removeChild(pasteSink);
     }
     _hideBanner();
 }
