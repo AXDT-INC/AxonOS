@@ -29,6 +29,7 @@ logging.basicConfig(
 logger = logging.getLogger("axonos.webrtc_agent")
 
 _AXT = "X-AxonOS-WebRTC-Agent-Key"
+_clipboard_owners: dict[str, subprocess.Popen[bytes]] = {}
 
 
 def _truthy(name: str) -> bool:
@@ -108,16 +109,25 @@ def _xdotool_key(obj: dict[str, Any]) -> str:
 
 def _set_x_clipboard(text: str, env: dict[str, str]) -> bool:
     data = text.encode("utf-8", errors="ignore")
-    commands = (
-        ["xclip", "-selection", "clipboard"],
-        ["xclip", "-selection", "primary"],
-    )
     ok = False
-    for cmd in commands:
+    for selection in ("clipboard", "primary"):
+        old = _clipboard_owners.pop(selection, None)
+        if old and old.poll() is None:
+            old.terminate()
         try:
-            p = subprocess.run(cmd, input=data, check=False, timeout=3, env=env)
-            ok = ok or p.returncode == 0
-        except (OSError, subprocess.TimeoutExpired):
+            p = subprocess.Popen(
+                ["xclip", "-selection", selection],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=env,
+            )
+            if p.stdin:
+                p.stdin.write(data)
+                p.stdin.close()
+            _clipboard_owners[selection] = p
+            ok = True
+        except (BrokenPipeError, OSError):
             continue
     return ok
 
