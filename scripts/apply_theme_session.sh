@@ -10,3 +10,24 @@ for p in $(xfconf-query -c xfce4-desktop -l 2>/dev/null | sed -n 's|^\(/backdrop
   xfconf-query -c xfce4-desktop -p "${p}last-image" -s "$W" 2>/dev/null || true
   xfconf-query -c xfce4-desktop -p "${p}image-style" -n -t int -s 5 2>/dev/null || true
 done
+
+# Disable screen lock / blanking. On this remote desktop the session is
+# already wallet-gated at the gate; an idle lockscreen only adds UX friction
+# and (crucially) its keyboard grab blocks xdotool/XTEST input from the
+# WebRTC agent, leaving users unable to type the unlock password.
+xset s off -dpms 2>/dev/null || true
+xset s noblank 2>/dev/null || true
+
+for key in \
+  "/saver/enabled" \
+  "/lock/enabled" \
+  "/saver/idle-activation/enabled"; do
+  xfconf-query -c xfce4-screensaver -p "$key" -n -t bool -s false 2>/dev/null \
+    || xfconf-query -c xfce4-screensaver -p "$key" -s false 2>/dev/null || true
+done
+
+# Stop any screensaver/locker that may already be running for this session.
+pkill -f xfce4-screensaver 2>/dev/null || true
+pkill -f xss-lock          2>/dev/null || true
+pkill -f light-locker      2>/dev/null || true
+pkill -f xscreensaver      2>/dev/null || true
