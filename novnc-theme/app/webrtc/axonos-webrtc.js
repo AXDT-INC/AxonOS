@@ -458,6 +458,12 @@ export async function connectAxonOSWebRTC(opts) {
         }
     }, true);
 
+    // Tracks keys whose keydown we deliberately suppressed (e.g. Ctrl+V's V) so
+    // we can also drop the matching keyup and avoid sending the remote a stray
+    // keyup for a key it never saw pressed. Keyed by ev.code for browser-stable
+    // identity (independent of modifier-altered ev.key values).
+    const suppressedKeyups = new Set();
+
     window.addEventListener('keydown', (ev) => {
         if (!UI.connected) {
             return;
@@ -475,6 +481,9 @@ export async function connectAxonOSWebRTC(opts) {
                 if (ev.target !== pasteSink) {
                     pasteSink.value = '';
                     focusPasteSink();
+                }
+                if (ev.code) {
+                    suppressedKeyups.add(ev.code);
                 }
                 return;
             }
@@ -500,6 +509,11 @@ export async function connectAxonOSWebRTC(opts) {
         }
         if (ev.key) {
             ev.preventDefault();
+            if (ev.code && suppressedKeyups.delete(ev.code)) {
+                // Matching keydown was intentionally not forwarded (paste shortcut).
+                // Drop the orphan keyup so the remote keymap state stays consistent.
+                return;
+            }
             sendInput({
                 t: 'keyup',
                 key: ev.key,

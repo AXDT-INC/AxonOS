@@ -112,8 +112,20 @@ def _set_x_clipboard(text: str, env: dict[str, str]) -> bool:
     ok = False
     for selection in ("clipboard", "primary"):
         old = _clipboard_owners.pop(selection, None)
-        if old and old.poll() is None:
-            old.terminate()
+        if old is not None:
+            try:
+                if old.poll() is None:
+                    old.terminate()
+                # Reap so the previous xclip doesn't linger as a zombie. Over a long
+                # session, accumulated zombies starve PIDs/FDs and make subsequent
+                # xdotool/xclip calls fail, which manifests as input "freezing".
+                old.wait(timeout=0.2)
+            except (subprocess.TimeoutExpired, OSError):
+                try:
+                    old.kill()
+                    old.wait(timeout=0.2)
+                except (subprocess.TimeoutExpired, OSError):
+                    pass
         try:
             p = subprocess.Popen(
                 ["xclip", "-selection", selection],
@@ -287,14 +299,45 @@ async def _run_session(job: dict[str, Any]) -> None:
 
         clipboard_task = asyncio.create_task(poll_remote_clipboard())
 
+        # Single-consumer queue keeps the data-channel callback non-blocking while
+        # preserving message order. Without this, a blocking xdotool/xclip call in
+        # `_apply_input_json` (notably the 80 ms sleep + ctrl+v injection on paste)
+        # stalls the event loop and freezes subsequent mouse clicks.
+        input_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=512)
+
+        async def input_worker() -> None:
+            while True:
+                msg = await input_queue.get()
+                try:
+                    await asyncio.to_thread(_apply_input_json, msg)
+                except Exception as e:
+                    logger.debug("input worker: %s", e)
+                finally:
+                    input_queue.task_done()
+
+        input_task = asyncio.create_task(input_worker())
+
         @channel.on("message")
         def on_msg(message) -> None:  # type: ignore[no-untyped-def]
-            if isinstance(message, str):
-                _apply_input_json(message)
+            if not isinstance(message, str):
+                return
+            try:
+                input_queue.put_nowait(message)
+            except asyncio.QueueFull:
+                # Drop oldest mouse-move-like messages to keep the loop responsive
+                # under bursts. We deliberately do not drop clicks or paste/key
+                # events when the queue is full; they are rare and latency-sensitive.
+                try:
+                    input_queue.get_nowait()
+                    input_queue.task_done()
+                    input_queue.put_nowait(message)
+                except asyncio.QueueEmpty:
+                    pass
 
         @channel.on("close")
         def on_close() -> None:
             clipboard_task.cancel()
+            input_task.cancel()
 
     try:
         from PIL import Image  # type: ignore[import-untyped]
