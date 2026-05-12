@@ -107,25 +107,42 @@ def _xdotool_key(obj: dict[str, Any]) -> str:
     return ""
 
 
+def _reap_xclip_popen(proc: subprocess.Popen[bytes] | None) -> None:
+    """Wait for a prior xclip Popen to finish; avoid SIGTERM during its handoff.
+
+    xclip (silent mode) claims the selection, forks a child to serve it, and the
+    parent exits quickly. If we SIGTERM the parent while it is still between
+    those steps—or before the child is ready—CLIPBOARD can be left empty or
+    stale while GTK/Qt \"Paste\" reads it. Back-to-back ``t:clipboard`` messages
+    (e.g. overlapping ``navigator.clipboard.readText()``) used to call
+    ``terminate()`` here whenever ``poll()`` was still None, which matched that
+    failure mode; Ctrl+V usually sends a single ``t:paste`` so it did not hit it.
+    """
+    if proc is None:
+        return
+    try:
+        proc.wait(timeout=3.0)
+    except subprocess.TimeoutExpired:
+        try:
+            if proc.poll() is None:
+                proc.terminate()
+            proc.wait(timeout=0.2)
+        except (subprocess.TimeoutExpired, OSError):
+            try:
+                proc.kill()
+                proc.wait(timeout=0.2)
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+    except OSError:
+        pass
+
+
 def _set_x_clipboard(text: str, env: dict[str, str]) -> bool:
     data = text.encode("utf-8", errors="ignore")
     ok = False
     for selection in ("clipboard", "primary"):
         old = _clipboard_owners.pop(selection, None)
-        if old is not None:
-            try:
-                if old.poll() is None:
-                    old.terminate()
-                # Reap so the previous xclip doesn't linger as a zombie. Over a long
-                # session, accumulated zombies starve PIDs/FDs and make subsequent
-                # xdotool/xclip calls fail, which manifests as input "freezing".
-                old.wait(timeout=0.2)
-            except (subprocess.TimeoutExpired, OSError):
-                try:
-                    old.kill()
-                    old.wait(timeout=0.2)
-                except (subprocess.TimeoutExpired, OSError):
-                    pass
+        _reap_xclip_popen(old)
         try:
             p = subprocess.Popen(
                 ["xclip", "-selection", selection],
