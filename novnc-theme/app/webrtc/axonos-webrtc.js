@@ -434,10 +434,23 @@ export async function connectAxonOSWebRTC(opts) {
         ev.preventDefault();
         sendInput({ t: 'move', ...pointerToRemote(ev) });
     });
-    video.addEventListener('mousedown', (ev) => {
+    video.addEventListener('mousedown', async (ev) => {
         ev.preventDefault();
         focusPasteSink();
-        kickClipboardSync();
+        // `pullLocalClipboardToRemote` is async: if we fire-and-forget then
+        // `sendInput(click)` below, the data channel delivers the click BEFORE
+        // the `t:clipboard` message. A left-click on remote "Paste" then reads
+        // stale X CLIPBOARD. Ctrl+V worked because `t:paste` sets clipboard and
+        // injects in one agent handler. Await the pull so `dc.send` order is
+        // clipboard first, click second.
+        try {
+            if (typeof UI.pullLocalClipboardToRemote === 'function') {
+                const p = UI.pullLocalClipboardToRemote();
+                if (p && typeof p.then === 'function') {
+                    await p;
+                }
+            }
+        } catch { /* readText can reject when document lost focus */ }
         sendInput({ t: 'click', button: ev.button + 1, ...pointerToRemote(ev) });
     });
     video.addEventListener('mouseenter', focusPasteSink);
