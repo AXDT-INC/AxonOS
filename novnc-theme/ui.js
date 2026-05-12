@@ -69,6 +69,19 @@ const UI = {
     clipboardLastRemoteText: "",
     clipboardLastLocalText: "",
     clipboardApplyingRemoteText: false,
+    /** WebRTC: last time/text we pushed from host to remote (pull or Ctrl+V paste). */
+    webrtcHostPushAt: 0,
+    webrtcHostPushText: "",
+
+    markHostClipboardSentToRemote(text) {
+        if (typeof text !== 'string' || text.length === 0) {
+            UI.webrtcHostPushAt = 0;
+            UI.webrtcHostPushText = "";
+            return;
+        }
+        UI.webrtcHostPushAt = Date.now();
+        UI.webrtcHostPushText = text;
+    },
 
     prime() {
         const initResult = (typeof WebUtil.initSettings === 'function')
@@ -426,7 +439,11 @@ const UI = {
     pasteClipboardToRemote(text, pasteNow) {
         if (!UI.rfb || typeof UI.rfb.clipboardPasteFrom !== 'function') {
             if (typeof window.axonosWebRtcPasteClipboard === 'function') {
-                return window.axonosWebRtcPasteClipboard(text, pasteNow === true);
+                const ok = window.axonosWebRtcPasteClipboard(text, pasteNow === true);
+                if (ok && text && typeof UI.markHostClipboardSentToRemote === 'function') {
+                    UI.markHostClipboardSentToRemote(text);
+                }
+                return ok;
             }
             return false;
         }
@@ -463,6 +480,7 @@ const UI = {
                 if (pushed) {
                     UI.clipboardLastLocalText = text;
                     UI.clipboardLastRemoteText = text;
+                    UI.markHostClipboardSentToRemote(text);
                 }
                 return pushed;
             })
@@ -1190,6 +1208,7 @@ const UI = {
     clipboardClear() {
         UI.clipboardLastRemoteText = "";
         UI.clipboardLastLocalText = "";
+        UI.markHostClipboardSentToRemote("");
         UI.setClipboardTextarea("");
         UI.pushRemoteClipboardToLocal("");
         UI.pasteClipboardToRemote("");

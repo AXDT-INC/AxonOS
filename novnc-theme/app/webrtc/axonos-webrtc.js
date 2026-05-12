@@ -381,12 +381,38 @@ export async function connectAxonOSWebRTC(opts) {
         if (!msg || msg.t !== 'clipboard' || typeof msg.text !== 'string') {
             return;
         }
+        const incoming = msg.text;
         if (UI && typeof UI.setClipboardTextarea === 'function') {
-            UI.clipboardLastRemoteText = msg.text;
-            UI.setClipboardTextarea(msg.text);
+            UI.clipboardLastRemoteText = incoming;
+            UI.setClipboardTextarea(incoming);
         }
-        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-            navigator.clipboard.writeText(msg.text).catch(() => {});
+        // Remote poll can push PRIMARY noise (e.g. "New File" from the desktop)
+        // while the host user just copied real text. Unconditional writeText
+        // stomps the OS clipboard so readText() pulls garbage for right-click
+        // Paste; Ctrl+V often still sees the real clip via paste events.
+        const protectMs = 8000;
+        const pushAt = UI && typeof UI.webrtcHostPushAt === 'number' ? UI.webrtcHostPushAt : 0;
+        const pushText = UI && typeof UI.webrtcHostPushText === 'string' ? UI.webrtcHostPushText : '';
+        const recent = pushAt > 0 && Date.now() - pushAt < protectMs;
+        if (navigator.clipboard && typeof navigator.clipboard.readText === 'function' &&
+            typeof navigator.clipboard.writeText === 'function') {
+            navigator.clipboard.readText()
+                .then((host) => {
+                    if (
+                        recent &&
+                        pushText &&
+                        host === pushText &&
+                        incoming !== host
+                    ) {
+                        return;
+                    }
+                    return navigator.clipboard.writeText(incoming);
+                })
+                .catch(() => {
+                    navigator.clipboard.writeText(incoming).catch(() => {});
+                });
+        } else if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            navigator.clipboard.writeText(incoming).catch(() => {});
         }
     };
 
@@ -466,7 +492,15 @@ export async function connectAxonOSWebRTC(opts) {
     });
 
     function pasteTextToRemote(text) {
-        sendInput({ t: 'paste', text: String(text || '') });
+        const s = String(text || '');
+        sendInput({ t: 'paste', text: s });
+        if (UI && s) {
+            UI.clipboardLastLocalText = s;
+            UI.clipboardLastRemoteText = s;
+            if (typeof UI.markHostClipboardSentToRemote === 'function') {
+                UI.markHostClipboardSentToRemote(s);
+            }
+        }
     }
 
     function isLocalTextTarget(target) {
