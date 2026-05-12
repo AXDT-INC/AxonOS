@@ -145,19 +145,26 @@ def _set_x_clipboard(text: str, env: dict[str, str]) -> bool:
 
 
 def _get_x_clipboard(env: dict[str, str]) -> str:
-    try:
-        p = subprocess.run(
-            ["xclip", "-selection", "clipboard", "-o"],
-            check=False,
-            timeout=2,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
-        if p.returncode == 0:
-            return p.stdout.decode("utf-8", errors="ignore")
-    except (OSError, subprocess.TimeoutExpired):
-        pass
+    # Some apps (e.g. xterm, certain GTK menus, vim) only populate PRIMARY on
+    # right-click → Copy / text-selection, while Ctrl+C always lands in
+    # CLIPBOARD. Check both and prefer CLIPBOARD when it has content so
+    # right-click copy in the remote desktop also propagates back to the host.
+    for selection in ("clipboard", "primary"):
+        try:
+            p = subprocess.run(
+                ["xclip", "-selection", selection, "-o"],
+                check=False,
+                timeout=2,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+            if p.returncode == 0 and p.stdout:
+                text = p.stdout.decode("utf-8", errors="ignore")
+                if text:
+                    return text
+        except (OSError, subprocess.TimeoutExpired):
+            continue
     return ""
 
 
