@@ -579,9 +579,25 @@ export async function connectAxonOSWebRTC(opts) {
         try { pasteSink.focus(); } catch { /* ignore */ }
     }
 
+    // Host → remote clipboard auto-sync. Without this, the X CLIPBOARD inside
+    // the axonos session is only updated when the user explicitly hits Ctrl+V
+    // (which forwards clipboardData via the native paste event). Right-click →
+    // Paste in a remote app would then paste a stale X selection. Starting the
+    // poll here mirrors what the classic RFB path does in connectFinished.
+    if (typeof UI.startClipboardAutoSync === 'function') {
+        try {
+            UI.startClipboardAutoSync();
+        } catch (e) {
+            console.warn('AxonOS WebRTC clipboard auto-sync start failed', e);
+        }
+    }
+
     window.axonosWebRtcTeardown = async () => {
         if (metricsTimer) {
             clearInterval(metricsTimer);
+        }
+        if (typeof UI.stopClipboardAutoSync === 'function') {
+            try { UI.stopClipboardAutoSync(); } catch { /* ignore */ }
         }
         await _cleanup(pc, video, sessionId, wallet);
         window.axonosWebRtcPasteClipboard = null;
