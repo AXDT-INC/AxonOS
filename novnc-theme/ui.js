@@ -398,7 +398,15 @@ const UI = {
         return navigator.clipboard.readText()
             .then((text) => {
                 if (typeof text !== 'string') return false;
-                UI.clipboardLastLocalText = text;
+                // Only refresh the panel display; do NOT seed
+                // `clipboardLastLocalText`. Pre-seeding the dedup state from
+                // the post-connect prime made `pullLocalClipboardToRemote`'s
+                // very first tick (and every subsequent tick reading the same
+                // text) believe the value had already been pushed to the
+                // remote, so right-click → Paste in remote apps kept seeing a
+                // stale X CLIPBOARD until the user changed host clipboard
+                // content. The dedup state is now owned solely by the
+                // actual sync paths (push success, remote→host echo).
                 UI.setClipboardTextarea(text);
                 return true;
             })
@@ -436,10 +444,21 @@ const UI = {
                 if (text === UI.clipboardLastLocalText || text === UI.clipboardLastRemoteText) {
                     return false;
                 }
-                UI.clipboardLastLocalText = text;
-                UI.clipboardLastRemoteText = text;
                 UI.setClipboardTextarea(text);
-                return UI.pasteClipboardToRemote(text);
+                // Only memoize after we know the push actually reached the
+                // remote. If the WebRTC data channel was still `connecting`
+                // (or the RFB socket was momentarily wedged), updating the
+                // dedup state up front made every subsequent tick reading
+                // the same text a no-op, so the user's clipboard could only
+                // get to the remote via the explicit Ctrl+V → `t:'paste'`
+                // path, which is exactly the symptom reported for
+                // right-click → Paste in remote apps.
+                const pushed = UI.pasteClipboardToRemote(text);
+                if (pushed) {
+                    UI.clipboardLastLocalText = text;
+                    UI.clipboardLastRemoteText = text;
+                }
+                return pushed;
             })
             .catch(() => false);
     },
