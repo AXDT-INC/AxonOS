@@ -417,13 +417,15 @@ export async function connectAxonOSWebRTC(opts) {
         cursor.style.transform = 'translate(-100px,-100px)';
     });
 
-    function fallbackClipboardText() {
-        const panel = document.getElementById('noVNC_clipboard_text');
-        return panel && typeof panel.value === 'string' ? panel.value : '';
-    }
-
     function pasteTextToRemote(text) {
         sendInput({ t: 'paste', text: String(text || '') });
+    }
+
+    function focusPasteSinkForRetry() {
+        pasteSink.value = '';
+        pasteSink.focus();
+        _setBanner('Clipboard permission needed. Press Ctrl+V again.', 'reconnecting');
+        setTimeout(_hideBanner, 2500);
     }
 
     function isLocalTextTarget(target) {
@@ -458,16 +460,22 @@ export async function connectAxonOSWebRTC(opts) {
         }
         if (ev.key) {
             if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'v') {
-                pasteSink.value = '';
-                pasteSink.focus();
-                // If the browser does not dispatch a paste event for this focus context,
-                // fall back to the last text visible in the clipboard panel.
-                setTimeout(() => {
-                    if (!pasteSink.value) {
-                        pasteTextToRemote(fallbackClipboardText());
-                        video.focus();
-                    }
-                }, 80);
+                ev.preventDefault();
+                if (navigator.clipboard && typeof navigator.clipboard.readText === 'function') {
+                    navigator.clipboard.readText()
+                        .then((text) => {
+                            if (text) {
+                                pasteTextToRemote(text);
+                            } else {
+                                focusPasteSinkForRetry();
+                            }
+                        })
+                        .catch(() => {
+                            focusPasteSinkForRetry();
+                        });
+                } else {
+                    focusPasteSinkForRetry();
+                }
                 return;
             }
             ev.preventDefault();
