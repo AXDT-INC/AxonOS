@@ -64,6 +64,18 @@ def _extra_args_tokens() -> List[str]:
     return shlex.split(raw)
 
 
+def _shm_size_for_run() -> Optional[str]:
+    """
+    Docker default /dev/shm is tiny; GLX and many GPU apps need more (matches main axonos shm_size).
+    Unset env -> 32g. Explicit empty string -> omit --shm-size (not recommended).
+    """
+    key = "AXGT_HOST_SESSION_CONTAINER_SHM_SIZE"
+    if key not in os.environ:
+        return "32g"
+    raw = (os.getenv(key) or "").strip()
+    return raw or None
+
+
 def _network_name() -> str:
     return (os.getenv("AXGT_HOST_SESSION_CONTAINER_NETWORK") or "").strip()
 
@@ -118,17 +130,24 @@ def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], 
         "--rm",
         "--name",
         name,
-        "--gpus",
-        f"device={gpu_spec}",
-        "-e",
-        f"AXGT_SESSION_ID={session_id}",
-        "-e",
-        f"AXGT_WALLET_ADDRESS={wallet}",
-        "-e",
-        f"AXGT_REQUESTED_PROFILE={profile}",
-        "-e",
-        f"AXGT_ASSIGNED_GPU_IDS={gpu_spec}",
     ]
+    shm = _shm_size_for_run()
+    if shm:
+        cmd.extend(["--shm-size", shm])
+    cmd.extend(
+        [
+            "--gpus",
+            f"device={gpu_spec}",
+            "-e",
+            f"AXGT_SESSION_ID={session_id}",
+            "-e",
+            f"AXGT_WALLET_ADDRESS={wallet}",
+            "-e",
+            f"AXGT_REQUESTED_PROFILE={profile}",
+            "-e",
+            f"AXGT_ASSIGNED_GPU_IDS={gpu_spec}",
+        ]
+    )
 
     for env_name in _env_passthrough_names():
         env_value = os.getenv(env_name)

@@ -30,7 +30,8 @@ Set on host:
 - `AXGT_HOST_SESSION_CONTAINER_IMAGE=<image to launch per user>`
 - optional `AXGT_HOST_SESSION_CONTAINER_COMMAND=/startup.sh`
 - optional `AXGT_HOST_SESSION_CONTAINER_NETWORK=<docker-network>`
-- optional `AXGT_HOST_SESSION_CONTAINER_EXTRA_ARGS=...`
+- optional `AXGT_HOST_SESSION_CONTAINER_EXTRA_ARGS=...` (avoid duplicating `--shm-size`; use next line instead)
+- optional `AXGT_HOST_SESSION_CONTAINER_SHM_SIZE=32g` (default when unset; matches main `axonos` `shm_size` intent for GLX)
 - optional `AXGT_HOST_SESSION_ENV_PASSTHROUGH=AXGT_CHAIN_ID,AXGT_RPC_URL,...`
 - optional bind:
   - `AXGT_SESSION_LAUNCHER_BIND_HOST=127.0.0.1`
