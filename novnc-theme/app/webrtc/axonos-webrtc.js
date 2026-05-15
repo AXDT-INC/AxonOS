@@ -449,7 +449,7 @@ export async function connectAxonOSWebRTC(opts) {
     function kickClipboardSync() {
         if (typeof UI.pullLocalClipboardToRemote !== 'function') return;
         try {
-            const p = UI.pullLocalClipboardToRemote();
+            const p = UI.pullLocalClipboardToRemote({ timeoutMs: 800 });
             if (p && typeof p.catch === 'function') {
                 p.catch(() => { /* readText can reject when document lost focus */ });
             }
@@ -460,23 +460,31 @@ export async function connectAxonOSWebRTC(opts) {
         ev.preventDefault();
         sendInput({ t: 'move', ...pointerToRemote(ev) });
     });
+    const clipboardBeforeClickMs = 200;
+
+    async function syncClipboardBeforeClick(ev) {
+        // Only right-click needs host clipboard on X CLIPBOARD before the
+        // remote context menu opens. Left/middle clicks must not call or await
+        // `readText()` — after host paste the API can hang for seconds and
+        // blocks every click. Ctrl+V uses `t:paste` (set + inject in one step).
+        if (ev.button !== 2) {
+            return;
+        }
+        if (typeof UI.pullLocalClipboardToRemote !== 'function') {
+            return;
+        }
+        try {
+            const p = UI.pullLocalClipboardToRemote({ timeoutMs: clipboardBeforeClickMs });
+            if (p && typeof p.then === 'function') {
+                await p.catch(() => { /* readText can reject when document lost focus */ });
+            }
+        } catch { /* ignore */ }
+    }
+
     video.addEventListener('mousedown', async (ev) => {
         ev.preventDefault();
         focusPasteSink();
-        // `pullLocalClipboardToRemote` is async: if we fire-and-forget then
-        // `sendInput(click)` below, the data channel delivers the click BEFORE
-        // the `t:clipboard` message. A left-click on remote "Paste" then reads
-        // stale X CLIPBOARD. Ctrl+V worked because `t:paste` sets clipboard and
-        // injects in one agent handler. Await the pull so `dc.send` order is
-        // clipboard first, click second.
-        try {
-            if (typeof UI.pullLocalClipboardToRemote === 'function') {
-                const p = UI.pullLocalClipboardToRemote();
-                if (p && typeof p.then === 'function') {
-                    await p;
-                }
-            }
-        } catch { /* readText can reject when document lost focus */ }
+        await syncClipboardBeforeClick(ev);
         sendInput({ t: 'click', button: ev.button + 1, ...pointerToRemote(ev) });
     });
     video.addEventListener('mouseenter', focusPasteSink);
@@ -521,6 +529,7 @@ export async function connectAxonOSWebRTC(opts) {
         const text = ev.clipboardData ? ev.clipboardData.getData('text/plain') : '';
         if (text) {
             ev.preventDefault();
+            ev.stopImmediatePropagation();
             pasteTextToRemote(text);
             // Drain the sink so subsequent pastes start clean and keep focus on
             // pasteSink so future Ctrl+V keystrokes also receive paste events.

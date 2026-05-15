@@ -69,6 +69,8 @@ const UI = {
     clipboardLastRemoteText: "",
     clipboardLastLocalText: "",
     clipboardApplyingRemoteText: false,
+    /** Single in-flight `readText()` — overlapping reads hang after host paste. */
+    clipboardReadInFlight: null,
     /** WebRTC: last time/text we pushed from host to remote (pull or Ctrl+V paste). */
     webrtcHostPushAt: 0,
     webrtcHostPushText: "",
@@ -451,40 +453,55 @@ const UI = {
         return true;
     },
 
-    pullLocalClipboardToRemote() {
+    _pushLocalClipboardText(text) {
+        if (typeof text !== 'string') return false;
+        // Dedupe only on text we have already pushed to the remote.
+        if (text === UI.clipboardLastLocalText) {
+            return false;
+        }
+        UI.setClipboardTextarea(text);
+        const pushed = UI.pasteClipboardToRemote(text);
+        if (pushed) {
+            UI.clipboardLastLocalText = text;
+            UI.clipboardLastRemoteText = text;
+            UI.markHostClipboardSentToRemote(text);
+        }
+        return pushed;
+    },
+
+    pullLocalClipboardToRemote(opts) {
         if (!UI.connected || !UI.clipboardHasBrowserPermission()) {
             return Promise.resolve(false);
         }
-        return navigator.clipboard.readText()
+        const knownText = opts && typeof opts.knownText === 'string' ? opts.knownText : null;
+        if (knownText !== null) {
+            return Promise.resolve(UI._pushLocalClipboardText(knownText));
+        }
+        if (UI.clipboardReadInFlight) {
+            return UI.clipboardReadInFlight;
+        }
+        const timeoutMs = (opts && typeof opts.timeoutMs === 'number') ? opts.timeoutMs : 0;
+        const readP = navigator.clipboard.readText();
+        const raced = timeoutMs > 0
+            ? Promise.race([
+                readP,
+                new Promise((resolve) => { setTimeout(() => resolve('__clipboard_timeout__'), timeoutMs); }),
+            ])
+            : readP;
+        const p = raced
             .then((text) => {
+                if (text === '__clipboard_timeout__') return false;
                 if (typeof text !== 'string') return false;
-                // Dedupe only on text we have already pushed to the remote.
-                // Skipping when `text === clipboardLastRemoteText` was wrong:
-                // `lastRemote` is updated by remote→host messages and can match
-                // the host OS clipboard without the remote X selection being in
-                // sync, which blocked pushes and matched "Paste sees old data
-                // until Ctrl+V" (Ctrl+V does not consult this check).
-                if (text === UI.clipboardLastLocalText) {
-                    return false;
-                }
-                UI.setClipboardTextarea(text);
-                // Only memoize after we know the push actually reached the
-                // remote. If the WebRTC data channel was still `connecting`
-                // (or the RFB socket was momentarily wedged), updating the
-                // dedup state up front made every subsequent tick reading
-                // the same text a no-op, so the user's clipboard could only
-                // get to the remote via the explicit Ctrl+V → `t:'paste'`
-                // path, which is exactly the symptom reported for
-                // right-click → Paste in remote apps.
-                const pushed = UI.pasteClipboardToRemote(text);
-                if (pushed) {
-                    UI.clipboardLastLocalText = text;
-                    UI.clipboardLastRemoteText = text;
-                    UI.markHostClipboardSentToRemote(text);
-                }
-                return pushed;
+                return UI._pushLocalClipboardText(text);
             })
-            .catch(() => false);
+            .catch(() => false)
+            .finally(() => {
+                if (UI.clipboardReadInFlight === p) {
+                    UI.clipboardReadInFlight = null;
+                }
+            });
+        UI.clipboardReadInFlight = p;
+        return p;
     },
 
     startClipboardAutoSync() {
@@ -492,8 +509,11 @@ const UI = {
         UI.clipboardAutoSyncEnabled = UI.clipboardHasBrowserPermission();
         UI.syncClipboardPanelValueFromLocal();
         if (!UI.clipboardAutoSyncEnabled) return;
-        UI.pullLocalClipboardToRemote();
-        UI.clipboardAutoPollId = window.setInterval(UI.pullLocalClipboardToRemote, 1500);
+        UI.pullLocalClipboardToRemote({ timeoutMs: 800 });
+        UI.clipboardAutoPollId = window.setInterval(
+            () => UI.pullLocalClipboardToRemote({ timeoutMs: 800 }),
+            1500,
+        );
     },
 
     stopClipboardAutoSync() {
@@ -506,6 +526,10 @@ const UI = {
 
     handleLocalClipboardPaste(e) {
         if (!UI.connected) return;
+        // WebRTC path registers its own capture-phase paste handler.
+        if (typeof window.axonosWebRtcPasteClipboard === 'function') {
+            return;
+        }
         const active = document.activeElement;
         if (UI.clipboardLooksSelectableTarget(active)) return;
         const clipData = e.clipboardData || window.clipboardData;
