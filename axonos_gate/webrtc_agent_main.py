@@ -373,22 +373,53 @@ async def _run_session(job: dict[str, Any]) -> None:
 
         input_task = asyncio.create_task(input_worker())
 
+        def _input_kind(raw: str) -> str:
+            try:
+                obj = json.loads(raw)
+            except json.JSONDecodeError:
+                return ""
+            if not isinstance(obj, dict):
+                return ""
+            return (obj.get("t") or obj.get("type") or "").strip().lower()
+
+        def _enqueue_input(raw: str) -> None:
+            kind = _input_kind(raw)
+            if kind in ("move", "mousemove") and input_queue.full():
+                return
+            try:
+                input_queue.put_nowait(raw)
+                return
+            except asyncio.QueueFull:
+                pass
+            # Evict oldest move events only; never drop clicks, paste, or keys.
+            backlog: list[str] = []
+            dropped_move = False
+            while True:
+                try:
+                    old = input_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                input_queue.task_done()
+                if not dropped_move and _input_kind(old) in ("move", "mousemove"):
+                    dropped_move = True
+                    continue
+                backlog.append(old)
+            for item in backlog:
+                try:
+                    input_queue.put_nowait(item)
+                except asyncio.QueueFull:
+                    break
+            try:
+                input_queue.put_nowait(raw)
+            except asyncio.QueueFull:
+                if kind not in ("move", "mousemove"):
+                    logger.debug("input queue full; dropped %s", kind or "message")
+
         @channel.on("message")
         def on_msg(message) -> None:  # type: ignore[no-untyped-def]
             if not isinstance(message, str):
                 return
-            try:
-                input_queue.put_nowait(message)
-            except asyncio.QueueFull:
-                # Drop oldest mouse-move-like messages to keep the loop responsive
-                # under bursts. We deliberately do not drop clicks or paste/key
-                # events when the queue is full; they are rare and latency-sensitive.
-                try:
-                    input_queue.get_nowait()
-                    input_queue.task_done()
-                    input_queue.put_nowait(message)
-                except asyncio.QueueEmpty:
-                    pass
+            _enqueue_input(message)
 
         @channel.on("close")
         def on_close() -> None:
