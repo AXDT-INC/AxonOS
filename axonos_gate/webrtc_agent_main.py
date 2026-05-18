@@ -336,6 +336,109 @@ def _mousemove(x: float, y: float, env: dict[str, str]) -> None:
     )
 
 
+def _reset_mouse_button_state(env: dict[str, str] | None = None) -> None:
+    """Clear tracked mask; optionally release stuck buttons on the X display."""
+    global _mouse_button_mask
+    if _mouse_button_mask and env is not None:
+        _sync_mouse_buttons(0, env)
+    else:
+        _mouse_button_mask = 0
+
+
+def _input_kind_from_raw(raw: str) -> str:
+    try:
+        obj = json.loads(raw)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(obj, dict):
+        return ""
+    return (obj.get("t") or obj.get("type") or "").strip().lower()
+
+
+def _input_buttons_from_raw(raw: str) -> int:
+    try:
+        obj = json.loads(raw)
+    except json.JSONDecodeError:
+        return 0
+    if not isinstance(obj, dict):
+        return 0
+    try:
+        return int(obj.get("buttons", 0)) & 7
+    except (TypeError, ValueError):
+        return 0
+
+
+def _flush_queued_move_events(input_queue: asyncio.Queue[str]) -> None:
+    """Drop all queued move/mousemove events; preserve everything else in order."""
+    backlog: list[str] = []
+    while True:
+        try:
+            old = input_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+        input_queue.task_done()
+        if _input_kind_from_raw(old) in ("move", "mousemove"):
+            continue
+        backlog.append(old)
+    for item in backlog:
+        try:
+            input_queue.put_nowait(item)
+        except asyncio.QueueFull:
+            logger.warning("Could not re-queue non-move input after flush")
+            break
+
+
+def _enqueue_rtc_input(input_queue: asyncio.Queue[str], raw: str) -> None:
+    kind = _input_kind_from_raw(raw)
+    is_move = kind in ("move", "mousemove")
+    buttons = _input_buttons_from_raw(raw) if is_move else 0
+    critical_button = kind in ("mousedown", "mouseup")
+    critical_move = is_move and buttons != 0
+
+    # Plain hover moves may be dropped when the queue is saturated.
+    if is_move and input_queue.full() and not critical_move:
+        return
+
+    try:
+        input_queue.put_nowait(raw)
+        return
+    except asyncio.QueueFull:
+        pass
+
+    if critical_button or critical_move:
+        _flush_queued_move_events(input_queue)
+        try:
+            input_queue.put_nowait(raw)
+            return
+        except asyncio.QueueFull:
+            if critical_button:
+                logger.warning("Could not queue critical button event")
+            return
+
+    backlog: list[str] = []
+    dropped_move = False
+    while True:
+        try:
+            old = input_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+        input_queue.task_done()
+        if not dropped_move and _input_kind_from_raw(old) in ("move", "mousemove"):
+            dropped_move = True
+            continue
+        backlog.append(old)
+    for item in backlog:
+        try:
+            input_queue.put_nowait(item)
+        except asyncio.QueueFull:
+            break
+    try:
+        input_queue.put_nowait(raw)
+    except asyncio.QueueFull:
+        if not is_move:
+            logger.debug("input queue full; dropped %s", kind or "message")
+
+
 def _apply_input_json(raw: str) -> None:
     try:
         obj = json.loads(raw)
@@ -475,6 +578,7 @@ async def _run_session(job: dict[str, Any]) -> None:
         if channel.label != "axonos-input":
             return
         clipboard_env = _display_env()
+        _reset_mouse_button_state(clipboard_env)
         last_clipboard = ""
 
         async def poll_remote_clipboard() -> None:
@@ -517,61 +621,17 @@ async def _run_session(job: dict[str, Any]) -> None:
 
         input_task = asyncio.create_task(input_worker())
 
-        def _input_kind(raw: str) -> str:
-            try:
-                obj = json.loads(raw)
-            except json.JSONDecodeError:
-                return ""
-            if not isinstance(obj, dict):
-                return ""
-            return (obj.get("t") or obj.get("type") or "").strip().lower()
-
-        def _enqueue_input(raw: str) -> None:
-            kind = _input_kind(raw)
-            if kind in ("move", "mousemove") and input_queue.full():
-                return
-            try:
-                input_queue.put_nowait(raw)
-                return
-            except asyncio.QueueFull:
-                pass
-            # Evict oldest move events only; never drop clicks, mouse down/up, paste, or keys.
-            backlog: list[str] = []
-            dropped_move = False
-            while True:
-                try:
-                    old = input_queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
-                input_queue.task_done()
-                if not dropped_move and _input_kind(old) in ("move", "mousemove"):
-                    dropped_move = True
-                    continue
-                backlog.append(old)
-            for item in backlog:
-                try:
-                    input_queue.put_nowait(item)
-                except asyncio.QueueFull:
-                    break
-            try:
-                input_queue.put_nowait(raw)
-            except asyncio.QueueFull:
-                if kind not in ("move", "mousemove"):
-                    logger.debug(
-                        "input queue full; dropped %s",
-                        kind or "message",
-                    )
-
         @channel.on("message")
         def on_msg(message) -> None:  # type: ignore[no-untyped-def]
             if not isinstance(message, str):
                 return
-            _enqueue_input(message)
+            _enqueue_rtc_input(input_queue, message)
 
         @channel.on("close")
         def on_close() -> None:
             clipboard_task.cancel()
             input_task.cancel()
+            _reset_mouse_button_state(clipboard_env)
 
     try:
         from PIL import Image  # type: ignore[import-untyped]
