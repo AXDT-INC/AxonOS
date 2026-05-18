@@ -877,7 +877,9 @@ document.addEventListener("DOMContentLoaded", function() {
                     data.allocation_status === 'queued'));
 
         if (titleEl) {
-            if (queued && data && data.queue_impossible_on_host === true) {
+            if (data && data.allocation_status === 'failed') {
+                titleEl.textContent = 'Could not start session';
+            } else if (queued && data && data.queue_impossible_on_host === true) {
                 titleEl.textContent = 'This GPU profile exceeds this host';
             } else if (queued) {
                 titleEl.textContent = 'Waiting for GPU availability';
@@ -900,8 +902,20 @@ document.addEventListener("DOMContentLoaded", function() {
                 : 'Not in queue yet';
         }
         if (lenEl) lenEl.textContent = (data && data.queue_length != null) ? String(data.queue_length) : '—';
-        if (joinBtn) joinBtn.style.display = (data && data.queue_position != null) ? 'none' : '';
-        if (leaveBtn) leaveBtn.style.display = (data && data.queue_position != null) ? '' : 'none';
+        if (joinBtn) {
+            if (data && data.allocation_status === 'failed') {
+                joinBtn.style.display = 'none';
+            } else {
+                joinBtn.style.display = (data && data.queue_position != null) ? 'none' : '';
+            }
+        }
+        if (leaveBtn) {
+            if (data && data.allocation_status === 'failed') {
+                leaveBtn.style.display = 'none';
+            } else {
+                leaveBtn.style.display = (data && data.queue_position != null) ? '' : 'none';
+            }
+        }
     }
 
     function hideQueueOverlay() {
@@ -929,8 +943,30 @@ document.addEventListener("DOMContentLoaded", function() {
         return v != null && v !== '';
     }
 
+    /** Append launcher/docker error when spawn fails (API field container_error). */
+    function axonosFormatClaimDeniedMessage(claim, fallbackReason) {
+        var main = (claim && claim.reason) ? claim.reason : (fallbackReason || 'Desktop in use.');
+        var err = claim && claim.container_error ? String(claim.container_error).trim() : '';
+        if (err && main.indexOf(err) === -1) {
+            return main + '\n\n' + err;
+        }
+        return main;
+    }
+
     function handleSessionClaimDenied(claim, fallbackReason) {
-        var reason = (claim && claim.reason) ? claim.reason : (fallbackReason || 'Desktop in use.');
+        var reason = axonosFormatClaimDeniedMessage(claim, fallbackReason);
+        if (claim && claim.allocation_status === 'failed') {
+            showQueueOverlay({
+                reason: reason + ' Choose a smaller profile or retry after administrators fix launcher/Docker GPU access.',
+                queue_position: null,
+                queue_length:
+                    claim && claim.queue_length != null ? claim.queue_length : null,
+                allocation_status: 'failed',
+                queue_impossible_on_host: claim.queue_impossible_on_host,
+                capacity_note: claim.capacity_note
+            });
+            return;
+        }
         var hasPos = axonosHasQueuePosition(claim && claim.queue_position);
         if (hasPos) {
             showQueueOverlay({
