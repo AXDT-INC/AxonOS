@@ -470,10 +470,60 @@ export async function connectAxonOSWebRTC(opts) {
         return button + 1;
     }
 
-    video.addEventListener('mousemove', (ev) => {
+    // Moves must keep firing during click-and-drag when the cursor leaves the
+    // letterboxed video bounds; listeners on video alone stop dispatching moves
+    // once pointer exits the element, which breaks dragging on the desktop.
+    function clientPointOverVideo(ev) {
+        const r = video.getBoundingClientRect();
+        return (
+            ev.clientX >= r.left &&
+            ev.clientX <= r.right &&
+            ev.clientY >= r.top &&
+            ev.clientY <= r.bottom
+        );
+    }
+
+    function onWindowMouseMove(ev) {
+        const dragging = currentMouseButtons !== 0;
+        if (!dragging && !clientPointOverVideo(ev)) {
+            return;
+        }
         ev.preventDefault();
         sendInput({ t: 'move', buttons: currentMouseButtons, ...pointerToRemote(ev) });
+    }
+    window.addEventListener('mousemove', onWindowMouseMove);
+
+    /** Optional: retain pointer coords when dragging across subframes / subtleties */
+    video.addEventListener('pointerdown', (ev) => {
+        if (ev.pointerType === 'touch') {
+            return;
+        }
+        if (video.setPointerCapture && typeof video.setPointerCapture === 'function') {
+            try {
+                video.setPointerCapture(ev.pointerId);
+            } catch {
+                /* ignore */
+            }
+        }
     });
+
+    /** Release capture so scroll / click outside behave normally once drag ends */
+    function releaseCapturedPointer(ev) {
+        if (
+            !video.releasePointerCapture ||
+            typeof video.releasePointerCapture !== 'function'
+        ) {
+            return;
+        }
+        if (!ev || typeof ev.pointerId !== 'number') {
+            return;
+        }
+        try {
+            video.releasePointerCapture(ev.pointerId);
+        } catch {
+            /* ignore: not capturing or unsupported */
+        }
+    }
     const clipboardBeforeClickMs = 200;
 
     async function syncClipboardBeforeClick(ev) {
@@ -525,11 +575,16 @@ export async function connectAxonOSWebRTC(opts) {
         });
     }
     window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('pointerup', releaseCapturedPointer);
+    window.addEventListener('pointercancel', releaseCapturedPointer);
     video.addEventListener('mouseenter', focusPasteSink);
     video.addEventListener('contextmenu', (ev) => {
         ev.preventDefault();
     });
     video.addEventListener('mouseleave', () => {
+        if (currentMouseButtons !== 0) {
+            return;
+        }
         cursor.style.transform = 'translate(-100px,-100px)';
     });
     window.addEventListener('focus', kickClipboardSync);
@@ -712,6 +767,9 @@ export async function connectAxonOSWebRTC(opts) {
 
     window.axonosWebRtcTeardown = async () => {
         window.removeEventListener('mouseup', onMouseUp);
+        window.removeEventListener('mousemove', onWindowMouseMove);
+        window.removeEventListener('pointerup', releaseCapturedPointer);
+        window.removeEventListener('pointercancel', releaseCapturedPointer);
         if (metricsTimer) {
             clearInterval(metricsTimer);
         }
