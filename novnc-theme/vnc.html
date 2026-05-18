@@ -531,8 +531,13 @@ Copyright (C) 2019 The noVNC Authors
 
     <!-- AxonOS Connection Loading Animation -->
     <div class="axonos-connection-loader" id="axonos-loader">
-        <div class="axonos-spinner">
-            <div class="axonos-progress-ring"></div>
+        <div class="axonos-loader-visual">
+            <div class="axonos-spinner" aria-hidden="true">
+                <div class="axonos-progress-ring"></div>
+            </div>
+            <div class="axonos-loader-x-wrap">
+                <img class="axonos-loader-x-img" src="icon.png" alt="" width="48" height="48" decoding="async">
+            </div>
         </div>
         <div class="axonos-loading-text">Launching GPU-Native Desktop</div>
         <div class="axonos-loading-subtext">Connecting to AxonOS with direct GPU access...</div>
