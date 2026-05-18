@@ -27,4 +27,8 @@ else
   echo "No BusID detected; using default Xorg config."
   cp "$CONFIG_SRC" "$CONFIG_TMP"
 fi
-exec /usr/bin/Xorg :0 -config "$CONFIG_TMP" -keeptty -novtswitch -sharevts
+# Do not use -keeptty here: supervisord/docker often have no controlling TTY, and Xorg
+# exits immediately (clients then see "unable to open display :0"). See VirtualGL headless NV.
+echo "start-xorg-nvidia: exec Xorg :0 config=${CONFIG_TMP}"
+exec /usr/bin/Xorg :0 -config "$CONFIG_TMP" -noreset -nolisten tcp -novtswitch -sharevts \
+  -logfile /var/log/Xorg.0.log
