@@ -53,7 +53,7 @@ Copyright (C) 2019 The noVNC Authors
 
     <!-- Stylesheets -->
     <link rel="stylesheet" href="app/styles/base.css">
-    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=15.7&t=1740200000">
+    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=16.0&t=1740200000">
 
     <!-- Images that will later appear via CSS -->
     <link rel="preload" as="image" href="app/images/info.svg">
@@ -66,26 +66,25 @@ Copyright (C) 2019 The noVNC Authors
 
 <body>
 
-    <!-- Prerequisites: fixed header ticker while landing (mirror synced after /api/config) -->
+    <!-- Prerequisites: fixed label + marquee body (mirror synced after /api/config) -->
     <div id="axonos_prerequisites_ticker_banner" class="axonos-prerequisites-ticker" role="region" aria-label="Before you launch">
-        <div class="axonos-prerequisites-ticker__mask">
-            <div class="axonos-prerequisites-ticker__track" id="axonos_prerequisites_ticker_track">
-                <div class="axonos-prerequisites-ticker__seg" data-ticker-canonical="1">
-                    <strong class="axonos-prerequisites-ticker__kick">Before you launch</strong>
-                    <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
-                    <span class="axonos-prerequisites-ticker__chunk">An <strong>EVM wallet</strong> (e.g. <a href="https://metamask.io" target="_blank" rel="noopener noreferrer">MetaMask</a>)</span>
-                    <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
-                    <span id="axonos_prereq_deposit_line" class="axonos-prerequisites-ticker__chunk"><strong>Pay with ETH, save with AXGT</strong>: each <strong id="axonos_prereq_min_eth">—</strong> <strong>ETH</strong> (min.) → <strong id="axonos_prereq_eth_min_label">—</strong>. <strong>AXGT holders</strong> automatically get a tiered discount on the ETH price (<a href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=0x6112c3509a8a787df576028450febb3786a2274d" target="_blank" rel="noopener noreferrer">Get AXGT</a>)</span>
-                    <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
-                    <span class="axonos-prerequisites-ticker__chunk">You'll <strong>sign a one-time message</strong> (no gas, no transaction)</span>
-                    <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
-                    <span class="axonos-prerequisites-ticker__chunk"><strong>One desktop at a time</strong> — if in use, you can join the queue</span>
-                    <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
-                    <span class="axonos-prerequisites-ticker__chunk">While <strong>connected</strong>, prepaid <strong>minutes count</strong> for your session, including <strong>idle time</strong> if this browser tab stays open</span>
-                    <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
-                    <span class="axonos-prerequisites-ticker__chunk">Use <strong>Disconnect</strong> in the sidebar when finished; closing only the tab may <strong>delay release</strong> until session timeout</span>
+        <strong class="axonos-prerequisites-ticker__kick">Before you launch</strong>
+        <div class="axonos-prerequisites-ticker__marquee-wrap">
+            <div class="axonos-prerequisites-ticker__mask">
+                <div class="axonos-prerequisites-ticker__track" id="axonos_prerequisites_ticker_track">
+                    <div class="axonos-prerequisites-ticker__seg" data-ticker-canonical="1">
+                        <span class="axonos-prerequisites-ticker__chunk">An <strong>EVM wallet</strong> (e.g. <a href="https://metamask.io" target="_blank" rel="noopener noreferrer">MetaMask</a>)</span>
+                        <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
+                        <span id="axonos_prereq_deposit_line" class="axonos-prerequisites-ticker__chunk"><strong>Pay with ETH, save with AXGT</strong>: each <strong id="axonos_prereq_min_eth">—</strong> <strong>ETH</strong> (min.) → <strong id="axonos_prereq_eth_min_label">—</strong>. <strong>AXGT holders</strong> automatically get a tiered discount on the ETH price (<a href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=0x6112c3509a8a787df576028450febb3786a2274d" target="_blank" rel="noopener noreferrer">Get AXGT</a>)</span>
+                        <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
+                        <span class="axonos-prerequisites-ticker__chunk">You'll <strong>sign a one-time message</strong> (no gas, no transaction)</span>
+                        <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
+                        <span class="axonos-prerequisites-ticker__chunk">While <strong>connected</strong>, prepaid <strong>minutes count</strong> for your session, including <strong>idle time</strong> if this browser tab stays open</span>
+                        <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
+                        <span class="axonos-prerequisites-ticker__chunk">Use <strong>Disconnect</strong> in the sidebar when finished; closing only the tab may <strong>delay release</strong> until session timeout</span>
+                    </div>
+                    <div class="axonos-prerequisites-ticker__seg" data-ticker-mirror="1" aria-hidden="true"></div>
                 </div>
-                <div class="axonos-prerequisites-ticker__seg" data-ticker-mirror="1" aria-hidden="true"></div>
             </div>
         </div>
     </div>
