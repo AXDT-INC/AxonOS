@@ -605,11 +605,11 @@ RUN apt-get update && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Fail fast if the Xorg NVIDIA GLX server module never landed (fix-libglx would be pointless).
-RUN PKG="xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}" && \
-    dpkg -L "$$PKG" 2>/dev/null | grep -q libglxserver_nvidia || \
-    { echo "axonos: $$PKG contains no libglxserver_nvidia — apt layout/driver version mismatch?"; \
+# Do not use a shell $PKG variable here — "$$PKG" in RUN can become PID+"PKG" (e.g. 1PKG) if $$ is not reduced.
+RUN dpkg -L "xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}" 2>/dev/null | grep -q libglxserver_nvidia || \
+    { echo "axonos: xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION} lists no libglxserver_nvidia — check package contents"; \
       dpkg -l | grep -iE 'nvidia|xorg|mesa' || true; \
-      dpkg -L "$$PKG" 2>/dev/null | tail -40 || true; \
+      dpkg -L "xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}" 2>/dev/null | tail -40 || true; \
       exit 1; }
 
 # Mesa's libglx.so can remain the default after early apt layers; Xorg then loads two GLX vendors
