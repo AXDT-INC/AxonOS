@@ -48,7 +48,7 @@ SOFTWARE.
   );
 }
 
-/* Prerequisites ticker — replaces hover tooltip on connect stack */
+/* Prerequisites ticker — fixed left label + scrolling details */
 .axonos-prerequisites-ticker {
   display: none;
   box-sizing: border-box;
@@ -58,10 +58,12 @@ SOFTWARE.
   right: 0;
   height: var(--axonos-prereq-ticker-strip-h);
   z-index: 60;
+  flex-direction: row;
   align-items: center;
+  gap: 0.5rem;
   overflow: hidden;
   padding-left: clamp(54px, 11vw, 92px);
-  padding-right: 12px;
+  padding-right: 10px;
   background: rgba(24, 32, 48, 0.96);
   border-bottom: 1px solid rgba(70, 130, 180, 0.48);
   box-shadow:
@@ -77,22 +79,51 @@ html.noVNC_connected .axonos-prerequisites-ticker {
   display: none !important;
 }
 
+.axonos-prerequisites-ticker__kick {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0 0.55rem 0 0;
+  border-right: 1px solid rgba(104, 120, 196, 0.35);
+  font-family: "Orbitron", system-ui, sans-serif;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.96);
+  white-space: nowrap;
+  line-height: 1.2;
+  align-self: stretch;
+  display: inline-flex;
+  align-items: center;
+}
+
+.axonos-prerequisites-ticker__marquee-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
 .axonos-prerequisites-ticker__mask {
   flex: 1;
   min-width: 0;
   overflow: hidden;
+  height: 100%;
+  display: flex;
+  align-items: center;
   -webkit-mask-image: linear-gradient(
     90deg,
     transparent,
-    #000 1.35rem,
-    #000 calc(100% - 1.35rem),
+    #000 0.65rem,
+    #000 calc(100% - 1.15rem),
     transparent
   );
   mask-image: linear-gradient(
     90deg,
     transparent,
-    #000 1.35rem,
-    #000 calc(100% - 1.35rem),
+    #000 0.65rem,
+    #000 calc(100% - 1.15rem),
     transparent
   );
 }
@@ -120,15 +151,6 @@ html.noVNC_connected .axonos-prerequisites-ticker {
   color: rgba(245, 245, 245, 0.95);
   letter-spacing: 0.015em;
   white-space: nowrap;
-}
-
-.axonos-prerequisites-ticker__kick {
-  font-family: "Orbitron", system-ui, sans-serif;
-  font-size: 0.66rem;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.95);
 }
 
 .axonos-prerequisites-ticker__bullet {
@@ -169,6 +191,11 @@ html.noVNC_connected .axonos-prerequisites-ticker {
     row-gap: 4px;
   }
 
+  .axonos-prerequisites-ticker__marquee-wrap .axonos-prerequisites-ticker__mask {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+
   .axonos-prerequisites-ticker__seg {
     flex-wrap: wrap;
     white-space: normal;
@@ -183,9 +210,151 @@ html.noVNC_connected .axonos-prerequisites-ticker {
   }
 }
 
+@media (max-width: 520px) {
+  .axonos-prerequisites-ticker__kick {
+    font-size: 0.53rem;
+    letter-spacing: 0.07em;
+    padding-right: 0.42rem;
+  }
+}
+
+/* Landing scrollbars — themed; WebKit thumbs hidden until the scrollbar groove is hovered */
+html:not(.noVNC_connected) {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+html:not(.noVNC_connected):hover {
+  scrollbar-color: rgba(96, 128, 192, 0.5) rgba(10, 16, 28, 0.28);
+}
+
+html:not(.noVNC_connected)::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+html:not(.noVNC_connected)::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+html:not(.noVNC_connected)::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+html:not(.noVNC_connected)::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 5px;
+}
+
+html:not(.noVNC_connected)::-webkit-scrollbar:hover::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    180deg,
+    rgba(110, 128, 200, 0.88) 0%,
+    rgba(52, 150, 100, 0.58) 100%
+  );
+}
+
+html:not(.noVNC_connected)::-webkit-scrollbar-thumb:active {
+  background: linear-gradient(
+    180deg,
+    rgba(130, 150, 220, 0.95) 0%,
+    rgba(62, 170, 115, 0.72) 100%
+  );
+}
+
+html:not(.noVNC_connected)::-webkit-scrollbar:hover {
+  background: rgba(6, 10, 20, 0.42);
+}
+
+html:not(.noVNC_connected) #noVNC_connect_dlg {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+html:not(.noVNC_connected) #noVNC_connect_dlg:hover {
+  scrollbar-color: rgba(96, 128, 192, 0.52) rgba(10, 16, 28, 0.32);
+}
+
+html:not(.noVNC_connected) #noVNC_connect_dlg::-webkit-scrollbar {
+  width: 8px;
+}
+
+html:not(.noVNC_connected) #noVNC_connect_dlg::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+html:not(.noVNC_connected) #noVNC_connect_dlg::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 4px;
+}
+
+html:not(.noVNC_connected) #noVNC_connect_dlg::-webkit-scrollbar:hover::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    180deg,
+    rgba(110, 128, 200, 0.88) 0%,
+    rgba(52, 150, 100, 0.58) 100%
+  );
+}
+
+html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg) {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg):hover {
+  scrollbar-color: rgba(96, 128, 192, 0.52) rgba(10, 16, 28, 0.32);
+}
+
+html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg)::-webkit-scrollbar {
+  width: 8px;
+}
+
+html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg)::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg)::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 4px;
+}
+
+html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg)::-webkit-scrollbar:hover::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    180deg,
+    rgba(110, 128, 200, 0.88) 0%,
+    rgba(52, 150, 100, 0.58) 100%
+  );
+}
+
+@media (hover: none) {
+  html:not(.noVNC_connected) {
+    scrollbar-color: rgba(96, 128, 192, 0.32) rgba(10, 16, 28, 0.18);
+  }
+
+  html:not(.noVNC_connected)::-webkit-scrollbar-thumb {
+    background-color: rgba(88, 118, 170, 0.32);
+  }
+
+  html:not(.noVNC_connected) #noVNC_connect_dlg {
+    scrollbar-color: rgba(96, 128, 192, 0.36) rgba(10, 16, 28, 0.22);
+  }
+
+  html:not(.noVNC_connected) #noVNC_connect_dlg::-webkit-scrollbar-thumb {
+    background-color: rgba(88, 118, 170, 0.38);
+  }
+
+  html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg) {
+    scrollbar-color: rgba(96, 128, 192, 0.36) rgba(10, 16, 28, 0.22);
+  }
+
+  html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg)::-webkit-scrollbar-thumb {
+    background-color: rgba(88, 118, 170, 0.38);
+  }
+}
+
 @media (max-width: 480px) {
   .axonos-prerequisites-ticker__seg {
-    font-size: 0.72rem;
+    font-size: 0.71rem;
   }
 }
 
@@ -320,22 +489,28 @@ html.noVNC_connected .axonos-version {
 }
 
 .axonos-branding {
-  position: absolute;
-  bottom: 10px;
-  right: 15px;
+  position: fixed;
+  bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  right: calc(14px + env(safe-area-inset-right, 0px));
   color: var(--axonos-accent);
   font-size: 12px;
-  opacity: 0.8;
+  opacity: 0.92;
   font-family: "Orbitron", monospace;
+  z-index: 55;
+  pointer-events: none;
 }
 
-.axonos-version {
-  position: absolute;
-  top: 10px;
-  right: 15px;
+html:not(.noVNC_connected) .axonos-version {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + var(--axonos-prereq-ticker-strip-h) + 6px);
+  right: calc(14px + env(safe-area-inset-right, 0px));
+  left: auto;
+  bottom: auto;
+  z-index: 55;
+  pointer-events: none;
   color: var(--axonos-light);
   font-size: 10px;
-  opacity: 0.6;
+  opacity: 0.72;
   font-family: "Orbitron", monospace;
 }
 
