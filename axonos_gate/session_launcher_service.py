@@ -146,10 +146,16 @@ def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], 
             f"AXGT_REQUESTED_PROFILE={profile}",
             "-e",
             f"AXGT_ASSIGNED_GPU_IDS={gpu_spec}",
+            "-e",
+            "AXGT_DESKTOP_ENABLED=true",
+            "-e",
+            "WEBRTC_AGENT_ENABLED=true",
         ]
     )
 
     for env_name in _env_passthrough_names():
+        if env_name in ("AXGT_DESKTOP_ENABLED", "WEBRTC_AGENT_ENABLED"):
+            continue
         env_value = os.getenv(env_name)
         if env_value is not None:
             cmd.extend(["-e", f"{env_name}={env_value}"])

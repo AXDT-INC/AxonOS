@@ -77,6 +77,8 @@ def _launch_via_docker_cli(session_id: int, wallet: str, profile: str, gpu_ids: 
         "-e", f"AXGT_WALLET_ADDRESS={wallet}",
         "-e", f"AXGT_REQUESTED_PROFILE={profile}",
         "-e", f"AXGT_ASSIGNED_GPU_IDS={gpu_spec}",
+        "-e", "AXGT_DESKTOP_ENABLED=true",
+        "-e", "WEBRTC_AGENT_ENABLED=true",
     ]
     extra_raw = (os.getenv("AXGT_SESSION_CONTAINER_EXTRA_ARGS") or "").strip()
     if extra_raw:
