@@ -90,7 +90,7 @@ defaults rather than failing closed.
   influence which tier a wallet ends up in.
 - On RPC failure during the quote or credit step, the system **defaults
   safely to no discount**. A user with a failing RPC simply pays the full
-  base ETH price; payment is never blocked outright.
+  ETH price; payment is never blocked outright.
 
 ---
 
@@ -135,7 +135,7 @@ Replay protection (`axgt_verified_deposits`) and the audit ledger
 2. User signs the one-time challenge to prove ownership; server issues an
    auth token.
 3. UI shows:
-   - **Base ETH price** (`ETH_MIN_DEPOSIT` by default)
+   - **ETH price** (`ETH_MIN_DEPOSIT` by default)
    - **Connected wallet AXGT balance** (server-fetched via `balanceOf`)
    - **Eligible tier** + **discount percentage**
    - **Final ETH amount payable**
@@ -157,7 +157,7 @@ Replay protection (`axgt_verified_deposits`) and the audit ledger
 Query parameters:
 
 - `wallet_address` (required) — `0x…` wallet to quote.
-- `base_eth` (optional) — override the base ETH price; defaults to
+- `base_eth` (optional) — override the ETH price; defaults to
   `ETH_MIN_DEPOSIT`.
 
 Response (200 OK):

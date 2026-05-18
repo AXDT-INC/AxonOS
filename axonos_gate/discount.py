@@ -363,7 +363,7 @@ def quote_for_balance(
     balance_axgt: int,
     tiers: Optional[List[Tier]] = None,
 ) -> Dict[str, Any]:
-    """Return the discount quote for a given AXGT balance and base ETH price."""
+    """Return the discount quote for a given AXGT balance and ETH price."""
     cfg = tiers if tiers is not None else get_tiers()
     tier = resolve_tier(balance_axgt, cfg)
     final_eth = apply_discount(base_eth, tier.discount_percent)
