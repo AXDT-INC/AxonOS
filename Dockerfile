@@ -540,6 +540,8 @@ COPY scripts/apply_theme_session.sh /usr/local/bin/apply_theme_session.sh
 RUN chmod +x /usr/local/bin/apply_theme_session.sh
 COPY scripts/reset_session.sh /usr/local/bin/reset_session.sh
 RUN chmod +x /usr/local/bin/reset_session.sh
+COPY scripts/fix-libglx-nvidia-symlink.sh /usr/local/bin/fix-libglx-nvidia-symlink.sh
+RUN chmod +x /usr/local/bin/fix-libglx-nvidia-symlink.sh
 RUN mkdir -p /home/aXonian/.config/autostart
 COPY scripts/axonos-theme.desktop /home/aXonian/.config/autostart/axonos-theme.desktop
 RUN chown -R aXonian:aXonian /home/aXonian/.config/autostart
@@ -603,15 +605,9 @@ RUN apt-get update && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Mesa's libglx.so can remain the default after early apt layers; Xorg then loads two GLX vendors
-# ("Another vendor is already registered for screen 0") and SIGSEGVs. Point libglx at NVIDIA only.
-# Use backticks for the command substitution: "$$(cmd)" can confuse BuildKit/sh ("$$" + "(" → PID + '(').
-RUN set -e; \
-    GLX_EXT=/usr/lib/xorg/modules/extensions; \
-    NVGLX=`ls -1 "$$GLX_EXT"/libglxserver_nvidia.so.* 2>/dev/null | sort -V | tail -1`; \
-    if [ -z "$$NVGLX" ]; then echo "axonos: no libglxserver_nvidia.* under $$GLX_EXT"; ls -la "$$GLX_EXT" || true; exit 1; fi; \
-    rm -f "$$GLX_EXT/libglx.so"; \
-    ln -sf "$$NVGLX" "$$GLX_EXT/libglx.so"; \
-    ls -la "$$GLX_EXT/libglx.so"
+# ("Another vendor is already registered for screen 0") and SIGSEGVs. Script avoids Dockerfile RUN "$$VAR"
+# (sh expands $$ to PID, e.g. 1GLX_EXT).
+RUN /usr/local/bin/fix-libglx-nvidia-symlink.sh
 
 # Start services
 CMD ["/startup.sh"]
