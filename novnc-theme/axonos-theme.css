@@ -2023,6 +2023,96 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   z-index: 10;
 }
 
+/* Desktop landscape landing: wider panel, hero/features left / launch column right */
+@media (min-width: 993px) {
+  #noVNC_connect_dlg {
+    display: grid;
+    grid-template-columns: minmax(0, 1.22fr) minmax(296px, 400px);
+    column-gap: 2rem;
+    row-gap: 0.85rem;
+    max-width: min(1120px, 93vw);
+    align-items: start;
+    padding: 32px 40px !important;
+  }
+
+  #noVNC_connect_dlg > .axonos-mobile-notice {
+    grid-column: 1 / -1;
+  }
+
+  #noVNC_connect_dlg > .axonos-vision-header {
+    grid-column: 1;
+    grid-row: 1;
+    margin-bottom: 0;
+    padding: 22px 18px;
+  }
+
+  #noVNC_connect_dlg .axonos-main-title {
+    font-size: 3.15rem !important;
+    letter-spacing: 3px;
+  }
+
+  #noVNC_connect_dlg .axonos-tagline {
+    font-size: 1.05rem;
+  }
+
+  #noVNC_connect_dlg > .axonos-mission {
+    grid-column: 1;
+    grid-row: 2;
+    margin: 0;
+    padding: 16px 18px;
+  }
+
+  #noVNC_connect_dlg > .axonos-features {
+    grid-column: 1;
+    grid-row: 3;
+    margin: 0;
+    padding: 14px 0;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px 18px;
+    border-top: 1px solid rgba(70, 130, 180, 0.28);
+    border-bottom: 1px solid rgba(70, 130, 180, 0.28);
+  }
+
+  #noVNC_connect_dlg > .axonos-quote {
+    grid-column: 1;
+    grid-row: 4;
+    margin: 0;
+    padding: 14px 16px;
+    text-align: left;
+  }
+
+  #noVNC_connect_dlg > .axonos-quote p {
+    margin-bottom: 6px;
+  }
+
+  #noVNC_connect_dlg > .axonos-connect-wrapper {
+    grid-column: 2;
+    grid-row: 1 / 5;
+    align-self: center;
+    justify-self: stretch;
+    padding-left: 1.5rem;
+    margin-left: 0.125rem;
+    border-left: 1px solid rgba(136, 169, 212, 0.28);
+    box-sizing: border-box;
+  }
+
+  /* Full width of launch column without exceeding parent */
+  .axonos-connect-wrapper > #noVNC_connect_button {
+    max-width: none;
+  }
+
+  .axonos-connect-wrapper .axonos-enhanced-connect {
+    margin-top: 0 !important;
+    margin-bottom: 16px !important;
+  }
+
+  /* Picker stretches in the narrower column */
+  .axonos-profile-picker {
+    max-width: none;
+  }
+}
+
 /* Mobile notice: hidden on desktop, shown on small viewports */
 .axonos-mobile-notice {
   display: none;
