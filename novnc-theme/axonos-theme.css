@@ -92,7 +92,7 @@ html.noVNC_connected .axonos-prerequisites-ticker {
   padding: 0 0.42rem 0 0;
   border-right: 1px solid rgba(104, 120, 196, 0.35);
   font-family: "Orbitron", system-ui, sans-serif;
-  font-size: clamp(0.82rem, 0.7vw + 0.54rem, 1.06rem);
+  font-size: clamp(0.738rem, 0.63vw + 0.486rem, 0.954rem);
   font-weight: 600;
   letter-spacing: 0.03em;
   align-self: stretch;
@@ -239,7 +239,7 @@ html.noVNC_connected .axonos-prerequisites-ticker {
   .axonos-prerequisites-ticker__kick {
     flex-basis: clamp(9.25rem, 54vw, 11.85rem);
     width: clamp(9.25rem, 54vw, 11.85rem);
-    font-size: clamp(0.64rem, 2.4vw + 0.48rem, 0.82rem);
+    font-size: clamp(0.576rem, 2.16vw + 0.432rem, 0.738rem);
     letter-spacing: 0.04em;
     padding-right: 0.38rem;
   }
