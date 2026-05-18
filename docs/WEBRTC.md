@@ -46,7 +46,7 @@ For **WebSocket-only** proxies, signaling still uses **HTTPS fetch** on the same
 
 1. Add to `.env`: `WEBRTC_ENABLED=true`, a strong `WEBRTC_AGENT_INTERNAL_KEY`, and optional `WEBRTC_STUN_URLS` / TURN credentials.
 2. `docker compose build && docker compose up -d`
-3. Open `http://localhost:16080/vnc.html` (or mapped port), complete wallet + session claim, launch desktop.
+3. Open `http://localhost:6080/vnc.html` (or mapped port), complete wallet + session claim, launch desktop.
 4. Confirm in logs: gate posts answer, agent reports `WebRTC answer stored`, browser shows “Connected (WebRTC)” or falls back to classic stream if configured.
 
 ## Troubleshooting
