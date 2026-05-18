@@ -1342,6 +1342,24 @@ input[type="password"]#noVNC_password_input {
   margin: 14px 0 0 0;
 }
 
+/* AXGT discount tier card — Gradio-safe light text on dark panel */
+.axonos-discount-panel {
+  color: rgba(255, 255, 255, 0.92) !important;
+  -webkit-text-fill-color: rgba(255, 255, 255, 0.92) !important;
+}
+.axonos-discount-panel strong {
+  color: rgba(255, 255, 255, 0.95) !important;
+  -webkit-text-fill-color: rgba(255, 255, 255, 0.95) !important;
+}
+.axonos-discount-panel #axonos_discount_percent {
+  color: #7adf8a !important;
+  -webkit-text-fill-color: #7adf8a !important;
+}
+.axonos-discount-panel #axonos_discount_final_eth {
+  color: #ffd166 !important;
+  -webkit-text-fill-color: #ffd166 !important;
+}
+
 /* Prepaid deposit rows: label + amount + [Min | Send] stays aligned; Gradio-safe text color */
 .axonos-pay-deposit-row {
   display: flex;
