@@ -77,6 +77,8 @@ services:
     environment:
       AXGT_CHALLENGE_DB_URL: postgresql://${POSTGRES_USER:-axonos_gate}:${POSTGRES_PASSWORD:-axonos_gate_secret}@postgres:5432/${POSTGRES_DB:-axonos_gate}
       AXGT_USER_CONTAINER_ENABLED: ${AXGT_USER_CONTAINER_ENABLED:-true}
+      # Gate-only on base axonos: no Xorg (GPU :0 reserved for axgt-session-* desktops).
+      AXGT_DESKTOP_ENABLED: ${AXGT_DESKTOP_ENABLED:-false}
       AXGT_SESSION_LAUNCHER_MODE: ${AXGT_SESSION_LAUNCHER_MODE:-http}
       AXGT_SESSION_LAUNCHER_URL: ${AXGT_SESSION_LAUNCHER_URL:-http://axonos-launcher:8090}
       AXGT_SESSION_LAUNCHER_TOKEN: ${AXGT_SESSION_LAUNCHER_TOKEN:-change-me-launcher-token}

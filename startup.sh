@@ -62,15 +62,25 @@ sleep 3
 echo "Checking IPFS status..."
 su - aXonian -c 'ipfs id' || echo "IPFS still starting up..."
 
-# WebRTC screen-capture agent: avoid running it on the base gate desktop when per-session
-# containers provide the real user desktop (both agents dequeue the same Postgres queue and race).
-# Session runtimes set AXGT_SESSION_ID; respect explicit WEBRTC_AGENT_ENABLED if already set.
-if [ -z "${AXGT_SESSION_ID:-}" ] && [ -z "${WEBRTC_AGENT_ENABLED:-}" ]; then
+# Per-session desktops (axgt-session-*): base axonos is gate-only — no Xorg on GPU 0.
+# Otherwise session containers cannot open :0 on the same GPU (WebRTC capture fails).
+# Session runtimes set AXGT_SESSION_ID; respect explicit overrides if already set.
+if [ -z "${AXGT_SESSION_ID:-}" ]; then
     _uc=$(echo "${AXGT_USER_CONTAINER_ENABLED:-}" | tr '[:upper:]' '[:lower:]')
     if [ "${_uc}" = "true" ] || [ "${_uc}" = "1" ] || [ "${_uc}" = "yes" ]; then
-        export WEBRTC_AGENT_ENABLED=false
+        if [ -z "${AXGT_DESKTOP_ENABLED:-}" ]; then
+            export AXGT_DESKTOP_ENABLED=false
+        fi
+        if [ -z "${WEBRTC_AGENT_ENABLED:-}" ]; then
+            export WEBRTC_AGENT_ENABLED=false
+        fi
     else
-        export WEBRTC_AGENT_ENABLED=true
+        if [ -z "${AXGT_DESKTOP_ENABLED:-}" ]; then
+            export AXGT_DESKTOP_ENABLED=true
+        fi
+        if [ -z "${WEBRTC_AGENT_ENABLED:-}" ]; then
+            export WEBRTC_AGENT_ENABLED=true
+        fi
     fi
 fi
 
@@ -243,21 +253,20 @@ EOF
 # Make the script executable
 chmod +x /tmp/setup_x.sh
 
-# Switch to aXonian user and run the script
-su - aXonian -c '/tmp/setup_x.sh'
-
-# Apply theme/wallpaper after XFCE is fully up (avoids race; runs same logic as post_deploy_theme.sh)
-( sleep 35; /usr/local/bin/post_deploy_theme.sh ) &
-
-echo "== Xorg log =="; ls -l /var/log/Xorg.0.log || true
-test -f /var/log/Xorg.0.log && tail -n 200 /var/log/Xorg.0.log || true
-echo "== try start-xorg manually =="; /usr/local/bin/start-xorg-nvidia.sh
-
-ls -l /tmp/.X11-unix/X0 /tmp/.X0-lock || true
-ps -ef | grep -E "Xorg" || true
-
-su - aXonian -c "DISPLAY=:0 XAUTHORITY=/home/aXonian/.Xauthority xset q" || true
-su - aXonian -c "DISPLAY=:0 XAUTHORITY=/home/aXonian/.Xauthority vglrun glxinfo | head -20" || true
+# Gate-only base (AXGT_DESKTOP_ENABLED=false): skip XFCE/VNC setup — desktops run in axgt-session-*.
+if [ "${AXGT_DESKTOP_ENABLED:-true}" != "false" ]; then
+    su - aXonian -c '/tmp/setup_x.sh'
+    ( sleep 35; /usr/local/bin/post_deploy_theme.sh ) &
+    echo "== Xorg log =="; ls -l /var/log/Xorg.0.log || true
+    test -f /var/log/Xorg.0.log && tail -n 200 /var/log/Xorg.0.log || true
+    echo "== try start-xorg manually =="; /usr/local/bin/start-xorg-nvidia.sh
+    ls -l /tmp/.X11-unix/X0 /tmp/.X0-lock || true
+    ps -ef | grep -E "Xorg" || true
+    su - aXonian -c "DISPLAY=:0 XAUTHORITY=/home/aXonian/.Xauthority xset q" || true
+    su - aXonian -c "DISPLAY=:0 XAUTHORITY=/home/aXonian/.Xauthority vglrun glxinfo | head -20" || true
+else
+    echo "AXGT_DESKTOP_ENABLED=false: gate-only container (no local X desktop)."
+fi
 
 # Keep the container running
 tail -f /dev/null
