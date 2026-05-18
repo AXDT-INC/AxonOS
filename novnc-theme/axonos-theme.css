@@ -43,8 +43,7 @@ SOFTWARE.
   --axonos-hover: #32CD32;
   --axonos-shadow: rgba(46, 139, 87, 0.3);
   --axonos-prereq-ticker-strip-h: 44px;
-  /* ~noVNC control rail + small gutter; avoids wide 11vw padding that leaves a dead zone beside the label */
-  --axonos-prereq-ticker-sidebar-clear: calc(env(safe-area-inset-left, 0px) + 60px);
+  --axonos-prereq-ticker-sidebar-clear: calc(env(safe-area-inset-left, 0px) + 50px);
   --axonos-prereq-ticker-body-pad-top: calc(
     env(safe-area-inset-top, 0px) + var(--axonos-prereq-ticker-strip-h)
   );
@@ -83,19 +82,26 @@ html.noVNC_connected .axonos-prerequisites-ticker {
 }
 
 .axonos-prerequisites-ticker__kick {
+  box-sizing: border-box;
   flex: 0 0 auto;
   margin: 0;
-  padding: 0 0.55rem 0 0;
+  padding: 0 0.4rem 0 0;
   border-right: 1px solid rgba(104, 120, 196, 0.35);
   font-family: "Orbitron", system-ui, sans-serif;
   font-size: clamp(0.82rem, 0.7vw + 0.54rem, 1.06rem);
   font-weight: 600;
-  letter-spacing: 0.09em;
+  letter-spacing: 0.055em;
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.96);
   white-space: nowrap;
   line-height: 1.1;
   align-self: stretch;
+  width: fit-content;
+  max-width: none;
+  text-align: left;
+  justify-content: flex-start;
+  /* Nudge label toward the rail; keeps glyph cluster visually tight in the blue strip */
+  transform: translateX(-3px);
   display: inline-flex;
   align-items: center;
 }
