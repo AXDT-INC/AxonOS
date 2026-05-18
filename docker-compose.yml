@@ -7,6 +7,7 @@
 # UI: http://HOST:6080/vnc.html  —  gate API: 8889
 #
 # Image tag axonos:public-beta (not latest) so main-branch axonos:latest is untouched on rebuild.
+# Session containers join network axonos_stack (fixed name; not tied to COMPOSE_PROJECT_NAME).
 # AXGT_CHALLENGE_DB_URL is set on the axonos service to this stack's postgres only.
 
 name: axonos
@@ -26,13 +27,15 @@ services:
       # Session desktops must run the WebRTC capture agent; base gate stack disables it (see startup.sh).
       WEBRTC_AGENT_ENABLED: "true"
       AXGT_HOST_SESSION_CONTAINER_IMAGE: ${AXGT_HOST_SESSION_CONTAINER_IMAGE:-axonos:public-beta}
-      AXGT_HOST_SESSION_CONTAINER_NETWORK: ${AXGT_HOST_SESSION_CONTAINER_NETWORK:-axonos_default}
+      AXGT_HOST_SESSION_CONTAINER_NETWORK: ${AXGT_HOST_SESSION_CONTAINER_NETWORK:-axonos_stack}
       AXGT_HOST_SESSION_CONTAINER_COMMAND: ${AXGT_HOST_SESSION_CONTAINER_COMMAND:-/startup.sh}
       AXGT_HOST_SESSION_CONTAINER_EXTRA_ARGS: ${AXGT_HOST_SESSION_CONTAINER_EXTRA_ARGS:-}
       AXGT_HOST_SESSION_CONTAINER_SHM_SIZE: ${AXGT_HOST_SESSION_CONTAINER_SHM_SIZE:-32g}
       AXGT_HOST_SESSION_ENV_PASSTHROUGH: ${AXGT_HOST_SESSION_ENV_PASSTHROUGH:-AXGT_CHAIN_ID,AXGT_RPC_URL,AXGT_CONTRACT_ADDRESS,AXGT_REVENUE_WALLET,AXGT_CHALLENGE_DB_URL,AXGT_MIN_DEPOSIT,AXGT_CREDIT_PER_100_AXGT_MINUTES,ETH_MIN_DEPOSIT,ETH_CREDIT_PER_ETH_MINUTES,AXGT_ENABLE_ETH_DEPOSITS,WEBRTC_ENABLED,WEBRTC_AGENT_ENABLED,WEBRTC_AGENT_INTERNAL_KEY,WEBRTC_STUN_URLS,WEBRTC_TURN_URLS,WEBRTC_TURN_USERNAME,WEBRTC_TURN_CREDENTIAL,WEBRTC_FALLBACK_ENABLED}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - axonos_stack
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=2).read()"]
@@ -49,6 +52,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-axonos_gate}
     volumes:
       - axonos_postgres_data:/var/lib/postgresql/data
+    networks:
+      - axonos_stack
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-axonos_gate} -d ${POSTGRES_DB:-axonos_gate}"]
@@ -103,7 +108,14 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    networks:
+      - axonos_stack
     restart: unless-stopped
+
+networks:
+  axonos_stack:
+    name: axonos_stack
+    driver: bridge
 
 volumes:
   axonos_postgres_data: {}
