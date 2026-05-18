@@ -30,6 +30,9 @@ logger = logging.getLogger("axonos.webrtc_agent")
 
 _AXT = "X-AxonOS-WebRTC-Agent-Key"
 _clipboard_owners: dict[str, subprocess.Popen[bytes]] = {}
+# RFB-style pressed buttons: 1=left, 2=middle, 4=right.
+_mouse_button_mask: int = 0
+_MOUSE_BUTTON_BITS = ((1, 1), (2, 2), (4, 3))
 
 
 def _truthy(name: str) -> bool:
@@ -296,6 +299,43 @@ def _get_x_clipboard_for_browser_poll(env: dict[str, str]) -> str:
     return ""
 
 
+def _button_bit(button: int) -> int:
+    b = max(1, min(3, int(button)))
+    return 1 << (b - 1)
+
+
+def _sync_mouse_buttons(mask: int, env: dict[str, str]) -> None:
+    global _mouse_button_mask
+    mask &= 7
+    for bit, btn in _MOUSE_BUTTON_BITS:
+        was = (_mouse_button_mask & bit) != 0
+        now = (mask & bit) != 0
+        if now and not was:
+            subprocess.run(
+                ["xdotool", "mousedown", str(btn)],
+                check=False,
+                timeout=2,
+                env=env,
+            )
+        elif was and not now:
+            subprocess.run(
+                ["xdotool", "mouseup", str(btn)],
+                check=False,
+                timeout=2,
+                env=env,
+            )
+    _mouse_button_mask = mask
+
+
+def _mousemove(x: float, y: float, env: dict[str, str]) -> None:
+    subprocess.run(
+        ["xdotool", "mousemove", str(int(x)), str(int(y))],
+        check=False,
+        timeout=2,
+        env=env,
+    )
+
+
 def _apply_input_json(raw: str) -> None:
     try:
         obj = json.loads(raw)
@@ -309,13 +349,26 @@ def _apply_input_json(raw: str) -> None:
         if t in ("move", "mousemove"):
             x = float(obj.get("x", 0))
             y = float(obj.get("y", 0))
-            subprocess.run(["xdotool", "mousemove", str(int(x)), str(int(y))], check=False, timeout=2, env=env)
-        elif t in ("click",):
+            if "buttons" in obj:
+                _sync_mouse_buttons(int(obj.get("buttons", 0)), env)
+            _mousemove(x, y, env)
+        elif t in ("mousedown",):
             b = int(obj.get("button", 1))
             if "x" in obj and "y" in obj:
-                x = float(obj.get("x", 0))
-                y = float(obj.get("y", 0))
-                subprocess.run(["xdotool", "mousemove", str(int(x)), str(int(y))], check=False, timeout=2, env=env)
+                _mousemove(float(obj.get("x", 0)), float(obj.get("y", 0)), env)
+            mask = int(obj.get("buttons", _mouse_button_mask | _button_bit(b)))
+            _sync_mouse_buttons(mask, env)
+        elif t in ("mouseup",):
+            b = int(obj.get("button", 1))
+            if "x" in obj and "y" in obj:
+                _mousemove(float(obj.get("x", 0)), float(obj.get("y", 0)), env)
+            mask = int(obj.get("buttons", _mouse_button_mask & ~_button_bit(b)))
+            _sync_mouse_buttons(mask, env)
+        elif t in ("click",):
+            _sync_mouse_buttons(0, env)
+            b = int(obj.get("button", 1))
+            if "x" in obj and "y" in obj:
+                _mousemove(float(obj.get("x", 0)), float(obj.get("y", 0)), env)
             subprocess.run(["xdotool", "click", str(b)], check=False, timeout=2, env=env)
         elif t in ("key",):
             text = str(obj.get("key", ""))[:64]
@@ -482,7 +535,7 @@ async def _run_session(job: dict[str, Any]) -> None:
                 return
             except asyncio.QueueFull:
                 pass
-            # Evict oldest move events only; never drop clicks, paste, or keys.
+            # Evict oldest move events only; never drop clicks, mouse down/up, paste, or keys.
             backlog: list[str] = []
             dropped_move = False
             while True:
@@ -504,7 +557,10 @@ async def _run_session(job: dict[str, Any]) -> None:
                 input_queue.put_nowait(raw)
             except asyncio.QueueFull:
                 if kind not in ("move", "mousemove"):
-                    logger.debug("input queue full; dropped %s", kind or "message")
+                    logger.debug(
+                        "input queue full; dropped %s",
+                        kind or "message",
+                    )
 
         @channel.on("message")
         def on_msg(message) -> None:  # type: ignore[no-untyped-def]

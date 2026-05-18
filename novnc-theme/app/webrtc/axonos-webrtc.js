@@ -459,9 +459,20 @@ export async function connectAxonOSWebRTC(opts) {
         } catch { /* ignore */ }
     }
 
+    // RFB-style bitmask: 1=left, 2=middle, 4=right (1 << DOM button index).
+    let currentMouseButtons = 0;
+
+    function domButtonMask(button) {
+        return 1 << button;
+    }
+
+    function domButtonToXdotool(button) {
+        return button + 1;
+    }
+
     video.addEventListener('mousemove', (ev) => {
         ev.preventDefault();
-        sendInput({ t: 'move', ...pointerToRemote(ev) });
+        sendInput({ t: 'move', buttons: currentMouseButtons, ...pointerToRemote(ev) });
     });
     const clipboardBeforeClickMs = 200;
 
@@ -488,8 +499,32 @@ export async function connectAxonOSWebRTC(opts) {
         ev.preventDefault();
         focusPasteSink();
         await syncClipboardBeforeClick(ev);
-        sendInput({ t: 'click', button: ev.button + 1, ...pointerToRemote(ev) });
+        currentMouseButtons |= domButtonMask(ev.button);
+        sendInput({
+            t: 'mousedown',
+            button: domButtonToXdotool(ev.button),
+            buttons: currentMouseButtons,
+            ...pointerToRemote(ev),
+        });
     });
+
+    function onMouseUp(ev) {
+        if (currentMouseButtons === 0) {
+            return;
+        }
+        const mask = domButtonMask(ev.button);
+        if (!(currentMouseButtons & mask)) {
+            return;
+        }
+        currentMouseButtons &= ~mask;
+        sendInput({
+            t: 'mouseup',
+            button: domButtonToXdotool(ev.button),
+            buttons: currentMouseButtons,
+            ...pointerToRemote(ev),
+        });
+    }
+    window.addEventListener('mouseup', onMouseUp);
     video.addEventListener('mouseenter', focusPasteSink);
     video.addEventListener('contextmenu', (ev) => {
         ev.preventDefault();
@@ -676,6 +711,7 @@ export async function connectAxonOSWebRTC(opts) {
     }
 
     window.axonosWebRtcTeardown = async () => {
+        window.removeEventListener('mouseup', onMouseUp);
         if (metricsTimer) {
             clearInterval(metricsTimer);
         }
