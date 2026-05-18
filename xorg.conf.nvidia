@@ -40,6 +40,8 @@ Section "Device"
   Identifier "Device0"
   Driver "nvidia"
   VendorName "NVIDIA Corporation"
+  # Multi-GPU hosts: Xorg still enumerates all Tesla PCI devices; probing can SIGSEGV with Docker.
+  Option "ProbeAllGpus" "false"
   Option "AllowEmptyInitialConfiguration"
   # For headless Tesla GPUs, force a display output so Xorg can start.
   Option "ConnectedMonitor" "DFP-0"

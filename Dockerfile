@@ -548,10 +548,14 @@ RUN chown -R aXonian:aXonian /home/aXonian/.config/autostart
 
 # Install NVIDIA Xorg/OpenGL userspace driver (for GPU-backed Xorg :0)
 # Keep this late in the Dockerfile to preserve cache for heavy build steps.
-# Set NVIDIA_DRIVER_VERSION to match host `nvidia-smi` (e.g., 535, 550).
+# NVIDIA_DRIVER_VERSION: major branch (e.g. 535) matching host `nvidia-smi`.
 ARG NVIDIA_DRIVER_VERSION=535
-# Optional full package version (e.g., 535.274.02-0ubuntu0.22.04.1).
-# If set and available in apt, packages are pinned to this exact version.
+# NVIDIA_DRIVER_PKG_VERSION: optional exact .deb version for BOTH xserver-xorg-video-nvidia-* and
+# libnvidia-gl-* (see `apt-cache madison 'xserver-xorg-video-nvidia-535'` on the build host).
+# If unset, apt picks latest 535.x in Ubuntu — which can be NEWER than the host kernel driver
+# (e.g. lib 535.309 vs host 535.288). Then Xorg logs "NVIDIA GLX Module ..." vs
+# "NVIDIA dlloader X Driver ..." mismatched and often SIGSEGVs at "Enabling 2D acceleration".
+# Set via docker compose build arg / .env (see env.example).
 ARG NVIDIA_DRIVER_PKG_VERSION=
 # Only install the Xorg + GL userspace pieces needed for GPU-backed Xorg :0.
 # Avoid nvidia-utils to prevent overlayfs hardlink backup failures.

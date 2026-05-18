@@ -6,6 +6,11 @@ if ! nvidia-smi &>/dev/null; then
   echo "No NVIDIA GPU detected; skipping X :0 (VirtualGL will not be used)."
   exec sleep infinity
 fi
+# Helpful when debugging SIGSEGV: host driver vs container userspace must agree (see Dockerfile / env.example).
+if command -v nvidia-smi >/dev/null 2>&1; then
+  _dv="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 | tr -d '[:space:]')" || _dv=""
+  echo "start-xorg-nvidia: nvidia-smi reports driver_version=${_dv:-unknown}"
+fi
 BUS_ID_RAW="$(nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader 2>/dev/null | head -n 1 | tr -d '[:space:]')"
 CONFIG_SRC="/etc/X11/xorg.conf.nvidia"
 CONFIG_TMP="/tmp/xorg.conf.nvidia"
