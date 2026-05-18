@@ -69,6 +69,8 @@ services:
       dockerfile: Dockerfile
       args:
         PASSWORD: ${AXONOS_VNC_PASSWORD}
+        # Pin to host `nvidia-smi` Driver Version — see env.example / Dockerfile NVIDIA_DRIVER_PKG_VERSION.
+        NVIDIA_DRIVER_PKG_VERSION: ${NVIDIA_DRIVER_PKG_VERSION:-}
       tags:
         - axonos:public-beta
     container_name: axonos
