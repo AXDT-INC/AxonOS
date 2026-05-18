@@ -604,10 +604,10 @@ RUN apt-get update && \
 
 # Mesa's libglx.so can remain the default after early apt layers; Xorg then loads two GLX vendors
 # ("Another vendor is already registered for screen 0") and SIGSEGVs. Point libglx at NVIDIA only.
-# Use POSIX sh (dash): avoid nested "$(basename "$VAR")" and "|| { ... }" — both break /bin/sh -c here.
+# Use backticks for the command substitution: "$$(cmd)" can confuse BuildKit/sh ("$$" + "(" → PID + '(').
 RUN set -e; \
     GLX_EXT=/usr/lib/xorg/modules/extensions; \
-    NVGLX=$$(ls -1 "$$GLX_EXT"/libglxserver_nvidia.so.* 2>/dev/null | sort -V | tail -1); \
+    NVGLX=`ls -1 "$$GLX_EXT"/libglxserver_nvidia.so.* 2>/dev/null | sort -V | tail -1`; \
     if [ -z "$$NVGLX" ]; then echo "axonos: no libglxserver_nvidia.* under $$GLX_EXT"; ls -la "$$GLX_EXT" || true; exit 1; fi; \
     rm -f "$$GLX_EXT/libglx.so"; \
     ln -sf "$$NVGLX" "$$GLX_EXT/libglx.so"; \
