@@ -1662,7 +1662,125 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 .axonos-connect-wrapper {
   position: relative;
   display: flex;
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
+  width: 100%;
+}
+
+/* GPU profile row — glass strip + readable label (avoids dark-on-dark inherit bugs) */
+.axonos-profile-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem 1rem;
+  margin: 0.35rem 0 0.85rem;
+  max-width: min(100%, 440px);
+  width: 100%;
+  padding: 0.62rem 1.15rem;
+  box-sizing: border-box;
+  background: linear-gradient(
+    135deg,
+    rgba(94, 129, 172, 0.12) 0%,
+    rgba(24, 38, 62, 0.45) 100%
+  );
+  border: 1px solid rgba(136, 169, 212, 0.38);
+  border-radius: 14px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 8px 28px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(8px);
+}
+
+.axonos-profile-picker__label {
+  margin: 0;
+  font-family: "Orbitron", system-ui, sans-serif;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--axonos-light);
+  text-shadow:
+    0 0 18px rgba(120, 210, 255, 0.35),
+    0 1px 2px rgba(0, 0, 0, 0.85);
+  opacity: 0.98;
+  flex: 0 0 auto;
+}
+
+.axonos-profile-picker__select {
+  flex: 1 1 auto;
+  min-width: min(100%, 230px);
+  max-width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  color-scheme: dark;
+  font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+  font-size: 0.95rem;
+  font-weight: 500;
+  padding: 0.5rem 2.35rem 0.5rem 0.85rem;
+  border-radius: 10px;
+  cursor: pointer;
+  color: var(--axonos-light) !important;
+  background-color: rgba(12, 18, 28, 0.92) !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2378b4e8' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 0.65rem center !important;
+  border: 1px solid rgba(120, 176, 228, 0.45) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 4px 14px rgba(0, 0, 0, 0.35) !important;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.15s ease;
+}
+
+.axonos-profile-picker__select:hover {
+  border-color: rgba(255, 215, 0, 0.45) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 4px 18px rgba(42, 68, 120, 0.4) !important;
+}
+
+.axonos-profile-picker__select:focus {
+  outline: none !important;
+  border-color: var(--axonos-accent) !important;
+  box-shadow:
+    0 0 0 2px rgba(46, 139, 87, 0.35),
+    0 0 20px rgba(255, 215, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+.axonos-profile-picker__select:focus-visible {
+  outline: 2px solid var(--axonos-accent);
+  outline-offset: 2px;
+}
+
+/* Option list chrome (best-effort; native menu is OS-controlled) */
+.axonos-profile-picker__select option {
+  background: #141a24;
+  color: var(--axonos-light);
+  font-weight: 500;
+  padding: 0.35rem;
+}
+
+@media (max-width: 420px) {
+  .axonos-profile-picker {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .axonos-profile-picker__select {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+.axonos-connect-wrapper > #noVNC_connect_button {
+  width: 100%;
+  max-width: 480px;
+  box-sizing: border-box;
 }
 
 .axonos-prerequisites-tooltip {
