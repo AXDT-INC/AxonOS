@@ -524,7 +524,50 @@ export async function connectAxonOSWebRTC(opts) {
             /* ignore: not capturing or unsupported */
         }
     }
-    const clipboardBeforeClickMs = 200;
+
+    /**
+     * Map WheelEvent deltas to discrete X11 scroll-button clicks (4=up, 5=down).
+     * @param {number} delta
+     * @param {number} deltaMode 0=pixel, 1=line, 2=page
+     * @returns {number} signed step count, capped per event
+     */
+    function wheelSteps(delta, deltaMode) {
+        const d = Number(delta) || 0;
+        if (Math.abs(d) < 1e-6) {
+            return 0;
+        }
+        let lines;
+        switch (deltaMode) {
+            case 1: // DOM_DELTA_LINE
+                lines = Math.abs(d);
+                break;
+            case 2: // DOM_DELTA_PAGE
+                lines = Math.abs(d) * 8;
+                break;
+            default: // DOM_DELTA_PIXEL
+                lines = Math.abs(d) / 50;
+                break;
+        }
+        const steps = Math.max(1, Math.min(25, Math.round(lines)));
+        return Math.sign(d) * steps;
+    }
+
+    function onVideoWheel(ev) {
+        ev.preventDefault();
+        const dy = wheelSteps(ev.deltaY, ev.deltaMode);
+        const dx = wheelSteps(ev.deltaX, ev.deltaMode);
+        if (dy === 0 && dx === 0) {
+            return;
+        }
+        sendInput({
+            t: 'wheel',
+            ...pointerToRemote(ev),
+            dy,
+            dx,
+        });
+    }
+    video.addEventListener('wheel', onVideoWheel, { passive: false });
+
 
     async function syncClipboardBeforeClick(ev) {
         // Only right-click needs host clipboard on X CLIPBOARD before the

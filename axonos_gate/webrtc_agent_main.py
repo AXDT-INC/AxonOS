@@ -336,6 +336,41 @@ def _mousemove(x: float, y: float, env: dict[str, str]) -> None:
     )
 
 
+def _wheel_scroll(dx: int, dy: int, env: dict[str, str]) -> None:
+    """Send scroll clicks: X buttons 4/5 vertical, 6/7 horizontal (xdotool)."""
+    cap = 40
+    dv = max(-cap, min(cap, int(dy)))
+    dh = max(-cap, min(cap, int(dx)))
+    if dv > 0:
+        subprocess.run(
+            ["xdotool", "click", "--repeat", str(dv), "5"],
+            check=False,
+            timeout=4,
+            env=env,
+        )
+    elif dv < 0:
+        subprocess.run(
+            ["xdotool", "click", "--repeat", str(-dv), "4"],
+            check=False,
+            timeout=4,
+            env=env,
+        )
+    if dh > 0:
+        subprocess.run(
+            ["xdotool", "click", "--repeat", str(dh), "7"],
+            check=False,
+            timeout=4,
+            env=env,
+        )
+    elif dh < 0:
+        subprocess.run(
+            ["xdotool", "click", "--repeat", str(-dh), "6"],
+            check=False,
+            timeout=4,
+            env=env,
+        )
+
+
 def _reset_mouse_button_state(env: dict[str, str] | None = None) -> None:
     """Clear tracked mask; optionally release stuck buttons on the X display."""
     global _mouse_button_mask
@@ -473,6 +508,11 @@ def _apply_input_json(raw: str) -> None:
             if "x" in obj and "y" in obj:
                 _mousemove(float(obj.get("x", 0)), float(obj.get("y", 0)), env)
             subprocess.run(["xdotool", "click", str(b)], check=False, timeout=2, env=env)
+        elif t in ("wheel",):
+            x = float(obj.get("x", 0))
+            y = float(obj.get("y", 0))
+            _mousemove(x, y, env)
+            _wheel_scroll(int(obj.get("dx", 0)), int(obj.get("dy", 0)), env)
         elif t in ("key",):
             text = str(obj.get("key", ""))[:64]
             if text:
