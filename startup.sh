@@ -63,9 +63,15 @@ echo "Checking IPFS status..."
 su - aXonian -c 'ipfs id' || echo "IPFS still starting up..."
 
 # Per-session desktops (axgt-session-*): base axonos is gate-only — no Xorg on GPU 0.
-# Otherwise session containers cannot open :0 on the same GPU (WebRTC capture fails).
 # Session runtimes set AXGT_SESSION_ID; respect explicit overrides if already set.
-if [ -z "${AXGT_SESSION_ID:-}" ]; then
+if [ -n "${AXGT_SESSION_ID:-}" ]; then
+    if [ -z "${AXGT_DESKTOP_ENABLED:-}" ]; then
+        export AXGT_DESKTOP_ENABLED=true
+    fi
+    if [ -z "${WEBRTC_AGENT_ENABLED:-}" ]; then
+        export WEBRTC_AGENT_ENABLED=true
+    fi
+elif [ -z "${AXGT_SESSION_ID:-}" ]; then
     _uc=$(echo "${AXGT_USER_CONTAINER_ENABLED:-}" | tr '[:upper:]' '[:lower:]')
     if [ "${_uc}" = "true" ] || [ "${_uc}" = "1" ] || [ "${_uc}" = "yes" ]; then
         if [ -z "${AXGT_DESKTOP_ENABLED:-}" ]; then
@@ -257,13 +263,11 @@ chmod +x /tmp/setup_x.sh
 if [ "${AXGT_DESKTOP_ENABLED:-true}" != "false" ]; then
     su - aXonian -c '/tmp/setup_x.sh'
     ( sleep 35; /usr/local/bin/post_deploy_theme.sh ) &
-    echo "== Xorg log =="; ls -l /var/log/Xorg.0.log || true
-    test -f /var/log/Xorg.0.log && tail -n 200 /var/log/Xorg.0.log || true
-    echo "== try start-xorg manually =="; /usr/local/bin/start-xorg-nvidia.sh
-    ls -l /tmp/.X11-unix/X0 /tmp/.X0-lock || true
-    ps -ef | grep -E "Xorg" || true
+    echo "== Xorg log =="; ls -l /var/log/Xorg.0.log 2>/dev/null || true
+    test -f /var/log/Xorg.0.log && tail -n 80 /var/log/Xorg.0.log || true
+    ls -l /tmp/.X11-unix/X0 /tmp/.X0-lock 2>/dev/null || true
+    ps -ef | grep -E "[X]org" || true
     su - aXonian -c "DISPLAY=:0 XAUTHORITY=/home/aXonian/.Xauthority xset q" || true
-    su - aXonian -c "DISPLAY=:0 XAUTHORITY=/home/aXonian/.Xauthority vglrun glxinfo | head -20" || true
 else
     echo "AXGT_DESKTOP_ENABLED=false: gate-only container (no local X desktop)."
 fi
