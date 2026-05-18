@@ -702,10 +702,14 @@ async def main_loop() -> None:
     logger.info("WebRTC agent polling gate at %s", poll_url)
 
     if (os.getenv("AXGT_SESSION_ID") or "").strip():
-        logger.info("session container: pre-warming display before accepting WebRTC offers")
-        warmed = await asyncio.to_thread(_ensure_display_ready)
-        if not warmed:
-            logger.warning("session container: display pre-warm incomplete; will retry when offer arrives")
+
+        async def _prewarm_display() -> None:
+            logger.info("session container: pre-warming display in background")
+            warmed = await asyncio.to_thread(_ensure_display_ready)
+            if not warmed:
+                logger.warning("session container: display pre-warm incomplete; will retry when offer arrives")
+
+        asyncio.create_task(_prewarm_display())
 
     while True:
         if not _truthy("WEBRTC_ENABLED"):
