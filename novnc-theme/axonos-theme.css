@@ -43,6 +43,8 @@ SOFTWARE.
   --axonos-hover: #32CD32;
   --axonos-shadow: rgba(46, 139, 87, 0.3);
   --axonos-prereq-ticker-strip-h: 44px;
+  /* ~noVNC control rail + small gutter; avoids wide 11vw padding that leaves a dead zone beside the label */
+  --axonos-prereq-ticker-sidebar-clear: calc(env(safe-area-inset-left, 0px) + 60px);
   --axonos-prereq-ticker-body-pad-top: calc(
     env(safe-area-inset-top, 0px) + var(--axonos-prereq-ticker-strip-h)
   );
@@ -62,7 +64,8 @@ SOFTWARE.
   align-items: center;
   gap: 0.5rem;
   overflow: hidden;
-  padding-left: clamp(54px, 11vw, 92px);
+  justify-content: flex-start;
+  padding-left: var(--axonos-prereq-ticker-sidebar-clear);
   padding-right: 10px;
   background: rgba(24, 32, 48, 0.96);
   border-bottom: 1px solid rgba(70, 130, 180, 0.48);
@@ -85,7 +88,7 @@ html.noVNC_connected .axonos-prerequisites-ticker {
   padding: 0 0.55rem 0 0;
   border-right: 1px solid rgba(104, 120, 196, 0.35);
   font-family: "Orbitron", system-ui, sans-serif;
-  font-size: clamp(0.76rem, 0.55vw + 0.58rem, 0.98rem);
+  font-size: clamp(0.82rem, 0.7vw + 0.54rem, 1.06rem);
   font-weight: 600;
   letter-spacing: 0.09em;
   text-transform: uppercase;
@@ -2297,7 +2300,7 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
 @media (min-width: 993px) {
   html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg) {
     overflow-x: hidden;
-    padding-left: calc(20px + 58px);
+    padding-left: calc(20px + var(--axonos-prereq-ticker-sidebar-clear));
   }
 
   #noVNC_connect_dlg {
