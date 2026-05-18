@@ -42,7 +42,7 @@ SOFTWARE.
   --axonos-light: #F5F5F5;
   --axonos-hover: #32CD32;
   --axonos-shadow: rgba(46, 139, 87, 0.3);
-  --axonos-prereq-ticker-strip-h: 40px;
+  --axonos-prereq-ticker-strip-h: 44px;
   --axonos-prereq-ticker-body-pad-top: calc(
     env(safe-area-inset-top, 0px) + var(--axonos-prereq-ticker-strip-h)
   );
@@ -85,13 +85,13 @@ html.noVNC_connected .axonos-prerequisites-ticker {
   padding: 0 0.55rem 0 0;
   border-right: 1px solid rgba(104, 120, 196, 0.35);
   font-family: "Orbitron", system-ui, sans-serif;
-  font-size: 0.62rem;
+  font-size: clamp(0.76rem, 0.55vw + 0.58rem, 0.98rem);
   font-weight: 600;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.96);
   white-space: nowrap;
-  line-height: 1.2;
+  line-height: 1.1;
   align-self: stretch;
   display: inline-flex;
   align-items: center;
@@ -212,8 +212,8 @@ html.noVNC_connected .axonos-prerequisites-ticker {
 
 @media (max-width: 520px) {
   .axonos-prerequisites-ticker__kick {
-    font-size: 0.53rem;
-    letter-spacing: 0.07em;
+    font-size: clamp(0.64rem, 2.4vw + 0.48rem, 0.82rem);
+    letter-spacing: 0.06em;
     padding-right: 0.42rem;
   }
 }
