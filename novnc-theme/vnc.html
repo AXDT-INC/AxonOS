@@ -502,7 +502,7 @@ Copyright (C) 2019 The noVNC Authors
     <!-- AXGT queue overlay: desktop in use, show position and join/leave queue. -->
     <div id="axonos_queue_overlay" class="axonos-queue-overlay axonos-queue-overlay--hidden" aria-hidden="true">
         <div class="axonos-queue-overlay__panel">
-            <h2 class="axonos-queue-overlay__title">Desktop In Use</h2>
+            <h2 id="axonos_queue_title" class="axonos-queue-overlay__title">Desktop In Use</h2>
             <p id="axonos_queue_message" class="axonos-queue-overlay__message">Another researcher is currently using the desktop.</p>
             <p class="axonos-queue-overlay__row">Your position: <strong id="axonos_queue_position">Not in queue yet</strong></p>
             <p class="axonos-queue-overlay__row">People waiting in queue: <strong id="axonos_queue_length">—</strong></p>
@@ -863,15 +863,37 @@ document.addEventListener("DOMContentLoaded", function() {
 
     function showQueueOverlay(data) {
         const overlay = document.getElementById('axonos_queue_overlay');
+        const titleEl = document.getElementById('axonos_queue_title');
         const msgEl = document.getElementById('axonos_queue_message');
         const posEl = document.getElementById('axonos_queue_position');
         const lenEl = document.getElementById('axonos_queue_length');
         const joinBtn = document.getElementById('axonos_queue_join_btn');
         const leaveBtn = document.getElementById('axonos_queue_leave_btn');
         if (!overlay) return;
+
+        var queued =
+            !!(data &&
+                (axonosHasQueuePosition(data.queue_position) ||
+                    data.allocation_status === 'queued'));
+
+        if (titleEl) {
+            if (queued && data && data.queue_impossible_on_host === true) {
+                titleEl.textContent = 'This GPU profile exceeds this host';
+            } else if (queued) {
+                titleEl.textContent = 'Waiting for GPU availability';
+            } else {
+                titleEl.textContent = 'Desktop In Use';
+            }
+        }
+
         overlay.classList.remove('axonos-queue-overlay--hidden');
         overlay.setAttribute('aria-hidden', 'false');
-        if (msgEl) msgEl.textContent = (data && data.reason) ? data.reason : 'Waiting for GPU allocation.';
+        if (msgEl) {
+            var parts = [];
+            if (data && data.reason) parts.push(data.reason);
+            if (data && data.capacity_note) parts.push(data.capacity_note);
+            msgEl.textContent = parts.length ? parts.join('\n\n') : 'Waiting for GPU allocation.';
+        }
         if (posEl) {
             posEl.textContent = (data && data.queue_position != null && data.queue_position !== '')
                 ? String(data.queue_position)
@@ -914,7 +936,10 @@ document.addEventListener("DOMContentLoaded", function() {
             showQueueOverlay({
                 reason: reason,
                 queue_position: claim.queue_position,
-                queue_length: claim && claim.queue_length != null ? claim.queue_length : null
+                queue_length: claim && claim.queue_length != null ? claim.queue_length : null,
+                allocation_status: claim && claim.allocation_status,
+                queue_impossible_on_host: claim && claim.queue_impossible_on_host,
+                capacity_note: claim && claim.capacity_note
             });
             startQueuePolling();
             return;
@@ -927,7 +952,10 @@ document.addEventListener("DOMContentLoaded", function() {
             showQueueOverlay({
                 reason: reason + ' Click Join queue to wait for availability.',
                 queue_position: null,
-                queue_length: claim && claim.queue_length != null ? claim.queue_length : null
+                queue_length: claim && claim.queue_length != null ? claim.queue_length : null,
+                allocation_status: claim && claim.allocation_status,
+                queue_impossible_on_host: claim && claim.queue_impossible_on_host,
+                capacity_note: claim && claim.capacity_note
             });
             startQueuePolling();
             return;
@@ -938,22 +966,31 @@ document.addEventListener("DOMContentLoaded", function() {
         showQueueOverlay({
             reason: reason + ' Joining queue…',
             queue_position: null,
-            queue_length: claim && claim.queue_length != null ? claim.queue_length : null
+            queue_length: claim && claim.queue_length != null ? claim.queue_length : null,
+            allocation_status: claim && claim.allocation_status,
+            queue_impossible_on_host: claim && claim.queue_impossible_on_host,
+            capacity_note: claim && claim.capacity_note
         });
 
         joinQueue().then(function (r) {
             var joinedOk = r && (r.joined === true || r.joined === 'true' || axonosHasQueuePosition(r.queue_position));
             if (joinedOk) {
                 showQueueOverlay({
-                    reason: 'You are in the queue. We will connect when the desktop is free.',
+                    reason: r.reason || 'You are in the queue. We will connect when enough GPUs are available.',
                     queue_position: r.queue_position,
-                    queue_length: r.queue_length
+                    queue_length: r.queue_length,
+                    allocation_status: r.allocation_status,
+                    queue_impossible_on_host: r.queue_impossible_on_host,
+                    capacity_note: r.capacity_note
                 });
             } else {
                 showQueueOverlay({
                     reason: reason + ' Click Join queue to wait for availability.',
                     queue_position: axonosHasQueuePosition(r && r.queue_position) ? r.queue_position : null,
-                    queue_length: r && r.queue_length != null ? r.queue_length : null
+                    queue_length: r && r.queue_length != null ? r.queue_length : null,
+                    allocation_status: r && r.allocation_status,
+                    queue_impossible_on_host: r && r.queue_impossible_on_host,
+                    capacity_note: r && r.capacity_note
                 });
             }
         }).catch(function () {
@@ -997,11 +1034,25 @@ document.addEventListener("DOMContentLoaded", function() {
                 var qOverlay = document.getElementById('axonos_queue_overlay');
                 var queueVisible = qOverlay && !qOverlay.classList.contains('axonos-queue-overlay--hidden');
                 if (data.reason) {
-                    showQueueOverlay({ reason: data.reason, queue_position: data.queue_position, queue_length: data.queue_length });
+                    showQueueOverlay({
+                        reason: data.reason,
+                        queue_position: data.queue_position,
+                        queue_length: data.queue_length,
+                        allocation_status: data.allocation_status,
+                        queue_impossible_on_host: data.queue_impossible_on_host,
+                        capacity_note: data.capacity_note
+                    });
                 } else if (queueVisible && data.active === true && !data.is_owner) {
                     var qMsg = document.getElementById('axonos_queue_message');
                     var keepMsg = (qMsg && qMsg.textContent) ? qMsg.textContent : 'Another researcher is currently using the desktop.';
-                    showQueueOverlay({ reason: keepMsg, queue_position: data.queue_position, queue_length: data.queue_length });
+                    showQueueOverlay({
+                        reason: keepMsg,
+                        queue_position: data.queue_position,
+                        queue_length: data.queue_length,
+                        allocation_status: data.allocation_status,
+                        queue_impossible_on_host: data.queue_impossible_on_host,
+                        capacity_note: data.capacity_note
+                    });
                 }
                 if (data.active === false || data.is_owner === true) {
                     claimSession().then(function (claim) {
@@ -2086,9 +2137,12 @@ document.addEventListener("DOMContentLoaded", function() {
                 var hasPos = r.queue_position != null && r.queue_position !== '';
                 if (joinedOk || hasPos) {
                     showQueueOverlay({
-                        reason: 'You are in the queue. We will connect when the desktop is free.',
+                        reason: r.reason || 'You are in the queue. We will connect when enough GPUs are available.',
                         queue_position: r.queue_position,
-                        queue_length: r.queue_length
+                        queue_length: r.queue_length,
+                        allocation_status: r.allocation_status,
+                        queue_impossible_on_host: r.queue_impossible_on_host,
+                        capacity_note: r.capacity_note
                     });
                     joinQueueBtn.style.display = 'none';
                     if (leaveQueueBtn) leaveQueueBtn.style.display = '';
