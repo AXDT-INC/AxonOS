@@ -550,8 +550,10 @@ RUN chown -R aXonian:aXonian /home/aXonian/.config/autostart
 # Keep this late in the Dockerfile to preserve cache for heavy build steps.
 # NVIDIA_DRIVER_VERSION: major branch (e.g. 535) matching host `nvidia-smi`.
 ARG NVIDIA_DRIVER_VERSION=535
-# NVIDIA_DRIVER_PKG_VERSION: optional exact .deb version for BOTH xserver-xorg-video-nvidia-* and
-# libnvidia-gl-* (see `apt-cache madison 'xserver-xorg-video-nvidia-535'` on the build host).
+# NVIDIA_DRIVER_PKG_VERSION: pin ALL of these Ubuntu restricted packages together (same madison version):
+#   xserver-xorg-video-nvidia-*, libnvidia-gl-*, libnvidia-cfg1-*, libnvidia-common-*
+# The CUDA base image often preinstalls newer libnvidia-cfg1 (e.g. 535.309) — without pinning cfg1/common,
+# apt cannot downgrade to match host (e.g. 535.288). Use --allow-downgrades in the install line.
 # If unset, apt picks latest 535.x in Ubuntu — which can be NEWER than the host kernel driver
 # (e.g. lib 535.309 vs host 535.288). Then Xorg logs "NVIDIA GLX Module ..." vs
 # "NVIDIA dlloader X Driver ..." mismatched and often SIGSEGVs at "Enabling 2D acceleration".
@@ -562,16 +564,20 @@ ARG NVIDIA_DRIVER_PKG_VERSION=
 RUN apt-get update && \
     if [ -n "${NVIDIA_DRIVER_PKG_VERSION}" ] && \
        apt-cache madison "xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}" | awk '{print $3}' | grep -qx "${NVIDIA_DRIVER_PKG_VERSION}" && \
-       apt-cache madison "libnvidia-gl-${NVIDIA_DRIVER_VERSION}" | awk '{print $3}' | grep -qx "${NVIDIA_DRIVER_PKG_VERSION}"; then \
-      apt-get -o Dpkg::Options::=--force-unsafe-io install -y --no-install-recommends \
+       apt-cache madison "libnvidia-gl-${NVIDIA_DRIVER_VERSION}" | awk '{print $3}' | grep -qx "${NVIDIA_DRIVER_PKG_VERSION}" && \
+       apt-cache madison "libnvidia-cfg1-${NVIDIA_DRIVER_VERSION}" | awk '{print $3}' | grep -qx "${NVIDIA_DRIVER_PKG_VERSION}" && \
+       apt-cache madison "libnvidia-common-${NVIDIA_DRIVER_VERSION}" | awk '{print $3}' | grep -qx "${NVIDIA_DRIVER_PKG_VERSION}"; then \
+      apt-get -o Dpkg::Options::=--force-unsafe-io install -y --no-install-recommends --allow-downgrades \
         xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}=${NVIDIA_DRIVER_PKG_VERSION} \
         libnvidia-gl-${NVIDIA_DRIVER_VERSION}=${NVIDIA_DRIVER_PKG_VERSION} \
+        libnvidia-cfg1-${NVIDIA_DRIVER_VERSION}=${NVIDIA_DRIVER_PKG_VERSION} \
+        libnvidia-common-${NVIDIA_DRIVER_VERSION}=${NVIDIA_DRIVER_PKG_VERSION} \
         libglvnd0 libglx0 libegl1 && \
       if apt-cache madison libnvidia-egl-${NVIDIA_DRIVER_VERSION} | awk '{print $3}' | grep -qx "${NVIDIA_DRIVER_PKG_VERSION}"; then \
-        apt-get -o Dpkg::Options::=--force-unsafe-io install -y --no-install-recommends \
+        apt-get -o Dpkg::Options::=--force-unsafe-io install -y --no-install-recommends --allow-downgrades \
           libnvidia-egl-${NVIDIA_DRIVER_VERSION}=${NVIDIA_DRIVER_PKG_VERSION}; \
       elif apt-cache madison libnvidia-egl-${NVIDIA_DRIVER_VERSION}-server | awk '{print $3}' | grep -qx "${NVIDIA_DRIVER_PKG_VERSION}"; then \
-        apt-get -o Dpkg::Options::=--force-unsafe-io install -y --no-install-recommends \
+        apt-get -o Dpkg::Options::=--force-unsafe-io install -y --no-install-recommends --allow-downgrades \
           libnvidia-egl-${NVIDIA_DRIVER_VERSION}-server=${NVIDIA_DRIVER_PKG_VERSION}; \
       fi; \
     elif [ -n "${NVIDIA_DRIVER_PKG_VERSION}" ]; then \
@@ -604,8 +610,13 @@ RUN apt-get update && \
       ver="$(ls /usr/lib/x86_64-linux-gnu/nvidia | sort -V | tail -1)"; \
       ln -s "/usr/lib/x86_64-linux-gnu/nvidia/${ver}" /usr/lib/x86_64-linux-gnu/nvidia/current; \
     fi && \
-    apt-get -o Dpkg::Options::=--force-unsafe-io install -y --reinstall --no-install-recommends \
-      "xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}" && \
+    if [ -n "${NVIDIA_DRIVER_PKG_VERSION}" ]; then \
+      apt-get -o Dpkg::Options::=--force-unsafe-io install -y --reinstall --no-install-recommends --allow-downgrades \
+        xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}=${NVIDIA_DRIVER_PKG_VERSION}; \
+    else \
+      apt-get -o Dpkg::Options::=--force-unsafe-io install -y --reinstall --no-install-recommends \
+        xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}; \
+    fi && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Fail fast if the NVIDIA GLX server module never landed (fix-libglx would be pointless).
