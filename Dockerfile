@@ -604,12 +604,17 @@ RUN apt-get update && \
       "xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}" && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Fail fast if the Xorg NVIDIA GLX server module never landed (fix-libglx would be pointless).
-# Do not use a shell $PKG variable here — "$$PKG" in RUN can become PID+"PKG" (e.g. 1PKG) if $$ is not reduced.
-RUN dpkg -L "xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}" 2>/dev/null | grep -q libglxserver_nvidia || \
-    { echo "axonos: xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION} lists no libglxserver_nvidia — check package contents"; \
+# Fail fast if the NVIDIA GLX server module never landed (fix-libglx would be pointless).
+# Jammy+ splits modules: xserver-xorg-video-nvidia-* ships nvidia_drv.so; libglxserver_nvidia is
+# in libnvidia-gl-* — only checking the xserver package is a false negative. No shell $PKG / $$ here.
+RUN ( dpkg -L "xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}"; \
+      dpkg -L "libnvidia-gl-${NVIDIA_DRIVER_VERSION}" ) 2>/dev/null | grep -q libglxserver_nvidia || \
+    { echo "axonos: libglxserver_nvidia not in xserver-xorg-video-nvidia / libnvidia-gl (${NVIDIA_DRIVER_VERSION})"; \
       dpkg -l | grep -iE 'nvidia|xorg|mesa' || true; \
-      dpkg -L "xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}" 2>/dev/null | tail -40 || true; \
+      echo "axonos: xserver-xorg-video-nvidia file list (tail):"; \
+      dpkg -L "xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}" 2>/dev/null | tail -20 || true; \
+      echo "axonos: libnvidia-gl file list (tail):"; \
+      dpkg -L "libnvidia-gl-${NVIDIA_DRIVER_VERSION}" 2>/dev/null | tail -20 || true; \
       exit 1; }
 
 # Mesa's libglx.so can remain the default after early apt layers; Xorg then loads two GLX vendors
