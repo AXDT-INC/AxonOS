@@ -43,7 +43,10 @@ SOFTWARE.
   --axonos-hover: #32CD32;
   --axonos-shadow: rgba(46, 139, 87, 0.3);
   --axonos-prereq-ticker-strip-h: 44px;
+  /* Gutter below the prerequisites strip — keeps hero/dialog clear of floating control rail */
   --axonos-prereq-ticker-sidebar-clear: calc(env(safe-area-inset-left, 0px) + 50px);
+  /* Prerequisites strip spans the full viewport header; tighter pad than sidebar-clear */
+  --axonos-prereq-ticker-strip-pad-start: calc(env(safe-area-inset-left, 0px) + max(11px, 0.62rem));
   --axonos-prereq-ticker-body-pad-top: calc(
     env(safe-area-inset-top, 0px) + var(--axonos-prereq-ticker-strip-h)
   );
@@ -64,7 +67,7 @@ SOFTWARE.
   gap: 0.5rem;
   overflow: hidden;
   justify-content: flex-start;
-  padding-left: var(--axonos-prereq-ticker-sidebar-clear);
+  padding-left: var(--axonos-prereq-ticker-strip-pad-start);
   padding-right: 10px;
   background: rgba(24, 32, 48, 0.96);
   border-bottom: 1px solid rgba(70, 130, 180, 0.48);
@@ -83,27 +86,40 @@ html.noVNC_connected .axonos-prerequisites-ticker {
 
 .axonos-prerequisites-ticker__kick {
   box-sizing: border-box;
-  flex: 0 0 auto;
   margin: 0;
-  padding: 0 0.4rem 0 0;
+  flex: 0 0 clamp(10.5rem, 19.25vw, 13.5rem);
+  width: clamp(10.5rem, 19.25vw, 13.5rem);
+  padding: 0 0.42rem 0 0;
   border-right: 1px solid rgba(104, 120, 196, 0.35);
   font-family: "Orbitron", system-ui, sans-serif;
   font-size: clamp(0.82rem, 0.7vw + 0.54rem, 1.06rem);
   font-weight: 600;
-  letter-spacing: 0.055em;
+  letter-spacing: 0.03em;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+}
+
+.axonos-prerequisites-ticker__kick-inner {
+  display: inline-block;
+  width: 100%;
+  white-space: nowrap;
+  font: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.96);
-  white-space: nowrap;
-  line-height: 1.1;
-  align-self: stretch;
-  width: fit-content;
-  max-width: none;
-  text-align: left;
-  justify-content: flex-start;
-  /* Nudge label toward the rail; keeps glyph cluster visually tight in the blue strip */
-  transform: translateX(-3px);
-  display: inline-flex;
-  align-items: center;
+  text-align: justify;
+  text-align-last: justify;
+  text-justify: inter-word;
+}
+
+/* Stretch last line so inter-word justification applies to a single line */
+.axonos-prerequisites-ticker__kick-inner::after {
+  content: "";
+  display: inline-block;
+  width: 100%;
+  height: 0;
 }
 
 .axonos-prerequisites-ticker__marquee-wrap {
@@ -221,9 +237,11 @@ html.noVNC_connected .axonos-prerequisites-ticker {
 
 @media (max-width: 520px) {
   .axonos-prerequisites-ticker__kick {
+    flex-basis: clamp(9.25rem, 54vw, 11.85rem);
+    width: clamp(9.25rem, 54vw, 11.85rem);
     font-size: clamp(0.64rem, 2.4vw + 0.48rem, 0.82rem);
-    letter-spacing: 0.06em;
-    padding-right: 0.42rem;
+    letter-spacing: 0.04em;
+    padding-right: 0.38rem;
   }
 }
 
