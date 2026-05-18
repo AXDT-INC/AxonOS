@@ -42,6 +42,16 @@ def max_reconnect_attempts() -> int:
         return 5
 
 
+def answer_wait_ms() -> int:
+    """How long the browser polls for a WebRTC answer (must exceed display wait + ICE gather)."""
+    raw = (os.getenv("WEBRTC_ANSWER_WAIT_MS") or "").strip()
+    try:
+        n = int(raw)
+    except ValueError:
+        n = 180_000
+    return max(90_000, min(300_000, n))
+
+
 def rate_limit_per_minute() -> int:
     raw = (os.getenv("WEBRTC_SIGNAL_RATE_LIMIT_PER_MIN") or "60").strip()
     try:
@@ -99,6 +109,7 @@ def public_config() -> dict[str, Any]:
         "webrtc_fallback_enabled": fallback_enabled(),
         "webrtc_session_timeout_seconds": session_timeout_seconds(),
         "webrtc_max_reconnect_attempts": max_reconnect_attempts(),
+        "webrtc_answer_wait_ms": answer_wait_ms(),
     }
 
 

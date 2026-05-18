@@ -56,6 +56,9 @@ def _display_env() -> dict[str, str]:
     return {**os.environ, "DISPLAY": _display(), "XAUTHORITY": _xauthority_path()}
 
 
+_display_ready_cached = False
+
+
 def _display_wait_timeout_seconds() -> float:
     raw = (os.getenv("WEBRTC_DISPLAY_WAIT_SECONDS") or "120").strip()
     try:
@@ -106,6 +109,29 @@ def _wait_for_display_ready() -> bool:
         timeout_s,
         attempt,
     )
+    return False
+
+
+def _ensure_display_ready() -> bool:
+    """Wait for X11 once per container; re-check quickly if already warmed."""
+    global _display_ready_cached
+    if _display_ready_cached:
+        try:
+            probe = subprocess.run(
+                ["xset", "q"],
+                env=_display_env(),
+                capture_output=True,
+                timeout=3,
+                check=False,
+            )
+            if probe.returncode == 0:
+                return True
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        _display_ready_cached = False
+    if _wait_for_display_ready():
+        _display_ready_cached = True
+        return True
     return False
 
 
@@ -376,7 +402,7 @@ async def _run_session(job: dict[str, Any]) -> None:
     import numpy as np
 
     session_id = job["session_id"]
-    if not _wait_for_display_ready():
+    if not _ensure_display_ready():
         _agent_fail(session_id, "display_not_ready")
         return
 
@@ -673,6 +699,13 @@ async def main_loop() -> None:
 
     gate = _gate_url()
     poll_url = f"{gate}/api/webrtc/agent/next"
+    logger.info("WebRTC agent polling gate at %s", poll_url)
+
+    if (os.getenv("AXGT_SESSION_ID") or "").strip():
+        logger.info("session container: pre-warming display before accepting WebRTC offers")
+        warmed = await asyncio.to_thread(_ensure_display_ready)
+        if not warmed:
+            logger.warning("session container: display pre-warm incomplete; will retry when offer arrives")
 
     while True:
         if not _truthy("WEBRTC_ENABLED"):

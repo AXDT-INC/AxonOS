@@ -112,6 +112,9 @@ export async function connectAxonOSWebRTC(opts) {
 
     /** When false, UI must not imply noVNC fallback; server blocks classic path. */
     const webrtcFallbackOk = cfgRes.json.webrtc_fallback_enabled !== false;
+    const answerWaitMs = Number(cfgRes.json.webrtc_answer_wait_ms) > 0
+        ? Number(cfgRes.json.webrtc_answer_wait_ms)
+        : 180000;
 
     if (typeof RTCPeerConnection === 'undefined') {
         if (webrtcFallbackOk) {
@@ -248,7 +251,7 @@ export async function connectAxonOSWebRTC(opts) {
     }
 
     let answerApplied = false;
-    const deadline = Date.now() + 90000;
+    const deadline = Date.now() + answerWaitMs;
     let serverIceCursor = 0;
 
     while (Date.now() < deadline && !answerApplied) {
