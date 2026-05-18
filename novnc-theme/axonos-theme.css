@@ -2270,7 +2270,39 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   }
 }
 
-/* Circular Loading Spinner */
+/* Connection loader: rotating rings behind a non-rotating breathing X (matches landing connect icon). */
+.axonos-loader-visual {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  margin-bottom: 20px;
+}
+
+.axonos-loader-visual .axonos-spinner {
+  margin-bottom: 0;
+}
+
+.axonos-loader-x-wrap {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  line-height: 0;
+}
+
+.axonos-loader-x-img {
+  width: 44px;
+  height: 44px;
+  object-fit: contain;
+  animation: rocket-pulse 2s infinite ease-in-out;
+}
+
+/* Circular loading rings (rotate; center logo is layered above in markup) */
 .axonos-spinner {
   width: 80px;
   height: 80px;
@@ -2295,29 +2327,9 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   animation: axonos-spin-reverse 0.8s linear infinite;
 }
 
-.axonos-spinner::after {
-  content: '🚀';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  font-size: 24px;
-  animation: rocket-bounce 2s ease-in-out infinite;
-}
-
-@keyframes axonos-spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
 @keyframes axonos-spin-reverse {
   0% { transform: rotate(360deg); }
   100% { transform: rotate(0deg); }
-}
-
-@keyframes rocket-bounce {
-  0%, 100% { transform: translate(-50%, -50%) scale(1); }
-  50% { transform: translate(-50%, -50%) scale(1.1); }
 }
 
 /* Loading Text */
