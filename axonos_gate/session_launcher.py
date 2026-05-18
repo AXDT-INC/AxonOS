@@ -17,17 +17,20 @@ from typing import List, Optional, Tuple
 
 try:
     from .docker_gpu_cli import (
+        docker_run_gpus_device_value,
         subprocess_env_for_nested_docker,
         strip_conflicting_gpu_run_flags,
     )
 except ImportError:
     try:
         from axonos_gate.docker_gpu_cli import (
+            docker_run_gpus_device_value,
             subprocess_env_for_nested_docker,
             strip_conflicting_gpu_run_flags,
         )
     except ImportError:
         from docker_gpu_cli import (
+            docker_run_gpus_device_value,
             subprocess_env_for_nested_docker,
             strip_conflicting_gpu_run_flags,
         )
@@ -89,7 +92,7 @@ def _launch_via_docker_cli(session_id: int, wallet: str, profile: str, gpu_ids: 
     cmd: List[str] = [
         "docker", "run", "-d", "--rm",
         "--name", name,
-        "--gpus", f"device={gpu_spec}",
+        "--gpus", docker_run_gpus_device_value(gpu_ids),
         "-e", f"AXGT_SESSION_ID={session_id}",
         "-e", f"AXGT_WALLET_ADDRESS={wallet}",
         "-e", f"AXGT_REQUESTED_PROFILE={profile}",
