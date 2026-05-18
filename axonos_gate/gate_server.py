@@ -436,7 +436,7 @@ def api_discount_quote():
 
     Query params:
         wallet_address (required): 0x... wallet to quote.
-        base_eth (optional): override the base ETH price to discount; defaults to ETH_MIN_DEPOSIT.
+        base_eth (optional): override the ETH price to discount; defaults to ETH_MIN_DEPOSIT.
 
     The backend always re-fetches the AXGT balance on-chain (no client trust)
     and resolves the tier from the server-side configuration. On RPC failure
