@@ -94,6 +94,15 @@ class WebrtcInputTests(unittest.TestCase):
             any(self.agent._input_buttons_from_raw(item) for item in items)
         )
 
+    @mock.patch("webrtc_agent_main.subprocess.run")
+    def test_wheel_vertical_maps_to_buttons_4_5(self, run: mock.MagicMock) -> None:
+        self.agent._apply_input_json('{"t":"wheel","x":10,"y":20,"dx":0,"dy":3}')
+        cmds = [c.args[0] for c in run.call_args_list if c.args]
+        self.assertIn(["xdotool", "mousemove", "10", "20"], cmds)
+        self.assertIn(
+            ["xdotool", "click", "--repeat", "3", "5"], cmds,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
