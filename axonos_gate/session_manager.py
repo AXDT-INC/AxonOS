@@ -159,17 +159,27 @@ def _gpu_device_ids() -> List[int]:
         return _gpu_device_cache_last
 
     discovered = _detect_nvidia_smi_gpu_indices()
+    discovery_source = "nvidia-smi"
+    if not discovered:
+        ln = _import_session_launcher()
+        launcher_fn = getattr(ln, "enumerate_host_gpus_via_http", None)
+        if callable(launcher_fn):
+            discovered = launcher_fn()
+            if discovered:
+                discovery_source = "launcher"
     if discovered:
         logger.info(
-            "session_manager: auto-detected %d GPU(s) via nvidia-smi: %s",
+            "session_manager: auto-detected %d GPU(s) via %s: %s",
             len(discovered),
+            discovery_source,
             discovered,
         )
         _gpu_device_cache_last = discovered
     else:
         logger.info(
             "session_manager: GPU auto-detect found no devices; "
-            "falling back to [0] (set AXGT_GPU_DEVICE_IDS or AXGT_GPU_TOTAL_COUNT to override)"
+            "falling back to [0]. Set AXGT_GPU_DEVICE_IDS, AXGT_GPU_TOTAL_COUNT, or ensure "
+            "the session launcher exposes GET /enumerate-gpus when the gate container has no GPUs."
         )
         _gpu_device_cache_last = [0]
     _gpu_device_cache_until = now + _gpu_device_cache_ttl_seconds()

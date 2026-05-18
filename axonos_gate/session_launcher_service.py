@@ -64,6 +64,28 @@ def _extra_args_tokens() -> List[str]:
     return shlex.split(raw)
 
 
+def _enumerate_image_name() -> str:
+    """Image that includes `nvidia-smi` on PATH; reuse session desktop image by default."""
+    for key in ("AXGT_LAUNCHER_GPU_ENUMERATE_IMAGE", "AXGT_HOST_SESSION_CONTAINER_IMAGE"):
+        img = (os.getenv(key) or "").strip()
+        if img:
+            return img
+    return ""
+
+
+def _parse_nvidia_index_csv(text: str) -> List[int]:
+    ids: List[int] = []
+    for line in (text or "").splitlines():
+        part = line.strip().split(",")[0].strip()
+        if not part:
+            continue
+        try:
+            ids.append(int(float(part)))
+        except ValueError:
+            continue
+    return sorted(set(ids))
+
+
 def _shm_size_for_run() -> Optional[str]:
     """
     Docker default /dev/shm is tiny; GLX and many GPU apps need more (matches main axonos shm_size).
@@ -173,6 +195,46 @@ def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], 
 @app.route("/healthz", methods=["GET"])
 def healthz():
     return jsonify({"ok": True})
+
+
+@app.route("/enumerate-gpus", methods=["GET"])
+def enumerate_gpus():
+    """Run a one-shot privileged container so the gate (GPU-less) can size the host pool."""
+    auth_err = _require_token()
+    if auth_err:
+        return auth_err
+    image = _enumerate_image_name()
+    if not image:
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "error": "Set AXGT_HOST_SESSION_CONTAINER_IMAGE or AXGT_LAUNCHER_GPU_ENUMERATE_IMAGE",
+                }
+            ),
+            503,
+        )
+    cmd = [
+        "docker",
+        "run",
+        "--rm",
+        "--gpus",
+        "all",
+        "--entrypoint",
+        "nvidia-smi",
+        image,
+        "--query-gpu=index",
+        "--format=csv,noheader,nounits",
+    ]
+    ok, out = _run_cmd(cmd)
+    if not ok:
+        logger.warning("launcher: enumerate-gpus failed: %s", out[:800] if out else "")
+        return jsonify({"ok": False, "error": out or "docker run enumerate failed"}), 500
+    indices = _parse_nvidia_index_csv(out)
+    if not indices:
+        return jsonify({"ok": False, "error": "nvidia-smi returned no GPUs", "raw": out}), 500
+    logger.info("launcher: enumerated %d GPU(s): %s", len(indices), indices)
+    return jsonify({"ok": True, "indices": indices})
 
 
 @app.route("/launch", methods=["POST"])
