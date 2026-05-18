@@ -25,6 +25,20 @@ class DockerGpuCliTests(unittest.TestCase):
         inp2 = ["--gpus=device=1,2"]
         self.assertEqual(strip_conflicting_gpu_run_flags(inp2), [])
 
+    def test_docker_run_gpus_device_value_quotes_multi_gpu(self) -> None:
+        from docker_gpu_cli import docker_run_gpus_device_value
+
+        self.assertEqual(docker_run_gpus_device_value([0]), "device=0")
+        self.assertEqual(docker_run_gpus_device_value([1]), "device=1")
+        self.assertEqual(docker_run_gpus_device_value([0, 1]), '"device=0,1"')
+        self.assertEqual(docker_run_gpus_device_value([0, 2, 3]), '"device=0,2,3"')
+
+    def test_docker_run_gpus_device_value_rejects_empty(self) -> None:
+        from docker_gpu_cli import docker_run_gpus_device_value
+
+        with self.assertRaises(ValueError):
+            docker_run_gpus_device_value([])
+
     def test_subprocess_env_drops_nvidia_visible(self) -> None:
         from docker_gpu_cli import subprocess_env_for_nested_docker
 

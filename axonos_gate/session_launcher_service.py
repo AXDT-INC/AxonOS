@@ -21,17 +21,20 @@ from flask import Flask, jsonify, request
 
 try:
     from .docker_gpu_cli import (
+        docker_run_gpus_device_value,
         subprocess_env_for_nested_docker,
         strip_conflicting_gpu_run_flags,
     )
 except ImportError:
     try:
         from axonos_gate.docker_gpu_cli import (
+            docker_run_gpus_device_value,
             subprocess_env_for_nested_docker,
             strip_conflicting_gpu_run_flags,
         )
     except ImportError:
         from docker_gpu_cli import (
+            docker_run_gpus_device_value,
             subprocess_env_for_nested_docker,
             strip_conflicting_gpu_run_flags,
         )
@@ -182,7 +185,7 @@ def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], 
     cmd.extend(
         [
             "--gpus",
-            f"device={gpu_spec}",
+            docker_run_gpus_device_value(gpu_ids),
             "-e",
             f"AXGT_SESSION_ID={session_id}",
             "-e",
