@@ -360,6 +360,9 @@ html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg)::-webkit-scroll
 
 /* Space Background - Only when not connected */
 html:not(.noVNC_connected) body {
+  /* border-box keeps min-height + padding-top within one viewport (avoids phantom footer scrollbar). */
+  box-sizing: border-box;
+  margin: 0;
   padding-top: var(--axonos-prereq-ticker-body-pad-top);
   background: 
     radial-gradient(ellipse at bottom, #1B2735 0%, #090A0F 100%),
