@@ -4,6 +4,7 @@ heartbeat billing. Uses mocked deposit_ledger and session DB.
 """
 
 import os
+import subprocess
 import sys
 import unittest
 from unittest.mock import patch, MagicMock
@@ -142,6 +143,115 @@ class TestBillingAndSession(unittest.TestCase):
         with patch.dict(os.environ, {"AXGT_GPU_DEVICE_IDS": "0,1,2,3"}):
             alloc = session_manager._choose_allocation(active_rows, 2)
         self.assertIsNone(alloc)
+
+
+class TestGpuDeviceDiscovery(unittest.TestCase):
+    """AXGT_GPU_* env overrides vs nvidia-smi auto-detect for session_manager._gpu_device_ids."""
+
+    def tearDown(self) -> None:
+        from axonos_gate import session_manager
+
+        session_manager.reset_gpu_device_cache()
+
+    def test_explicit_ids_override_detection(self):
+        from axonos_gate import session_manager
+        session_manager.reset_gpu_device_cache()
+        with patch.dict(
+            os.environ,
+            {"AXGT_GPU_DEVICE_IDS": "3,1,3"},
+            clear=False,
+        ), patch.object(
+            session_manager,
+            "_detect_nvidia_smi_gpu_indices",
+            return_value=[9, 8],
+        ) as mock_detect:
+            gpus = session_manager._gpu_device_ids()
+        mock_detect.assert_not_called()
+        self.assertEqual(gpus, [1, 3])
+
+    def test_total_count_override(self):
+        from axonos_gate import session_manager
+        session_manager.reset_gpu_device_cache()
+        with patch.dict(
+            os.environ,
+            {"AXGT_GPU_TOTAL_COUNT": "4"},
+            clear=False,
+        ), patch.object(
+            session_manager,
+            "_detect_nvidia_smi_gpu_indices",
+            return_value=[99],
+        ) as mock_detect:
+            self.assertEqual(session_manager._gpu_device_ids(), [0, 1, 2, 3])
+        mock_detect.assert_not_called()
+
+    def test_auto_detect_uses_nvidia_smi_when_no_env(self):
+        from axonos_gate import session_manager
+        session_manager.reset_gpu_device_cache()
+        with patch.dict(
+            os.environ,
+            {
+                "AXGT_GPU_DEVICE_IDS": "",
+                "AXGT_GPU_TOTAL_COUNT": "",
+                "AXGT_GPU_AUTO_DETECT": "true",
+                "AXGT_GPU_DEVICE_CACHE_SECONDS": "0",
+            },
+            clear=False,
+        ), patch.object(
+            session_manager,
+            "_detect_nvidia_smi_gpu_indices",
+            return_value=[0, 1, 2, 3, 4, 5, 6, 7],
+        ):
+            self.assertEqual(
+                session_manager._gpu_device_ids(),
+                [0, 1, 2, 3, 4, 5, 6, 7],
+            )
+
+    def test_auto_detect_fallback_zero_when_detection_fails(self):
+        from axonos_gate import session_manager
+        session_manager.reset_gpu_device_cache()
+        with patch.dict(
+            os.environ,
+            {
+                "AXGT_GPU_DEVICE_IDS": "",
+                "AXGT_GPU_TOTAL_COUNT": "",
+                "AXGT_GPU_AUTO_DETECT": "true",
+                "AXGT_GPU_DEVICE_CACHE_SECONDS": "0",
+            },
+            clear=False,
+        ), patch.object(session_manager, "_detect_nvidia_smi_gpu_indices", return_value=None):
+            self.assertEqual(session_manager._gpu_device_ids(), [0])
+
+    def test_auto_detect_disabled_falls_back_to_single_gpu(self):
+        from axonos_gate import session_manager
+        session_manager.reset_gpu_device_cache()
+        with patch.dict(
+            os.environ,
+            {
+                "AXGT_GPU_DEVICE_IDS": "",
+                "AXGT_GPU_TOTAL_COUNT": "",
+                "AXGT_GPU_AUTO_DETECT": "false",
+                "AXGT_GPU_DEVICE_CACHE_SECONDS": "0",
+            },
+            clear=False,
+        ), patch.object(
+            session_manager,
+            "_detect_nvidia_smi_gpu_indices",
+            return_value=[0, 1],
+        ) as mock_detect:
+            self.assertEqual(session_manager._gpu_device_ids(), [0])
+        mock_detect.assert_not_called()
+
+    def test_detect_nvidia_smi_parses_stdout(self):
+        from axonos_gate import session_manager
+
+        fake = subprocess.CompletedProcess(
+            args=["nvidia-smi"],
+            returncode=0,
+            stdout="0\n 1 \n\n2\n",
+            stderr="",
+        )
+        with patch("axonos_gate.session_manager.subprocess.run", return_value=fake):
+            self.assertEqual(session_manager._detect_nvidia_smi_gpu_indices(), [0, 1, 2])
 
 
 class TestSessionLauncher(unittest.TestCase):

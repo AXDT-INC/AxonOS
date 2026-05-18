@@ -21,6 +21,9 @@ _QUEUE_TABLE = "axgt_queue"
 _pg_init_done = False
 _pg_init_lock = Lock()
 
+_gpu_device_cache_last: Optional[List[int]] = None
+_gpu_device_cache_until: float = 0.0
+
 
 # ---------------------------------------------------------------------------
 # Configuration helpers
@@ -58,7 +61,8 @@ def _configured_profiles() -> Dict[str, int]:
     }
 
 
-def _parse_gpu_device_ids() -> List[int]:
+def _explicit_gpu_ids_from_env() -> Optional[List[int]]:
+    """Return GPU indices from env if configured; None means use auto-detect or fallback."""
     raw = (os.getenv("AXGT_GPU_DEVICE_IDS") or "").strip()
     if raw:
         out: List[int] = []
@@ -79,11 +83,97 @@ def _parse_gpu_device_ids() -> List[int]:
         count = 0
     if count > 0:
         return list(range(count))
-    return [0]
+    return None
+
+
+def _gpu_device_cache_ttl_seconds() -> float:
+    raw = (os.getenv("AXGT_GPU_DEVICE_CACHE_SECONDS") or "").strip()
+    try:
+        val = float(raw)
+        if val >= 0:
+            return val
+    except (ValueError, TypeError):
+        pass
+    return 120.0
+
+
+def _detect_nvidia_smi_gpu_indices(timeout: float = 5.0) -> Optional[List[int]]:
+    """Enumerate GPU indices visible to this process (respects NVIDIA_VISIBLE_DEVICES in containers)."""
+    try:
+        proc = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=index",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.debug("session_manager: nvidia-smi GPU discovery failed: %s", exc)
+        return None
+    if proc.returncode != 0:
+        err = (proc.stderr or "").strip()
+        logger.debug(
+            "session_manager: nvidia-smi returned %s: %s",
+            proc.returncode,
+            err[:200] if err else "(no stderr)",
+        )
+        return None
+    ids: List[int] = []
+    for line in (proc.stdout or "").splitlines():
+        part = line.strip().split(",")[0].strip()
+        if not part:
+            continue
+        try:
+            ids.append(int(float(part)))
+        except ValueError:
+            logger.debug("session_manager: skip unparseable nvidia-smi line: %r", line)
+    ids = sorted(set(ids))
+    return ids if ids else None
+
+
+def reset_gpu_device_cache() -> None:
+    """Clear cached auto-detected GPU list (e.g. after host reconfiguration)."""
+    global _gpu_device_cache_last, _gpu_device_cache_until
+    _gpu_device_cache_last = None
+    _gpu_device_cache_until = 0.0
 
 
 def _gpu_device_ids() -> List[int]:
-    return _parse_gpu_device_ids()
+    global _gpu_device_cache_last, _gpu_device_cache_until
+
+    explicit = _explicit_gpu_ids_from_env()
+    if explicit is not None:
+        return explicit
+
+    now = time.monotonic()
+    if _gpu_device_cache_last is not None and now < _gpu_device_cache_until:
+        return _gpu_device_cache_last
+
+    if not _truthy("AXGT_GPU_AUTO_DETECT", True):
+        _gpu_device_cache_last = [0]
+        _gpu_device_cache_until = now + _gpu_device_cache_ttl_seconds()
+        return _gpu_device_cache_last
+
+    discovered = _detect_nvidia_smi_gpu_indices()
+    if discovered:
+        logger.info(
+            "session_manager: auto-detected %d GPU(s) via nvidia-smi: %s",
+            len(discovered),
+            discovered,
+        )
+        _gpu_device_cache_last = discovered
+    else:
+        logger.info(
+            "session_manager: GPU auto-detect found no devices; "
+            "falling back to [0] (set AXGT_GPU_DEVICE_IDS or AXGT_GPU_TOTAL_COUNT to override)"
+        )
+        _gpu_device_cache_last = [0]
+    _gpu_device_cache_until = now + _gpu_device_cache_ttl_seconds()
+    return _gpu_device_cache_last
 
 
 def _resolve_profile(profile: Optional[str]) -> Tuple[str, int]:
@@ -431,6 +521,34 @@ def _choose_allocation(rows: List[Dict[str, Any]], requested_gpus: int) -> Optio
     return free_ids[:requested_gpus]
 
 
+def _gpu_queue_capacity_fields(
+    requested_gpus: int,
+    active_rows: List[Dict[str, Any]],
+    profile_name: str,
+) -> Dict[str, Any]:
+    """Human-oriented queue context for API + UI (multi-GPU allocation)."""
+    total = len(_gpu_device_ids())
+    free_n = len(_free_gpu_ids(active_rows))
+    impossible = requested_gpus > total
+    out: Dict[str, Any] = {
+        "machine_total_gpus": total,
+        "machine_free_gpus": free_n,
+        "requested_gpus": requested_gpus,
+        "queue_impossible_on_host": impossible,
+    }
+    if impossible:
+        out["capacity_note"] = (
+            f"This host exposes {total} GPU(s), but the \"{profile_name}\" profile needs {requested_gpus}. "
+            "Leave the queue, pick a smaller profile (Small = 1 GPU, Medium = 2), then connect again."
+        )
+    elif free_n < requested_gpus:
+        out["capacity_note"] = (
+            f"Right now {free_n} GPU(s) are free; your profile needs {requested_gpus}. "
+            "You will connect when enough GPUs are available (or leave the queue and choose a smaller profile)."
+        )
+    return out
+
+
 def _queue_position(cur, wallet_address: str) -> Optional[int]:
     """1-indexed position, or None if not in queue."""
     cur.execute(
@@ -678,6 +796,7 @@ def try_claim_session(wallet_address: str, requested_profile: Optional[str] = No
                         )
                         pos = _queue_position(cur, wallet)
                     qlen = _queue_length(cur)
+                    cap_meta = _gpu_queue_capacity_fields(requested_gpus, active_rows, profile_name)
                     conn.commit()
                     if ended:
                         _on_session_ended(ended[0], ended[1])
@@ -691,6 +810,7 @@ def try_claim_session(wallet_address: str, requested_profile: Optional[str] = No
                         "queue_position": pos,
                         "queue_length": qlen,
                         "free_gpu_count": len(_free_gpu_ids(active_rows)),
+                        **cap_meta,
                     }
                 if _queue_blocks_allocation(cur, wallet, requested_gpus, active_rows):
                     pos = _queue_position(cur, wallet)
@@ -706,6 +826,18 @@ def try_claim_session(wallet_address: str, requested_profile: Optional[str] = No
                         )
                         pos = _queue_position(cur, wallet)
                     qlen = _queue_length(cur)
+                    cap_meta = _gpu_queue_capacity_fields(requested_gpus, active_rows, profile_name)
+                    cap_note = cap_meta.get("capacity_note")
+                    if cap_note:
+                        fifo_note = (
+                            "Another request is ahead of you for the next free GPUs; you will connect in FIFO order.\n\n"
+                            + cap_note
+                        )
+                    else:
+                        fifo_note = (
+                            "Another request is ahead of you for the next free GPUs; you will connect in FIFO order."
+                        )
+                    cap_meta = {**cap_meta, "capacity_note": fifo_note}
                     conn.commit()
                     if ended:
                         _on_session_ended(ended[0], ended[1])
@@ -718,6 +850,7 @@ def try_claim_session(wallet_address: str, requested_profile: Optional[str] = No
                         "queue_reason": "waiting turn behind schedulable queued request",
                         "queue_position": pos,
                         "queue_length": qlen,
+                        **cap_meta,
                     }
 
                 _remove_from_queue(cur, wallet)
@@ -1104,6 +1237,13 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
                     result["queue_reason"] = qrow[2]
                     result["allocation_status"] = "queued"
                     result["reason"] = f"Queued waiting for {result['queued_gpus']} GPU(s)"
+                    result.update(
+                        _gpu_queue_capacity_fields(
+                            result["queued_gpus"],
+                            active_rows,
+                            result["queued_profile"],
+                        )
+                    )
                 owned = _active_session_for_wallet(cur, wallet)
                 if owned:
                     result["is_owner"] = True
@@ -1140,6 +1280,7 @@ def join_queue(wallet_address: str, requested_profile: Optional[str] = None) -> 
 
         now = time.time()
         with conn.cursor() as cur:
+            active_rows_snapshot = _get_active_rows(cur)
             # Already the active user? No need to queue.
             active = _active_session_for_wallet(cur, wallet)
             if active:
@@ -1161,6 +1302,7 @@ def join_queue(wallet_address: str, requested_profile: Optional[str] = None) -> 
             pos = _queue_position(cur, wallet)
             qlen = _queue_length(cur)
         conn.commit()
+        cap_join = _gpu_queue_capacity_fields(requested_gpus, active_rows_snapshot, profile_name)
         logger.info("session_manager: %s joined queue at position %s", _mask(wallet), pos)
         return {
             "joined": True,
@@ -1170,6 +1312,7 @@ def join_queue(wallet_address: str, requested_profile: Optional[str] = None) -> 
             "requested_gpus": requested_gpus,
             "allocation_status": "queued",
             "reason": f"Queued waiting for {requested_gpus} GPU(s)",
+            **cap_join,
         }
     except Exception as exc:
         conn.rollback()
