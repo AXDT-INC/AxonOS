@@ -604,6 +604,14 @@ RUN apt-get update && \
       "xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}" && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Fail fast if the Xorg NVIDIA GLX server module never landed (fix-libglx would be pointless).
+RUN PKG="xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}" && \
+    dpkg -L "$$PKG" 2>/dev/null | grep -q libglxserver_nvidia || \
+    { echo "axonos: $$PKG contains no libglxserver_nvidia — apt layout/driver version mismatch?"; \
+      dpkg -l | grep -iE 'nvidia|xorg|mesa' || true; \
+      dpkg -L "$$PKG" 2>/dev/null | tail -40 || true; \
+      exit 1; }
+
 # Mesa's libglx.so can remain the default after early apt layers; Xorg then loads two GLX vendors
 # ("Another vendor is already registered for screen 0") and SIGSEGVs. Script avoids Dockerfile RUN "$$VAR"
 # (sh expands $$ to PID, e.g. 1GLX_EXT).
