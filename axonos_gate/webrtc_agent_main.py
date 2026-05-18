@@ -48,6 +48,67 @@ def _display() -> str:
     return (os.getenv("WEBRTC_CAPTURE_DISPLAY") or ":0").strip()
 
 
+def _xauthority_path() -> str:
+    return (os.getenv("XAUTHORITY") or "/home/aXonian/.Xauthority").strip()
+
+
+def _display_env() -> dict[str, str]:
+    return {**os.environ, "DISPLAY": _display(), "XAUTHORITY": _xauthority_path()}
+
+
+def _display_wait_timeout_seconds() -> float:
+    raw = (os.getenv("WEBRTC_DISPLAY_WAIT_SECONDS") or "120").strip()
+    try:
+        return max(5.0, min(300.0, float(raw)))
+    except ValueError:
+        return 120.0
+
+
+def _wait_for_display_ready() -> bool:
+    """Block until X11 on WEBRTC_CAPTURE_DISPLAY accepts connections (session containers need this)."""
+    env = _display_env()
+    timeout_s = _display_wait_timeout_seconds()
+    interval_s = 1.0
+    deadline = time.monotonic() + timeout_s
+    attempt = 0
+    while time.monotonic() < deadline:
+        attempt += 1
+        try:
+            probe = subprocess.run(
+                ["xset", "q"],
+                env=env,
+                capture_output=True,
+                timeout=4,
+                check=False,
+            )
+            if probe.returncode == 0:
+                try:
+                    import mss
+
+                    with mss.mss() as sct:
+                        mon = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
+                        sct.grab(mon)
+                except Exception as exc:
+                    logger.debug("display ready (xset ok) but mss probe failed (attempt %s): %s", attempt, exc)
+                else:
+                    logger.info(
+                        "WebRTC display ready on %s after %s attempt(s)",
+                        _display(),
+                        attempt,
+                    )
+                    return True
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            logger.debug("display wait attempt %s: %s", attempt, exc)
+        time.sleep(interval_s)
+    logger.error(
+        "WebRTC display %s not ready within %.0fs (%s attempts)",
+        _display(),
+        timeout_s,
+        attempt,
+    )
+    return False
+
+
 def _max_width() -> int:
     raw = (os.getenv("WEBRTC_CAPTURE_MAX_WIDTH") or "1920").strip()
     try:
@@ -217,7 +278,7 @@ def _apply_input_json(raw: str) -> None:
     if not isinstance(obj, dict):
         return
     t = (obj.get("t") or obj.get("type") or "").strip().lower()
-    env = {**os.environ, "DISPLAY": _display()}
+    env = _display_env()
     try:
         if t in ("move", "mousemove"):
             x = float(obj.get("x", 0))
@@ -315,6 +376,10 @@ async def _run_session(job: dict[str, Any]) -> None:
     import numpy as np
 
     session_id = job["session_id"]
+    if not _wait_for_display_ready():
+        _agent_fail(session_id, "display_not_ready")
+        return
+
     offer_sdp = job["offer_sdp"]
     offer_type = (job.get("offer_type") or "offer").lower()
     max_w = _max_width()
@@ -330,7 +395,7 @@ async def _run_session(job: dict[str, Any]) -> None:
     def on_dc(channel) -> None:  # type: ignore[no-untyped-def]
         if channel.label != "axonos-input":
             return
-        clipboard_env = {**os.environ, "DISPLAY": _display()}
+        clipboard_env = _display_env()
         last_clipboard = ""
 
         async def poll_remote_clipboard() -> None:
