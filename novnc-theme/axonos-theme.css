@@ -56,10 +56,18 @@ html:not(.noVNC_connected) body {
   min-height: 100vh;
 }
 
-/* Normal background when connected */
+/* Normal background when connected — lock viewport to avoid edge scrollbars
+   (slight overflow from video/canvas vs 100% width/height made body scrollable). */
+html.noVNC_connected {
+  height: 100%;
+  overflow: hidden;
+}
+
 html.noVNC_connected body {
   background: var(--axonos-dark) !important;
-  overflow: auto;
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 /* Container background - transparent during login, normal when connected */
@@ -71,6 +79,8 @@ html:not(.noVNC_connected) #noVNC_container {
 html.noVNC_connected #noVNC_container {
   background-color: var(--axonos-dark) !important;
   border-bottom-right-radius: 20px !important;
+  overflow: hidden !important;
+  box-sizing: border-box;
 }
 
 /* Control bar styling */
