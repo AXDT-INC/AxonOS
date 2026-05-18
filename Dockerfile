@@ -602,5 +602,14 @@ RUN apt-get update && \
       "xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}" && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Mesa's libglx.so can remain the default after early apt layers; Xorg then loads two GLX vendors
+# ("Another vendor is already registered for screen 0") and SIGSEGVs. Point libglx at NVIDIA only.
+RUN GLX_EXT=/usr/lib/xorg/modules/extensions && \
+    NVGLX=$$(ls -1 "$$GLX_EXT"/libglxserver_nvidia.so.* 2>/dev/null | sort -V | tail -1) && \
+    test -n "$$NVGLX" || { echo "axonos: no libglxserver_nvidia.* under $$GLX_EXT"; ls -la "$$GLX_EXT" || true; exit 1; } && \
+    rm -f "$$GLX_EXT/libglx.so" && \
+    ln -sf "$$(basename "$$NVGLX")" "$$GLX_EXT/libglx.so" && \
+    ls -la "$$GLX_EXT/libglx.so"
+
 # Start services
 CMD ["/startup.sh"]
