@@ -42,10 +42,156 @@ SOFTWARE.
   --axonos-light: #F5F5F5;
   --axonos-hover: #32CD32;
   --axonos-shadow: rgba(46, 139, 87, 0.3);
+  --axonos-prereq-ticker-strip-h: 40px;
+  --axonos-prereq-ticker-body-pad-top: calc(
+    env(safe-area-inset-top, 0px) + var(--axonos-prereq-ticker-strip-h)
+  );
+}
+
+/* Prerequisites ticker — replaces hover tooltip on connect stack */
+.axonos-prerequisites-ticker {
+  display: none;
+  box-sizing: border-box;
+  position: fixed;
+  top: env(safe-area-inset-top, 0px);
+  left: 0;
+  right: 0;
+  height: var(--axonos-prereq-ticker-strip-h);
+  z-index: 60;
+  align-items: center;
+  overflow: hidden;
+  padding-left: clamp(54px, 11vw, 92px);
+  padding-right: 12px;
+  background: rgba(24, 32, 48, 0.96);
+  border-bottom: 1px solid rgba(70, 130, 180, 0.48);
+  box-shadow:
+    0 4px 22px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+html:not(.noVNC_connected) .axonos-prerequisites-ticker {
+  display: flex;
+}
+
+html.noVNC_connected .axonos-prerequisites-ticker {
+  display: none !important;
+}
+
+.axonos-prerequisites-ticker__mask {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    transparent,
+    #000 1.35rem,
+    #000 calc(100% - 1.35rem),
+    transparent
+  );
+  mask-image: linear-gradient(
+    90deg,
+    transparent,
+    #000 1.35rem,
+    #000 calc(100% - 1.35rem),
+    transparent
+  );
+}
+
+.axonos-prerequisites-ticker__track {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  width: max-content;
+  animation: axonos-prerequisite-ticker-scroll 75s linear infinite;
+  will-change: transform;
+}
+
+.axonos-prerequisites-ticker__seg {
+  display: inline-flex;
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+  padding-right: 2.75rem;
+  font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: rgba(245, 245, 245, 0.95);
+  letter-spacing: 0.015em;
+  white-space: nowrap;
+}
+
+.axonos-prerequisites-ticker__kick {
+  font-family: "Orbitron", system-ui, sans-serif;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.axonos-prerequisites-ticker__bullet {
+  color: rgba(136, 169, 212, 0.55);
+  font-weight: 300;
+}
+
+.axonos-prerequisites-ticker__chunk strong {
+  margin: 0 0.12em;
+}
+
+.axonos-prerequisites-ticker__chunk a {
+  color: var(--axonos-accent);
+  text-decoration: none;
+}
+
+.axonos-prerequisites-ticker__chunk a:hover {
+  text-decoration: underline;
+}
+
+@keyframes axonos-prerequisite-ticker-scroll {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .axonos-prerequisites-ticker__track {
+    animation: none;
+    justify-content: center;
+    flex-wrap: wrap;
+    width: 100%;
+    max-width: 100%;
+    white-space: normal;
+    row-gap: 4px;
+  }
+
+  .axonos-prerequisites-ticker__seg {
+    flex-wrap: wrap;
+    white-space: normal;
+    justify-content: center;
+    text-align: center;
+    padding-right: 0;
+    max-width: 100%;
+  }
+
+  .axonos-prerequisites-ticker__seg[data-ticker-mirror="1"] {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .axonos-prerequisites-ticker__seg {
+    font-size: 0.72rem;
+  }
 }
 
 /* Space Background - Only when not connected */
 html:not(.noVNC_connected) body {
+  padding-top: var(--axonos-prereq-ticker-body-pad-top);
   background: 
     radial-gradient(ellipse at bottom, #1B2735 0%, #090A0F 100%),
     radial-gradient(circle at 20% 20%, rgba(120, 119, 198, 0.3) 0%, transparent 50%),
@@ -66,6 +212,7 @@ html.noVNC_connected {
 html.noVNC_connected body {
   background: var(--axonos-dark) !important;
   margin: 0;
+  padding-top: 0 !important;
   height: 100%;
   overflow: hidden;
 }
@@ -1658,7 +1805,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   opacity: 0.9;
 }
 
-/* Connect wrapper: tooltip shown on hover */
+/* Connect wrapper: profile + launch (prerequisites headline is the fixed header ticker) */
 .axonos-connect-wrapper {
   position: relative;
   display: flex;
@@ -1783,66 +1930,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   box-sizing: border-box;
 }
 
-.axonos-prerequisites-tooltip {
-  position: absolute;
-  left: 50%;
-  bottom: calc(100% - 42px);
-  transform: translateX(-50%);
-  margin-bottom: 0;
-  width: min(92vw, 460px);
-  max-width: 460px;
-  min-width: 0;
-  padding: 14px 18px;
-  background: rgba(28, 28, 28, 0.98);
-  border: 1px solid rgba(70, 130, 180, 0.5);
-  border-radius: 8px;
-  text-align: left;
-  font-size: 0.9rem;
-  line-height: 1.5;
-  color: var(--axonos-light);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-  z-index: 50;
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transition: opacity 0.2s ease, visibility 0.2s ease;
-}
 
-.axonos-connect-wrapper:hover .axonos-prerequisites-tooltip {
-  opacity: 1;
-  visibility: visible;
-  pointer-events: auto;
-}
-
-.axonos-prerequisites-tooltip .axonos-prerequisites__title {
-  margin: 0 0 8px 0;
-  font-weight: 600;
-  font-size: 0.95rem;
-}
-
-.axonos-prerequisites-tooltip .axonos-prerequisites__list {
-  margin: 0;
-  padding-left: 1.2em;
-}
-
-.axonos-prerequisites-tooltip .axonos-prerequisites__list li {
-  margin: 6px 0;
-  word-spacing: 0.25em;
-}
-
-.axonos-prerequisites-tooltip .axonos-prerequisites__list strong,
-.axonos-prerequisites-tooltip .axonos-prerequisites__list a {
-  margin: 0 0.15em;
-}
-
-.axonos-prerequisites-tooltip .axonos-prerequisites__list a {
-  color: var(--axonos-accent);
-  text-decoration: none;
-}
-
-.axonos-prerequisites-tooltip .axonos-prerequisites__list a:hover {
-  text-decoration: underline;
-}
 
 /* Enhanced Connect Button */
 .axonos-enhanced-connect {
@@ -2023,6 +2111,10 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   z-index: 10;
 }
 
+html:not(.noVNC_connected) #noVNC_connect_dlg {
+  max-height: calc(100vh - var(--axonos-prereq-ticker-body-pad-top) - 40px);
+}
+
 /* Desktop landscape landing: hero + CTA columns, full-width features/quote below */
 @media (min-width: 993px) {
   html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg) {
@@ -2128,11 +2220,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
     background: rgba(8, 14, 24, 0.5);
   }
 
-  /* Tooltip clears the shorter CTA column cleanly */
-  #noVNC_connect_dlg .axonos-connect-wrapper .axonos-prerequisites-tooltip {
-    bottom: 100%;
-    margin-bottom: 0.45rem;
-  }
+
 
   /* Full width of launch column without exceeding parent */
   .axonos-connect-wrapper > #noVNC_connect_button {
@@ -2192,8 +2280,8 @@ input#noVNC_setting_path:-webkit-autofill:focus {
     border-radius: 8px;
     text-align: center;
   }
-  #noVNC_connect_dlg {
-    max-height: calc(100vh - 6rem);
+  html:not(.noVNC_connected) #noVNC_connect_dlg {
+    max-height: calc(100vh - env(safe-area-inset-bottom, 0px) - var(--axonos-prereq-ticker-body-pad-top) - 6rem);
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
   }

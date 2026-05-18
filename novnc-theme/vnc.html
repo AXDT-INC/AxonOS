@@ -53,7 +53,7 @@ Copyright (C) 2019 The noVNC Authors
 
     <!-- Stylesheets -->
     <link rel="stylesheet" href="app/styles/base.css">
-    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=15.6&t=1740200000">
+    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=15.7&t=1740200000">
 
     <!-- Images that will later appear via CSS -->
     <link rel="preload" as="image" href="app/images/info.svg">
@@ -65,6 +65,30 @@ Copyright (C) 2019 The noVNC Authors
 </head>
 
 <body>
+
+    <!-- Prerequisites: fixed header ticker while landing (mirror synced after /api/config) -->
+    <div id="axonos_prerequisites_ticker_banner" class="axonos-prerequisites-ticker" role="region" aria-label="Before you launch">
+        <div class="axonos-prerequisites-ticker__mask">
+            <div class="axonos-prerequisites-ticker__track" id="axonos_prerequisites_ticker_track">
+                <div class="axonos-prerequisites-ticker__seg" data-ticker-canonical="1">
+                    <strong class="axonos-prerequisites-ticker__kick">Before you launch</strong>
+                    <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
+                    <span class="axonos-prerequisites-ticker__chunk">An <strong>EVM wallet</strong> (e.g. <a href="https://metamask.io" target="_blank" rel="noopener noreferrer">MetaMask</a>)</span>
+                    <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
+                    <span id="axonos_prereq_deposit_line" class="axonos-prerequisites-ticker__chunk"><strong>Pay with ETH, save with AXGT</strong>: each <strong id="axonos_prereq_min_eth">—</strong> <strong>ETH</strong> (min.) → <strong id="axonos_prereq_eth_min_label">—</strong>. <strong>AXGT holders</strong> automatically get a tiered discount on the ETH price (<a href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=0x6112c3509a8a787df576028450febb3786a2274d" target="_blank" rel="noopener noreferrer">Get AXGT</a>)</span>
+                    <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
+                    <span class="axonos-prerequisites-ticker__chunk">You'll <strong>sign a one-time message</strong> (no gas, no transaction)</span>
+                    <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
+                    <span class="axonos-prerequisites-ticker__chunk"><strong>One desktop at a time</strong> — if in use, you can join the queue</span>
+                    <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
+                    <span class="axonos-prerequisites-ticker__chunk">While <strong>connected</strong>, prepaid <strong>minutes count</strong> for your session, including <strong>idle time</strong> if this browser tab stays open</span>
+                    <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
+                    <span class="axonos-prerequisites-ticker__chunk">Use <strong>Disconnect</strong> in the sidebar when finished; closing only the tab may <strong>delay release</strong> until session timeout</span>
+                </div>
+                <div class="axonos-prerequisites-ticker__seg" data-ticker-mirror="1" aria-hidden="true"></div>
+            </div>
+        </div>
+    </div>
 
     <div id="noVNC_fallback_error" class="noVNC_center">
         <div>
@@ -296,7 +320,7 @@ Copyright (C) 2019 The noVNC Authors
                 </p>
             </div>
             
-            <!-- Connect Button; prerequisites shown on hover to save vertical space -->
+            <!-- Connect stack: GPU profile + launch -->
             <div class="axonos-connect-wrapper">
                 <div class="axonos-profile-picker" role="group" aria-label="GPU profile selection">
                     <label class="axonos-profile-picker__label" for="axonos_profile_select">GPU profile</label>
@@ -305,17 +329,6 @@ Copyright (C) 2019 The noVNC Authors
                         <option value="medium">Medium (2 GPUs)</option>
                         <option value="large">Large (4 GPUs)</option>
                     </select>
-                </div>
-                <div id="axonos_prerequisites_tooltip" class="axonos-prerequisites-tooltip" aria-label="Requirements to sign in" role="tooltip">
-                    <p class="axonos-prerequisites__title">To sign in you need:</p>
-                    <ul class="axonos-prerequisites__list">
-                        <li>An <strong>EVM wallet</strong> (e.g. <a href="https://metamask.io" target="_blank" rel="noopener noreferrer">MetaMask</a>)</li>
-                        <li id="axonos_prereq_deposit_line"><strong>Pay with ETH, save with AXGT</strong>: each <strong id="axonos_prereq_min_eth">—</strong> <strong>ETH</strong> (min.) → <strong id="axonos_prereq_eth_min_label">—</strong>. <strong>AXGT holders</strong> automatically get a tiered discount on the ETH price (<a href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=0x6112c3509a8a787df576028450febb3786a2274d" target="_blank" rel="noopener noreferrer">Get AXGT</a>)</li>
-                        <li>You'll <strong>sign a one-time message</strong> (no gas, no transaction)</li>
-                        <li><strong>One desktop at a time</strong> — if in use, you can join the queue</li>
-                        <li>While you're <strong>connected</strong>, prepaid <strong>minutes count</strong> for your reserved session, including <strong>idle time</strong> if this browser tab keeps running.</li>
-                        <li>Use <strong>Disconnect</strong> in the left sidebar when you're done to end your session promptly for you and others; closing the tab or browser only may <strong>delay release</strong> until the session timeout.</li>
-                    </ul>
                 </div>
                 <div id="noVNC_connect_button" class="axonos-enhanced-connect">
                     <div class="axonos-connect-content">
@@ -1329,6 +1342,18 @@ document.addEventListener("DOMContentLoaded", function() {
         });
     }
 
+    function syncAxonosPrerequisiteTickerMirror() {
+        var track = document.getElementById('axonos_prerequisites_ticker_track');
+        if (!track) return;
+        var c = track.querySelector('[data-ticker-canonical="1"]');
+        var m = track.querySelector('[data-ticker-mirror="1"]');
+        if (!c || !m) return;
+        m.innerHTML = c.innerHTML;
+        Array.prototype.forEach.call(m.querySelectorAll('[id]'), function (el) {
+            el.removeAttribute('id');
+        });
+    }
+
     (function loadAxonOSConfig() {
         var cfgUrl = new URL('/api/config', window.location.origin).toString();
         fetch(cfgUrl, { method: 'GET' })
@@ -1442,6 +1467,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 if (revenueEtherscanEl && rev && /^0x[a-fA-F0-9]{40}$/.test(rev)) revenueEtherscanEl.href = base + '/address/' + rev;
                 // Landing + wallet network banner (AXGT_CHAIN_ID / axgt_chain_id). Pass through; null only on fetch failure.
                 applyAxonosNetworkEnvironmentUi(axonosConfig.axgt_chain_id != null && String(axonosConfig.axgt_chain_id).trim() !== '' ? axonosConfig.axgt_chain_id : '1');
+                syncAxonosPrerequisiteTickerMirror();
             })
             .catch(function () {
                 applyAxonosNetworkEnvironmentUi(null);
@@ -1452,8 +1478,11 @@ document.addEventListener("DOMContentLoaded", function() {
                     dh.innerHTML = 'Connect wallet to see live rates from server, or check operator docs (100 AXGT → 60 min typical).' +
                         '<span class="axonos-wallet-card__hints-session">While connected, minutes count for your session (idle included if this tab stays open). Use <strong>Disconnect</strong> when finished.</span>';
                 }
+                syncAxonosPrerequisiteTickerMirror();
             });
     })();
+
+    syncAxonosPrerequisiteTickerMirror();
 
     function setWalletUIState(state, data) {
         STATE_IDS.forEach(function (id) {
