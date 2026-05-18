@@ -19,6 +19,23 @@ from typing import Dict, List, Optional, Tuple
 
 from flask import Flask, jsonify, request
 
+try:
+    from .docker_gpu_cli import (
+        subprocess_env_for_nested_docker,
+        strip_conflicting_gpu_run_flags,
+    )
+except ImportError:
+    try:
+        from axonos_gate.docker_gpu_cli import (
+            subprocess_env_for_nested_docker,
+            strip_conflicting_gpu_run_flags,
+        )
+    except ImportError:
+        from docker_gpu_cli import (
+            subprocess_env_for_nested_docker,
+            strip_conflicting_gpu_run_flags,
+        )
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -61,7 +78,7 @@ def _extra_args_tokens() -> List[str]:
     raw = (os.getenv("AXGT_HOST_SESSION_CONTAINER_EXTRA_ARGS") or "").strip()
     if not raw:
         return []
-    return shlex.split(raw)
+    return strip_conflicting_gpu_run_flags(shlex.split(raw))
 
 
 def _enumerate_image_name() -> str:
@@ -110,8 +127,14 @@ def _env_passthrough_names() -> List[str]:
 
 
 def _run_cmd(cmd: List[str]) -> Tuple[bool, str]:
+    env = subprocess_env_for_nested_docker()
     try:
-        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, text=True).strip()
+        out = subprocess.check_output(
+            cmd,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=env,
+        ).strip()
         return True, out
     except subprocess.CalledProcessError as exc:
         return False, (exc.output or "").strip() or str(exc)

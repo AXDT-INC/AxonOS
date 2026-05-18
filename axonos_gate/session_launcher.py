@@ -15,6 +15,23 @@ import urllib.error
 import urllib.request
 from typing import List, Optional, Tuple
 
+try:
+    from .docker_gpu_cli import (
+        subprocess_env_for_nested_docker,
+        strip_conflicting_gpu_run_flags,
+    )
+except ImportError:
+    try:
+        from axonos_gate.docker_gpu_cli import (
+            subprocess_env_for_nested_docker,
+            strip_conflicting_gpu_run_flags,
+        )
+    except ImportError:
+        from docker_gpu_cli import (
+            subprocess_env_for_nested_docker,
+            strip_conflicting_gpu_run_flags,
+        )
+
 logger = logging.getLogger(__name__)
 
 
@@ -82,13 +99,18 @@ def _launch_via_docker_cli(session_id: int, wallet: str, profile: str, gpu_ids: 
     ]
     extra_raw = (os.getenv("AXGT_SESSION_CONTAINER_EXTRA_ARGS") or "").strip()
     if extra_raw:
-        cmd.extend(shlex.split(extra_raw))
+        cmd.extend(strip_conflicting_gpu_run_flags(shlex.split(extra_raw)))
     cmd.append(image)
     run_cmd = (os.getenv("AXGT_SESSION_CONTAINER_COMMAND") or "").strip()
     if run_cmd:
         cmd.extend(shlex.split(run_cmd))
     try:
-        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, text=True).strip()
+        out = subprocess.check_output(
+            cmd,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=subprocess_env_for_nested_docker(),
+        ).strip()
         container_id = out.splitlines()[-1][:64] if out else name
         return True, container_id, None
     except subprocess.CalledProcessError as exc:
