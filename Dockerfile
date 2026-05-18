@@ -598,6 +598,8 @@ RUN apt-get update && \
       ver="$(ls /usr/lib/x86_64-linux-gnu/nvidia | sort -V | tail -1)"; \
       ln -s "/usr/lib/x86_64-linux-gnu/nvidia/${ver}" /usr/lib/x86_64-linux-gnu/nvidia/current; \
     fi && \
+    apt-get -o Dpkg::Options::=--force-unsafe-io install -y --reinstall --no-install-recommends \
+      "xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}" && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Start services
