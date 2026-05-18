@@ -142,6 +142,60 @@ def _stop_via_http(session_id: int, container_id: Optional[str]) -> None:
     _http_json("POST", f"{base_url}/stop", payload)
 
 
+def enumerate_host_gpus_via_http() -> Optional[List[int]]:
+    """Ask the session launcher service to probe host GPUs via `docker run --gpus all`.
+
+    Used when the gate container has no GPU passthrough so `nvidia-smi` is unavailable
+    locally. Requires AXGT_SESSION_LAUNCHER_MODE=http and a launcher that exposes
+    GET /enumerate-gpus (session_launcher_service).
+    """
+    if (os.getenv("AXGT_SESSION_LAUNCHER_MODE") or "").strip().lower() != "http":
+        return None
+    if not _truthy("AXGT_GPU_ENUMERATE_VIA_LAUNCHER", True):
+        return None
+    base_url = (os.getenv("AXGT_SESSION_LAUNCHER_URL") or "").strip().rstrip("/")
+    if not base_url:
+        return None
+    token = (os.getenv("AXGT_SESSION_LAUNCHER_TOKEN") or "").strip()
+    timeout_raw = (os.getenv("AXGT_SESSION_LAUNCHER_ENUMERATE_TIMEOUT_SECONDS") or "").strip()
+    try:
+        timeout_s = float(timeout_raw) if timeout_raw else 90.0
+    except ValueError:
+        timeout_s = 90.0
+    url = f"{base_url}/enumerate-gpus"
+    req = urllib.request.Request(url=url, method="GET")
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            raw = resp.read().decode("utf-8").strip()
+            data = json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as exc:
+        try:
+            raw = exc.read().decode("utf-8").strip()
+            logger.warning(
+                "session_launcher: enumerate-gpus HTTP %s: %s",
+                exc.code,
+                raw[:500],
+            )
+        except Exception:
+            logger.warning("session_launcher: enumerate-gpus HTTP %s", exc.code)
+        return None
+    except Exception as exc:
+        logger.warning("session_launcher: enumerate-gpus request failed %s", exc)
+        return None
+    if not isinstance(data, dict) or not data.get("ok"):
+        return None
+    raw_ids = data.get("indices") or data.get("gpu_ids")
+    if not isinstance(raw_ids, list) or not raw_ids:
+        return None
+    try:
+        out = sorted(set(int(float(x)) for x in raw_ids))
+    except (TypeError, ValueError):
+        return None
+    return out if out else None
+
+
 def _http_json(method: str, url: str, payload: dict) -> Tuple[int, object, Optional[str]]:
     token = (os.getenv("AXGT_SESSION_LAUNCHER_TOKEN") or "").strip()
     timeout_raw = (os.getenv("AXGT_SESSION_LAUNCHER_TIMEOUT_SECONDS") or "").strip()

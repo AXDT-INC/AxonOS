@@ -241,6 +241,26 @@ class TestGpuDeviceDiscovery(unittest.TestCase):
             self.assertEqual(session_manager._gpu_device_ids(), [0])
         mock_detect.assert_not_called()
 
+    def test_auto_detect_uses_launcher_when_local_smi_missing(self):
+        from axonos_gate import session_manager
+        session_manager.reset_gpu_device_cache()
+        with patch.dict(
+            os.environ,
+            {
+                "AXGT_GPU_DEVICE_IDS": "",
+                "AXGT_GPU_TOTAL_COUNT": "",
+                "AXGT_GPU_AUTO_DETECT": "true",
+                "AXGT_GPU_DEVICE_CACHE_SECONDS": "0",
+                "AXGT_SESSION_LAUNCHER_MODE": "http",
+                "AXGT_SESSION_LAUNCHER_URL": "http://axonos-launcher:8090",
+            },
+            clear=False,
+        ), patch.object(session_manager, "_detect_nvidia_smi_gpu_indices", return_value=None), patch(
+            "axonos_gate.session_launcher.enumerate_host_gpus_via_http",
+            return_value=[0, 1, 2, 3, 4, 5, 6, 7],
+        ):
+            self.assertEqual(session_manager._gpu_device_ids(), list(range(8)))
+
     def test_detect_nvidia_smi_parses_stdout(self):
         from axonos_gate import session_manager
 
