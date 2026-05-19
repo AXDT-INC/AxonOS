@@ -58,6 +58,7 @@ def _configured_profiles() -> Dict[str, int]:
         "small": 1,
         "medium": 2,
         "large": 4,
+        "max": 8,
     }
 
 
@@ -549,7 +550,7 @@ def _gpu_queue_capacity_fields(
     if impossible:
         out["capacity_note"] = (
             f"This host exposes {total} GPU(s), but the \"{profile_name}\" profile needs {requested_gpus}. "
-            "Leave the queue, pick a smaller profile (Small = 1 GPU, Medium = 2), then connect again."
+            "Leave the queue, pick a smaller profile (Small = 1, Medium = 2, Large = 4, Max = 8 GPUs), then connect again."
         )
     elif free_n < requested_gpus:
         out["capacity_note"] = (
