@@ -52,6 +52,7 @@
   - [x] `deposit_verifier.py` ETH path: server-side AXGT balance re-check + discount-adjusted min and credit rate; AXGT direct deposits gated behind `AXGT_ENABLE_AXGT_DEPOSITS` (default false)
   - [x] `/api/config` exposes `axgt_discount_tiers`, `axgt_direct_deposits_enabled`; new `GET /api/discount/quote` on both gate (8889) and websockify (6080) backends
   - [x] vnc.html: AXGT discount tier card (base ETH / wallet AXGT balance / tier / discount % / final ETH); ETH-only by default; copy switched to "Pay with ETH, save with AXGT"
+  - [x] vnc.html: remove "Discounted" min button; live `/api/discount/quote?base_eth=` preview + pay hint on ETH input (pay-what-you-type model)
   - [x] Tests: 28-case `test_discount.py` covering all tier boundaries, RPC failure fallback, env overrides, and end-to-end ETH+AXGT verifier paths; existing deposit/ledger/access tests still pass
   - [x] Docs: rewrote `docs/TOKENOMICS.md` for ETH-first + tier system + deployment/testing checklist; updated `env.example` with tier-config knobs
 

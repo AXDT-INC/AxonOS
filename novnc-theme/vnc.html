@@ -428,16 +428,22 @@ Copyright (C) 2019 The noVNC Authors
                         <span id="axonos_discount_status" style="font-size:0.78rem;opacity:0.7;">Loading on-chain balance…</span>
                     </div>
                     <ul style="list-style:none;padding:0;margin:0.45rem 0 0.2rem;">
-                        <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span style="opacity:0.78;">ETH price</span><strong id="axonos_discount_base_eth">—</strong></li>
+                        <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span style="opacity:0.78;">Base minimum (list)</span><strong id="axonos_discount_base_eth">—</strong></li>
                         <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span style="opacity:0.78;">Wallet AXGT balance</span><strong id="axonos_discount_balance">—</strong></li>
                         <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span style="opacity:0.78;">Eligible tier</span><strong id="axonos_discount_tier">—</strong></li>
-                        <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span style="opacity:0.78;">Discount</span><strong id="axonos_discount_percent" style="color:#7adf8a;">—</strong></li>
-                        <li style="display:flex;justify-content:space-between;gap:0.5rem;border-top:1px dashed rgba(255,255,255,0.18);margin-top:0.35rem;padding-top:0.35rem;"><span>Final ETH payable</span><strong id="axonos_discount_final_eth" style="color:#ffd166;">—</strong></li>
+                        <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span style="opacity:0.78;">Holder discount</span><strong id="axonos_discount_percent" style="color:#7adf8a;">—</strong></li>
+                        <li style="display:flex;justify-content:space-between;gap:0.5rem;border-top:1px dashed rgba(255,255,255,0.18);margin-top:0.35rem;padding-top:0.35rem;"><span>Minimum ETH (your tier)</span><strong id="axonos_discount_min_eth" style="color:#ffd166;">—</strong></li>
+                        <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span style="opacity:0.78;">Minimum desktop time</span><strong id="axonos_discount_min_minutes">—</strong></li>
+                    </ul>
+                    <ul id="axonos_discount_preview" class="axonos-discount-preview" style="list-style:none;padding:0;margin:0.35rem 0 0;display:none;">
+                        <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span style="opacity:0.78;">You pay</span><strong id="axonos_discount_pay_eth">—</strong></li>
+                        <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span style="opacity:0.78;">Estimated desktop time</span><strong id="axonos_discount_preview_minutes" style="color:#7adf8a;">—</strong></li>
+                        <li id="axonos_discount_preview_baseline_row" style="display:none;justify-content:space-between;gap:0.5rem;"><span style="opacity:0.78;">Without AXGT (same ETH)</span><strong id="axonos_discount_preview_baseline">—</strong></li>
                     </ul>
                     <p id="axonos_discount_warn" class="axonos-wallet-state__msg" style="font-size:0.78rem;min-height:0;margin:0.35rem 0 0;color:#f0a878;display:none;">RPC balance check failed — paying full ETH price (no discount applied).</p>
                 </div>
 
-                <p class="axonos-wallet-state__help" style="margin:0.55rem 0 0.35rem;font-size:0.9em;opacity:0.9;">Send the discounted ETH amount above. Larger amounts add proportionally more desktop minutes. You can also send manually from another wallet/DEX and paste the tx hash.</p>
+                <p class="axonos-wallet-state__help" style="margin:0.55rem 0 0.35rem;font-size:0.9em;opacity:0.9;">Enter the ETH you will pay. AXGT holders get more desktop time per ETH and a lower minimum. Larger amounts add proportionally more minutes. You can also send from another wallet/DEX and paste the tx hash.</p>
                 <div class="axonos-pay-deposit-rows" style="margin:0.5rem 0;width:100%;max-width:28rem;margin-left:auto;margin-right:auto;">
                     <div class="axonos-pay-deposit-row" id="axonos_pay_axgt_row" style="display:none;">
                         <span class="axonos-pay-row-label">AXGT</span>
@@ -449,13 +455,13 @@ Copyright (C) 2019 The noVNC Authors
                     </div>
                     <div class="axonos-pay-deposit-row">
                         <span class="axonos-pay-row-label">ETH</span>
-                        <input type="text" id="axonos_pay_eth_amount" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="ETH amount" class="axonos-pay-amount-input" />
+                        <input type="text" id="axonos_pay_eth_amount" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="ETH amount to pay" class="axonos-pay-amount-input" placeholder="ETH amount" />
                         <div class="axonos-pay-deposit-actions">
-                            <button type="button" id="axonos_pay_eth_min_btn" class="axonos-connect-wallet-btn axonos-pay-min-btn">Discounted</button>
                             <button type="button" id="axonos_pay_eth_btn" class="axonos-connect-wallet-btn axonos-pay-send-btn">Pay with ETH</button>
                         </div>
                     </div>
                 </div>
+                <p id="axonos_pay_eth_hint" class="axonos-pay-eth-hint" role="status" aria-live="polite"></p>
                 <p class="axonos-wallet-state__help" style="margin:0.35rem 0;font-size:0.82em;opacity:0.75;">Manual: paste tx hash after sending from another wallet or DEX.</p>
                 <p style="margin:0.5rem 0;display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;justify-content:center;">
                     <input type="text" id="axonos_tx_hash_input" placeholder="0x… transaction hash" autocomplete="off" spellcheck="false" style="flex:1;min-width:12rem;max-width:22rem;padding:0.45rem 0.6rem;border-radius:6px;border:1px solid rgba(255,255,255,0.25);background:rgba(0,0,0,0.3);color:inherit;font-family:monospace;font-size:0.85rem;" />
@@ -573,6 +579,9 @@ Copyright (C) 2019 The noVNC Authors
 // Must be declared before DOMContentLoaded handlers (axonosUpdateProfileBurnHint reads it).
 let axonosConfig = { axgt_contract_address: '', axgt_revenue_wallet: '', axgt_chain_id: null, axgt_min_deposit: '100', eth_deposits_enabled: true, eth_min_deposit: '0.0005', axgt_token_decimals: 18, credit_per_100_axgt: 60, eth_credit_per_eth: 120000, min_axgt_minutes: 60, min_eth_minutes: 60, axgt_direct_deposits_enabled: false, axgt_discount_tiers: [], gpu_profiles: { small: 1, medium: 2, large: 4, max: 8 }, gpu_weighted_billing_enabled: false };
 let axonosLastDiscountQuote = null;
+let axonosLastDiscountMinQuote = null;
+let axonosEthAmountQuoteTimer = null;
+let axonosEthAmountQuoteSeq = 0;
 
 // Force password field styling
 document.addEventListener("DOMContentLoaded", function() {
@@ -1351,14 +1360,12 @@ document.addEventListener("DOMContentLoaded", function() {
 
     function setEthDepositUiEnabled(enabled) {
         var ethAmountInput = document.getElementById('axonos_pay_eth_amount');
-        var ethMinBtn = document.getElementById('axonos_pay_eth_min_btn');
         var ethSendBtn = document.getElementById('axonos_pay_eth_btn');
         var ethRow = (ethSendBtn && typeof ethSendBtn.closest === 'function')
             ? ethSendBtn.closest('.axonos-pay-deposit-row')
             : null;
 
         if (ethAmountInput) ethAmountInput.disabled = !enabled;
-        if (ethMinBtn) ethMinBtn.disabled = !enabled;
         if (ethSendBtn) ethSendBtn.disabled = !enabled;
         if (ethRow) ethRow.style.display = enabled ? '' : 'none';
     }
@@ -1646,23 +1653,165 @@ document.addEventListener("DOMContentLoaded", function() {
         return account;
     }
 
-    /**
-     * Refresh the discount panel for ``walletAddress`` by hitting
-     * ``GET /api/discount/quote``. The server is the sole source of truth:
-     * it re-fetches the on-chain AXGT balance and applies the configured tier
-     * table, so the client cannot manipulate the discount.
-     *
-     * On RPC failure the panel still renders (with no discount) and surfaces
-     * a small warning so the user knows to retry — payment is never blocked
-     * just because we couldn't read the holder's balance.
-     */
-    function refreshDiscountQuote(walletAddress) {
+    function axonosDiscountMinEthStr() {
+        if (axonosLastDiscountMinQuote && axonosLastDiscountMinQuote.final_eth) {
+            return String(axonosLastDiscountMinQuote.final_eth);
+        }
+        if (axonosLastDiscountQuote && axonosLastDiscountQuote.final_eth) {
+            return String(axonosLastDiscountQuote.final_eth);
+        }
+        return String(axonosConfig.eth_min_deposit || '0.0005');
+    }
+
+    function axonosEthCreditRatePerEth() {
+        if (axonosLastDiscountMinQuote && axonosLastDiscountMinQuote.eth_credit_per_eth_minutes != null) {
+            return Number(axonosLastDiscountMinQuote.eth_credit_per_eth_minutes);
+        }
+        return Number(axonosConfig.eth_credit_per_eth || 120000);
+    }
+
+    function axonosBaselineMinutesForEth(payEthStr) {
+        var wei = axonosHumanEthToWei(payEthStr);
+        if (wei == null) return null;
+        var rate = axonosEthCreditRatePerEth();
+        if (!(rate > 0)) return null;
+        return Number(wei) / 1e18 * rate;
+    }
+
+    function applyDiscountTierPanel(d) {
         var statusEl = document.getElementById('axonos_discount_status');
         var baseEl = document.getElementById('axonos_discount_base_eth');
         var balEl = document.getElementById('axonos_discount_balance');
         var tierEl = document.getElementById('axonos_discount_tier');
         var pctEl = document.getElementById('axonos_discount_percent');
-        var finalEl = document.getElementById('axonos_discount_final_eth');
+        var minEthEl = document.getElementById('axonos_discount_min_eth');
+        var minMinEl = document.getElementById('axonos_discount_min_minutes');
+        var warnEl = document.getElementById('axonos_discount_warn');
+        if (!d || !d.ok) {
+            if (statusEl) statusEl.textContent = 'Could not load discount.';
+            return;
+        }
+        if (baseEl) baseEl.textContent = String(d.base_eth || '—') + ' ETH';
+        if (balEl) balEl.textContent = (d.axgt_balance != null ? String(d.axgt_balance) : '0') + ' AXGT';
+        if (tierEl) tierEl.textContent = (d.tier_label || ('Tier ' + (d.tier_index != null ? d.tier_index : 0))) + (d.tier_min_axgt != null ? ' (≥ ' + d.tier_min_axgt + ' AXGT)' : '');
+        if (pctEl) pctEl.textContent = (d.discount_percent != null ? Number(d.discount_percent) : 0) + '%';
+        if (minEthEl) minEthEl.textContent = String(d.final_eth || d.base_eth || '—') + ' ETH';
+        if (minMinEl) minMinEl.textContent = formatCreditMinutes(axonosConfig.min_eth_minutes);
+        if (statusEl) statusEl.textContent = d.balance_check_ok ? 'On-chain balance verified' : 'On-chain check failed — no discount';
+        if (warnEl) {
+            if (d.balance_check_ok === false) {
+                warnEl.textContent = (d.balance_check_error ? ('RPC error: ' + d.balance_check_error) : 'RPC balance check failed') + ' — paying full ETH price (no discount applied).';
+                warnEl.style.display = '';
+            } else {
+                warnEl.style.display = 'none';
+            }
+        }
+    }
+
+    function updateEthPaymentPreview(quote, payEthStr) {
+        var preview = document.getElementById('axonos_discount_preview');
+        var payEl = document.getElementById('axonos_discount_pay_eth');
+        var minEl = document.getElementById('axonos_discount_preview_minutes');
+        var baseRow = document.getElementById('axonos_discount_preview_baseline_row');
+        var baseEl = document.getElementById('axonos_discount_preview_baseline');
+        var trimmed = String(payEthStr || '').trim();
+        if (!trimmed || axonosHumanEthToWei(trimmed) == null) {
+            if (preview) preview.style.display = 'none';
+            return;
+        }
+        if (preview) preview.style.display = '';
+        if (payEl) payEl.textContent = trimmed + ' ETH';
+        var est = (quote && quote.estimated_minutes != null) ? Number(quote.estimated_minutes) : null;
+        if (minEl) minEl.textContent = est != null && !isNaN(est) ? ('~' + formatCreditMinutes(est)) : '—';
+        var discPct = (quote && quote.discount_percent != null) ? Number(quote.discount_percent) : 0;
+        var baseline = axonosBaselineMinutesForEth(trimmed);
+        if (baseRow && baseEl && discPct > 0 && baseline != null && !isNaN(baseline)) {
+            baseRow.style.display = 'flex';
+            baseEl.textContent = '~' + formatCreditMinutes(baseline);
+        } else if (baseRow) {
+            baseRow.style.display = 'none';
+        }
+    }
+
+    function updateEthPayHint(payEthStr) {
+        var hint = document.getElementById('axonos_pay_eth_hint');
+        if (!hint) return;
+        var trimmed = String(payEthStr || '').trim();
+        hint.className = 'axonos-pay-eth-hint';
+        if (!trimmed) {
+            hint.textContent = 'Enter an ETH amount to see estimated desktop time.';
+            return;
+        }
+        var payWei = axonosHumanEthToWei(trimmed);
+        if (payWei == null || payWei === BigInt(0)) {
+            hint.textContent = 'Enter a valid positive ETH amount.';
+            hint.classList.add('axonos-pay-eth-hint--error');
+            return;
+        }
+        var minStr = axonosDiscountMinEthStr();
+        var minWei = axonosHumanEthToWei(minStr);
+        if (minWei != null && payWei < minWei) {
+            hint.textContent = 'Below minimum for your tier (' + minStr + ' ETH).';
+            hint.classList.add('axonos-pay-eth-hint--error');
+            return;
+        }
+        hint.textContent = 'Ready to pay ' + trimmed + ' ETH from your wallet.';
+        hint.classList.add('axonos-pay-eth-hint--ok');
+    }
+
+    function syncEthPaymentUiFromInput() {
+        var ethInput = document.getElementById('axonos_pay_eth_amount');
+        var val = ethInput ? String(ethInput.value || '').trim() : '';
+        updateEthPayHint(val);
+        if (!val || axonosHumanEthToWei(val) == null) {
+            updateEthPaymentPreview(null, '');
+        }
+    }
+
+    function fetchDiscountQuote(walletAddress, baseEth) {
+        if (!walletAddress || !/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) {
+            return Promise.resolve(null);
+        }
+        var url = new URL('/api/discount/quote', window.location.origin);
+        url.searchParams.set('wallet_address', walletAddress);
+        if (baseEth != null && String(baseEth).trim() !== '') {
+            url.searchParams.set('base_eth', String(baseEth).trim());
+        }
+        return fetch(url.toString(), { method: 'GET', headers: { 'X-Wallet-Address': walletAddress }, credentials: 'include' })
+            .then(function (r) { return r.text().then(function (t) { try { return { ok: r.ok, status: r.status, data: t ? JSON.parse(t) : {} }; } catch (e) { return { ok: false, status: r.status, data: {} }; } }); })
+            .then(function (res) {
+                var d = res.data || {};
+                return d.ok ? d : null;
+            })
+            .catch(function () { return null; });
+    }
+
+    function scheduleEthAmountQuoteRefresh(walletAddress) {
+        if (axonosEthAmountQuoteTimer) clearTimeout(axonosEthAmountQuoteTimer);
+        var ethInput = document.getElementById('axonos_pay_eth_amount');
+        var val = ethInput ? String(ethInput.value || '').trim() : '';
+        syncEthPaymentUiFromInput();
+        if (!walletAddress || !val || axonosHumanEthToWei(val) == null) return;
+        axonosEthAmountQuoteTimer = setTimeout(function () {
+            axonosEthAmountQuoteTimer = null;
+            var seq = ++axonosEthAmountQuoteSeq;
+            fetchDiscountQuote(walletAddress, val).then(function (d) {
+                if (seq !== axonosEthAmountQuoteSeq) return;
+                var current = document.getElementById('axonos_pay_eth_amount');
+                var currentVal = current ? String(current.value || '').trim() : '';
+                if (currentVal !== val) return;
+                if (d) updateEthPaymentPreview(d, val);
+                updateEthPayHint(val);
+            });
+        }, 400);
+    }
+
+    /**
+     * Refresh tier + minimum from ``GET /api/discount/quote`` (server-side AXGT balance).
+     * Prefills the ETH input with the tier minimum when the user has not edited it.
+     */
+    function refreshDiscountQuote(walletAddress) {
+        var statusEl = document.getElementById('axonos_discount_status');
         var warnEl = document.getElementById('axonos_discount_warn');
         var ethInput = document.getElementById('axonos_pay_eth_amount');
         if (!walletAddress || !/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) {
@@ -1670,48 +1819,30 @@ document.addEventListener("DOMContentLoaded", function() {
         }
         if (statusEl) statusEl.textContent = 'Loading on-chain balance…';
         if (warnEl) warnEl.style.display = 'none';
-        var url = new URL('/api/discount/quote', window.location.origin);
-        url.searchParams.set('wallet_address', walletAddress);
-        return fetch(url.toString(), { method: 'GET', headers: { 'X-Wallet-Address': walletAddress }, credentials: 'include' })
-            .then(function (r) { return r.text().then(function (t) { try { return { ok: r.ok, status: r.status, data: t ? JSON.parse(t) : {} }; } catch (e) { return { ok: false, status: r.status, data: {} }; } }); })
-            .then(function (res) {
-                var d = res.data || {};
-                if (!d.ok) {
-                    if (statusEl) statusEl.textContent = 'Could not load discount.';
-                    if (warnEl) {
-                        warnEl.textContent = (d.error || 'Discount lookup failed') + ' — paying full ETH price.';
-                        warnEl.style.display = '';
-                    }
-                    return null;
-                }
-                axonosLastDiscountQuote = d;
-                if (baseEl) baseEl.textContent = String(d.base_eth || '—') + ' ETH';
-                if (balEl) balEl.textContent = (d.axgt_balance != null ? String(d.axgt_balance) : '0') + ' AXGT';
-                if (tierEl) tierEl.textContent = (d.tier_label || ('Tier ' + (d.tier_index != null ? d.tier_index : 0))) + (d.tier_min_axgt != null ? ' (≥ ' + d.tier_min_axgt + ' AXGT)' : '');
-                if (pctEl) pctEl.textContent = (d.discount_percent != null ? Number(d.discount_percent) : 0) + '%';
-                if (finalEl) finalEl.textContent = String(d.final_eth || d.base_eth || '—') + ' ETH';
-                if (statusEl) statusEl.textContent = d.balance_check_ok ? 'On-chain balance verified' : 'On-chain check failed — no discount';
-                if (warnEl) {
-                    if (d.balance_check_ok === false) {
-                        warnEl.textContent = (d.balance_check_error ? ('RPC error: ' + d.balance_check_error) : 'RPC balance check failed') + ' — paying full ETH price (no discount applied).';
-                        warnEl.style.display = '';
-                    } else {
-                        warnEl.style.display = 'none';
-                    }
-                }
-                if (ethInput && !ethInput.dataset.axonosUserAmount) {
-                    ethInput.value = String(d.final_eth || d.base_eth || axonosConfig.eth_min_deposit || '0.0005');
-                }
-                return d;
-            })
-            .catch(function () {
+        return fetchDiscountQuote(walletAddress, null).then(function (d) {
+            if (!d) {
                 if (statusEl) statusEl.textContent = 'Could not load discount.';
                 if (warnEl) {
-                    warnEl.textContent = 'Network error during discount lookup — paying full ETH price.';
+                    warnEl.textContent = 'Discount lookup failed — paying full ETH price.';
                     warnEl.style.display = '';
                 }
+                syncEthPaymentUiFromInput();
                 return null;
-            });
+            }
+            axonosLastDiscountMinQuote = d;
+            axonosLastDiscountQuote = d;
+            applyDiscountTierPanel(d);
+            if (ethInput && !ethInput.dataset.axonosUserAmount) {
+                ethInput.value = String(d.final_eth || d.base_eth || axonosConfig.eth_min_deposit || '0.0005');
+            }
+            var payVal = ethInput ? String(ethInput.value || '').trim() : '';
+            if (payVal && axonosHumanEthToWei(payVal) != null) {
+                scheduleEthAmountQuoteRefresh(walletAddress);
+            } else {
+                syncEthPaymentUiFromInput();
+            }
+            return d;
+        });
     }
 
     function axonosReadFetchJson(r) {
@@ -1873,7 +2004,7 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 
     function setPayDepositButtonsBusy(busy) {
-        var ids = ['axonos_pay_axgt_btn', 'axonos_pay_eth_btn', 'axonos_pay_axgt_min_btn', 'axonos_pay_eth_min_btn'];
+        var ids = ['axonos_pay_axgt_btn', 'axonos_pay_eth_btn', 'axonos_pay_axgt_min_btn'];
         ids.forEach(function (id) {
             var btn = document.getElementById(id);
             if (btn) {
@@ -2145,10 +2276,7 @@ document.addEventListener("DOMContentLoaded", function() {
         // (the backend re-checks it again on credit). Falls back to the base
         // ETH_MIN_DEPOSIT when no quote is available — never undercut the base.
         var baseMinEth = String(axonosConfig.eth_min_deposit || '0.0005');
-        var minEthStr = baseMinEth;
-        if (axonosLastDiscountQuote && axonosLastDiscountQuote.final_eth) {
-            minEthStr = String(axonosLastDiscountQuote.final_eth);
-        }
+        var minEthStr = axonosDiscountMinEthStr();
         var ethEl = document.getElementById('axonos_pay_eth_amount');
         var rawEth = (ethEl && String(ethEl.value || '').trim()) ? String(ethEl.value).trim() : minEthStr;
         var minW = axonosHumanEthToWei(minEthStr);
@@ -2301,7 +2429,6 @@ document.addEventListener("DOMContentLoaded", function() {
     var payAxgtBtn = document.getElementById('axonos_pay_axgt_btn');
     var payEthBtn = document.getElementById('axonos_pay_eth_btn');
     var payAxgtMinBtn = document.getElementById('axonos_pay_axgt_min_btn');
-    var payEthMinBtn = document.getElementById('axonos_pay_eth_min_btn');
     if (payAxgtBtn) payAxgtBtn.addEventListener('click', function () { axonosPayAxgtFromWallet(); });
     if (payEthBtn) payEthBtn.addEventListener('click', function () { axonosPayEthFromWallet(); });
     if (payAxgtMinBtn) payAxgtMinBtn.addEventListener('click', function () {
@@ -2311,30 +2438,18 @@ document.addEventListener("DOMContentLoaded", function() {
             delete el.dataset.axonosUserAmount;
         }
     });
-    if (payEthMinBtn) payEthMinBtn.addEventListener('click', function () {
-        var el = document.getElementById('axonos_pay_eth_amount');
-        if (!el) return;
-        var wallet = window.verifiedWalletAddress || verifiedWalletAddress;
-        // Prefer the server-quoted discounted price; fall back to last quote, then to base min.
-        function applyValue(v) {
-            el.value = String(v);
-            delete el.dataset.axonosUserAmount;
-        }
-        var promise = wallet ? refreshDiscountQuote(wallet) : Promise.resolve(null);
-        promise.then(function (q) {
-            if (q && (q.final_eth || q.base_eth)) {
-                applyValue(q.final_eth || q.base_eth);
-            } else if (axonosLastDiscountQuote && (axonosLastDiscountQuote.final_eth || axonosLastDiscountQuote.base_eth)) {
-                applyValue(axonosLastDiscountQuote.final_eth || axonosLastDiscountQuote.base_eth);
-            } else {
-                applyValue(axonosConfig.eth_min_deposit || '0.0005');
-            }
+    var payEthInput = document.getElementById('axonos_pay_eth_amount');
+    if (payEthInput) {
+        payEthInput.addEventListener('input', function () {
+            payEthInput.dataset.axonosUserAmount = '1';
+            var wallet = window.verifiedWalletAddress || verifiedWalletAddress;
+            scheduleEthAmountQuoteRefresh(wallet);
         });
-    });
-    ['axonos_pay_axgt_amount', 'axonos_pay_eth_amount'].forEach(function (id) {
-        var el = document.getElementById(id);
-        if (el) el.addEventListener('input', function () { el.dataset.axonosUserAmount = '1'; });
-    });
+    }
+    var payAxgtInput = document.getElementById('axonos_pay_axgt_amount');
+    if (payAxgtInput) {
+        payAxgtInput.addEventListener('input', function () { payAxgtInput.dataset.axonosUserAmount = '1'; });
+    }
 
     var joinQueueBtn = document.getElementById('axonos_queue_join_btn');
     var leaveQueueBtn = document.getElementById('axonos_queue_leave_btn');
