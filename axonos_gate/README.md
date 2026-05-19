@@ -136,13 +136,13 @@ Optional user-container mode:
 
 - Session records now include `requested_profile`, `gpu_ids`, `container_id`, and `allocation_status`.
 - Queue records are profile-aware (`requested_profile`, `requested_gpus`, `queue_reason`).
-- Claim/queue APIs accept `requested_profile` (`small|medium|large`).
+- Claim/queue APIs accept `requested_profile` (`small|medium|large|max`).
 - Session status includes active sessions, assigned GPU IDs, requested profile, allocation/queue status, and queue reason.
 - Session runtime orchestration uses a launcher adapter (`session_launcher.py`) so scheduling is decoupled from container runtime.
 
 ### Scheduler policy
 
-- Profiles are fixed: `small=1`, `medium=2`, `large=4` GPUs.
+- Profiles are fixed: `small=1`, `medium=2`, `large=4`, `max=8` GPUs.
 - Allocation is **exclusive per physical GPU ID**; a GPU ID can be present in at most one active session.
 - If enough free GPUs exist, scheduler assigns exact count from free GPU IDs.
 - If not enough GPUs are free, request is queued with reason `insufficient free GPUs for requested profile`.
