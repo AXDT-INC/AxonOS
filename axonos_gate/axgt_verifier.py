@@ -621,6 +621,7 @@ def get_wallet_access_status(wallet_address: str, consume_usage: bool = False) -
     verified = remaining > 0
     response: Dict[str, Any] = {
         "verified": verified,
+        "locked": not verified,
         "access_type": "deposit_credit" if verified else None,
         "remaining_minutes": round(remaining, 2),
         "consumed_minutes": round(consumed, 2),

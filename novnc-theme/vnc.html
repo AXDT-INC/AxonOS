@@ -512,7 +512,7 @@ Copyright (C) 2019 The noVNC Authors
     <div id="axonos_usage_overlay" class="axonos-usage-overlay axonos-usage-overlay--hidden" aria-hidden="true">
         <div class="axonos-usage-overlay__panel">
             <p id="axonos_usage_overlay_message" class="axonos-usage-overlay__message"></p>
-            <button type="button" id="axonos_usage_overlay_verify_btn" class="noVNC_submit axonos-usage-overlay__btn">Verify wallet again</button>
+            <button type="button" id="axonos_usage_overlay_verify_btn" class="noVNC_submit axonos-usage-overlay__btn">Continue</button>
         </div>
     </div>
 
@@ -1030,6 +1030,16 @@ document.addEventListener("DOMContentLoaded", function() {
             window.axonosHideConnectionLoader(true);
         }
         var reason = axonosFormatClaimDeniedMessage(claim, fallbackReason);
+        if (claim && claim.reason && /prepaid credit|insufficient prepaid/i.test(String(claim.reason))) {
+            window.axonosAllowVncConnect = false;
+            var creditDlg = document.getElementById('noVNC_credentials_dlg');
+            if (creditDlg) creditDlg.classList.add('noVNC_open');
+            setWalletUIState('axonos_wallet_state_insufficient', { balanceDisplay: String(claim.reason) });
+            if (window.verifiedWalletAddress && typeof refreshDiscountQuote === 'function') {
+                refreshDiscountQuote(window.verifiedWalletAddress);
+            }
+            return;
+        }
         if (claim && claim.allocation_status === 'failed') {
             showQueueOverlay({
                 reason: reason + ' Choose a smaller profile or retry after administrators fix launcher/Docker GPU access.',
@@ -1546,6 +1556,46 @@ document.addEventListener("DOMContentLoaded", function() {
 
     syncAxonosPrerequisiteTickerMirror();
 
+    /** Open wallet dialog for ETH top-up (keeps auth token; does not reconnect desktop). */
+    window.axonosOpenWalletTopUpDialog = function () {
+        var dlg = document.getElementById('noVNC_credentials_dlg');
+        if (dlg) dlg.classList.add('noVNC_open');
+        var wallet = window.verifiedWalletAddress;
+        if (!wallet) {
+            setWalletUIState('axonos_wallet_state_disconnected');
+            return;
+        }
+        var url = new URL('/api/auth/wallet-status', window.location.origin);
+        url.searchParams.set('wallet_address', wallet);
+        fetch(url.toString(), {
+            method: 'GET',
+            credentials: 'include',
+            headers: {
+                'X-Wallet-Address': wallet,
+                'X-AXGT-Auth-Token': window.verifiedWalletAuthToken || ''
+            }
+        })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                var remaining = typeof data.remaining_minutes === 'number' ? data.remaining_minutes : 0;
+                var balanceDisplay = (typeof data.remaining_minutes === 'number')
+                    ? (data.remaining_minutes + ' min prepaid')
+                    : '—';
+                if (data.verified && remaining > 0) {
+                    setWalletUIState('axonos_wallet_state_verified', {
+                        address: wallet,
+                        balanceDisplay: balanceDisplay
+                    });
+                } else {
+                    setWalletUIState('axonos_wallet_state_insufficient', { balanceDisplay: balanceDisplay });
+                    refreshDiscountQuote(wallet);
+                }
+            })
+            .catch(function () {
+                setWalletUIState('axonos_wallet_state_insufficient', { balanceDisplay: '—' });
+            });
+    };
+
     function setWalletUIState(state, data) {
         STATE_IDS.forEach(function (id) {
             var el = document.getElementById(id);
@@ -1871,17 +1921,25 @@ document.addEventListener("DOMContentLoaded", function() {
     function axonosDepositVerifiedSuccess(d, wallet) {
         var msgEl = document.getElementById('axonos_verify_deposit_msg');
         var inp = document.getElementById('axonos_tx_hash_input');
-        if (msgEl) msgEl.textContent = 'Credited ' + (d.credited_minutes != null ? d.credited_minutes : '?') + ' min. Connecting…';
+        if (msgEl) msgEl.textContent = 'Credited ' + (d.credited_minutes != null ? d.credited_minutes : '?') + ' min. Launch desktop when ready.';
         window.axonosAllowVncConnect = true;
         var balanceDisplay = (typeof d.remaining_minutes === 'number') ? (d.remaining_minutes + ' min prepaid') : '—';
+        var credDlg = document.getElementById('noVNC_credentials_dlg');
+        if (typeof UI !== 'undefined' && UI.connected &&
+            typeof UI._axgtSessionDesktopActive === 'function' && UI._axgtSessionDesktopActive()) {
+            if (credDlg) credDlg.classList.remove('noVNC_open');
+            if (typeof UI._axgtUpdateUsageOverlay === 'function') {
+                UI._axgtUpdateUsageOverlay('hidden');
+            }
+            return;
+        }
         setWalletUIState('axonos_wallet_state_verified', { address: wallet, balanceDisplay: balanceDisplay });
         if (inp) inp.value = '';
         claimSession().then(function (claim) {
             if (claim.granted) tryConnectAfterClaim();
             else {
                 handleSessionClaimDenied(claim, 'Desktop in use.');
-                var credentialsDialog = document.getElementById('noVNC_credentials_dlg');
-                if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
+                if (credDlg) credDlg.classList.remove('noVNC_open');
             }
         }).catch(function () {
             if (msgEl) msgEl.textContent = 'Credited, but session claim failed. Try Connect again.';
@@ -2377,6 +2435,10 @@ document.addEventListener("DOMContentLoaded", function() {
                 !!window.verifiedWalletAddress &&
                 !!window.verifiedWalletAuthToken;
             if (hasActiveVerifiedSession) {
+                if (typeof UI !== 'undefined' && UI.connected &&
+                    typeof UI._axgtSessionDesktopActive === 'function' && UI._axgtSessionDesktopActive()) {
+                    return;
+                }
                 setWalletUIState('axonos_wallet_state_verified', {
                     address: window.verifiedWalletAddress,
                     balanceDisplay: 'Connected'
