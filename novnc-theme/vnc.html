@@ -594,6 +594,9 @@ document.addEventListener("DOMContentLoaded", function() {
         profileSel.addEventListener('change', function () {
             if (typeof axonosUpdateProfileBurnHint === 'function') axonosUpdateProfileBurnHint();
         });
+        if (typeof axonosUpdateProfileBurnHint === 'function') {
+            axonosUpdateProfileBurnHint();
+        }
     }
 
     // Style settings panel inputs
@@ -741,13 +744,13 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     }
 
-    function hideConnectionLoader() {
+    function hideConnectionLoader(force) {
         const loader = document.getElementById('axonos-loader');
         if (loader && loader.classList.contains('active')) {
-            const minDisplayTime = 2000; // Minimum 2 seconds
+            const minDisplayTime = force ? 0 : 2000;
             const elapsedTime = loaderStartTime ? Date.now() - loaderStartTime : minDisplayTime;
             const remainingTime = Math.max(0, minDisplayTime - elapsedTime);
-            
+
             console.log('Hiding connection loader in', remainingTime, 'ms');
             setTimeout(() => {
                 loader.classList.remove('active');
@@ -755,6 +758,8 @@ document.addEventListener("DOMContentLoaded", function() {
             }, remainingTime);
         }
     }
+
+    window.axonosHideConnectionLoader = hideConnectionLoader;
 
     // Function to setup credential listeners when elements become available
     function setupCredentialListeners() {
@@ -968,7 +973,10 @@ document.addEventListener("DOMContentLoaded", function() {
 
     function axonosGpuCountForProfile(profile) {
         var map = (axonosConfig && axonosConfig.gpu_profiles) ? axonosConfig.gpu_profiles : null;
-        if (map && map[profile] != null) return Math.max(1, Number(map[profile]) || 1);
+        if (map && Object.prototype.hasOwnProperty.call(map, profile)) {
+            var fromMap = parseInt(map[profile], 10);
+            if (!isNaN(fromMap) && fromMap > 0) return fromMap;
+        }
         if (profile === 'max') return 8;
         if (profile === 'large') return 4;
         if (profile === 'medium') return 2;
@@ -989,11 +997,13 @@ document.addEventListener("DOMContentLoaded", function() {
         }
         var profile = getRequestedProfile();
         var gpus = axonosGpuCountForProfile(profile);
+        var profileLabels = { small: 'Small', medium: 'Medium', large: 'Large', max: 'Max' };
+        var profileLabel = profileLabels[profile] || profile;
         hint.style.display = '';
         if (gpus <= 1) {
-            hint.textContent = 'Billing: 1 prepaid minute per wall-clock minute.';
+            hint.textContent = profileLabel + ': 1 prepaid minute per minute connected.';
         } else {
-            hint.textContent = 'Billing: ' + gpus + ' prepaid minutes per wall-clock minute (' + gpus + ' GPUs).';
+            hint.textContent = profileLabel + ': ' + gpus + ' prepaid minutes per minute connected (' + gpus + ' GPUs).';
         }
     }
 
@@ -1015,6 +1025,9 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 
     function handleSessionClaimDenied(claim, fallbackReason) {
+        if (typeof window.axonosHideConnectionLoader === 'function') {
+            window.axonosHideConnectionLoader(true);
+        }
         var reason = axonosFormatClaimDeniedMessage(claim, fallbackReason);
         if (claim && claim.allocation_status === 'failed') {
             showQueueOverlay({
@@ -1427,7 +1440,9 @@ document.addEventListener("DOMContentLoaded", function() {
                 axonosConfig.axgt_direct_deposits_enabled = !!(cfg && cfg.axgt_direct_deposits_enabled);
                 axonosConfig.axgt_discount_tiers = (cfg && Array.isArray(cfg.axgt_discount_tiers)) ? cfg.axgt_discount_tiers : [];
                 axonosConfig.gpu_profiles = (cfg && cfg.gpu_profiles) ? cfg.gpu_profiles : { small: 1, medium: 2, large: 4, max: 8 };
-                axonosConfig.gpu_weighted_billing_enabled = !!(cfg && cfg.gpu_weighted_billing_enabled);
+                axonosConfig.gpu_weighted_billing_enabled = !!(
+                    cfg && (cfg.gpu_weighted_billing_enabled || cfg.gpu_profiles_enabled)
+                );
                 axonosUpdateProfileBurnHint();
                 var axgtRow = document.getElementById('axonos_pay_axgt_row');
                 if (axgtRow) axgtRow.style.display = axonosConfig.axgt_direct_deposits_enabled ? '' : 'none';
@@ -1469,7 +1484,7 @@ document.addEventListener("DOMContentLoaded", function() {
                         ? (' · Legacy AXGT direct: ' + cp100 + ' min per 100 AXGT')
                         : '';
                     var billingHint = axonosGpuWeightedBillingEnabled()
-                        ? ' While connected, prepaid minutes bill at <strong>1× per assigned GPU</strong> (wall-clock × GPUs; idle counts if this tab stays open).'
+                        ? (' While connected, usage burns <strong>' + axonosGpuCountForProfile(getRequestedProfile()) + '×</strong> prepaid minutes per real minute for your selected GPU profile (idle counts if this tab stays open).')
                         : ' While connected, minutes count for your session (idle included if this tab stays open).';
                     dlgHints.innerHTML = rateHint + legacyHint + '. ' + discountHint +
                         '<span class="axonos-wallet-card__hints-session">' + billingHint + ' Use <strong>Disconnect</strong> when finished; closing the tab only may delay releasing the desktop.</span>';

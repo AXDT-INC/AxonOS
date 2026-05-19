@@ -1474,6 +1474,9 @@ const UI = {
         UI._axonosFetchSessionClaim().then((claim) => {
             const granted = claim && (claim.granted === true || claim.granted === 'true');
             if (!granted) {
+                if (typeof window.axonosHideConnectionLoader === 'function') {
+                    window.axonosHideConnectionLoader(true);
+                }
                 UI.updateVisualState('disconnected');
                 const reason = (claim && claim.reason) ? String(claim.reason) : _('Could not claim desktop session.');
                 UI.showStatus(reason, 'warn');
@@ -1502,6 +1505,9 @@ const UI = {
                         Log.Warn('AxonOS WebRTC path failed: ' + weErr);
                     }
                     if (!usedWebRtc && cfgPeek.webrtc_fallback_enabled === false) {
+                        if (typeof window.axonosHideConnectionLoader === 'function') {
+                            window.axonosHideConnectionLoader(true);
+                        }
                         UI.updateVisualState('disconnected');
                         UI.showStatus(_('WebRTC connection is required but failed. Check STUN/TURN or try again.'), 'error');
                         return;
@@ -1513,6 +1519,9 @@ const UI = {
             })();
         }).catch((err) => {
             Log.Error('AxonOS session claim failed: ' + err);
+            if (typeof window.axonosHideConnectionLoader === 'function') {
+                window.axonosHideConnectionLoader(true);
+            }
             UI.updateVisualState('disconnected');
             UI.showStatus(_('Could not claim desktop session. Check network.'), 'error');
         });
