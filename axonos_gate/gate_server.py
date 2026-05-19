@@ -53,12 +53,13 @@ except ImportError:
         sys.exit(1)
 
 try:
-    from deposit_verifier import verify_deposit
+    from deposit_verifier import verify_deposit, verify_deposit_is_pending
 except ImportError:
     try:
-        from axonos_gate.deposit_verifier import verify_deposit
+        from axonos_gate.deposit_verifier import verify_deposit, verify_deposit_is_pending
     except ImportError:
         verify_deposit = None
+        verify_deposit_is_pending = None
 
 try:
     from session_manager import (
@@ -387,7 +388,7 @@ def api_verify_deposit():
     if auth_err:
         return auth_err
     result = verify_deposit(authenticated_wallet=wallet_address, tx_hash=tx_hash)
-    if result.get("verified"):
+    if result.get("verified") or verify_deposit_is_pending(result):
         return jsonify(result)
     return jsonify(result), 400
 

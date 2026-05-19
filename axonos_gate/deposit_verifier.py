@@ -104,6 +104,34 @@ def _min_confirmations() -> int:
     return DEFAULT_MIN_CONFIRMATIONS
 
 
+def verify_deposit_is_pending(result: Dict[str, Any]) -> bool:
+    """True when verify_deposit returned a pollable wait state (HTTP 200, not an error)."""
+    return result.get("pending") is True
+
+
+def _pending_result(
+    wallet: str,
+    tx_hash: str,
+    message: str,
+    *,
+    confirmations: Optional[int] = None,
+    required: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Not verified yet; client should poll until verified or a hard error."""
+    out: Dict[str, Any] = {
+        "verified": False,
+        "pending": True,
+        "wallet_address": wallet,
+        "tx_hash": tx_hash,
+        "error": message,
+    }
+    if confirmations is not None:
+        out["confirmations"] = confirmations
+    if required is not None:
+        out["required"] = required
+    return out
+
+
 def _min_deposit() -> Decimal:
     raw = (os.getenv("AXGT_MIN_DEPOSIT") or "").strip()
     if not raw:
@@ -284,14 +312,27 @@ def verify_deposit(
 
     # Fetch transaction
     tx_obj = _rpc(rpc_url, "eth_getTransactionByHash", [tx])
+    min_conf = _min_confirmations()
     if not tx_obj:
         # No ledger row: client may poll immediately after broadcast (tx not indexed yet).
-        return fail("Transaction not found yet — wait a few seconds if you just submitted.")
+        return _pending_result(
+            wallet,
+            tx_hash,
+            "Transaction not found yet — wait a few seconds if you just submitted.",
+            confirmations=0,
+            required=min_conf,
+        )
 
     # Fetch receipt (None while pending)
     receipt = _rpc(rpc_url, "eth_getTransactionReceipt", [tx])
     if not receipt:
-        return fail("Transaction pending — waiting for inclusion in a block.")
+        return _pending_result(
+            wallet,
+            tx_hash,
+            "Transaction pending — waiting for inclusion in a block.",
+            confirmations=0,
+            required=min_conf,
+        )
 
     status = receipt.get("status")
     if status is None:
@@ -325,10 +366,15 @@ def verify_deposit(
         deposit_ledger.record_verification_reject(wallet, notes="Invalid latest block")
         return fail("Invalid latest block")
     confirmations = latest - block_number + 1
-    min_conf = _min_confirmations()
     if confirmations < min_conf:
         # No ledger row: UI polls until min confirmations (avoids audit spam).
-        return fail(f"Insufficient confirmations (have {confirmations}, need {min_conf})")
+        return _pending_result(
+            wallet,
+            tx_hash,
+            f"Insufficient confirmations (have {confirmations}, need {min_conf})",
+            confirmations=confirmations,
+            required=min_conf,
+        )
 
     to_addr = (tx_obj.get("to") or "").strip().lower()
     if not to_addr:

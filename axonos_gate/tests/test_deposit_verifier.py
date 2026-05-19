@@ -132,7 +132,39 @@ class TestDepositVerifierParsing(unittest.TestCase):
             tx_hash="0xabcdef",
         )
         self.assertFalse(result["verified"])
+        self.assertTrue(result.get("pending"))
+        self.assertEqual(result.get("confirmations"), 0)
         self.assertIn("not found", result.get("error", "").lower())
+
+    @patch("axonos_gate.deposit_verifier._rpc")
+    @patch("axonos_gate.deposit_ledger.tx_hash_already_credited")
+    def test_verify_deposit_insufficient_confirmations_pending(
+        self, mock_already, mock_rpc
+    ):
+        from axonos_gate.deposit_verifier import verify_deposit
+
+        mock_already.return_value = False
+        wallet = "0x1234567890123456789012345678901234567890"
+        tx_hash = "0x" + "ab" * 32
+
+        def rpc_side_effect(url, method, params):
+            if method == "eth_getTransactionByHash":
+                return {"from": wallet, "to": "0x" + "1" * 40, "value": "0x0"}
+            if method == "eth_getTransactionReceipt":
+                return {"status": "0x1", "blockNumber": "0x64"}
+            if method == "eth_blockNumber":
+                return "0x65"  # 2 confirmations (0x65 - 0x64 + 1)
+            return None
+
+        mock_rpc.side_effect = rpc_side_effect
+        with patch.dict(os.environ, {"AXGT_DEPOSIT_MIN_CONFIRMATIONS": "6"}, clear=False):
+            result = verify_deposit(authenticated_wallet=wallet, tx_hash=tx_hash)
+
+        self.assertFalse(result["verified"])
+        self.assertTrue(result.get("pending"))
+        self.assertEqual(result.get("confirmations"), 2)
+        self.assertEqual(result.get("required"), 6)
+        self.assertIn("Insufficient confirmations", result.get("error", ""))
 
 
 if __name__ == "__main__":

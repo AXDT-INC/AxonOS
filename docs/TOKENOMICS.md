@@ -210,8 +210,27 @@ Now also exposes `axgt_discount_tiers` and `axgt_direct_deposits_enabled`.
 
 ### `POST /api/auth/verify-deposit`
 
-Existing endpoint. Verifies a tx hash. The ETH path now includes a `tier`
-object in the response body capturing the discount applied at credit time:
+Existing endpoint. Verifies a tx hash.
+
+**Pending (poll): HTTP 200**
+
+```json
+{
+  "verified": false,
+  "pending": true,
+  "confirmations": 2,
+  "required": 6,
+  "error": "Insufficient confirmations (have 2, need 6)",
+  "wallet_address": "0x…",
+  "tx_hash": "0x…"
+}
+```
+
+Also used while the tx is not yet indexed or not yet included in a block.
+**Hard errors** (wrong wallet, duplicate credit, below minimum) return **HTTP 400**.
+
+The ETH path on success includes a `tier` object in the response body capturing
+the discount applied at credit time:
 
 ```json
 {
