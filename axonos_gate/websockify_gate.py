@@ -76,12 +76,13 @@ except ImportError:
         sys.exit(1)
 
 try:
-    from deposit_verifier import verify_deposit
+    from deposit_verifier import verify_deposit, verify_deposit_is_pending
 except ImportError:
     try:
-        from axonos_gate.deposit_verifier import verify_deposit
+        from axonos_gate.deposit_verifier import verify_deposit, verify_deposit_is_pending
     except ImportError:
         verify_deposit = None
+        verify_deposit_is_pending = None
 
 try:
     from session_manager import (
@@ -1002,7 +1003,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                     401, {"verified": False, "error": "Valid auth token required"}
                 )
             result = verify_deposit(authenticated_wallet=wallet_address, tx_hash=tx_hash)
-            if result.get("verified"):
+            if result.get("verified") or verify_deposit_is_pending(result):
                 return self._send_json(200, result)
             return self._send_json(400, result)
 

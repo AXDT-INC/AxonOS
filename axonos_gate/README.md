@@ -90,7 +90,7 @@ Returns current deposit-credit status (no billing).
 
 ### POST /api/auth/verify-deposit
 
-Verify a deposit by transaction hash. **Requires auth token** (cookie or header). Body: `{"wallet_address": "0x...", "tx_hash": "0x..."}`. The `wallet_address` must match the authenticated session. On success: `verified`, `credited_minutes`, `remaining_minutes`, `confirmations`, etc.
+Verify a deposit by transaction hash. **Requires auth token** (cookie or header). Body: `{"wallet_address": "0x...", "tx_hash": "0x..."}`. The `wallet_address` must match the authenticated session. On success: `verified`, `credited_minutes`, `remaining_minutes`, `confirmations`, etc. While the tx is indexing or confirming, returns **HTTP 200** with `verified: false`, `pending: true`, `confirmations`, `required`, and `error` (client should poll). Hard failures (wrong sender, duplicate tx, below minimum) return **HTTP 400**.
 
 ### GET /api/config
 

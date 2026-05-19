@@ -1903,6 +1903,24 @@ document.addEventListener("DOMContentLoaded", function() {
         }).then(axonosReadFetchJson);
     }
 
+    function axonosDepositVerifyPendingMessage(d) {
+        var data = d || {};
+        if (data.pending) {
+            var conf = typeof data.confirmations === 'number' ? data.confirmations : 0;
+            var req = typeof data.required === 'number' ? data.required : 6;
+            if (data.error) return String(data.error);
+            return 'Confirmations ' + conf + '/' + req;
+        }
+        return String(data.error || data.message || '');
+    }
+
+    function axonosDepositVerifyShouldPoll(d) {
+        var data = d || {};
+        if (data.pending) return true;
+        var err = String(data.error || '');
+        return /not found yet|pending|Insufficient confirmations/i.test(err);
+    }
+
     function axonosPollVerifyDeposit(txHash) {
         var wallet = verifiedWalletAddress;
         var msgEl = document.getElementById('axonos_verify_deposit_msg');
@@ -1934,7 +1952,7 @@ document.addEventListener("DOMContentLoaded", function() {
                     axonosDepositVerifiedSuccess(d, wallet);
                     return;
                 }
-                var err = String(d.error || d.message || '');
+                var err = axonosDepositVerifyPendingMessage(d) || String(d.error || d.message || '');
                 if (/already credited|duplicate tx_hash|already.*credited/i.test(err)) {
                     checkWalletStatusFallback().then(function (ok) {
                         if (ok) return;
@@ -1943,7 +1961,7 @@ document.addEventListener("DOMContentLoaded", function() {
                     });
                     return;
                 }
-                if (/not found yet|pending|Insufficient confirmations/i.test(err)) {
+                if (axonosDepositVerifyShouldPoll(d)) {
                     if (msgEl) msgEl.textContent = err + (attempts < maxAttempts ? ' — checking again in ~12s…' : '');
                     if (attempts >= maxAttempts) {
                         setPayDepositButtonsBusy(false);
@@ -2123,8 +2141,8 @@ document.addEventListener("DOMContentLoaded", function() {
                 if (msgEl) msgEl.textContent = 'Already credited — syncing balance…';
                 setPayDepositButtonsBusy(true);
                 axonosPollVerifyDeposit(tx);
-            } else if (/not found yet|pending|Insufficient confirmations/i.test(String(d.error || ''))) {
-                if (msgEl) msgEl.textContent = String(d.error || '') + ' — auto-retrying…';
+            } else if (axonosDepositVerifyShouldPoll(d)) {
+                if (msgEl) msgEl.textContent = axonosDepositVerifyPendingMessage(d) + ' — auto-retrying…';
                 setPayDepositButtonsBusy(true);
                 axonosPollVerifyDeposit(tx);
             } else {
