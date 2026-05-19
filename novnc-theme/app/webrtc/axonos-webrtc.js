@@ -819,6 +819,10 @@ export async function connectAxonOSWebRTC(opts) {
         }
     }
 
+    if (typeof UI._axgtStartSessionBillingPoll === 'function') {
+        UI._axgtStartSessionBillingPoll();
+    }
+
     window.axonosWebRtcTeardown = async () => {
         window.removeEventListener('mouseup', onMouseUp);
         window.removeEventListener('mousemove', onWindowMouseMove);
