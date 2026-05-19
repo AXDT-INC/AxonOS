@@ -1278,6 +1278,8 @@ const UI = {
             UI.reconnectCallback = null;
         }
         UI.inhibitReconnect = false;
+        const desktopStillActive = typeof UI._axgtSessionDesktopActive === 'function'
+            && UI._axgtSessionDesktopActive();
         if (typeof UI.rfb !== 'undefined' && UI.rfb) {
             try {
                 UI.rfb.disconnect();
@@ -1292,6 +1294,10 @@ const UI = {
         const overlay = document.getElementById('axonos_usage_overlay');
         if (!overlay || !overlay.classList.contains('axonos-usage-overlay--locked')) {
             UI._axgtUpdateUsageOverlay('hidden');
+        }
+        if (desktopStillActive) {
+            UI._axgtStartSessionBillingPoll();
+            return;
         }
         UI.updateVisualState('disconnected');
     },
@@ -1439,6 +1445,9 @@ const UI = {
         if (typeof UI._axgtSessionDesktopActive === 'function' && UI._axgtSessionDesktopActive()) {
             UI.closeConnectPanel();
             UI._axgtUpdateUsageOverlay('hidden');
+            if (!UI._axgtStatusPollId) {
+                UI._axgtStartSessionBillingPoll();
+            }
             UI.focusRemoteDesktop();
             return;
         }
@@ -1699,6 +1708,23 @@ const UI = {
         return !!document.getElementById('axonos_webrtc_video');
     },
 
+    /** True only on successful wallet-status when prepaid credit is actually exhausted. */
+    _axgtWalletStatusCreditExhausted(httpOk, data) {
+        if (!httpOk || !data || typeof data !== 'object') {
+            return false;
+        }
+        const remaining = typeof data.remaining_minutes === 'number'
+            ? data.remaining_minutes
+            : null;
+        if (remaining !== null && remaining > 0) {
+            return false;
+        }
+        if (data.locked === true) {
+            return true;
+        }
+        return data.verified === false && (remaining === null || remaining <= 0);
+    },
+
     /** Heartbeat billing + low-credit warnings (RFB and WebRTC). */
     _axgtStartSessionBillingPoll() {
         if (!window.verifiedWalletAddress) {
@@ -1784,10 +1810,13 @@ const UI = {
             headers
         };
         fetch(url.toString(), opts)
-            .then(r => r.json())
-            .then(data => {
+            .then((r) => r.json().then((data) => ({ ok: r.ok, data })))
+            .then(({ ok, data }) => {
+                if (!ok) {
+                    return;
+                }
                 const remaining = typeof data.remaining_minutes === 'number' ? data.remaining_minutes : 0;
-                const locked = data.locked === true || data.verified === false || remaining <= 0;
+                const creditExhausted = UI._axgtWalletStatusCreditExhausted(ok, data);
                 const threshold = typeof data.warning_threshold_minutes === 'number' ? data.warning_threshold_minutes : 10;
                 const gpuBilling = data.gpu_billing_enabled === true || window.axonosGpuBillingEnabled === true;
                 const billingGpus = gpuBilling
@@ -1797,7 +1826,7 @@ const UI = {
                     ? data.estimated_wall_minutes_remaining
                     : (gpuBilling && billingGpus > 1 ? remaining / billingGpus : remaining);
                 const reason = (data.reason && String(data.reason)) || '';
-                if (locked) {
+                if (creditExhausted) {
                     if (typeof window !== 'undefined') {
                         window.axonosAllowVncConnect = false;
                     }

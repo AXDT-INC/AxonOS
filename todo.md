@@ -63,3 +63,4 @@
   - [x] `docs/WEBRTC.md`, `env.example`, `docker-compose.yml` env wiring + launcher passthrough for session containers
   - [x] `axonos_gate/tests/test_webrtc_config.py` (unittest)
   - [ ] Compose E2E: negotiate WebRTC, verify video + input + fallback + unauthorized signaling denial
+  - [x] WebRTC billing poll regression (`ff3171d`): tighten wallet-status credit-exhausted check (ignore 401/400), restart poll on Launch when session active, keep poll alive after queue leave on active WebRTC
