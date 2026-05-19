@@ -1744,12 +1744,14 @@ const UI = {
         const overlay = document.getElementById('axonos_usage_overlay');
         const msgEl = document.getElementById('axonos_usage_overlay_message');
         const btn = document.getElementById('axonos_usage_overlay_verify_btn');
+        const exitBtn = document.getElementById('axonos_usage_overlay_exit_btn');
         if (!overlay || !msgEl) return;
         overlay.classList.remove('axonos-usage-overlay--hidden', 'axonos-usage-overlay--warning', 'axonos-usage-overlay--locked');
         if (state === 'hidden') {
             UI._axgtUsageOverlayState = 'hidden';
             overlay.classList.add('axonos-usage-overlay--hidden');
             overlay.setAttribute('aria-hidden', 'true');
+            if (exitBtn) exitBtn.hidden = true;
             return;
         }
         UI._axgtUsageOverlayState = state;
@@ -1758,10 +1760,38 @@ const UI = {
         if (state === 'warning') {
             overlay.classList.add('axonos-usage-overlay--warning');
             if (btn) btn.textContent = 'Continue session';
+            if (exitBtn) exitBtn.hidden = true;
         } else if (state === 'locked') {
             overlay.classList.add('axonos-usage-overlay--locked');
             if (btn) btn.textContent = 'Add credit';
+            if (exitBtn) exitBtn.hidden = false;
         }
+    },
+
+    /** Leave exhausted-credit overlay and return to the launch / connect homepage. */
+    _axgtUsageOverlayExitToHome() {
+        UI._axgtUpdateUsageOverlay('hidden');
+        const credentialsDialog = document.getElementById('noVNC_credentials_dlg');
+        if (credentialsDialog) {
+            credentialsDialog.classList.remove('noVNC_open');
+        }
+        if (typeof window.axonosHideConnectionLoader === 'function') {
+            window.axonosHideConnectionLoader(true);
+        }
+        if (typeof window.axonosHideQueueOverlay === 'function') {
+            try {
+                window.axonosHideQueueOverlay();
+            } catch (err) {
+                Log.Warn('AxonOS queue overlay reset failed: ' + err);
+            }
+        }
+        if (UI.connected || typeof window.axonosWebRtcTeardown === 'function') {
+            UI.disconnect();
+            return;
+        }
+        UI.updateVisualState('disconnected');
+        UI.openControlbar();
+        UI.openConnectPanel();
     },
 
     _axgtPollWalletStatus() {
@@ -1853,27 +1883,35 @@ const UI = {
 
     _axgtSetupUsageOverlayButton() {
         const btn = document.getElementById('axonos_usage_overlay_verify_btn');
-        if (!btn || btn.hasAttribute('data-axgt-listener')) return;
-        btn.setAttribute('data-axgt-listener', 'true');
-        btn.addEventListener('click', () => {
-            const mode = UI._axgtUsageOverlayState || 'warning';
-            if (mode === 'warning') {
-                UI._axgtUpdateUsageOverlay('hidden');
-                UI.focusRemoteDesktop();
-                return;
-            }
-            if (mode === 'locked') {
-                UI._axgtUpdateUsageOverlay('hidden');
-                if (typeof window.axonosOpenWalletTopUpDialog === 'function') {
-                    window.axonosOpenWalletTopUpDialog();
-                } else {
-                    UI.credentials({ detail: { types: ['password'] } });
+        if (btn && !btn.hasAttribute('data-axgt-listener')) {
+            btn.setAttribute('data-axgt-listener', 'true');
+            btn.addEventListener('click', () => {
+                const mode = UI._axgtUsageOverlayState || 'warning';
+                if (mode === 'warning') {
+                    UI._axgtUpdateUsageOverlay('hidden');
+                    UI.focusRemoteDesktop();
+                    return;
                 }
-                return;
-            }
-            UI._axgtUpdateUsageOverlay('hidden');
-            UI.credentials({ detail: { types: ['password'] } });
-        });
+                if (mode === 'locked') {
+                    UI._axgtUpdateUsageOverlay('hidden');
+                    if (typeof window.axonosOpenWalletTopUpDialog === 'function') {
+                        window.axonosOpenWalletTopUpDialog();
+                    } else {
+                        UI.credentials({ detail: { types: ['password'] } });
+                    }
+                    return;
+                }
+                UI._axgtUpdateUsageOverlay('hidden');
+                UI.credentials({ detail: { types: ['password'] } });
+            });
+        }
+        const exitBtn = document.getElementById('axonos_usage_overlay_exit_btn');
+        if (exitBtn && !exitBtn.hasAttribute('data-axgt-listener')) {
+            exitBtn.setAttribute('data-axgt-listener', 'true');
+            exitBtn.addEventListener('click', () => {
+                UI._axgtUsageOverlayExitToHome();
+            });
+        }
     },
 
     securityFailed(e) {
