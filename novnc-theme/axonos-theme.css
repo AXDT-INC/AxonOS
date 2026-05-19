@@ -839,8 +839,26 @@ input[type="password"]::placeholder {
     font-size: 1rem;
     line-height: 1.5;
 }
-.axonos-usage-overlay__btn {
+.axonos-usage-overlay__actions {
     margin-top: 8px;
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+.axonos-usage-overlay__btn {
+    margin: 0;
+    min-width: 9rem;
+}
+.axonos-usage-overlay__btn--exit {
+    color: var(--axonos-light) !important;
+    background: transparent !important;
+    border: 2px solid rgba(220, 20, 60, 0.85) !important;
+    box-shadow: none;
+}
+.axonos-usage-overlay__btn--exit:hover:not(:disabled) {
+    border-color: #ff6b6b !important;
+    background: rgba(220, 20, 60, 0.12) !important;
 }
 
 /* Prerequisites on connect panel (what you need to sign in) */
