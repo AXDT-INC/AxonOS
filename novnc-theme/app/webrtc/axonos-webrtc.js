@@ -260,6 +260,17 @@ export async function connectAxonOSWebRTC(opts) {
             { headers: _authHeaders() }
         );
         if (!st.ok) {
+            if (st.status === 401) {
+                await _cleanup(pc, video, sessionId, wallet);
+                const msg = 'WebRTC auth expired — sign in again or use classic VNC if enabled.';
+                if (webrtcFallbackOk) {
+                    _setBanner(msg + ' Falling back.', 'fallback');
+                } else {
+                    _setBanner(msg, 'failed');
+                }
+                setTimeout(_hideBanner, 8000);
+                return false;
+            }
             break;
         }
         const j = st.json;
