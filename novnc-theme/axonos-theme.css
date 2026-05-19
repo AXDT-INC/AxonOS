@@ -1373,9 +1373,34 @@ input[type="password"]#noVNC_password_input {
   color: #7adf8a !important;
   -webkit-text-fill-color: #7adf8a !important;
 }
-.axonos-discount-panel #axonos_discount_final_eth {
+.axonos-discount-panel #axonos_discount_min_eth {
   color: #ffd166 !important;
   -webkit-text-fill-color: #ffd166 !important;
+}
+.axonos-discount-preview {
+  border-top: 1px dashed rgba(255, 255, 255, 0.18);
+  padding-top: 0.35rem;
+}
+.axonos-discount-panel #axonos_discount_preview_minutes {
+  color: #7adf8a !important;
+  -webkit-text-fill-color: #7adf8a !important;
+}
+.axonos-pay-eth-hint {
+  margin: 0.25rem auto 0;
+  max-width: 28rem;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  min-height: 1.1rem;
+  opacity: 0.88;
+  text-align: center;
+}
+.axonos-pay-eth-hint--ok {
+  color: #7adf8a !important;
+  -webkit-text-fill-color: #7adf8a !important;
+}
+.axonos-pay-eth-hint--error {
+  color: #f08080 !important;
+  -webkit-text-fill-color: #f08080 !important;
 }
 
 /* Prepaid deposit rows: label + amount + [Min | Send] stays aligned; Gradio-safe text color */
