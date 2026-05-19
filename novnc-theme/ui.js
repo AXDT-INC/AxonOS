@@ -1530,6 +1530,11 @@ const UI = {
     disconnect() {
         UI.connected = false;
 
+        if (UI._axgtStatusPollId) {
+            clearInterval(UI._axgtStatusPollId);
+            UI._axgtStatusPollId = null;
+        }
+
         // Disable automatic reconnecting
         UI.inhibitReconnect = true;
 
@@ -1613,15 +1618,7 @@ const UI = {
         UI.updateVisualState('connected');
         UI.startClipboardAutoSync();
 
-        // Start AXGT usage polling when connected with a verified wallet
-        if (window.verifiedWalletAddress) {
-            UI._axgtUpdateUsageOverlay('hidden');
-            if (UI._axgtStatusPollId) clearInterval(UI._axgtStatusPollId);
-            const poll = () => UI._axgtPollWalletStatus();
-            UI._axgtStatusPollId = setInterval(poll, 60000);
-            setTimeout(poll, 2000);
-            UI._axgtSetupUsageOverlayButton();
-        }
+        UI._axgtStartSessionBillingPoll();
 
         // Do this last because it can only be used on rendered elements
         UI.focusRemoteDesktop();
@@ -1681,6 +1678,35 @@ const UI = {
         UI.openConnectPanel();
     },
 
+    /** True when a desktop session is active (classic RFB or WebRTC). */
+    _axgtSessionDesktopActive() {
+        if (!UI.connected) {
+            return false;
+        }
+        if (UI.rfb) {
+            return true;
+        }
+        if (typeof window.axonosWebRtcTeardown === 'function') {
+            return true;
+        }
+        return !!document.getElementById('axonos_webrtc_video');
+    },
+
+    /** Heartbeat billing + low-credit warnings (RFB and WebRTC). */
+    _axgtStartSessionBillingPoll() {
+        if (!window.verifiedWalletAddress) {
+            return;
+        }
+        UI._axgtUpdateUsageOverlay('hidden');
+        if (UI._axgtStatusPollId) {
+            clearInterval(UI._axgtStatusPollId);
+        }
+        const poll = () => UI._axgtPollWalletStatus();
+        UI._axgtStatusPollId = setInterval(poll, 60000);
+        setTimeout(poll, 2000);
+        UI._axgtSetupUsageOverlayButton();
+    },
+
     _axgtUpdateUsageOverlay(state, message) {
         const overlay = document.getElementById('axonos_usage_overlay');
         const msgEl = document.getElementById('axonos_usage_overlay_message');
@@ -1698,7 +1724,9 @@ const UI = {
     },
 
     _axgtPollWalletStatus() {
-        if (!UI.connected || !UI.rfb || !window.verifiedWalletAddress) return;
+        if (!window.verifiedWalletAddress || !UI._axgtSessionDesktopActive()) {
+            return;
+        }
         const wallet = window.verifiedWalletAddress;
         const token = window.verifiedWalletAuthToken || null;
         const headers = { 'X-Wallet-Address': wallet };
@@ -1718,6 +1746,17 @@ const UI = {
                 }
                 if (hb && typeof hb.gpu_billing_enabled === 'boolean') {
                     window.axonosGpuBillingEnabled = hb.gpu_billing_enabled;
+                }
+                if (hb && hb.ok === false && /credit exhausted/i.test(String(hb.reason || ''))) {
+                    UI.inhibitReconnect = true;
+                    if (typeof window !== 'undefined') {
+                        window.axonosAllowVncConnect = false;
+                    }
+                    UI._axgtUpdateUsageOverlay(
+                        'locked',
+                        'Usage credit exhausted. Add more ETH to unlock access.'
+                    );
+                    UI.disconnect();
                 }
             })
             .catch(() => {});
@@ -1753,14 +1792,12 @@ const UI = {
                     }
                     UI._axgtUpdateUsageOverlay(
                         'locked',
-                        'Usage credit exhausted. Add more AXGT/ETH to unlock access.'
+                        'Usage credit exhausted. Add more ETH to unlock access.'
                     );
-                    if (UI.rfb && typeof UI.rfb.disconnect === 'function') {
-                        UI.inhibitReconnect = true;
-                        UI.rfb.disconnect();
-                    }
+                    UI.inhibitReconnect = true;
+                    UI.disconnect();
                 } else if (
-                    (gpuBilling && billingGpus > 1 && wallRemaining <= warnThreshold && remaining > 0) ||
+                    (gpuBilling && billingGpus > 1 && wallRemaining <= threshold && remaining > 0) ||
                     (!gpuBilling && remaining <= threshold && remaining > 0)
                 ) {
                     const warnMsg = reason || (gpuBilling && billingGpus > 1
