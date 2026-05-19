@@ -94,6 +94,81 @@ class WebrtcInputTests(unittest.TestCase):
             any(self.agent._input_buttons_from_raw(item) for item in items)
         )
 
+    def test_enqueue_mousedown_evicts_when_queue_full_of_paste(self) -> None:
+        q: asyncio.Queue[str] = asyncio.Queue(maxsize=2)
+        q.put_nowait('{"t":"paste","text":"a"}')
+        q.put_nowait('{"t":"paste","text":"b"}')
+        self.agent._enqueue_rtc_input(
+            q, '{"t":"mousedown","button":1,"buttons":1,"x":0,"y":0}'
+        )
+        kinds = []
+        while not q.empty():
+            kinds.append(self.agent._input_kind_from_raw(q.get_nowait()))
+        self.assertIn("mousedown", kinds)
+        self.assertEqual(kinds[-1], "mousedown")
+
+    def test_enqueue_burst_moves_then_click(self) -> None:
+        q: asyncio.Queue[str] = asyncio.Queue(maxsize=8)
+        for i in range(8):
+            q.put_nowait(f'{{"t":"move","x":{i},"y":0,"buttons":0}}')
+        self.agent._enqueue_rtc_input(
+            q, '{"t":"mousedown","button":1,"buttons":1,"x":0,"y":0}'
+        )
+        items: list[str] = []
+        while not q.empty():
+            items.append(q.get_nowait())
+        self.assertEqual(self.agent._input_kind_from_raw(items[-1]), "mousedown")
+
+    def test_session_cycle_resets_button_mask(self) -> None:
+        env = {"DISPLAY": ":0"}
+        with mock.patch("webrtc_agent_main.subprocess.run") as run:
+            self.agent._sync_mouse_buttons(1, env)
+            self.assertEqual(self.agent._mouse_button_mask, 1)
+            self.agent._reset_mouse_button_state()
+            self.assertEqual(self.agent._mouse_button_mask, 0)
+            run.reset_mock()
+            self.agent._reset_mouse_button_state(env)
+            self.assertEqual(self.agent._mouse_button_mask, 0)
+            self.assertEqual(run.call_count, 0)
+
+    @mock.patch("webrtc_agent_main.subprocess.run")
+    def test_mixed_left_right_click_and_drag(self, run: mock.MagicMock) -> None:
+        self.agent._apply_input_json(
+            '{"t":"mousedown","button":1,"buttons":1,"x":0,"y":0}'
+        )
+        self.agent._apply_input_json('{"t":"move","x":4,"y":4,"buttons":1}')
+        self.agent._apply_input_json(
+            '{"t":"mouseup","button":1,"buttons":0,"x":4,"y":4}'
+        )
+        self.agent._apply_input_json(
+            '{"t":"mousedown","button":3,"buttons":4,"x":10,"y":10}'
+        )
+        self.agent._apply_input_json(
+            '{"t":"mouseup","button":3,"buttons":0,"x":10,"y":10}'
+        )
+        cmds = [c.args[0] for c in run.call_args_list if c.args]
+        self.assertIn(["xdotool", "mousedown", "1"], cmds)
+        self.assertIn(["xdotool", "mouseup", "1"], cmds)
+        self.assertIn(["xdotool", "mousedown", "3"], cmds)
+        self.assertIn(["xdotool", "mouseup", "3"], cmds)
+        self.assertEqual(self.agent._mouse_button_mask, 0)
+
+    def test_input_kind_helpers_no_throw_on_garbage(self) -> None:
+        self.assertEqual(self.agent._input_kind_from_raw("{not json"), "")
+        self.assertEqual(self.agent._input_buttons_from_raw("{not json"), 0)
+        self.assertEqual(self.agent._input_buttons_from_raw('{"t":"move","buttons":99}'), 3)
+
+    @mock.patch("webrtc_agent_main.subprocess.run")
+    def test_mouseup_without_coords_skips_mousemove(self, run: mock.MagicMock) -> None:
+        env = {"DISPLAY": ":0"}
+        self.agent._sync_mouse_buttons(1, env)
+        run.reset_mock()
+        self.agent._apply_input_json('{"t":"mouseup","button":1,"buttons":0}')
+        cmds = [c.args[0] for c in run.call_args_list if c.args]
+        self.assertNotIn(["xdotool", "mousemove", "0", "0"], cmds)
+        self.assertIn(["xdotool", "mouseup", "1"], cmds)
+        self.assertEqual(self.agent._mouse_button_mask, 0)
+
     @mock.patch("webrtc_agent_main.subprocess.run")
     def test_wheel_vertical_maps_to_buttons_4_5(self, run: mock.MagicMock) -> None:
         self.agent._apply_input_json('{"t":"wheel","x":10,"y":20,"dx":0,"dy":3}')

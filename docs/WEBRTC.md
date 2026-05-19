@@ -57,3 +57,12 @@ For **WebSocket-only** proxies, signaling still uses **HTTPS fetch** on the same
 | Stuck on “Connecting” | STUN/TURN reachability; restrictive NAT → configure TURN. |
 | 403 on signaling | Auth token or session claim missing/expired. |
 | Agent idle | `WEBRTC_AGENT_INTERNAL_KEY` must match between environment for gate and agent. |
+
+## Input lifecycle validation
+
+Repeated WebRTC session spawn/teardown and teardown mouseup safety are documented in **[WEBRTC_INPUT_VALIDATION.md](./WEBRTC_INPUT_VALIDATION.md)**. Browser console runner:
+
+```javascript
+const audit = await import('./app/webrtc/axonos-webrtc-input-validation.js');
+await audit.runRepeatedSessionAudit({ cycles: 5 });
+```

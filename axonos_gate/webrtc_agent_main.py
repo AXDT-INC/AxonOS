@@ -423,6 +423,38 @@ def _flush_queued_move_events(input_queue: asyncio.Queue[str]) -> None:
             break
 
 
+def _make_room_for_critical_event(input_queue: asyncio.Queue[str]) -> None:
+    """Evict queued items until a critical mousedown/mouseup/drag-move can fit.
+
+    Prefer dropping plain hover moves first, then the oldest non-button event.
+    Never evict mousedown/mouseup — those must not be starved by paste/key bursts.
+    """
+    if not input_queue.full():
+        return
+    _flush_queued_move_events(input_queue)
+    if not input_queue.full():
+        return
+    backlog: list[str] = []
+    dropped = False
+    while True:
+        try:
+            old = input_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+        input_queue.task_done()
+        kind = _input_kind_from_raw(old)
+        if not dropped and kind not in ("mousedown", "mouseup"):
+            dropped = True
+            continue
+        backlog.append(old)
+    for item in backlog:
+        try:
+            input_queue.put_nowait(item)
+        except asyncio.QueueFull:
+            logger.warning("Could not re-queue input after critical eviction")
+            break
+
+
 def _enqueue_rtc_input(input_queue: asyncio.Queue[str], raw: str) -> None:
     kind = _input_kind_from_raw(raw)
     is_move = kind in ("move", "mousemove")
@@ -441,13 +473,13 @@ def _enqueue_rtc_input(input_queue: asyncio.Queue[str], raw: str) -> None:
         pass
 
     if critical_button or critical_move:
-        _flush_queued_move_events(input_queue)
+        _make_room_for_critical_event(input_queue)
         try:
             input_queue.put_nowait(raw)
             return
         except asyncio.QueueFull:
             if critical_button:
-                logger.warning("Could not queue critical button event")
+                logger.warning("Could not queue critical button event after eviction")
             return
 
     backlog: list[str] = []
@@ -601,6 +633,9 @@ async def _run_session(job: dict[str, Any]) -> None:
     if not _ensure_display_ready():
         _agent_fail(session_id, "display_not_ready")
         return
+
+    # Each WebRTC session gets a clean X mouse-button mask (agent process is long-lived).
+    _reset_mouse_button_state()
 
     offer_sdp = job["offer_sdp"]
     offer_type = (job.get("offer_type") or "offer").lower()
