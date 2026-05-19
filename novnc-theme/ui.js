@@ -1436,6 +1436,13 @@ const UI = {
         ).toLowerCase();
         const includeQueryAuthToken = (wsAuthMode === 'query' || wsAuthMode === 'both');
 
+        if (typeof UI._axgtSessionDesktopActive === 'function' && UI._axgtSessionDesktopActive()) {
+            UI.closeConnectPanel();
+            UI._axgtUpdateUsageOverlay('hidden');
+            UI.focusRemoteDesktop();
+            return;
+        }
+
         // Check if wallet is verified before connecting
         if (!window.verifiedWalletAddress) {
             Log.Warn("Wallet not verified - showing credentials dialog");
@@ -1710,17 +1717,25 @@ const UI = {
     _axgtUpdateUsageOverlay(state, message) {
         const overlay = document.getElementById('axonos_usage_overlay');
         const msgEl = document.getElementById('axonos_usage_overlay_message');
+        const btn = document.getElementById('axonos_usage_overlay_verify_btn');
         if (!overlay || !msgEl) return;
         overlay.classList.remove('axonos-usage-overlay--hidden', 'axonos-usage-overlay--warning', 'axonos-usage-overlay--locked');
         if (state === 'hidden') {
+            UI._axgtUsageOverlayState = 'hidden';
             overlay.classList.add('axonos-usage-overlay--hidden');
             overlay.setAttribute('aria-hidden', 'true');
             return;
         }
+        UI._axgtUsageOverlayState = state;
         overlay.setAttribute('aria-hidden', 'false');
         msgEl.textContent = message || '';
-        if (state === 'warning') overlay.classList.add('axonos-usage-overlay--warning');
-        else if (state === 'locked') overlay.classList.add('axonos-usage-overlay--locked');
+        if (state === 'warning') {
+            overlay.classList.add('axonos-usage-overlay--warning');
+            if (btn) btn.textContent = 'Continue session';
+        } else if (state === 'locked') {
+            overlay.classList.add('axonos-usage-overlay--locked');
+            if (btn) btn.textContent = 'Add credit';
+        }
     },
 
     _axgtPollWalletStatus() {
@@ -1756,7 +1771,7 @@ const UI = {
                         'locked',
                         'Usage credit exhausted. Add more ETH to unlock access.'
                     );
-                    UI.disconnect();
+                    setTimeout(() => UI.disconnect(), 400);
                 }
             })
             .catch(() => {});
@@ -1771,8 +1786,8 @@ const UI = {
         fetch(url.toString(), opts)
             .then(r => r.json())
             .then(data => {
-                const locked = data.locked === true;
                 const remaining = typeof data.remaining_minutes === 'number' ? data.remaining_minutes : 0;
+                const locked = data.locked === true || data.verified === false || remaining <= 0;
                 const threshold = typeof data.warning_threshold_minutes === 'number' ? data.warning_threshold_minutes : 10;
                 const gpuBilling = data.gpu_billing_enabled === true || window.axonosGpuBillingEnabled === true;
                 const billingGpus = gpuBilling
@@ -1783,19 +1798,15 @@ const UI = {
                     : (gpuBilling && billingGpus > 1 ? remaining / billingGpus : remaining);
                 const reason = (data.reason && String(data.reason)) || '';
                 if (locked) {
-                    // Credit exhausted: treat as signed-out-for-desktop so the next
-                    // "Launch GPU-Native Desktop" goes back through the normal
-                    // verify/top-up flow instead of trying to reuse a stale session.
                     if (typeof window !== 'undefined') {
                         window.axonosAllowVncConnect = false;
-                        window.verifiedWalletAuthToken = null;
                     }
                     UI._axgtUpdateUsageOverlay(
                         'locked',
                         'Usage credit exhausted. Add more ETH to unlock access.'
                     );
                     UI.inhibitReconnect = true;
-                    UI.disconnect();
+                    setTimeout(() => UI.disconnect(), 400);
                 } else if (
                     (gpuBilling && billingGpus > 1 && wallRemaining <= threshold && remaining > 0) ||
                     (!gpuBilling && remaining <= threshold && remaining > 0)
@@ -1816,6 +1827,21 @@ const UI = {
         if (!btn || btn.hasAttribute('data-axgt-listener')) return;
         btn.setAttribute('data-axgt-listener', 'true');
         btn.addEventListener('click', () => {
+            const mode = UI._axgtUsageOverlayState || 'warning';
+            if (mode === 'warning') {
+                UI._axgtUpdateUsageOverlay('hidden');
+                UI.focusRemoteDesktop();
+                return;
+            }
+            if (mode === 'locked') {
+                UI._axgtUpdateUsageOverlay('hidden');
+                if (typeof window.axonosOpenWalletTopUpDialog === 'function') {
+                    window.axonosOpenWalletTopUpDialog();
+                } else {
+                    UI.credentials({ detail: { types: ['password'] } });
+                }
+                return;
+            }
             UI._axgtUpdateUsageOverlay('hidden');
             UI.credentials({ detail: { types: ['password'] } });
         });
@@ -1848,6 +1874,15 @@ const UI = {
         const verifiedWallet = window.verifiedWalletAddress || null;
         const verifiedAuthToken = window.verifiedWalletAuthToken || null;
         if (verifiedWallet && verifiedAuthToken) {
+            if (typeof UI._axgtSessionDesktopActive === 'function' && UI._axgtSessionDesktopActive()) {
+                const credentialsDialog = document.getElementById('noVNC_credentials_dlg');
+                if (credentialsDialog) {
+                    credentialsDialog.classList.remove('noVNC_open');
+                }
+                UI._axgtUpdateUsageOverlay('hidden');
+                UI.focusRemoteDesktop();
+                return;
+            }
             // Prefer explicit config (URL/config var). Fall back to the image default.
             // NOTE: The VNC password is not a secret in this flow; access is gated by AXGT verification.
             const password = WebUtil.getConfigVar('password') || 'axonpassword';
