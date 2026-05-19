@@ -567,6 +567,10 @@ Copyright (C) 2019 The noVNC Authors
 </html>
 
 <script>
+// Must be declared before DOMContentLoaded handlers (axonosUpdateProfileBurnHint reads it).
+let axonosConfig = { axgt_contract_address: '', axgt_revenue_wallet: '', axgt_chain_id: null, axgt_min_deposit: '100', eth_deposits_enabled: true, eth_min_deposit: '0.0005', axgt_token_decimals: 18, credit_per_100_axgt: 60, eth_credit_per_eth: 120000, min_axgt_minutes: 60, min_eth_minutes: 60, axgt_direct_deposits_enabled: false, axgt_discount_tiers: [], gpu_profiles: { small: 1, medium: 2, large: 4, max: 8 }, gpu_weighted_billing_enabled: false };
+let axonosLastDiscountQuote = null;
+
 // Force password field styling
 document.addEventListener("DOMContentLoaded", function() {
     const passwordInput = document.getElementById("noVNC_password_input");
@@ -594,9 +598,6 @@ document.addEventListener("DOMContentLoaded", function() {
         profileSel.addEventListener('change', function () {
             if (typeof axonosUpdateProfileBurnHint === 'function') axonosUpdateProfileBurnHint();
         });
-        if (typeof axonosUpdateProfileBurnHint === 'function') {
-            axonosUpdateProfileBurnHint();
-        }
     }
 
     // Style settings panel inputs
@@ -1187,9 +1188,6 @@ document.addEventListener("DOMContentLoaded", function() {
     const retryConnectBtn = document.getElementById('axonos_retry_connect_btn');
     const switchNetworkBtn = document.getElementById('axonos_switch_network_btn');
     const STATE_IDS = ['axonos_wallet_state_disconnected', 'axonos_wallet_state_choose_wallet', 'axonos_wallet_state_checking', 'axonos_wallet_state_verified', 'axonos_wallet_state_insufficient', 'axonos_wallet_state_connect_error', 'axonos_wallet_state_no_wallet', 'axonos_wallet_state_rejected', 'axonos_wallet_state_wrong_network'];
-    let axonosConfig = { axgt_contract_address: '', axgt_revenue_wallet: '', axgt_chain_id: null, axgt_min_deposit: '100', eth_deposits_enabled: true, eth_min_deposit: '0.0005', axgt_token_decimals: 18, credit_per_100_axgt: 60, eth_credit_per_eth: 120000, min_axgt_minutes: 60, min_eth_minutes: 60, axgt_direct_deposits_enabled: false, axgt_discount_tiers: [], gpu_profiles: { small: 1, medium: 2, large: 4, max: 8 }, gpu_weighted_billing_enabled: false };
-    /** Latest discount quote from the server. Refreshed on wallet verify and after a deposit. */
-    let axonosLastDiscountQuote = null;
 
     /**
      * Mainnet vs testnet labels (landing + wallet dialog)
