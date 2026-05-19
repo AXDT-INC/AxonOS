@@ -62,6 +62,92 @@ def _configured_profiles() -> Dict[str, int]:
     }
 
 
+def _gpu_billing_enabled() -> bool:
+    """When true, heartbeat billing multiplies wall-clock minutes by assigned GPU count."""
+    if not _gpu_profiles_enabled():
+        return False
+    raw = (os.getenv("AXGT_GPU_WEIGHTED_BILLING") or "").strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return True
+
+
+def _billing_gpu_count(gpu_ids: Optional[List[int]], profile: Optional[str] = None) -> int:
+    """GPU multiplier for usage billing (exclusive devices in this session)."""
+    if gpu_ids:
+        return max(1, len(gpu_ids))
+    _, requested = _resolve_profile(profile)
+    return max(1, requested)
+
+
+def _usage_minutes_for_interval(
+    wall_clock_minutes: float,
+    gpu_ids: Optional[List[int]],
+    profile: Optional[str] = None,
+) -> float:
+    if wall_clock_minutes <= 0:
+        return 0.0
+    if not _gpu_billing_enabled():
+        return wall_clock_minutes
+    return wall_clock_minutes * _billing_gpu_count(gpu_ids, profile)
+
+
+def _prepaid_credit_allows_profile(
+    wallet: str,
+    requested_gpus: int,
+    profile_name: str,
+) -> Tuple[bool, Optional[str]]:
+    """Require prepaid minutes > 0 and enough balance for at least one billed heartbeat."""
+    deposit_ledger = _import_deposit_ledger()
+    if not deposit_ledger.init_once():
+        return False, "Billing unavailable. Cannot claim without deposit ledger."
+    remaining = deposit_ledger.get_remaining_minutes(wallet)
+    if remaining <= 0:
+        return False, "No prepaid credit. Deposit AXGT and verify tx hash."
+    if _gpu_billing_enabled() and remaining < requested_gpus:
+        return (
+            False,
+            (
+                f"Insufficient prepaid credit for profile \"{profile_name}\" ({requested_gpus} GPU(s)). "
+                f"You have {remaining:.1f} minute(s) but need at least {requested_gpus} "
+                f"(usage bills at {requested_gpus}× wall-clock minutes per GPU)."
+            ),
+        )
+    return True, None
+
+
+def billing_context_for_wallet(wallet_address: str) -> Dict[str, Any]:
+    """Active-session GPU billing context for wallet-status / UI warnings."""
+    enabled = _gpu_billing_enabled()
+    ctx: Dict[str, Any] = {
+        "gpu_billing_enabled": enabled,
+        "billing_gpu_count": 1,
+        "gpu_profiles": _configured_profiles() if enabled else None,
+    }
+    if not enabled or not _init_once():
+        return ctx
+    wallet = (wallet_address or "").strip().lower()
+    if not wallet:
+        return ctx
+    conn = _get_connection()
+    if not conn:
+        return ctx
+    try:
+        with conn.cursor() as cur:
+            owned = _active_session_for_wallet(cur, wallet)
+        if owned:
+            gpu_ids = owned.get("gpu_ids") or []
+            profile = owned.get("requested_profile")
+            count = _billing_gpu_count(gpu_ids, profile)
+            ctx["billing_gpu_count"] = count
+            ctx["requested_profile"] = profile or "small"
+    except Exception as exc:
+        logger.debug("billing_context_for_wallet failed: %s", exc)
+    finally:
+        conn.close()
+    return ctx
+
+
 def _explicit_gpu_ids_from_env() -> Optional[List[int]]:
     """Return GPU indices from env if configured; None means use auto-detect or fallback."""
     raw = (os.getenv("AXGT_GPU_DEVICE_IDS") or "").strip()
@@ -739,26 +825,16 @@ def try_claim_session(wallet_address: str, requested_profile: Optional[str] = No
             active_rows = _get_active_rows(cur)
             active = active_rows[-1] if active_rows else None
 
-            # Deposit-credit: require prepaid minutes for any non-owner (claim or queue position).
-            try:
-                from . import deposit_ledger
-            except ImportError:
-                try:
-                    from axonos_gate import deposit_ledger
-                except ImportError:
-                    import deposit_ledger
             is_owner = _active_session_for_wallet(cur, wallet) is not None
             if not is_owner:
-                if not deposit_ledger.init_once():
+                ok_credit, credit_reason = _prepaid_credit_allows_profile(
+                    wallet, requested_gpus, profile_name
+                )
+                if not ok_credit:
                     conn.commit()
                     if ended:
                         _on_session_ended(ended[0], ended[1])
-                    return {"granted": False, "reason": "Billing unavailable. Cannot claim without deposit ledger."}
-                if deposit_ledger.get_remaining_minutes(wallet) <= 0:
-                    conn.commit()
-                    if ended:
-                        _on_session_ended(ended[0], ended[1])
-                    return {"granted": False, "reason": "No prepaid credit. Deposit AXGT and verify tx hash."}
+                    return {"granted": False, "reason": credit_reason}
 
             # Already owner in multi-session mode
             owned = _active_session_for_wallet(cur, wallet)
@@ -1022,7 +1098,11 @@ def heartbeat(wallet_address: str) -> Dict[str, Any]:
             # Bill from last checkpoint, or from session start if never billed (e.g. pre-migration row)
             bill_from = last_billed_at if last_billed_at is not None else started_at
             elapsed_seconds = max(0.0, now - bill_from)
-            minutes_delta = elapsed_seconds / 60.0
+            wall_minutes = elapsed_seconds / 60.0
+            billing_gpu_count = _billing_gpu_count(assigned_gpu_ids, req_profile)
+            minutes_delta = _usage_minutes_for_interval(
+                wall_minutes, assigned_gpu_ids, req_profile
+            )
 
             # If there is billable time but ledger is unavailable, fail the heartbeat (no silent unbilled use).
             if minutes_delta > 0 and not deposit_ledger.init_once():
@@ -1063,6 +1143,8 @@ def heartbeat(wallet_address: str) -> Dict[str, Any]:
                         "requested_profile": req_profile,
                         "assigned_gpu_ids": assigned_gpu_ids,
                         "container_id": container_id,
+                        "gpu_billing_enabled": _gpu_billing_enabled(),
+                        "billing_gpu_count": billing_gpu_count,
                     }
                 billed_this_heartbeat = True
             else:
@@ -1093,9 +1175,19 @@ def heartbeat(wallet_address: str) -> Dict[str, Any]:
                 "assigned_gpu_ids": assigned_gpu_ids,
                 "container_id": container_id,
                 "allocation_status": "allocated",
+                "gpu_billing_enabled": _gpu_billing_enabled(),
+                "billing_gpu_count": billing_gpu_count,
             }
+            if wall_minutes > 0 and _gpu_billing_enabled():
+                result["wall_minutes_billed"] = round(wall_minutes, 4)
+                result["minutes_billed"] = round(minutes_delta, 4)
             if minutes_delta > 0 and deposit_ledger.init_once():
-                result["remaining_minutes"] = round(deposit_ledger.get_remaining_minutes(wallet), 2)
+                remaining_after = deposit_ledger.get_remaining_minutes(wallet)
+                result["remaining_minutes"] = round(remaining_after, 2)
+                if _gpu_billing_enabled() and billing_gpu_count > 1:
+                    result["estimated_wall_minutes_remaining"] = round(
+                        remaining_after / billing_gpu_count, 2
+                    )
             if ended:
                 _on_session_ended(ended[0], ended[1])
             return result
@@ -1263,6 +1355,12 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
                     result["assigned_gpu_ids"] = owned.get("gpu_ids", [])
                     result["container_id"] = owned.get("container_id")
                     result["allocation_status"] = owned.get("allocation_status") or "allocated"
+                    if _gpu_billing_enabled():
+                        result["gpu_billing_enabled"] = True
+                        result["billing_gpu_count"] = _billing_gpu_count(
+                            owned.get("gpu_ids", []),
+                            result["requested_profile"],
+                        )
 
         return result
     except Exception as exc:
@@ -1282,12 +1380,11 @@ def join_queue(wallet_address: str, requested_profile: Optional[str] = None) -> 
     if not conn:
         return {"joined": False, "reason": "Session DB unavailable"}
     try:
-        # Require deposit credit before allowing queue join (deposit-credit access control).
-        deposit_ledger = _import_deposit_ledger()
-        if not deposit_ledger.init_once():
-            return {"joined": False, "reason": "Billing unavailable. Cannot join queue without deposit ledger."}
-        if deposit_ledger.get_remaining_minutes(wallet) <= 0:
-            return {"joined": False, "reason": "No prepaid credit. Deposit AXGT and verify tx hash to join queue."}
+        ok_credit, credit_reason = _prepaid_credit_allows_profile(
+            wallet, requested_gpus, profile_name
+        )
+        if not ok_credit:
+            return {"joined": False, "reason": credit_reason}
 
         now = time.time()
         with conn.cursor() as cur:

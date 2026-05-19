@@ -613,6 +613,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 "multi_session_enabled": (os.getenv("AXGT_MULTI_SESSION_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")),
                 "gpu_profiles_enabled": (os.getenv("AXGT_GPU_PROFILES_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")),
                 "gpu_profiles": {"small": 1, "medium": 2, "large": 4, "max": 8},
+                "gpu_weighted_billing_enabled": policy.get("gpu_weighted_billing_enabled", False),
             }
             if webrtc_config is not None:
                 payload.update(webrtc_config.public_config())

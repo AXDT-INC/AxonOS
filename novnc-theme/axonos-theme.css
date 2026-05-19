@@ -2139,6 +2139,15 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 /* Option list chrome (best-effort; native menu is OS-controlled) */
+.axonos-profile-picker__hint {
+  margin: 0.45rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  color: rgba(245, 245, 245, 0.78);
+  text-align: center;
+  max-width: 28rem;
+}
+
 .axonos-profile-picker__select option {
   background: #141a24;
   color: var(--axonos-light);

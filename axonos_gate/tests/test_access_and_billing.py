@@ -125,6 +125,63 @@ class TestBillingAndSession(unittest.TestCase):
         self.assertEqual(call_args[1], "0x1234567890123456789012345678901234567890".lower())
         self.assertGreater(call_args[2], 0)
 
+    @patch("axonos_gate.deposit_ledger._deduct_usage_on_cursor")
+    @patch("axonos_gate.deposit_ledger.get_remaining_minutes", return_value=50.0)
+    @patch("axonos_gate.deposit_ledger.init_once", return_value=True)
+    @patch("axonos_gate.session_manager.time.time", return_value=1500.0)
+    @patch("axonos_gate.session_manager._get_connection")
+    def test_heartbeat_gpu_weighted_billing(
+        self, mock_conn, _mock_time, _mock_init, _mock_remaining, mock_deduct
+    ):
+        from axonos_gate import session_manager
+
+        session_manager._pg_init_done = True
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.fetchone.side_effect = [
+            None,
+            (1, 1000.0, 2000.0, 1000.0, "large", "0,1,2,3", "cid"),
+            (2000.0,),
+        ]
+        conn.cursor.return_value = cur
+        mock_conn.return_value = conn
+
+        with patch.dict(
+            os.environ,
+            {
+                "AXGT_GPU_PROFILES_ENABLED": "true",
+                "AXGT_GPU_WEIGHTED_BILLING": "true",
+            },
+            clear=False,
+        ):
+            mock_deduct.return_value = (True, 50.0, None)
+            result = session_manager.heartbeat(
+                "0x1234567890123456789012345678901234567890"
+            )
+
+        self.assertTrue(result.get("ok"))
+        billed = mock_deduct.call_args[0][2]
+        # 500s wall between t=1000 and t=1500 → 500/60 min × 4 GPUs
+        self.assertAlmostEqual(billed, (500.0 / 60.0) * 4, places=4)
+        self.assertEqual(result.get("billing_gpu_count"), 4)
+
+    def test_gpu_weighted_usage_minutes_helper(self):
+        from axonos_gate import session_manager
+
+        with patch.dict(
+            os.environ,
+            {"AXGT_GPU_PROFILES_ENABLED": "true", "AXGT_GPU_WEIGHTED_BILLING": "true"},
+            clear=False,
+        ):
+            self.assertEqual(
+                session_manager._usage_minutes_for_interval(10.0, [0, 1], "medium"),
+                20.0,
+            )
+            self.assertEqual(
+                session_manager._usage_minutes_for_interval(10.0, [], "max"),
+                80.0,
+            )
+
     def test_gpu_allocation_no_overlap(self):
         from axonos_gate import session_manager
         active_rows = [

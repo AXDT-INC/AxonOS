@@ -1701,7 +1701,17 @@ const UI = {
             credentials: 'include',
             headers: { ...headers, 'Content-Type': 'application/json' },
             body: JSON.stringify({ wallet_address: wallet })
-        }).then(() => {}).catch(() => {});
+        })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((hb) => {
+                if (hb && typeof hb.billing_gpu_count === 'number') {
+                    window.axonosBillingGpuCount = hb.billing_gpu_count;
+                }
+                if (hb && typeof hb.gpu_billing_enabled === 'boolean') {
+                    window.axonosGpuBillingEnabled = hb.gpu_billing_enabled;
+                }
+            })
+            .catch(() => {});
 
         const url = new URL('/api/auth/wallet-status', window.location.origin);
         url.searchParams.set('wallet_address', wallet);
@@ -1716,6 +1726,13 @@ const UI = {
                 const locked = data.locked === true;
                 const remaining = typeof data.remaining_minutes === 'number' ? data.remaining_minutes : 0;
                 const threshold = typeof data.warning_threshold_minutes === 'number' ? data.warning_threshold_minutes : 10;
+                const gpuBilling = data.gpu_billing_enabled === true || window.axonosGpuBillingEnabled === true;
+                const billingGpus = gpuBilling
+                    ? Math.max(1, Number(data.billing_gpu_count || window.axonosBillingGpuCount || 1))
+                    : 1;
+                const wallRemaining = typeof data.estimated_wall_minutes_remaining === 'number'
+                    ? data.estimated_wall_minutes_remaining
+                    : (gpuBilling && billingGpus > 1 ? remaining / billingGpus : remaining);
                 const reason = (data.reason && String(data.reason)) || '';
                 if (locked) {
                     // Credit exhausted: treat as signed-out-for-desktop so the next
@@ -1733,10 +1750,15 @@ const UI = {
                         UI.inhibitReconnect = true;
                         UI.rfb.disconnect();
                     }
-                } else if (remaining <= threshold && remaining > 0) {
-                    UI._axgtUpdateUsageOverlay('warning',
-                        reason || `Less than ${threshold} minutes of AXGT usage credit remaining. Add more AXGT to continue.`);
-                } else if (remaining > threshold) {
+                } else if (
+                    (gpuBilling && billingGpus > 1 && wallRemaining <= warnThreshold && remaining > 0) ||
+                    (!gpuBilling && remaining <= threshold && remaining > 0)
+                ) {
+                    const warnMsg = reason || (gpuBilling && billingGpus > 1
+                        ? `About ${wallRemaining.toFixed(1)} minute(s) of desktop time left (${billingGpus} GPUs, ${billingGpus}× billing). Add more ETH to continue.`
+                        : `Less than ${threshold} minutes of usage credit remaining. Add more ETH to continue.`);
+                    UI._axgtUpdateUsageOverlay('warning', warnMsg);
+                } else if (remaining > threshold * (gpuBilling && billingGpus > 1 ? billingGpus : 1)) {
                     UI._axgtUpdateUsageOverlay('hidden');
                 }
             })

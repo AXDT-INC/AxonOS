@@ -102,6 +102,8 @@ Returns contract address, chain ID, revenue wallet, min deposit (AXGT and ETH), 
 - `POST /api/queue/join`, `POST /api/queue/leave`
 
 Heartbeats trigger incremental billing; when remaining minutes reach zero the session is ended.
+When `AXGT_GPU_PROFILES_ENABLED` and weighted billing are on (default), usage deducts
+`wall_clock_minutes × assigned_gpu_count` from prepaid credit (e.g. Max = 8× burn rate).
 
 ### Admin (when AXGT_ADMIN_SECRET is set)
 
@@ -143,6 +145,7 @@ Optional user-container mode:
 ### Scheduler policy
 
 - Profiles are fixed: `small=1`, `medium=2`, `large=4`, `max=8` GPUs.
+- Billing scales with profile GPU count when `AXGT_GPU_WEIGHTED_BILLING` is enabled (default on with profiles).
 - Allocation is **exclusive per physical GPU ID**; a GPU ID can be present in at most one active session.
 - If enough free GPUs exist, scheduler assigns exact count from free GPU IDs.
 - If not enough GPUs are free, request is queued with reason `insufficient free GPUs for requested profile`.

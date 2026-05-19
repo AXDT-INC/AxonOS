@@ -148,6 +148,24 @@ Replay protection (`axgt_verified_deposits`) and the audit ledger
    heartbeats. When `remaining_minutes` reaches 0, the session is terminated
    and the user must top up again.
 
+### GPU-weighted session billing
+
+When multi-GPU profiles are enabled (`AXGT_GPU_PROFILES_ENABLED`), usage billing
+multiplies wall-clock time by the number of GPUs in the active session:
+
+| Profile | GPUs | Billed per 1 wall-clock minute |
+|---------|------|-------------------------------|
+| Small   | 1    | 1 prepaid minute              |
+| Medium  | 2    | 2 prepaid minutes             |
+| Large   | 4    | 4 prepaid minutes             |
+| Max     | 8    | 8 prepaid minutes             |
+
+Deposits still credit **prepaid minutes** at the ETH/AXGT rates above; larger
+profiles consume that balance faster. Claim/queue requires at least as many
+prepaid minutes as GPUs in the selected profile (so one billing tick can run).
+
+Disable with `AXGT_GPU_WEIGHTED_BILLING=false` (not recommended for production).
+
 ---
 
 ## API surface
