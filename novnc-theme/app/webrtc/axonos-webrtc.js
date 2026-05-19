@@ -100,6 +100,14 @@ export async function connectAxonOSWebRTC(opts) {
         return false;
     }
 
+    if (typeof window.axonosWebRtcTeardown === 'function') {
+        try {
+            await window.axonosWebRtcTeardown();
+        } catch (e) {
+            console.warn('AxonOS WebRTC prior session teardown failed', e);
+        }
+    }
+
     let cfgRes;
     try {
         cfgRes = await _fetchJson('./api/config', { headers: _authHeaders() });
@@ -376,14 +384,40 @@ export async function connectAxonOSWebRTC(opts) {
         inputScaleY = rh / imageHeight;
     };
 
-    video.addEventListener('loadeddata', syncInputScale);
-    window.addEventListener('resize', syncInputScale);
+    // AbortController removes every input listener on teardown so repeated
+    // session spawns cannot accumulate duplicate window handlers.
+    const inputAbort = new AbortController();
+    const inputSignal = inputAbort.signal;
+    const clipboardBeforeClickMs = 200;
+
+    video.addEventListener('loadeddata', syncInputScale, { signal: inputSignal });
+    window.addEventListener('resize', syncInputScale, { signal: inputSignal });
+
+    let inputChannelOpen = dc.readyState === 'open';
+    // RFB-style bitmask: 1=left, 2=middle, 4=right (1 << DOM button index).
+    let currentMouseButtons = 0;
 
     function sendInput(obj) {
-        if (dc.readyState === 'open') {
+        if (!inputChannelOpen || dc.readyState !== 'open') {
+            return false;
+        }
+        try {
             dc.send(JSON.stringify(obj));
+            return true;
+        } catch (e) {
+            console.warn('AxonOS WebRTC input send failed', e);
+            return false;
         }
     }
+
+    dc.addEventListener('open', () => {
+        inputChannelOpen = true;
+        currentMouseButtons = 0;
+    });
+    dc.addEventListener('close', () => {
+        inputChannelOpen = false;
+        currentMouseButtons = 0;
+    });
 
     dc.onmessage = (ev) => {
         let msg = null;
@@ -470,15 +504,83 @@ export async function connectAxonOSWebRTC(opts) {
         } catch { /* ignore */ }
     }
 
-    // RFB-style bitmask: 1=left, 2=middle, 4=right (1 << DOM button index).
-    let currentMouseButtons = 0;
-
     function domButtonMask(button) {
         return 1 << button;
     }
 
     function domButtonToXdotool(button) {
         return button + 1;
+    }
+
+    /** Drop local mask and optionally emit matching mouseup events (session teardown / cancel). */
+    function resetMouseInputState(ev, sendRelease) {
+        if (currentMouseButtons === 0) {
+            return;
+        }
+        // When `ev` is present, include remote coords (pointercancel mid-drag). When
+        // absent (session teardown), omit x/y so the agent runs xdotool mouseup
+        // only — no pointer jump to 0,0. Channel close also resets mask server-side.
+        const coords = ev ? pointerToRemote(ev) : null;
+        let remaining = currentMouseButtons;
+        for (let btn = 0; btn < 3; btn += 1) {
+            const bit = domButtonMask(btn);
+            if (!(remaining & bit)) {
+                continue;
+            }
+            remaining &= ~bit;
+            if (sendRelease) {
+                const payload = {
+                    t: 'mouseup',
+                    button: domButtonToXdotool(btn),
+                    buttons: remaining,
+                };
+                if (coords) {
+                    Object.assign(payload, coords);
+                }
+                sendInput(payload);
+            }
+        }
+        currentMouseButtons = 0;
+    }
+
+    function pressMouseButton(ev) {
+        const bit = domButtonMask(ev.button);
+        if (currentMouseButtons & bit) {
+            return;
+        }
+        currentMouseButtons |= bit;
+        const sent = sendInput({
+            t: 'mousedown',
+            button: domButtonToXdotool(ev.button),
+            buttons: currentMouseButtons,
+            ...pointerToRemote(ev),
+        });
+        if (!sent) {
+            currentMouseButtons &= ~bit;
+        }
+    }
+
+    function releaseMouseButton(ev) {
+        const bit = domButtonMask(ev.button);
+        const coords = pointerToRemote(ev);
+        if (!(currentMouseButtons & bit)) {
+            // Orphan mouseup: mousedown may have been delayed, dropped on a closed
+            // channel, or lost across session teardown — release remote anyway.
+            sendInput({
+                t: 'mouseup',
+                button: domButtonToXdotool(ev.button),
+                buttons: currentMouseButtons,
+                ...coords,
+            });
+            return;
+        }
+        currentMouseButtons &= ~bit;
+        sendInput({
+            t: 'mouseup',
+            button: domButtonToXdotool(ev.button),
+            buttons: currentMouseButtons,
+            ...coords,
+        });
     }
 
     // Moves must keep firing during click-and-drag when the cursor leaves the
@@ -502,12 +604,34 @@ export async function connectAxonOSWebRTC(opts) {
         ev.preventDefault();
         sendInput({ t: 'move', buttons: currentMouseButtons, ...pointerToRemote(ev) });
     }
-    window.addEventListener('mousemove', onWindowMouseMove);
+    window.addEventListener('mousemove', onWindowMouseMove, { signal: inputSignal });
 
-    /** Optional: retain pointer coords when dragging across subframes / subtleties */
-    video.addEventListener('pointerdown', (ev) => {
+    function syncClipboardBeforeClick(ev) {
+        // Only right-click needs host clipboard on X CLIPBOARD before the
+        // remote context menu opens. Left/middle clicks must not call
+        // `readText()` — after host paste the API can hang for seconds.
+        // Never await on the click path; pointerdown may start this earlier.
+        if (ev.button !== 2) {
+            return;
+        }
+        if (typeof UI.pullLocalClipboardToRemote !== 'function') {
+            return;
+        }
+        try {
+            const p = UI.pullLocalClipboardToRemote({ timeoutMs: clipboardBeforeClickMs });
+            if (p && typeof p.catch === 'function') {
+                p.catch(() => { /* readText can reject when document lost focus */ });
+            }
+        } catch { /* ignore */ }
+    }
+
+    /** Retain pointer coords when dragging outside the letterboxed video bounds. */
+    function onVideoPointerDown(ev) {
         if (ev.pointerType === 'touch') {
             return;
+        }
+        if (ev.button === 2) {
+            syncClipboardBeforeClick(ev);
         }
         if (video.setPointerCapture && typeof video.setPointerCapture === 'function') {
             try {
@@ -516,7 +640,8 @@ export async function connectAxonOSWebRTC(opts) {
                 /* ignore */
             }
         }
-    });
+    }
+    video.addEventListener('pointerdown', onVideoPointerDown, { signal: inputSignal });
 
     /** Release capture so scroll / click outside behave normally once drag ends */
     function releaseCapturedPointer(ev) {
@@ -577,74 +702,51 @@ export async function connectAxonOSWebRTC(opts) {
             dx,
         });
     }
-    video.addEventListener('wheel', onVideoWheel, { passive: false });
+    video.addEventListener('wheel', onVideoWheel, { passive: false, signal: inputSignal });
 
-
-    async function syncClipboardBeforeClick(ev) {
-        // Only right-click needs host clipboard on X CLIPBOARD before the
-        // remote context menu opens. Left/middle clicks must not call or await
-        // `readText()` — after host paste the API can hang for seconds and
-        // blocks every click. Ctrl+V uses `t:paste` (set + inject in one step).
-        if (ev.button !== 2) {
-            return;
-        }
-        if (typeof UI.pullLocalClipboardToRemote !== 'function') {
-            return;
-        }
-        try {
-            const p = UI.pullLocalClipboardToRemote({ timeoutMs: clipboardBeforeClickMs });
-            if (p && typeof p.then === 'function') {
-                await p.catch(() => { /* readText can reject when document lost focus */ });
-            }
-        } catch { /* ignore */ }
-    }
-
-    video.addEventListener('mousedown', async (ev) => {
+    function onVideoMouseDown(ev) {
         ev.preventDefault();
         focusPasteSink();
-        await syncClipboardBeforeClick(ev);
-        currentMouseButtons |= domButtonMask(ev.button);
-        sendInput({
-            t: 'mousedown',
-            button: domButtonToXdotool(ev.button),
-            buttons: currentMouseButtons,
-            ...pointerToRemote(ev),
-        });
-    });
+        if (ev.button === 2) {
+            syncClipboardBeforeClick(ev);
+        }
+        pressMouseButton(ev);
+    }
+    video.addEventListener('mousedown', onVideoMouseDown, { signal: inputSignal });
 
     function onMouseUp(ev) {
-        if (currentMouseButtons === 0) {
-            return;
-        }
-        const mask = domButtonMask(ev.button);
-        if (!(currentMouseButtons & mask)) {
-            return;
-        }
-        currentMouseButtons &= ~mask;
-        sendInput({
-            t: 'mouseup',
-            button: domButtonToXdotool(ev.button),
-            buttons: currentMouseButtons,
-            ...pointerToRemote(ev),
-        });
+        releaseMouseButton(ev);
     }
-    window.addEventListener('mouseup', onMouseUp);
-    window.addEventListener('pointerup', releaseCapturedPointer);
-    window.addEventListener('pointercancel', releaseCapturedPointer);
-    video.addEventListener('mouseenter', focusPasteSink);
+    window.addEventListener('mouseup', onMouseUp, { signal: inputSignal });
+
+    function onPointerUp(ev) {
+        releaseCapturedPointer(ev);
+    }
+    function onPointerCancel(ev) {
+        releaseCapturedPointer(ev);
+        resetMouseInputState(ev, true);
+    }
+    window.addEventListener('pointerup', onPointerUp, { signal: inputSignal });
+    window.addEventListener('pointercancel', onPointerCancel, { signal: inputSignal });
+
+    video.addEventListener('mouseenter', focusPasteSink, { signal: inputSignal });
     video.addEventListener('contextmenu', (ev) => {
         ev.preventDefault();
-    });
+    }, { signal: inputSignal });
     video.addEventListener('mouseleave', () => {
         if (currentMouseButtons !== 0) {
             return;
         }
         cursor.style.transform = 'translate(-100px,-100px)';
-    });
-    window.addEventListener('focus', kickClipboardSync);
-    document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') kickClipboardSync();
-    });
+    }, { signal: inputSignal });
+
+    function onVisibilityChange() {
+        if (document.visibilityState === 'visible') {
+            kickClipboardSync();
+        }
+    }
+    window.addEventListener('focus', kickClipboardSync, { signal: inputSignal });
+    document.addEventListener('visibilitychange', onVisibilityChange, { signal: inputSignal });
 
     function pasteTextToRemote(text) {
         const s = String(text || '');
@@ -683,7 +785,7 @@ export async function connectAxonOSWebRTC(opts) {
             pasteSink.value = '';
             focusPasteSink();
         }
-    }, true);
+    }, { capture: true, signal: inputSignal });
 
     // Tracks keys whose keydown we deliberately suppressed (e.g. Ctrl+V's V) so
     // we can also drop the matching keyup and avoid sending the remote a stray
@@ -726,7 +828,7 @@ export async function connectAxonOSWebRTC(opts) {
                 repeat: ev.repeat,
             });
         }
-    });
+    }, { signal: inputSignal });
     window.addEventListener('keyup', (ev) => {
         if (!UI.connected) {
             return;
@@ -751,7 +853,7 @@ export async function connectAxonOSWebRTC(opts) {
                 metaKey: ev.metaKey,
             });
         }
-    });
+    }, { signal: inputSignal });
     let metricsTimer = null;
     const pollStats = () => {
         pc.getStats(null).then((report) => {
@@ -824,10 +926,8 @@ export async function connectAxonOSWebRTC(opts) {
     }
 
     window.axonosWebRtcTeardown = async () => {
-        window.removeEventListener('mouseup', onMouseUp);
-        window.removeEventListener('mousemove', onWindowMouseMove);
-        window.removeEventListener('pointerup', releaseCapturedPointer);
-        window.removeEventListener('pointercancel', releaseCapturedPointer);
+        resetMouseInputState(null, true);
+        inputAbort.abort();
         if (metricsTimer) {
             clearInterval(metricsTimer);
         }
