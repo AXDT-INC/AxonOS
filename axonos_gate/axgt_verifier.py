@@ -555,6 +555,12 @@ def get_credit_policy() -> Dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 — non-fatal: tiers are optional in policy
         logger.warning("Failed to load discount tiers for credit policy: %s", exc)
         discount_tiers = []
+    gpu_profiles_enabled = (
+        os.getenv("AXGT_GPU_PROFILES_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
+    )
+    gpu_weighted_billing = gpu_profiles_enabled and (
+        os.getenv("AXGT_GPU_WEIGHTED_BILLING", "").strip().lower() not in ("0", "false", "no", "off")
+    )
     return {
         "min_deposit": _get_min_deposit_display(),
         "credit_per_100_axgt_minutes": _get_credit_per_100_axgt_minutes(),
@@ -566,6 +572,8 @@ def get_credit_policy() -> Dict[str, Any]:
         "min_eth_deposit_minutes": eth_min_minutes,
         "axgt_direct_deposits_enabled": axgt_direct,
         "axgt_discount_tiers": discount_tiers,
+        "gpu_profiles_enabled": gpu_profiles_enabled,
+        "gpu_weighted_billing_enabled": gpu_weighted_billing,
     }
 
 
@@ -635,6 +643,28 @@ def get_wallet_access_status(wallet_address: str, consume_usage: bool = False) -
         response["reason"] = (
             f"Warning: less than {warning_threshold} minutes of prepaid credit remaining."
         )
+    try:
+        try:
+            from . import session_manager as _sm
+        except ImportError:
+            from axonos_gate import session_manager as _sm
+        billing_ctx = _sm.billing_context_for_wallet(wallet_address)
+        response.update(billing_ctx)
+        if (
+            billing_ctx.get("gpu_billing_enabled")
+            and billing_ctx.get("billing_gpu_count", 1) > 1
+            and remaining > 0
+        ):
+            count = int(billing_ctx["billing_gpu_count"])
+            wall_left = remaining / count
+            response["estimated_wall_minutes_remaining"] = round(wall_left, 2)
+            if wall_left <= warning_threshold:
+                response["reason"] = (
+                    f"Warning: about {wall_left:.1f} minute(s) of desktop time left "
+                    f"({count} GPUs, billing {count}× wall-clock)."
+                )
+    except Exception as exc:
+        logger.debug("wallet billing context unavailable: %s", exc)
     # Optional on-chain balance for UI (wallet dialog); None if RPC not configured or on error
     balance_display = _get_axgt_balance_display(wallet_address)
     if balance_display is not None:

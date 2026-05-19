@@ -34,6 +34,7 @@
 - [ ] Phase 5: Public beta concurrency (exclusive whole-GPU)
   - [x] Feature-gated multi-session scheduler in `session_manager.py`
   - [x] Profile-aware queue (`small=1`, `medium=2`, `large=4`, `max=8`)
+  - [x] GPU-weighted heartbeat billing (prepaid minutes × assigned GPU count)
   - [x] API payload support for `requested_profile` in claim/join
   - [x] Frontend profile selector + queue/allocation status messaging
   - [x] Mode B launcher adapter (`session_launcher.py`) with `http`/`docker_cli`/`noop`

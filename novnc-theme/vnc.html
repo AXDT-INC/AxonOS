@@ -82,7 +82,7 @@ Copyright (C) 2019 The noVNC Authors
                         <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
                         <span class="axonos-prerequisites-ticker__chunk">You'll <strong>sign a one-time message</strong> (no gas, no transaction)</span>
                         <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
-                        <span class="axonos-prerequisites-ticker__chunk">While <strong>connected</strong>, prepaid <strong>minutes count</strong> for your session, including <strong>idle time</strong> if this browser tab stays open</span>
+                        <span class="axonos-prerequisites-ticker__chunk">While <strong>connected</strong>, prepaid minutes are consumed at <strong>1× per GPU</strong> (wall-clock × profile GPUs), including <strong>idle time</strong> if this tab stays open</span>
                         <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
                         <span class="axonos-prerequisites-ticker__chunk">Use <strong>Disconnect</strong> in the sidebar when finished; closing only the tab may <strong>delay release</strong> until session timeout</span>
                     </div>
@@ -332,6 +332,7 @@ Copyright (C) 2019 The noVNC Authors
                         <option value="large">Large (4 GPUs)</option>
                         <option value="max">Max (8 GPUs)</option>
                     </select>
+                    <p id="axonos_profile_burn_hint" class="axonos-profile-picker__hint" aria-live="polite"></p>
                 </div>
                 <div id="noVNC_connect_button" class="axonos-enhanced-connect">
                     <div class="axonos-connect-content">
@@ -585,6 +586,13 @@ document.addEventListener("DOMContentLoaded", function() {
         passwordInput.addEventListener("blur", function() {
             this.style.backgroundColor = "#1C1C1C";
             this.style.borderColor = "#4682B4";
+        });
+    }
+
+    var profileSel = document.getElementById('axonos_profile_select');
+    if (profileSel) {
+        profileSel.addEventListener('change', function () {
+            if (typeof axonosUpdateProfileBurnHint === 'function') axonosUpdateProfileBurnHint();
         });
     }
 
@@ -958,7 +966,39 @@ document.addEventListener("DOMContentLoaded", function() {
         return val;
     }
 
+    function axonosGpuCountForProfile(profile) {
+        var map = (axonosConfig && axonosConfig.gpu_profiles) ? axonosConfig.gpu_profiles : null;
+        if (map && map[profile] != null) return Math.max(1, Number(map[profile]) || 1);
+        if (profile === 'max') return 8;
+        if (profile === 'large') return 4;
+        if (profile === 'medium') return 2;
+        return 1;
+    }
+
+    function axonosGpuWeightedBillingEnabled() {
+        return !!(axonosConfig && axonosConfig.gpu_weighted_billing_enabled);
+    }
+
+    function axonosUpdateProfileBurnHint() {
+        var hint = document.getElementById('axonos_profile_burn_hint');
+        if (!hint) return;
+        if (!axonosGpuWeightedBillingEnabled()) {
+            hint.textContent = '';
+            hint.style.display = 'none';
+            return;
+        }
+        var profile = getRequestedProfile();
+        var gpus = axonosGpuCountForProfile(profile);
+        hint.style.display = '';
+        if (gpus <= 1) {
+            hint.textContent = 'Billing: 1 prepaid minute per wall-clock minute.';
+        } else {
+            hint.textContent = 'Billing: ' + gpus + ' prepaid minutes per wall-clock minute (' + gpus + ' GPUs).';
+        }
+    }
+
     window.axonosGetRequestedProfile = getRequestedProfile;
+    window.axonosGpuCountForProfile = axonosGpuCountForProfile;
 
     function axonosHasQueuePosition(v) {
         return v != null && v !== '';
@@ -1134,7 +1174,7 @@ document.addEventListener("DOMContentLoaded", function() {
     const retryConnectBtn = document.getElementById('axonos_retry_connect_btn');
     const switchNetworkBtn = document.getElementById('axonos_switch_network_btn');
     const STATE_IDS = ['axonos_wallet_state_disconnected', 'axonos_wallet_state_choose_wallet', 'axonos_wallet_state_checking', 'axonos_wallet_state_verified', 'axonos_wallet_state_insufficient', 'axonos_wallet_state_connect_error', 'axonos_wallet_state_no_wallet', 'axonos_wallet_state_rejected', 'axonos_wallet_state_wrong_network'];
-    let axonosConfig = { axgt_contract_address: '', axgt_revenue_wallet: '', axgt_chain_id: null, axgt_min_deposit: '100', eth_deposits_enabled: true, eth_min_deposit: '0.0005', axgt_token_decimals: 18, credit_per_100_axgt: 60, eth_credit_per_eth: 120000, min_axgt_minutes: 60, min_eth_minutes: 60, axgt_direct_deposits_enabled: false, axgt_discount_tiers: [] };
+    let axonosConfig = { axgt_contract_address: '', axgt_revenue_wallet: '', axgt_chain_id: null, axgt_min_deposit: '100', eth_deposits_enabled: true, eth_min_deposit: '0.0005', axgt_token_decimals: 18, credit_per_100_axgt: 60, eth_credit_per_eth: 120000, min_axgt_minutes: 60, min_eth_minutes: 60, axgt_direct_deposits_enabled: false, axgt_discount_tiers: [], gpu_profiles: { small: 1, medium: 2, large: 4, max: 8 }, gpu_weighted_billing_enabled: false };
     /** Latest discount quote from the server. Refreshed on wallet verify and after a deposit. */
     let axonosLastDiscountQuote = null;
 
@@ -1386,6 +1426,9 @@ document.addEventListener("DOMContentLoaded", function() {
                 if (isNaN(axonosConfig.axgt_token_decimals) || axonosConfig.axgt_token_decimals < 0) axonosConfig.axgt_token_decimals = 18;
                 axonosConfig.axgt_direct_deposits_enabled = !!(cfg && cfg.axgt_direct_deposits_enabled);
                 axonosConfig.axgt_discount_tiers = (cfg && Array.isArray(cfg.axgt_discount_tiers)) ? cfg.axgt_discount_tiers : [];
+                axonosConfig.gpu_profiles = (cfg && cfg.gpu_profiles) ? cfg.gpu_profiles : { small: 1, medium: 2, large: 4, max: 8 };
+                axonosConfig.gpu_weighted_billing_enabled = !!(cfg && cfg.gpu_weighted_billing_enabled);
+                axonosUpdateProfileBurnHint();
                 var axgtRow = document.getElementById('axonos_pay_axgt_row');
                 if (axgtRow) axgtRow.style.display = axonosConfig.axgt_direct_deposits_enabled ? '' : 'none';
                 var revShort = rev && /^0x[a-fA-F0-9]{40}$/.test(rev) ? (rev.slice(0, 6) + '\u2026' + rev.slice(-4)) : '(set AXGT_REVENUE_WALLET)';
@@ -1425,8 +1468,11 @@ document.addEventListener("DOMContentLoaded", function() {
                     var legacyHint = axgtDirect
                         ? (' · Legacy AXGT direct: ' + cp100 + ' min per 100 AXGT')
                         : '';
+                    var billingHint = axonosGpuWeightedBillingEnabled()
+                        ? ' While connected, prepaid minutes bill at <strong>1× per assigned GPU</strong> (wall-clock × GPUs; idle counts if this tab stays open).'
+                        : ' While connected, minutes count for your session (idle included if this tab stays open).';
                     dlgHints.innerHTML = rateHint + legacyHint + '. ' + discountHint +
-                        '<span class="axonos-wallet-card__hints-session">While connected, minutes count for your session (idle included if this tab stays open). Use <strong>Disconnect</strong> when finished; closing the tab only may delay releasing the desktop.</span>';
+                        '<span class="axonos-wallet-card__hints-session">' + billingHint + ' Use <strong>Disconnect</strong> when finished; closing the tab only may delay releasing the desktop.</span>';
                 }
                 var insRates = document.getElementById('axonos_insufficient_credit_rates');
                 if (insRates) {
