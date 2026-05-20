@@ -1455,6 +1455,12 @@ const UI = {
             return;
         }
 
+        if (window.axonosPausedResume &&
+            typeof window.axonosResumeDesktopConnectIfPaused === 'function' &&
+            window.axonosResumeDesktopConnectIfPaused()) {
+            return;
+        }
+
         // Check if wallet is verified before connecting
         if (!window.verifiedWalletAddress) {
             Log.Warn("Wallet not verified - showing credentials dialog");

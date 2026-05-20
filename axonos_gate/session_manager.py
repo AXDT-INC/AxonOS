@@ -1546,26 +1546,36 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
                 if paused_owned and _preserve_session_on_credit_exhaust():
                     paused_profile = paused_owned.get("requested_profile") or "small"
                     paused_gpus = paused_owned.get("gpu_ids", [])
-                    result["paused"] = True
-                    result["can_resume"] = True
-                    result["paused_session_id"] = paused_owned["id"]
-                    result["paused_container_id"] = paused_owned.get("container_id")
-                    result["paused_requested_profile"] = paused_profile
-                    result["paused_assigned_gpu_ids"] = paused_gpus
-                    result["paused_gpu_count"] = len(paused_gpus) if paused_gpus else _billing_gpu_count(
-                        paused_gpus, paused_profile
-                    )
+                    billing_count = _billing_gpu_count(paused_gpus, paused_profile)
                     pause_remaining = max(
                         0,
                         paused_owned["last_heartbeat"] + _session_paused_max_seconds() - now,
                     )
+                    result["paused"] = True
+                    result["can_resume"] = pause_remaining > 0
+                    result["paused_session_id"] = paused_owned["id"]
+                    result["paused_container_id"] = paused_owned.get("container_id")
+                    result["paused_requested_profile"] = paused_profile
+                    result["paused_assigned_gpu_ids"] = paused_gpus
+                    result["paused_gpu_count"] = len(paused_gpus) if paused_gpus else billing_count
                     result["paused_resume_seconds"] = int(pause_remaining)
+                    result["resume_minutes_required"] = (
+                        billing_count if _gpu_billing_enabled() else 1
+                    )
+                    try:
+                        deposit_ledger = _import_deposit_ledger()
+                        if deposit_ledger.init_once():
+                            remaining = deposit_ledger.get_remaining_minutes(wallet)
+                            result["remaining_minutes"] = round(remaining, 2)
+                            required = float(result["resume_minutes_required"])
+                            result["can_resume_with_credit"] = remaining > 0 and (
+                                not _gpu_billing_enabled() or remaining >= required
+                            )
+                    except Exception:
+                        pass
                     if _gpu_billing_enabled():
                         result["gpu_billing_enabled"] = True
-                        result["billing_gpu_count"] = _billing_gpu_count(
-                            paused_gpus,
-                            paused_profile,
-                        )
+                        result["billing_gpu_count"] = billing_count
 
         return result
     except Exception as exc:
