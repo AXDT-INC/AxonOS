@@ -192,6 +192,82 @@ class TestBillingAndSession(unittest.TestCase):
             alloc = session_manager._choose_allocation(active_rows, 1)
         self.assertEqual(alloc, [1])
 
+    @patch("axonos_gate.session_manager._on_session_credit_paused")
+    @patch("axonos_gate.session_manager._on_session_ended")
+    @patch("axonos_gate.deposit_ledger._deduct_usage_on_cursor")
+    @patch("axonos_gate.deposit_ledger.init_once", return_value=True)
+    @patch("axonos_gate.session_manager.time.time", return_value=1500.0)
+    @patch("axonos_gate.session_manager._get_connection")
+    def test_heartbeat_credit_exhaust_pauses_session(
+        self, mock_conn, _mock_time, _mock_init, mock_deduct, mock_ended, mock_paused
+    ):
+        from axonos_gate import session_manager
+
+        session_manager._pg_init_done = True
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.fetchall.return_value = []
+        cur.fetchone.side_effect = [
+            None,  # _expire_stale_session
+            (1, 1000.0, 2000.0, 1000.0, "small", "0", "axgt-session-1"),  # active session
+            ("0x1234567890123456789012345678901234567890",),  # pause UPDATE RETURNING
+        ]
+        conn.cursor.return_value = cur
+        mock_conn.return_value = conn
+        mock_deduct.return_value = (True, 0.0, None)
+
+        with patch.dict(
+            os.environ,
+            {"AXGT_SESSION_PRESERVE_ON_CREDIT_EXHAUST": "true"},
+            clear=False,
+        ):
+            result = session_manager.heartbeat(
+                "0x1234567890123456789012345678901234567890"
+            )
+
+        self.assertFalse(result.get("ok"))
+        self.assertEqual(result.get("reason"), "Credit exhausted")
+        self.assertTrue(result.get("paused_for_resume"))
+        mock_paused.assert_called_once()
+        mock_ended.assert_not_called()
+
+    @patch("axonos_gate.session_manager._on_session_credit_paused")
+    @patch("axonos_gate.session_manager._on_session_ended")
+    @patch("axonos_gate.deposit_ledger._deduct_usage_on_cursor")
+    @patch("axonos_gate.deposit_ledger.init_once", return_value=True)
+    @patch("axonos_gate.session_manager.time.time", return_value=1500.0)
+    @patch("axonos_gate.session_manager._get_connection")
+    def test_heartbeat_credit_exhaust_can_tear_down_when_disabled(
+        self, mock_conn, _mock_time, _mock_init, mock_deduct, mock_ended, mock_paused
+    ):
+        from axonos_gate import session_manager
+
+        session_manager._pg_init_done = True
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.fetchall.return_value = []
+        cur.fetchone.side_effect = [
+            None,
+            (1, 1000.0, 2000.0, 1000.0, "small", "0", "axgt-session-1"),
+            ("0x1234567890123456789012345678901234567890",),
+        ]
+        conn.cursor.return_value = cur
+        mock_conn.return_value = conn
+        mock_deduct.return_value = (True, 0.0, None)
+
+        with patch.dict(
+            os.environ,
+            {"AXGT_SESSION_PRESERVE_ON_CREDIT_EXHAUST": "false"},
+            clear=False,
+        ):
+            result = session_manager.heartbeat(
+                "0x1234567890123456789012345678901234567890"
+            )
+
+        self.assertFalse(result.get("ok"))
+        mock_ended.assert_called_once()
+        mock_paused.assert_not_called()
+
     def test_gpu_allocation_insufficient_capacity(self):
         from axonos_gate import session_manager
         active_rows = [
