@@ -563,6 +563,27 @@ ARG NVIDIA_DRIVER_VERSION=535
 # "NVIDIA dlloader X Driver ..." mismatched and often SIGSEGVs at "Enabling 2D acceleration".
 # Set via docker compose build arg / .env (see env.example).
 ARG NVIDIA_DRIVER_PKG_VERSION=
+# CUDA base images often ship Ubuntu "main" only; jammy NVIDIA Xorg/GL debs live in restricted.
+# Without restricted, NVIDIA_DRIVER_PKG_VERSION pins are invisible, apt installs CUDA-repo 535.309,
+# then the reinstall step fails (E: Version '535.288…' was not found).
+RUN set -eux; \
+    for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do \
+      [ -f "$$f" ] || continue; \
+      grep -qE 'archive\.ubuntu\.com|security\.ubuntu\.com' "$$f" || continue; \
+      grep -q jammy "$$f" || continue; \
+      if grep -qE '(archive|security)\.ubuntu\.com.*jammy' "$$f" && ! grep -q restricted "$$f"; then \
+        sed -i -E '/(archive|security)\.ubuntu\.com.*jammy/s/\bmain\b/main restricted universe multiverse/' "$$f"; \
+      fi; \
+    done; \
+    printf '%s\n' \
+      'Package: libnvidia-* xserver-xorg-video-nvidia-*' \
+      'Pin: release o=Ubuntu' \
+      'Pin-Priority: 1001' \
+      '' \
+      'Package: libnvidia-* xserver-xorg-video-nvidia-*' \
+      'Pin: origin developer.download.nvidia.com' \
+      'Pin-Priority: 50' \
+      > /etc/apt/preferences.d/axonos-ubuntu-nvidia.pref
 # Only install the Xorg + GL userspace pieces needed for GPU-backed Xorg :0.
 # Avoid nvidia-utils to prevent overlayfs hardlink backup failures.
 RUN apt-get update && \
@@ -618,9 +639,14 @@ RUN apt-get update && \
       ver="$(ls /usr/lib/x86_64-linux-gnu/nvidia | sort -V | tail -1)"; \
       ln -s "/usr/lib/x86_64-linux-gnu/nvidia/${ver}" /usr/lib/x86_64-linux-gnu/nvidia/current; \
     fi && \
-    if [ -n "${NVIDIA_DRIVER_PKG_VERSION}" ]; then \
+    if [ -n "${NVIDIA_DRIVER_PKG_VERSION}" ] && \
+       apt-cache madison "xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}" | awk '{print $3}' | grep -qx "${NVIDIA_DRIVER_PKG_VERSION}"; then \
       apt-get -o Dpkg::Options::=--force-unsafe-io install -y --reinstall --no-install-recommends --allow-downgrades \
         xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}=${NVIDIA_DRIVER_PKG_VERSION}; \
+    elif [ -n "${NVIDIA_DRIVER_PKG_VERSION}" ]; then \
+      echo "axonos: skip xserver reinstall pin (${NVIDIA_DRIVER_PKG_VERSION} not in apt after install)."; \
+      apt-get -o Dpkg::Options::=--force-unsafe-io install -y --reinstall --no-install-recommends \
+        xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}; \
     else \
       apt-get -o Dpkg::Options::=--force-unsafe-io install -y --reinstall --no-install-recommends \
         xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}; \
