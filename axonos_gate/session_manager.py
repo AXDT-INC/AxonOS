@@ -510,12 +510,45 @@ def _init_once() -> bool:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _expire_stale_session(cur, now: float) -> Optional[tuple]:
-    """End the active session if heartbeat timed out or hard limit exceeded.
+def _pause_stale_zero_credit_sessions(cur, now: float, hb_cutoff: float) -> List[tuple]:
+    """Pause (not kill) active sessions that timed out with no prepaid credit left."""
+    if not _preserve_session_on_credit_exhaust():
+        return []
+    deposit_ledger = _import_deposit_ledger()
+    if not deposit_ledger.init_once():
+        return []
+    cur.execute(
+        f"""SELECT id, wallet_address FROM {_SESSION_TABLE}
+            WHERE status = 'active' AND last_heartbeat < %s AND expires_at > %s""",
+        (hb_cutoff, now),
+    )
+    rows = cur.fetchall() or []
+    paused: List[tuple] = []
+    for session_id, wallet in rows:
+        if deposit_ledger.get_remaining_minutes(wallet) > 0:
+            continue
+        cur.execute(
+            f"""UPDATE {_SESSION_TABLE}
+                SET status = 'paused', last_heartbeat = %s
+                WHERE id = %s AND status = 'active'
+                RETURNING wallet_address""",
+            (now, session_id),
+        )
+        if cur.fetchone():
+            paused.append((wallet, session_id))
+    return paused
 
-    Returns (wallet_address, session_id) of the ended session, or None.
+
+def _expire_stale_session(cur, now: float) -> Tuple[Optional[tuple], List[tuple]]:
+    """End or pause stale active sessions.
+
+    Zero-credit heartbeat timeouts become ``paused`` when preserve is enabled (container kept).
+    Hard ``expires_at`` or other stale active rows are ``ended``.
+
+    Returns (ended_session_or_none, paused_zero_credit_sessions).
     """
     hb_cutoff = now - _heartbeat_timeout_seconds()
+    paused = _pause_stale_zero_credit_sessions(cur, now, hb_cutoff)
     cur.execute(
         f"""UPDATE {_SESSION_TABLE}
             SET status = 'ended'
@@ -525,7 +558,30 @@ def _expire_stale_session(cur, now: float) -> Optional[tuple]:
         (hb_cutoff, now),
     )
     row = cur.fetchone()
-    return (row[0], row[1]) if row else None
+    ended = (row[0], row[1]) if row else None
+    return ended, paused
+
+
+def _apply_stale_session_maintenance(ended: Optional[tuple], paused_credit: List[tuple]) -> None:
+    for wallet, session_id in paused_credit:
+        _on_session_credit_paused(wallet, session_id)
+    if ended:
+        _on_session_ended(ended[0], ended[1])
+
+
+def _cleanup_after_stale_maintenance(
+    ended: Optional[tuple],
+    paused_credit: List[tuple],
+    paused_ttl_ended: Optional[List[tuple]] = None,
+) -> None:
+    """Post-commit hooks for stale session DB updates."""
+    _apply_stale_session_maintenance(ended, paused_credit)
+    for wallet_ended, session_id_ended in paused_ttl_ended or []:
+        logger.info(
+            "session_manager: auto-ended stale session for %s",
+            _mask(wallet_ended),
+        )
+        _on_session_ended(wallet_ended, session_id_ended)
 
 
 def _parse_gpu_ids(text: Optional[str]) -> List[int]:
@@ -901,16 +957,11 @@ def get_active_session() -> Optional[Dict[str, Any]]:
     try:
         with conn.cursor() as cur:
             now = time.time()
-            ended = _expire_stale_session(cur, now)
+            ended, paused_credit = _expire_stale_session(cur, now)
             paused_ended = _expire_stale_paused_sessions(cur, now)
-            if ended or paused_ended:
+            if ended or paused_credit or paused_ended:
                 conn.commit()
-            for wallet_ended, session_id_ended in ([ended] if ended else []) + paused_ended:
-                logger.info(
-                    "session_manager: auto-ended stale session for %s",
-                    _mask(wallet_ended),
-                )
-                _on_session_ended(wallet_ended, session_id_ended)
+                _cleanup_after_stale_maintenance(ended, paused_credit, paused_ended)
             rows = _get_active_rows(cur)
             if not rows:
                 return None
@@ -941,14 +992,11 @@ def try_claim_session(wallet_address: str, requested_profile: Optional[str] = No
         with conn.cursor() as cur:
             now = time.time()
 
-            ended = _expire_stale_session(cur, now)
+            ended, paused_credit = _expire_stale_session(cur, now)
             paused_ended = _expire_stale_paused_sessions(cur, now)
-            if ended:
-                wallet_ended, session_id_ended = ended
-                logger.info(
-                    "session_manager: auto-ended stale session for %s",
-                    _mask(wallet_ended),
-                )
+            if ended or paused_credit or paused_ended:
+                conn.commit()
+                _cleanup_after_stale_maintenance(ended, paused_credit, paused_ended)
 
             active_rows = _get_active_rows(cur)
             paused_rows = _get_paused_rows(cur, now)
@@ -966,17 +1014,9 @@ def try_claim_session(wallet_address: str, requested_profile: Optional[str] = No
                 )
                 if not ok_credit:
                     conn.commit()
-                    if ended:
-                        _on_session_ended(ended[0], ended[1])
-                    for wallet_ended, session_id_ended in paused_ended:
-                        _on_session_ended(wallet_ended, session_id_ended)
                     return {"granted": False, "reason": credit_reason}
                 resume = _resume_paused_session(cur, wallet, paused, now)
                 conn.commit()
-                if ended:
-                    _on_session_ended(ended[0], ended[1])
-                for wallet_ended, session_id_ended in paused_ended:
-                    _on_session_ended(wallet_ended, session_id_ended)
                 return resume
 
             if not is_owner:
@@ -985,10 +1025,6 @@ def try_claim_session(wallet_address: str, requested_profile: Optional[str] = No
                 )
                 if not ok_credit:
                     conn.commit()
-                    if ended:
-                        _on_session_ended(ended[0], ended[1])
-                    for wallet_ended, session_id_ended in paused_ended:
-                        _on_session_ended(wallet_ended, session_id_ended)
                     return {"granted": False, "reason": credit_reason}
 
             # Already owner in multi-session mode
@@ -996,8 +1032,6 @@ def try_claim_session(wallet_address: str, requested_profile: Optional[str] = No
             if owned:
                 remaining = max(0, owned["expires_at"] - now)
                 conn.commit()
-                if ended:
-                    _on_session_ended(ended[0], ended[1])
                 return {
                     "granted": True,
                     "session_id": owned["id"],
@@ -1012,10 +1046,6 @@ def try_claim_session(wallet_address: str, requested_profile: Optional[str] = No
                 pos = _queue_position(cur, wallet)
                 qlen = _queue_length(cur)
                 conn.commit()
-                if ended:
-                    _on_session_ended(ended[0], ended[1])
-                for wallet_ended, session_id_ended in paused_ended:
-                    _on_session_ended(wallet_ended, session_id_ended)
                 return {
                     "granted": False,
                     "reason": "Desktop is in use by another researcher.",
@@ -1042,10 +1072,6 @@ def try_claim_session(wallet_address: str, requested_profile: Optional[str] = No
                     qlen = _queue_length(cur)
                     cap_meta = _gpu_queue_capacity_fields(requested_gpus, reserved_rows, profile_name)
                     conn.commit()
-                    if ended:
-                        _on_session_ended(ended[0], ended[1])
-                    for wallet_ended, session_id_ended in paused_ended:
-                        _on_session_ended(wallet_ended, session_id_ended)
                     return {
                         "granted": False,
                         "allocation_status": "queued",
@@ -1085,8 +1111,6 @@ def try_claim_session(wallet_address: str, requested_profile: Optional[str] = No
                         )
                     cap_meta = {**cap_meta, "capacity_note": fifo_note}
                     conn.commit()
-                    if ended:
-                        _on_session_ended(ended[0], ended[1])
                     return {
                         "granted": False,
                         "allocation_status": "queued",
@@ -1150,8 +1174,6 @@ def try_claim_session(wallet_address: str, requested_profile: Optional[str] = No
                     finally:
                         conn2.close()
                 if not spawned:
-                    if ended:
-                        _on_session_ended(ended[0], ended[1])
                     return {
                         "granted": False,
                         "allocation_status": "failed",
@@ -1160,8 +1182,6 @@ def try_claim_session(wallet_address: str, requested_profile: Optional[str] = No
                         "reason": "Failed to start user container",
                         "container_error": spawn_error,
                     }
-                if ended:
-                    _on_session_ended(ended[0], ended[1])
                 return {
                     "granted": True,
                     "session_id": session_id,
@@ -1178,8 +1198,6 @@ def try_claim_session(wallet_address: str, requested_profile: Optional[str] = No
                 pos = _queue_position(cur, wallet)
                 qlen = _queue_length(cur)
                 conn.commit()
-                if ended:
-                    _on_session_ended(ended[0], ended[1])
                 return {
                     "granted": False,
                     "reason": "Another researcher is next in the queue.",
@@ -1199,8 +1217,6 @@ def try_claim_session(wallet_address: str, requested_profile: Optional[str] = No
             )
             session_id = cur.fetchone()[0]
         conn.commit()
-        if ended:
-            _on_session_ended(ended[0], ended[1])
         logger.info("session_manager: session granted to %s", _mask(wallet))
         return {
             "granted": True,
@@ -1235,7 +1251,7 @@ def heartbeat(wallet_address: str) -> Dict[str, Any]:
         now = time.time()
         cur = conn.cursor()
         try:
-            ended = _expire_stale_session(cur, now)
+            ended, paused_credit = _expire_stale_session(cur, now)
             paused_ended = _expire_stale_paused_sessions(cur, now)
             cur.execute(
                 f"""SELECT id, last_billed_at, expires_at, started_at, requested_profile, gpu_ids, container_id
@@ -1248,10 +1264,7 @@ def heartbeat(wallet_address: str) -> Dict[str, Any]:
             if not row:
                 paused = _paused_session_for_wallet(cur, wallet, now)
                 conn.commit()
-                if ended:
-                    _on_session_ended(ended[0], ended[1])
-                for wallet_ended, session_id_ended in paused_ended:
-                    _on_session_ended(wallet_ended, session_id_ended)
+                _cleanup_after_stale_maintenance(ended, paused_credit, paused_ended)
                 if paused and _preserve_session_on_credit_exhaust():
                     return {
                         "ok": False,
@@ -1278,8 +1291,7 @@ def heartbeat(wallet_address: str) -> Dict[str, Any]:
             # If there is billable time but ledger is unavailable, fail the heartbeat (no silent unbilled use).
             if minutes_delta > 0 and not deposit_ledger.init_once():
                 conn.commit()
-                if ended:
-                    _on_session_ended(ended[0], ended[1])
+                _cleanup_after_stale_maintenance(ended, paused_credit, paused_ended)
                 return {"ok": False, "reason": "Billing unavailable. Cannot record usage."}
 
             if minutes_delta > 0 and deposit_ledger.init_once():
@@ -1289,8 +1301,7 @@ def heartbeat(wallet_address: str) -> Dict[str, Any]:
                 )
                 if not ok:
                     conn.commit()
-                    if ended:
-                        _on_session_ended(ended[0], ended[1])
+                    _cleanup_after_stale_maintenance(ended, paused_credit, paused_ended)
                     return {"ok": False, "reason": err or "Billing failed"}
                 if remaining <= 0:
                     # Pause or end session (same cursor: lock still held). Commit before cleanup hooks.
@@ -1316,8 +1327,7 @@ def heartbeat(wallet_address: str) -> Dict[str, Any]:
                         conn.commit()
                         if ended_row:
                             _on_session_ended(ended_row[0], session_id)
-                    if ended:
-                        _on_session_ended(ended[0], ended[1])
+                    _cleanup_after_stale_maintenance(ended, paused_credit, paused_ended)
                     return {
                         "ok": False,
                         "reason": "Credit exhausted",
@@ -1347,8 +1357,7 @@ def heartbeat(wallet_address: str) -> Dict[str, Any]:
             # No commit happens between deduct and this; if anything fails above, rollback in except unwinds all.
             conn.commit()
             if not row2:
-                if ended:
-                    _on_session_ended(ended[0], ended[1])
+                _cleanup_after_stale_maintenance(ended, paused_credit, paused_ended)
                 return {"ok": False, "reason": "Session ended"}
             remaining_secs = max(0, row2[0] - now)
             result = {
@@ -1371,8 +1380,7 @@ def heartbeat(wallet_address: str) -> Dict[str, Any]:
                     result["estimated_wall_minutes_remaining"] = round(
                         remaining_after / billing_gpu_count, 2
                     )
-            if ended:
-                _on_session_ended(ended[0], ended[1])
+            _cleanup_after_stale_maintenance(ended, paused_credit, paused_ended)
             return result
         finally:
             cur.close()
@@ -1433,11 +1441,10 @@ def restart_desktop_session(wallet_address: str) -> Dict[str, Any]:
     try:
         with conn.cursor() as cur:
             now = time.time()
-            ended = _expire_stale_session(cur, now)
+            ended, paused_credit = _expire_stale_session(cur, now)
             active = _get_active_row(cur)
         conn.commit()
-        if ended:
-            _on_session_ended(ended[0], ended[1])
+        _cleanup_after_stale_maintenance(ended, paused_credit, [])
         if not active:
             return {"restarted": False, "reason": "No active session"}
         if active["wallet_address"] != wallet:
@@ -1464,12 +1471,11 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
     try:
         now = time.time()
         with conn.cursor() as cur:
-            ended = _expire_stale_session(cur, now)
+            ended, paused_credit = _expire_stale_session(cur, now)
             paused_ended = _expire_stale_paused_sessions(cur, now)
-            if ended or paused_ended:
+            if ended or paused_credit or paused_ended:
                 conn.commit()
-            for wallet_ended, session_id_ended in ([ended] if ended else []) + paused_ended:
-                _on_session_ended(wallet_ended, session_id_ended)
+                _cleanup_after_stale_maintenance(ended, paused_credit, paused_ended)
 
             active_rows = _get_active_rows(cur)
             reserved_rows = _get_gpu_reserved_rows(cur, now)
@@ -1696,11 +1702,10 @@ def is_session_owner(wallet_address: str) -> bool:
     try:
         now = time.time()
         with conn.cursor() as cur:
-            ended = _expire_stale_session(cur, now)
+            ended, paused_credit = _expire_stale_session(cur, now)
             active = _active_session_for_wallet(cur, wallet)
         conn.commit()
-        if ended:
-            _on_session_ended(ended[0], ended[1])
+        _cleanup_after_stale_maintenance(ended, paused_credit, [])
         return active is not None
     except Exception as exc:
         logger.warning("is_session_owner failed: %s", exc)

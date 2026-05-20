@@ -1550,7 +1550,10 @@ const UI = {
         });
     },
 
-    disconnect() {
+    disconnect(options) {
+        const opts = options && typeof options === 'object' ? options : {};
+        const skipRelease = opts.skipRelease === true;
+
         UI.connected = false;
 
         if (UI._axgtStatusPollId) {
@@ -1600,8 +1603,62 @@ const UI = {
             }
         };
 
+        // Credit exhaustion must not release the session (server pauses + keeps container).
+        if (skipRelease) {
+            doDisconnect();
+            return;
+        }
         // Best-effort server-side release first so reconnect doesn't get trapped behind stale ownership.
         UI._axonosReleaseSessionBestEffort().finally(doDisconnect);
+    },
+
+    /** Final heartbeat (pause session) then disconnect without killing the container. */
+    _axgtDisconnectForCreditExhaustion(overlayMessage) {
+        UI.inhibitReconnect = true;
+        if (typeof window !== 'undefined') {
+            window.axonosAllowVncConnect = false;
+        }
+        const resumeHint = ' Your desktop is saved — add credit, then use Resume desktop session (same GPUs).';
+        UI._axgtUpdateUsageOverlay(
+            'locked',
+            (overlayMessage || 'Usage credit exhausted. Add more ETH to unlock access.') + resumeHint
+        );
+
+        const wallet = window.verifiedWalletAddress;
+        const token = window.verifiedWalletAuthToken || null;
+        const finishDisconnect = () => {
+            if (typeof window.axonosRefreshPausedResumeStatus === 'function') {
+                window.axonosRefreshPausedResumeStatus();
+            }
+            setTimeout(() => UI.disconnect({ skipRelease: true }), 400);
+        };
+
+        if (!wallet) {
+            finishDisconnect();
+            return;
+        }
+
+        const headers = {
+            'Content-Type': 'application/json',
+            'X-Wallet-Address': wallet,
+        };
+        if (token) {
+            headers['X-AXGT-Auth-Token'] = token;
+        }
+        fetch(new URL('/api/session/heartbeat', window.location.origin).toString(), {
+            method: 'POST',
+            credentials: 'include',
+            headers,
+            body: JSON.stringify({ wallet_address: wallet }),
+        })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((hb) => {
+                if (hb && hb.paused_for_resume && typeof window.axonosRefreshPausedResumeStatus === 'function') {
+                    window.axonosRefreshPausedResumeStatus();
+                }
+            })
+            .catch(() => {})
+            .finally(finishDisconnect);
     },
 
     reconnect() {
@@ -1830,21 +1887,9 @@ const UI = {
                     window.axonosGpuBillingEnabled = hb.gpu_billing_enabled;
                 }
                 if (hb && hb.ok === false && /credit exhausted/i.test(String(hb.reason || ''))) {
-                    UI.inhibitReconnect = true;
-                    if (typeof window !== 'undefined') {
-                        window.axonosAllowVncConnect = false;
-                    }
-                    const resumeHint = hb.paused_for_resume
-                        ? ' Your desktop is saved — add credit, then use Resume desktop session (same GPUs).'
-                        : '';
-                    UI._axgtUpdateUsageOverlay(
-                        'locked',
-                        'Usage credit exhausted. Add more ETH to unlock access.' + resumeHint
+                    UI._axgtDisconnectForCreditExhaustion(
+                        'Usage credit exhausted. Add more ETH to unlock access.'
                     );
-                    if (hb.paused_for_resume && typeof window.axonosRefreshPausedResumeStatus === 'function') {
-                        window.axonosRefreshPausedResumeStatus();
-                    }
-                    setTimeout(() => UI.disconnect(), 400);
                 }
             })
             .catch(() => {});
@@ -1874,15 +1919,9 @@ const UI = {
                     : (gpuBilling && billingGpus > 1 ? remaining / billingGpus : remaining);
                 const reason = (data.reason && String(data.reason)) || '';
                 if (creditExhausted) {
-                    if (typeof window !== 'undefined') {
-                        window.axonosAllowVncConnect = false;
-                    }
-                    UI._axgtUpdateUsageOverlay(
-                        'locked',
+                    UI._axgtDisconnectForCreditExhaustion(
                         'Usage credit exhausted. Add more ETH to unlock access.'
                     );
-                    UI.inhibitReconnect = true;
-                    setTimeout(() => UI.disconnect(), 400);
                 } else if (
                     (gpuBilling && billingGpus > 1 && wallRemaining <= threshold && remaining > 0) ||
                     (!gpuBilling && remaining <= threshold && remaining > 0)
