@@ -426,7 +426,8 @@ RUN apt update && apt install -y wget libxv1 && \
 COPY xorg.conf.nvidia /etc/X11/xorg.conf.nvidia
 COPY scripts/start-xorg-nvidia.sh /usr/local/bin/start-xorg-nvidia.sh
 COPY scripts/resolve-nvidia-driver-pkg-version.sh /usr/local/bin/resolve-nvidia-driver-pkg-version.sh
-RUN chmod +x /usr/local/bin/start-xorg-nvidia.sh /usr/local/bin/resolve-nvidia-driver-pkg-version.sh && \
+COPY scripts/install-nvidia-xorg-userspace.sh /usr/local/bin/install-nvidia-xorg-userspace.sh
+RUN chmod +x /usr/local/bin/start-xorg-nvidia.sh /usr/local/bin/resolve-nvidia-driver-pkg-version.sh /usr/local/bin/install-nvidia-xorg-userspace.sh && \
     echo 'export VGL_DISPLAY=:0' > /etc/profile.d/virtualgl.sh && \
     echo 'export __GLX_VENDOR_LIBRARY_NAME=nvidia' >> /etc/profile.d/virtualgl.sh && \
     echo 'export LIBGL_DRI3_DISABLE=1' >> /etc/profile.d/virtualgl.sh && \
@@ -566,59 +567,9 @@ ARG NVIDIA_DRIVER_VERSION=535
 ARG NVIDIA_DRIVER_PKG_VERSION=
 # Only install the Xorg + GL userspace pieces needed for GPU-backed Xorg :0.
 # Avoid nvidia-utils to prevent overlayfs hardlink backup failures.
-# resolve-nvidia-driver-pkg-version.sh picks a version present for all four packages; e.g. host
-# driver 535.288.01 maps to 535.288.01-0ubuntu1 (CUDA repo), not …-0ubuntu0.22.04.1 (1/4 in apt).
-RUN set -eux; \
-    apt-get update; \
-    NVIDIA_PKG_RESOLVED="$$(NVIDIA_DRIVER_VERSION="${NVIDIA_DRIVER_VERSION}" NVIDIA_DRIVER_PKG_VERSION="${NVIDIA_DRIVER_PKG_VERSION}" /usr/local/bin/resolve-nvidia-driver-pkg-version.sh)"; \
-    echo "axonos: NVIDIA_PKG_RESOLVED=$${NVIDIA_PKG_RESOLVED}"; \
-    if echo "$${NVIDIA_PKG_RESOLVED}" | grep -q '0ubuntu0.22.04'; then \
-      printf '%s\n' \
-        'Package: libnvidia-* xserver-xorg-video-nvidia-*' \
-        'Pin: release o=Ubuntu' \
-        'Pin-Priority: 1001' \
-        '' \
-        'Package: libnvidia-* xserver-xorg-video-nvidia-*' \
-        'Pin: origin developer.download.nvidia.com' \
-        'Pin-Priority: 50' \
-        > /etc/apt/preferences.d/axonos-nvidia.pref; \
-    else \
-      printf '%s\n' \
-        'Package: libnvidia-* xserver-xorg-video-nvidia-*' \
-        'Pin: origin developer.download.nvidia.com' \
-        'Pin-Priority: 1001' \
-        '' \
-        'Package: libnvidia-* xserver-xorg-video-nvidia-*' \
-        'Pin: release o=Ubuntu' \
-        'Pin-Priority: 50' \
-        > /etc/apt/preferences.d/axonos-nvidia.pref; \
-    fi; \
-    apt-get update; \
-    apt-get -o Dpkg::Options::=--force-unsafe-io install -y --no-install-recommends --allow-downgrades \
-      xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}=$${NVIDIA_PKG_RESOLVED} \
-      libnvidia-gl-${NVIDIA_DRIVER_VERSION}=$${NVIDIA_PKG_RESOLVED} \
-      libnvidia-cfg1-${NVIDIA_DRIVER_VERSION}=$${NVIDIA_PKG_RESOLVED} \
-      libnvidia-common-${NVIDIA_DRIVER_VERSION}=$${NVIDIA_PKG_RESOLVED} \
-      libglvnd0 libglx0 libegl1; \
-    if apt-cache madison libnvidia-egl-${NVIDIA_DRIVER_VERSION} 2>/dev/null | awk '{print $$3}' | grep -Fxq "$${NVIDIA_PKG_RESOLVED}"; then \
-      apt-get -o Dpkg::Options::=--force-unsafe-io install -y --no-install-recommends --allow-downgrades \
-        libnvidia-egl-${NVIDIA_DRIVER_VERSION}=$${NVIDIA_PKG_RESOLVED}; \
-    elif apt-cache madison libnvidia-egl-${NVIDIA_DRIVER_VERSION}-server 2>/dev/null | awk '{print $$3}' | grep -Fxq "$${NVIDIA_PKG_RESOLVED}"; then \
-      apt-get -o Dpkg::Options::=--force-unsafe-io install -y --no-install-recommends --allow-downgrades \
-        libnvidia-egl-${NVIDIA_DRIVER_VERSION}-server=$${NVIDIA_PKG_RESOLVED}; \
-    fi; \
-    if [ -d /usr/lib/x86_64-linux-gnu/nvidia ] && [ ! -d /usr/lib/x86_64-linux-gnu/nvidia/current ]; then \
-      ver="$$(ls /usr/lib/x86_64-linux-gnu/nvidia | sort -V | tail -1)"; \
-      ln -s "/usr/lib/x86_64-linux-gnu/nvidia/$${ver}" /usr/lib/x86_64-linux-gnu/nvidia/current; \
-    fi; \
-    apt-get -o Dpkg::Options::=--force-unsafe-io install -y --reinstall --no-install-recommends --allow-downgrades \
-      xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}=$${NVIDIA_PKG_RESOLVED}; \
-    for pkg in xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION} libnvidia-gl-${NVIDIA_DRIVER_VERSION} libnvidia-cfg1-${NVIDIA_DRIVER_VERSION} libnvidia-common-${NVIDIA_DRIVER_VERSION}; do \
-      inst="$$(dpkg-query -W -f='$${Version}' "$$pkg" 2>/dev/null || true)"; \
-      echo "axonos: $$pkg=$$inst"; \
-      [ "$$inst" = "$${NVIDIA_PKG_RESOLVED}" ] || { echo "axonos: $$pkg version mismatch (want $${NVIDIA_PKG_RESOLVED})"; exit 1; }; \
-    done; \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+# install-nvidia-xorg-userspace.sh resolves a 4/4-package version (see resolve-nvidia-driver-pkg-version.sh).
+RUN NVIDIA_DRIVER_VERSION="${NVIDIA_DRIVER_VERSION}" NVIDIA_DRIVER_PKG_VERSION="${NVIDIA_DRIVER_PKG_VERSION}" \
+    /usr/local/bin/install-nvidia-xorg-userspace.sh
 
 # Fail fast if the NVIDIA GLX server module never landed (fix-libglx would be pointless).
 # Jammy+ splits modules: xserver-xorg-video-nvidia-* ships nvidia_drv.so; libglxserver_nvidia is
