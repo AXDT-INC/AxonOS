@@ -586,9 +586,11 @@ RUN apt-get update && \
       fi; \
     elif [ -n "${NVIDIA_DRIVER_PKG_VERSION}" ]; then \
       echo "Requested NVIDIA_DRIVER_PKG_VERSION=${NVIDIA_DRIVER_PKG_VERSION} not available in apt; falling back to latest."; \
-      apt-get -o Dpkg::Options::=--force-unsafe-io install -y --no-install-recommends \
+      apt-get -o Dpkg::Options::=--force-unsafe-io install -y --no-install-recommends --allow-downgrades \
         xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION} \
         libnvidia-gl-${NVIDIA_DRIVER_VERSION} \
+        libnvidia-cfg1-${NVIDIA_DRIVER_VERSION} \
+        libnvidia-common-${NVIDIA_DRIVER_VERSION} \
         libglvnd0 libglx0 libegl1 && \
       if apt-cache show libnvidia-egl-${NVIDIA_DRIVER_VERSION} >/dev/null 2>&1; then \
         apt-get -o Dpkg::Options::=--force-unsafe-io install -y --no-install-recommends \
@@ -598,9 +600,11 @@ RUN apt-get update && \
           libnvidia-egl-${NVIDIA_DRIVER_VERSION}-server; \
       fi; \
     else \
-      apt-get -o Dpkg::Options::=--force-unsafe-io install -y --no-install-recommends \
+      apt-get -o Dpkg::Options::=--force-unsafe-io install -y --no-install-recommends --allow-downgrades \
         xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION} \
         libnvidia-gl-${NVIDIA_DRIVER_VERSION} \
+        libnvidia-cfg1-${NVIDIA_DRIVER_VERSION} \
+        libnvidia-common-${NVIDIA_DRIVER_VERSION} \
         libglvnd0 libglx0 libegl1 && \
       if apt-cache show libnvidia-egl-${NVIDIA_DRIVER_VERSION} >/dev/null 2>&1; then \
         apt-get -o Dpkg::Options::=--force-unsafe-io install -y --no-install-recommends \
