@@ -543,7 +543,7 @@ def _expire_stale_session(cur, now: float) -> Tuple[Optional[tuple], List[tuple]
     """End or pause stale active sessions.
 
     Zero-credit heartbeat timeouts become ``paused`` when preserve is enabled (container kept).
-    Hard ``expires_at`` or other stale active rows are ``ended``.
+    Stale ``expires_at`` (no heartbeat within ``AXGT_SESSION_MAX_MINUTES``) or heartbeat timeout end the session.
 
     Returns (ended_session_or_none, paused_zero_credit_sessions).
     """
@@ -1345,12 +1345,14 @@ def heartbeat(wallet_address: str) -> Dict[str, Any]:
 
             # Only advance last_billed_at when we actually deducted usage; otherwise keep baseline for next run
             last_billed_at_value = now if billed_this_heartbeat else bill_from
+            # Slide expires_at so AXGT_SESSION_MAX_MINUTES is idle timeout, not a fixed wall-clock cap.
+            new_expires_at = now + _session_max_seconds()
             cur.execute(
                 f"""UPDATE {_SESSION_TABLE}
-                    SET last_heartbeat = %s, last_billed_at = %s
+                    SET last_heartbeat = %s, last_billed_at = %s, expires_at = %s
                     WHERE status = 'active' AND wallet_address = %s AND id = %s
                     RETURNING expires_at""",
-                (now, last_billed_at_value, wallet, session_id),
+                (now, last_billed_at_value, new_expires_at, wallet, session_id),
             )
             row2 = cur.fetchone()
             # Single commit: persists both deposit_ledger updates (from _deduct_usage_on_cursor) and session row.

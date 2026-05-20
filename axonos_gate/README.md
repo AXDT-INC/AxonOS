@@ -49,7 +49,7 @@ This module implements **prepaid deposit-credit billing** for AxonOS remote desk
 - `AXGT_CORS_ORIGINS`: CORS allowlist for `/api/*`. Comma-separated origins or `*`.
 - `AXGT_RATE_LIMIT_PER_MIN`: Per-client rate limit for verify calls; `0` to disable.
 - `AXGT_AUTH_TOKEN_TTL_SECONDS`, `AXGT_CHALLENGE_TTL_SECONDS`, `AXGT_AUTH_COOKIE_NAME`, etc.: Auth/session tuning.
-- `AXGT_SESSION_MAX_MINUTES`, `AXGT_HEARTBEAT_TIMEOUT_SECONDS`: Session and heartbeat timeout.
+- `AXGT_SESSION_MAX_MINUTES`, `AXGT_HEARTBEAT_TIMEOUT_SECONDS`: Idle session cap (sliding on heartbeat) and stale-heartbeat timeout.
 - `AXGT_ADMIN_SECRET`: If set, enables admin API (`/api/admin/*`) when request includes header `X-AXGT-Admin-Secret` or query `admin_secret`.
 - `AXGT_EXPECTED_CONTRACT_ADDRESS`: If set, gate only accepts this contract address.
 
