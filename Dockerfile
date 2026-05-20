@@ -296,6 +296,9 @@ ENV NVHPC_ROOT=/opt/nvidia/hpc_sdk
 ENV NVHPC_COMM_LIBS=/opt/nvidia/hpc_sdk/Linux_x86_64/26.1/comm_libs
 ENV PATH=/opt/openmpi/bin:$PATH
 ENV LD_LIBRARY_PATH=/opt/openmpi/lib:/opt/ucx/lib:${NVHPC_COMM_LIBS}/nvshmem_cufftmp_compat/lib:${NVHPC_COMM_LIBS}/12.2/nvshmem_cufftmp_compat/lib:${NVHPC_COMM_LIBS}/12.9/nvshmem_cufftmp_compat/lib:${NVHPC_COMM_LIBS}/nvshmem/lib:${NVHPC_COMM_LIBS}/12.2/nvshmem/lib:${NVHPC_COMM_LIBS}/12.9/nvshmem/lib:$LD_LIBRARY_PATH
+# sm BTL fails in Docker; vader provides on-node shared memory instead.
+ENV OMPI_MCA_btl=vader,self,tcp
+ENV OMPI_MCA_btl_base_warn_component_unused=0
 
 # Ensure NVSHMEM runtime libraries are discoverable (libnvshmem_host.so.*)
 # Add all nvshmem lib dirs so gmx works in desktop terminals (e.g. 12.2 vs 12.9).
