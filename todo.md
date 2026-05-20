@@ -65,3 +65,4 @@
   - [x] `axonos_gate/tests/test_webrtc_config.py` (unittest)
   - [ ] Compose E2E: negotiate WebRTC, verify video + input + fallback + unauthorized signaling denial
   - [x] WebRTC billing poll regression (`ff3171d`): tighten wallet-status credit-exhausted check (ignore 401/400), restart poll on Launch when session active, keep poll alive after queue leave on active WebRTC
+  - [x] Credit exhaustion: pause session + preserve container for resume after top-up (`AXGT_SESSION_PRESERVE_ON_CREDIT_EXHAUST`, default true)

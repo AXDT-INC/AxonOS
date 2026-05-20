@@ -162,7 +162,7 @@ Optional user-container mode:
 - Active allocations are tracked as explicit GPU ID sets per session.
 - Scheduler derives free GPUs as `configured_gpus - union(active_session_gpu_ids)`.
 - New session can only be created from free IDs; overlapping GPU IDs are not allowed.
-- GPU IDs are released immediately when session ends (release, timeout, credit exhaustion, or container failure).
+- GPU IDs are released when a session ends (release, timeout, container failure). Credit exhaustion pauses the session by default (`AXGT_SESSION_PRESERVE_ON_CREDIT_EXHAUST=true`) so the same container/desktop can resume after top-up; paused sessions still reserve GPUs until `AXGT_SESSION_PAUSED_MAX_MINUTES` elapses.
 
 ### Launcher adapter (Mode B)
 
