@@ -428,7 +428,7 @@ Copyright (C) 2019 The noVNC Authors
                         <span id="axonos_discount_status" style="font-size:0.78rem;opacity:0.7;">Loading on-chain balance…</span>
                     </div>
                     <ul style="list-style:none;padding:0;margin:0.45rem 0 0.2rem;">
-                        <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span style="opacity:0.78;">Base minimum (list)</span><strong id="axonos_discount_base_eth">—</strong></li>
+                        <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span style="opacity:0.78;">Minimum (list)</span><strong id="axonos_discount_base_eth">—</strong></li>
                         <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span style="opacity:0.78;">Wallet AXGT balance</span><strong id="axonos_discount_balance">—</strong></li>
                         <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span style="opacity:0.78;">Eligible tier</span><strong id="axonos_discount_tier">—</strong></li>
                         <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span style="opacity:0.78;">Holder discount</span><strong id="axonos_discount_percent" style="color:#7adf8a;">—</strong></li>
@@ -443,7 +443,7 @@ Copyright (C) 2019 The noVNC Authors
                     <p id="axonos_discount_warn" class="axonos-wallet-state__msg" style="font-size:0.78rem;min-height:0;margin:0.35rem 0 0;color:#f0a878;display:none;">RPC balance check failed — paying full ETH price (no discount applied).</p>
                 </div>
 
-                <p class="axonos-wallet-state__help" style="margin:0.55rem 0 0.35rem;font-size:0.9em;opacity:0.9;">Enter the ETH you will pay. AXGT holders get more desktop time per ETH and a lower minimum. Larger amounts add proportionally more minutes. You can also send from another wallet/DEX and paste the tx hash.</p>
+                <p class="axonos-wallet-state__help" style="margin:0.55rem 0 0.35rem;font-size:0.9em;opacity:0.9;">Enter the ETH you will pay. Estimates are wall-clock desktop time for your currently selected GPU profile. AXGT holders get more time per ETH and a lower minimum. Larger amounts add proportionally more minutes. You can also send from another wallet/DEX and paste the tx hash.</p>
                 <div class="axonos-pay-deposit-rows" style="margin:0.5rem 0;width:100%;max-width:28rem;margin-left:auto;margin-right:auto;">
                     <div class="axonos-pay-deposit-row" id="axonos_pay_axgt_row" style="display:none;">
                         <span class="axonos-pay-row-label">AXGT</span>
@@ -580,6 +580,7 @@ Copyright (C) 2019 The noVNC Authors
 let axonosConfig = { axgt_contract_address: '', axgt_revenue_wallet: '', axgt_chain_id: null, axgt_min_deposit: '100', eth_deposits_enabled: true, eth_min_deposit: '0.0005', axgt_token_decimals: 18, credit_per_100_axgt: 60, eth_credit_per_eth: 120000, min_axgt_minutes: 60, min_eth_minutes: 60, axgt_direct_deposits_enabled: false, axgt_discount_tiers: [], gpu_profiles: { small: 1, medium: 2, large: 4, max: 8 }, gpu_weighted_billing_enabled: false };
 let axonosLastDiscountQuote = null;
 let axonosLastDiscountMinQuote = null;
+let axonosLastEthPayQuote = null;
 let axonosEthAmountQuoteTimer = null;
 let axonosEthAmountQuoteSeq = 0;
 
@@ -608,7 +609,7 @@ document.addEventListener("DOMContentLoaded", function() {
     var profileSel = document.getElementById('axonos_profile_select');
     if (profileSel) {
         profileSel.addEventListener('change', function () {
-            if (typeof axonosUpdateProfileBurnHint === 'function') axonosUpdateProfileBurnHint();
+            if (typeof axonosHandleGpuProfileChange === 'function') axonosHandleGpuProfileChange();
         });
     }
 
@@ -998,6 +999,49 @@ document.addEventListener("DOMContentLoaded", function() {
 
     function axonosGpuWeightedBillingEnabled() {
         return !!(axonosConfig && axonosConfig.gpu_weighted_billing_enabled);
+    }
+
+    /** Prepaid minutes from deposit quote → wall-clock desktop time for selected GPU profile. */
+    function axonosDesktopMinutesFromPrepaid(prepaidMin) {
+        if (prepaidMin == null || isNaN(prepaidMin)) return null;
+        if (!axonosGpuWeightedBillingEnabled()) return prepaidMin;
+        return prepaidMin / Math.max(1, axonosGpuCountForProfile(getRequestedProfile()));
+    }
+
+    function axonosFormatDesktopTimeLabel(prepaidMin) {
+        var desktop = axonosDesktopMinutesFromPrepaid(prepaidMin);
+        if (desktop == null || isNaN(desktop)) return '—';
+        var text = formatCreditMinutes(desktop);
+        if (axonosGpuWeightedBillingEnabled()) {
+            var profile = getRequestedProfile();
+            var gpus = axonosGpuCountForProfile(profile);
+            if (gpus > 1) {
+                var profileLabels = { small: 'Small', medium: 'Medium', large: 'Large', max: 'Max' };
+                text += ' (' + (profileLabels[profile] || profile) + ', ' + gpus + ' GPUs)';
+            }
+        }
+        return text;
+    }
+
+    function axonosUpdatePrereqEthDesktopLabel() {
+        var el = document.getElementById('axonos_prereq_eth_min_label');
+        if (!el) return;
+        if (!axonosConfig.eth_deposits_enabled) {
+            el.textContent = 'ETH top-ups disabled';
+            return;
+        }
+        el.textContent = axonosFormatDesktopTimeLabel(Number(axonosConfig.min_eth_minutes)) + ' desktop time';
+    }
+
+    function axonosHandleGpuProfileChange() {
+        axonosUpdateProfileBurnHint();
+        axonosUpdatePrereqEthDesktopLabel();
+        if (axonosLastDiscountMinQuote) applyDiscountTierPanel(axonosLastDiscountMinQuote);
+        var ethInput = document.getElementById('axonos_pay_eth_amount');
+        var val = ethInput ? String(ethInput.value || '').trim() : '';
+        if (val && axonosHumanEthToWei(val) != null) {
+            updateEthPaymentPreview(axonosLastEthPayQuote, val);
+        }
     }
 
     function axonosUpdateProfileBurnHint() {
@@ -1487,9 +1531,8 @@ document.addEventListener("DOMContentLoaded", function() {
                 if (prereqMin) prereqMin.textContent = minDeposit;
                 if (prereqMinEth) prereqMinEth.textContent = ethEnabled ? minEth : 'disabled';
                 var prereqAxgtMin = document.getElementById('axonos_prereq_axgt_min_label');
-                var prereqEthMin = document.getElementById('axonos_prereq_eth_min_label');
                 if (prereqAxgtMin) prereqAxgtMin.textContent = formatCreditMinutes(maMin) + ' desktop time';
-                if (prereqEthMin) prereqEthMin.textContent = ethEnabled ? (formatCreditMinutes(meMin) + ' desktop time') : 'ETH top-ups disabled';
+                axonosUpdatePrereqEthDesktopLabel();
                 var dlgHints = document.getElementById('axonos-dlg-credit-hints');
                 if (dlgHints) {
                     var ethPer1 = (cpe >= 1e6) ? String(Math.round(cpe)) : String(Math.round(cpe * 1e6) / 1e6);
@@ -1696,7 +1739,7 @@ document.addEventListener("DOMContentLoaded", function() {
         if (tierEl) tierEl.textContent = (d.tier_label || ('Tier ' + (d.tier_index != null ? d.tier_index : 0))) + (d.tier_min_axgt != null ? ' (≥ ' + d.tier_min_axgt + ' AXGT)' : '');
         if (pctEl) pctEl.textContent = (d.discount_percent != null ? Number(d.discount_percent) : 0) + '%';
         if (minEthEl) minEthEl.textContent = String(d.final_eth || d.base_eth || '—') + ' ETH';
-        if (minMinEl) minMinEl.textContent = formatCreditMinutes(axonosConfig.min_eth_minutes);
+        if (minMinEl) minMinEl.textContent = axonosFormatDesktopTimeLabel(Number(axonosConfig.min_eth_minutes));
         if (statusEl) statusEl.textContent = d.balance_check_ok ? 'On-chain balance verified' : 'On-chain check failed — no discount';
         if (warnEl) {
             if (d.balance_check_ok === false) {
@@ -1721,13 +1764,16 @@ document.addEventListener("DOMContentLoaded", function() {
         }
         if (preview) preview.style.display = '';
         if (payEl) payEl.textContent = trimmed + ' ETH';
-        var est = (quote && quote.estimated_minutes != null) ? Number(quote.estimated_minutes) : null;
-        if (minEl) minEl.textContent = est != null && !isNaN(est) ? ('~' + formatCreditMinutes(est)) : '—';
+        var prepaidEst = (quote && quote.estimated_minutes != null)
+            ? Number(quote.estimated_minutes)
+            : axonosBaselineMinutesForEth(trimmed);
+        var estLabel = axonosFormatDesktopTimeLabel(prepaidEst);
+        if (minEl) minEl.textContent = estLabel !== '—' ? ('~' + estLabel) : '—';
         var discPct = (quote && quote.discount_percent != null) ? Number(quote.discount_percent) : 0;
-        var baseline = axonosBaselineMinutesForEth(trimmed);
-        if (baseRow && baseEl && discPct > 0 && baseline != null && !isNaN(baseline)) {
+        var baselineLabel = axonosFormatDesktopTimeLabel(axonosBaselineMinutesForEth(trimmed));
+        if (baseRow && baseEl && discPct > 0 && baselineLabel !== '—') {
             baseRow.style.display = 'flex';
-            baseEl.textContent = '~' + formatCreditMinutes(baseline);
+            baseEl.textContent = '~' + baselineLabel;
         } else if (baseRow) {
             baseRow.style.display = 'none';
         }
@@ -1800,7 +1846,10 @@ document.addEventListener("DOMContentLoaded", function() {
                 var current = document.getElementById('axonos_pay_eth_amount');
                 var currentVal = current ? String(current.value || '').trim() : '';
                 if (currentVal !== val) return;
-                if (d) updateEthPaymentPreview(d, val);
+                if (d) {
+                    axonosLastEthPayQuote = d;
+                    updateEthPaymentPreview(d, val);
+                }
                 updateEthPayHint(val);
             });
         }, 400);
