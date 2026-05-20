@@ -813,38 +813,37 @@ def _resume_paused_session(
     wallet: str,
     paused: Dict[str, Any],
     now: float,
-    profile_name: str,
-    requested_gpus: int,
 ) -> Dict[str, Any]:
-    """Reactivate a credit-paused session without spawning a new container."""
+    """Reactivate a credit-paused session without spawning a new container.
+
+    Restores the same profile, GPU assignment, and container as before credit exhaustion.
+    Client-supplied ``requested_profile`` is ignored for resume.
+    """
+    paused_profile = (paused.get("requested_profile") or "small").strip().lower()
+    assigned = list(paused.get("gpu_ids") or [])
     max_secs = _session_max_seconds()
     cur.execute(
         f"""UPDATE {_SESSION_TABLE}
             SET status = 'active',
                 last_heartbeat = %s,
-                expires_at = %s,
-                requested_profile = %s
+                expires_at = %s
             WHERE id = %s AND status = 'paused' AND wallet_address = %s
-            RETURNING id, gpu_ids, container_id, expires_at""",
-        (now, now + max_secs, profile_name, paused["id"], wallet),
+            RETURNING id, gpu_ids, container_id, expires_at, requested_profile""",
+        (now, now + max_secs, paused["id"], wallet),
     )
     row = cur.fetchone()
     if not row:
         return {"granted": False, "reason": "Paused session no longer available"}
-    session_id, gpu_ids_text, container_id, expires_at = row[0], row[1], row[2], row[3]
-    assigned = _parse_gpu_ids(gpu_ids_text)
-    if _multi_session_enabled() and len(assigned) < requested_gpus:
-        return {
-            "granted": False,
-            "reason": (
-                f"Paused session has {len(assigned)} GPU(s); profile \"{profile_name}\" needs {requested_gpus}."
-            ),
-        }
+    session_id, gpu_ids_text, container_id, expires_at, stored_profile = row[0], row[1], row[2], row[3], row[4]
+    assigned = _parse_gpu_ids(gpu_ids_text) or assigned
+    profile_name = (stored_profile or paused_profile or "small").strip().lower()
     remaining = max(0, expires_at - now)
     logger.info(
-        "session_manager: resumed paused session %s for %s",
+        "session_manager: resumed paused session %s for %s (profile=%s, gpus=%s)",
         session_id,
         _mask(wallet),
+        profile_name,
+        assigned,
     )
     return {
         "granted": True,
@@ -958,6 +957,28 @@ def try_claim_session(wallet_address: str, requested_profile: Optional[str] = No
             blocking = active if active else (paused_rows[-1] if paused_rows else None)
 
             is_owner = _active_session_for_wallet(cur, wallet) is not None
+            paused = _paused_session_for_wallet(cur, wallet, now)
+            if not is_owner and paused and _preserve_session_on_credit_exhaust():
+                paused_profile = (paused.get("requested_profile") or "small").strip().lower()
+                _, paused_gpus = _resolve_profile(paused_profile)
+                ok_credit, credit_reason = _prepaid_credit_allows_profile(
+                    wallet, paused_gpus, paused_profile
+                )
+                if not ok_credit:
+                    conn.commit()
+                    if ended:
+                        _on_session_ended(ended[0], ended[1])
+                    for wallet_ended, session_id_ended in paused_ended:
+                        _on_session_ended(wallet_ended, session_id_ended)
+                    return {"granted": False, "reason": credit_reason}
+                resume = _resume_paused_session(cur, wallet, paused, now)
+                conn.commit()
+                if ended:
+                    _on_session_ended(ended[0], ended[1])
+                for wallet_ended, session_id_ended in paused_ended:
+                    _on_session_ended(wallet_ended, session_id_ended)
+                return resume
+
             if not is_owner:
                 ok_credit, credit_reason = _prepaid_credit_allows_profile(
                     wallet, requested_gpus, profile_name
@@ -969,18 +990,6 @@ def try_claim_session(wallet_address: str, requested_profile: Optional[str] = No
                     for wallet_ended, session_id_ended in paused_ended:
                         _on_session_ended(wallet_ended, session_id_ended)
                     return {"granted": False, "reason": credit_reason}
-
-                paused = _paused_session_for_wallet(cur, wallet, now)
-                if paused and _preserve_session_on_credit_exhaust():
-                    resume = _resume_paused_session(
-                        cur, wallet, paused, now, profile_name, requested_gpus
-                    )
-                    conn.commit()
-                    if ended:
-                        _on_session_ended(ended[0], ended[1])
-                    for wallet_ended, session_id_ended in paused_ended:
-                        _on_session_ended(wallet_ended, session_id_ended)
-                    return resume
 
             # Already owner in multi-session mode
             owned = _active_session_for_wallet(cur, wallet)
@@ -1529,25 +1538,27 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
                     result["is_owner"] = True
                 paused_owned = _paused_session_for_wallet(cur, wallet, now)
                 if paused_owned and _preserve_session_on_credit_exhaust():
+                    paused_profile = paused_owned.get("requested_profile") or "small"
+                    paused_gpus = paused_owned.get("gpu_ids", [])
                     result["paused"] = True
                     result["can_resume"] = True
                     result["paused_session_id"] = paused_owned["id"]
                     result["paused_container_id"] = paused_owned.get("container_id")
+                    result["paused_requested_profile"] = paused_profile
+                    result["paused_assigned_gpu_ids"] = paused_gpus
+                    result["paused_gpu_count"] = len(paused_gpus) if paused_gpus else _billing_gpu_count(
+                        paused_gpus, paused_profile
+                    )
                     pause_remaining = max(
                         0,
                         paused_owned["last_heartbeat"] + _session_paused_max_seconds() - now,
                     )
                     result["paused_resume_seconds"] = int(pause_remaining)
-                    result["session_id"] = owned["id"]
-                    result["requested_profile"] = owned.get("requested_profile") or "small"
-                    result["assigned_gpu_ids"] = owned.get("gpu_ids", [])
-                    result["container_id"] = owned.get("container_id")
-                    result["allocation_status"] = owned.get("allocation_status") or "allocated"
                     if _gpu_billing_enabled():
                         result["gpu_billing_enabled"] = True
                         result["billing_gpu_count"] = _billing_gpu_count(
-                            owned.get("gpu_ids", []),
-                            result["requested_profile"],
+                            paused_gpus,
+                            paused_profile,
                         )
 
         return result

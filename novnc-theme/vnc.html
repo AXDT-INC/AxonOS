@@ -322,9 +322,14 @@ Copyright (C) 2019 The noVNC Authors
                 </p>
             </div>
             
-            <!-- Connect stack: GPU profile + launch -->
+            <!-- Connect stack: GPU profile + launch (or resume saved session after credit pause) -->
             <div class="axonos-connect-wrapper">
-                <div class="axonos-profile-picker" role="group" aria-label="GPU profile selection">
+                <div id="axonos_resume_panel" class="axonos-resume-panel axonos-resume-panel--hidden" aria-live="polite">
+                    <p class="axonos-resume-panel__title">Your desktop is saved</p>
+                    <p id="axonos_resume_panel_detail" class="axonos-resume-panel__detail"></p>
+                    <p id="axonos_resume_panel_ttl" class="axonos-resume-panel__ttl"></p>
+                </div>
+                <div id="axonos_profile_picker_wrap" class="axonos-profile-picker" role="group" aria-label="GPU profile selection">
                     <label class="axonos-profile-picker__label" for="axonos_profile_select">GPU profile</label>
                     <select id="axonos_profile_select" class="axonos-profile-picker__select">
                         <option value="small">Small (1 GPU)</option>
@@ -858,14 +863,19 @@ document.addEventListener("DOMContentLoaded", function() {
         return fetch(opts.url, { method: opts.method || 'GET', credentials: 'include', headers: opts.headers || headers, body: opts.body }).then(r => r.json());
     }
 
+    window.axonosPausedResume = null;
+
     function claimSession() {
         const wallet = window.verifiedWalletAddress;
         if (!wallet) return Promise.resolve({ granted: false });
-        const requestedProfile = getRequestedProfile();
+        const payload = { wallet_address: wallet };
+        if (!window.axonosPausedResume) {
+            payload.requested_profile = getRequestedProfile();
+        }
         return axonosFetch({
             method: 'POST',
             url: new URL('/api/session/claim', window.location.origin).toString(),
-            body: JSON.stringify({ wallet_address: wallet, requested_profile: requestedProfile })
+            body: JSON.stringify(payload)
         });
     }
 
@@ -979,11 +989,106 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 
     function getRequestedProfile() {
+        if (window.axonosPausedResume && window.axonosPausedResume.profile) {
+            return window.axonosPausedResume.profile;
+        }
         var el = document.getElementById('axonos_profile_select');
         var val = el ? String(el.value || '').toLowerCase() : 'small';
         if (val !== 'small' && val !== 'medium' && val !== 'large' && val !== 'max') return 'small';
         return val;
     }
+
+    function axonosProfileLabel(profile) {
+        var labels = { small: 'Small', medium: 'Medium', large: 'Large', max: 'Max' };
+        return labels[profile] || profile;
+    }
+
+    function axonosFormatResumeTtl(seconds) {
+        if (seconds == null || seconds <= 0) return '';
+        var mins = Math.ceil(seconds / 60);
+        if (mins < 60) return 'Saved for about ' + mins + ' more minute(s).';
+        var hrs = Math.floor(mins / 60);
+        var rem = mins % 60;
+        return 'Saved for about ' + hrs + 'h' + (rem ? (' ' + rem + 'm') : '') + ' more.';
+    }
+
+    function axonosApplyResumeConnectUi(resumeActive) {
+        var pickerWrap = document.getElementById('axonos_profile_picker_wrap');
+        var resumePanel = document.getElementById('axonos_resume_panel');
+        var resumeDetail = document.getElementById('axonos_resume_panel_detail');
+        var resumeTtl = document.getElementById('axonos_resume_panel_ttl');
+        var connectText = document.querySelector('.axonos-connect-text');
+        var connectSub = document.querySelector('.axonos-connect-subtext');
+        var profileSel = document.getElementById('axonos_profile_select');
+        if (resumePanel) {
+            resumePanel.classList.toggle('axonos-resume-panel--hidden', !resumeActive);
+            resumePanel.setAttribute('aria-hidden', resumeActive ? 'false' : 'true');
+        }
+        if (pickerWrap) {
+            pickerWrap.hidden = !!resumeActive;
+        }
+        if (resumeActive && window.axonosPausedResume) {
+            var profile = window.axonosPausedResume.profile || 'small';
+            var gpus = window.axonosPausedResume.gpuCount || axonosGpuCountForProfile(profile);
+            if (resumeDetail) {
+                resumeDetail.textContent =
+                    axonosProfileLabel(profile) + ' · ' + gpus + ' GPU' + (gpus === 1 ? '' : 's') +
+                    ' — same desktop and apps as before your session paused.';
+            }
+            if (resumeTtl) {
+                resumeTtl.textContent = axonosFormatResumeTtl(window.axonosPausedResume.resumeSeconds);
+            }
+            if (profileSel) {
+                profileSel.value = profile;
+                profileSel.disabled = true;
+            }
+            if (connectText) connectText.textContent = 'Resume desktop session';
+            if (connectSub) connectSub.textContent = 'Reconnect wallet, then resume — no need to pick GPUs again';
+        } else {
+            if (profileSel) profileSel.disabled = false;
+            if (connectText) connectText.textContent = 'Launch GPU-Native Desktop';
+            if (connectSub) connectSub.textContent = 'Full Linux environment with direct GPU access';
+            if (resumeDetail) resumeDetail.textContent = '';
+            if (resumeTtl) resumeTtl.textContent = '';
+        }
+        document.body.classList.toggle('axonos-resume-mode', !!resumeActive);
+    }
+
+    function axonosRefreshPausedResumeStatus() {
+        var wallet = window.verifiedWalletAddress;
+        if (!wallet) {
+            window.axonosPausedResume = null;
+            axonosApplyResumeConnectUi(false);
+            return Promise.resolve(null);
+        }
+        return sessionStatus().then(function (st) {
+            if (st && st.can_resume && st.paused) {
+                var profile = String(st.paused_requested_profile || st.requested_profile || 'small').toLowerCase();
+                var gpuIds = st.paused_assigned_gpu_ids || st.assigned_gpu_ids || [];
+                var gpuCount = typeof st.paused_gpu_count === 'number'
+                    ? st.paused_gpu_count
+                    : (gpuIds.length || axonosGpuCountForProfile(profile));
+                window.axonosPausedResume = {
+                    profile: profile,
+                    gpuIds: gpuIds,
+                    gpuCount: gpuCount,
+                    resumeSeconds: st.paused_resume_seconds,
+                    sessionId: st.paused_session_id
+                };
+                axonosApplyResumeConnectUi(true);
+            } else {
+                window.axonosPausedResume = null;
+                axonosApplyResumeConnectUi(false);
+            }
+            return st;
+        }).catch(function () {
+            window.axonosPausedResume = null;
+            axonosApplyResumeConnectUi(false);
+            return null;
+        });
+    }
+
+    window.axonosRefreshPausedResumeStatus = axonosRefreshPausedResumeStatus;
 
     function axonosGpuCountForProfile(profile) {
         var map = (axonosConfig && axonosConfig.gpu_profiles) ? axonosConfig.gpu_profiles : null;
@@ -1969,17 +2074,34 @@ document.addEventListener("DOMContentLoaded", function() {
                 window.axonosAllowVncConnect = true;
                 try { localStorage.setItem('axonos_last_wallet', walletAddress); } catch (e) {}
                 var balanceDisplay = (data.balance_axgt != null) ? (String(data.balance_axgt) + ' AXGT') : ((typeof data.remaining_minutes === 'number') ? (data.remaining_minutes + ' min remaining') : '—');
-                setWalletUIState('axonos_wallet_state_verified', { address: walletAddress, balanceDisplay: balanceDisplay });
-                claimSession().then(function (claim) {
-                    if (claim.granted) {
-                        tryConnectAfterClaim();
-                    } else {
-                        handleSessionClaimDenied(claim, 'Desktop in use.');
+                axonosRefreshPausedResumeStatus().then(function () {
+                    var resumeHint = window.axonosPausedResume
+                        ? (' · Resume ' + axonosProfileLabel(window.axonosPausedResume.profile) +
+                            ' (' + window.axonosPausedResume.gpuCount + ' GPU' +
+                            (window.axonosPausedResume.gpuCount === 1 ? '' : 's') + ')')
+                        : '';
+                    setWalletUIState('axonos_wallet_state_verified', {
+                        address: walletAddress,
+                        balanceDisplay: balanceDisplay + resumeHint
+                    });
+                    if (window.axonosPausedResume) {
                         var credentialsDialog = document.getElementById('noVNC_credentials_dlg');
                         if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
+                        return;
                     }
-                }).catch(function () {
-                    setWalletUIState('axonos_wallet_state_connect_error', { msg: 'Session claim failed. Check network or try again.' });
+                    claimSession().then(function (claim) {
+                        if (claim.granted) {
+                            tryConnectAfterClaim();
+                        } else {
+                            handleSessionClaimDenied(claim, 'Desktop in use.');
+                            var credentialsDialog = document.getElementById('noVNC_credentials_dlg');
+                            if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
+                        }
+                    }).catch(function () {
+                        setWalletUIState('axonos_wallet_state_connect_error', {
+                            msg: 'Session claim failed. Check network or try again.'
+                        });
+                    });
                 });
                 return;
             }
@@ -2104,7 +2226,7 @@ document.addEventListener("DOMContentLoaded", function() {
     function axonosDepositVerifiedSuccess(d, wallet) {
         var msgEl = document.getElementById('axonos_verify_deposit_msg');
         var inp = document.getElementById('axonos_tx_hash_input');
-        if (msgEl) msgEl.textContent = 'Credited ' + (d.credited_minutes != null ? d.credited_minutes : '?') + ' min. Launch desktop when ready.';
+        if (msgEl) msgEl.textContent = 'Credited ' + (d.credited_minutes != null ? d.credited_minutes : '?') + ' min.';
         window.axonosAllowVncConnect = true;
         var balanceDisplay = (typeof d.remaining_minutes === 'number') ? (d.remaining_minutes + ' min prepaid') : '—';
         var credDlg = document.getElementById('noVNC_credentials_dlg');
@@ -2116,16 +2238,35 @@ document.addEventListener("DOMContentLoaded", function() {
             }
             return;
         }
-        setWalletUIState('axonos_wallet_state_verified', { address: wallet, balanceDisplay: balanceDisplay });
-        if (inp) inp.value = '';
-        claimSession().then(function (claim) {
-            if (claim.granted) tryConnectAfterClaim();
-            else {
-                handleSessionClaimDenied(claim, 'Desktop in use.');
-                if (credDlg) credDlg.classList.remove('noVNC_open');
+        axonosRefreshPausedResumeStatus().then(function () {
+            if (window.axonosPausedResume && msgEl) {
+                msgEl.textContent += ' Use Resume desktop session on the home screen.';
+            } else if (msgEl) {
+                msgEl.textContent += ' Launch desktop when ready.';
             }
-        }).catch(function () {
-            if (msgEl) msgEl.textContent = 'Credited, but session claim failed. Try Connect again.';
+            var resumeHint = window.axonosPausedResume
+                ? (' · Resume ' + axonosProfileLabel(window.axonosPausedResume.profile) +
+                    ' (' + window.axonosPausedResume.gpuCount + ' GPU' +
+                    (window.axonosPausedResume.gpuCount === 1 ? '' : 's') + ')')
+                : '';
+            setWalletUIState('axonos_wallet_state_verified', {
+                address: wallet,
+                balanceDisplay: balanceDisplay + resumeHint
+            });
+            if (inp) inp.value = '';
+            if (credDlg) credDlg.classList.remove('noVNC_open');
+            if (window.axonosPausedResume) {
+                return;
+            }
+            claimSession().then(function (claim) {
+                if (claim.granted) tryConnectAfterClaim();
+                else {
+                    handleSessionClaimDenied(claim, 'Desktop in use.');
+                    if (credDlg) credDlg.classList.remove('noVNC_open');
+                }
+            }).catch(function () {
+                if (msgEl) msgEl.textContent = 'Credited, but session claim failed. Try Resume again.';
+            });
         });
     }
 
@@ -2575,8 +2716,12 @@ document.addEventListener("DOMContentLoaded", function() {
                 window.verifiedWalletAddress = null;
                 window.verifiedWalletAuthToken = null;
                 window.axonosAllowVncConnect = false;
+                window.axonosPausedResume = null;
+                axonosApplyResumeConnectUi(false);
                 setWalletUIState('axonos_wallet_state_disconnected');
             } else {
+                window.axonosPausedResume = null;
+                axonosApplyResumeConnectUi(false);
                 setWalletUIState('axonos_wallet_state_disconnected');
             }
         });
@@ -2606,10 +2751,22 @@ document.addEventListener("DOMContentLoaded", function() {
                     typeof UI._axgtSessionDesktopActive === 'function' && UI._axgtSessionDesktopActive()) {
                     return;
                 }
-                setWalletUIState('axonos_wallet_state_verified', {
-                    address: window.verifiedWalletAddress,
-                    balanceDisplay: 'Connected'
-                });
+                if (typeof axonosRefreshPausedResumeStatus === 'function') {
+                    axonosRefreshPausedResumeStatus().then(function () {
+                        var hint = window.axonosPausedResume
+                            ? ('Connected · Resume ' + axonosProfileLabel(window.axonosPausedResume.profile))
+                            : 'Connected';
+                        setWalletUIState('axonos_wallet_state_verified', {
+                            address: window.verifiedWalletAddress,
+                            balanceDisplay: hint
+                        });
+                    });
+                } else {
+                    setWalletUIState('axonos_wallet_state_verified', {
+                        address: window.verifiedWalletAddress,
+                        balanceDisplay: 'Connected'
+                    });
+                }
                 return;
             }
             setWalletUIState('axonos_wallet_state_disconnected');
