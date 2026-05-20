@@ -1308,9 +1308,12 @@ const UI = {
         if (!wallet) {
             return Promise.resolve({ granted: false, reason: 'No wallet' });
         }
-        const requestedProfile = (typeof window.axonosGetRequestedProfile === 'function')
-            ? window.axonosGetRequestedProfile()
-            : 'small';
+        const payload = { wallet_address: wallet };
+        if (!window.axonosPausedResume) {
+            payload.requested_profile = (typeof window.axonosGetRequestedProfile === 'function')
+                ? window.axonosGetRequestedProfile()
+                : 'small';
+        }
         const url = new URL('/api/session/claim', window.location.origin).toString();
         const headers = {
             'Content-Type': 'application/json',
@@ -1323,7 +1326,7 @@ const UI = {
             method: 'POST',
             credentials: 'include',
             headers,
-            body: JSON.stringify({ wallet_address: wallet, requested_profile: requestedProfile }),
+            body: JSON.stringify(payload),
         }).then((r) => {
             const ct = (r.headers.get('content-type') || '');
             if (!ct.includes('application/json')) {
@@ -1501,7 +1504,11 @@ const UI = {
                 }
                 return;
             }
-            if (Array.isArray(claim.assigned_gpu_ids) && claim.assigned_gpu_ids.length > 0) {
+            if (claim && claim.resumed === true && typeof window.axonosRefreshPausedResumeStatus === 'function') {
+                window.axonosPausedResume = null;
+                window.axonosRefreshPausedResumeStatus();
+                UI.showStatus(_('Resumed your saved desktop session'), 'normal', 2500);
+            } else if (Array.isArray(claim.assigned_gpu_ids) && claim.assigned_gpu_ids.length > 0) {
                 UI.showStatus(`Session active on GPU(s): ${claim.assigned_gpu_ids.join(',')}`, 'normal', 2500);
             } else if (claim && claim.allocation_status === 'allocating') {
                 UI.showStatus(_('Allocating GPUs...'), 'normal', 2000);
@@ -1763,7 +1770,11 @@ const UI = {
             if (exitBtn) exitBtn.hidden = true;
         } else if (state === 'locked') {
             overlay.classList.add('axonos-usage-overlay--locked');
-            if (btn) btn.textContent = 'Add credit';
+            if (btn) {
+                btn.textContent = (typeof window !== 'undefined' && window.axonosPausedResume)
+                    ? 'Add credit to resume'
+                    : 'Add credit';
+            }
             if (exitBtn) exitBtn.hidden = false;
         }
     },
@@ -1823,10 +1834,16 @@ const UI = {
                     if (typeof window !== 'undefined') {
                         window.axonosAllowVncConnect = false;
                     }
+                    const resumeHint = hb.paused_for_resume
+                        ? ' Your desktop is saved — add credit, then use Resume desktop session (same GPUs).'
+                        : '';
                     UI._axgtUpdateUsageOverlay(
                         'locked',
-                        'Usage credit exhausted. Add more ETH to unlock access.'
+                        'Usage credit exhausted. Add more ETH to unlock access.' + resumeHint
                     );
+                    if (hb.paused_for_resume && typeof window.axonosRefreshPausedResumeStatus === 'function') {
+                        window.axonosRefreshPausedResumeStatus();
+                    }
                     setTimeout(() => UI.disconnect(), 400);
                 }
             })
