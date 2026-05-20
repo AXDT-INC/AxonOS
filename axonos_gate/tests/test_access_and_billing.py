@@ -126,6 +126,40 @@ class TestBillingAndSession(unittest.TestCase):
         self.assertGreater(call_args[2], 0)
 
     @patch("axonos_gate.deposit_ledger._deduct_usage_on_cursor")
+    @patch("axonos_gate.deposit_ledger.init_once", return_value=True)
+    @patch("axonos_gate.session_manager.time.time", return_value=1500.0)
+    @patch("axonos_gate.session_manager._get_connection")
+    def test_heartbeat_extends_expires_at_sliding(
+        self, mock_conn, _mock_time, _mock_init, mock_deduct
+    ):
+        from axonos_gate import session_manager
+
+        session_manager._pg_init_done = True
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.fetchone.side_effect = [
+            None,
+            (1, 1000.0, 2000.0, 500.0, "small", "0", "axgt-session-1"),
+            (5100.0,),
+        ]
+        conn.cursor.return_value = cur
+        mock_conn.return_value = conn
+        mock_deduct.return_value = (True, 58.5, None)
+
+        with patch.dict(os.environ, {"AXGT_SESSION_MAX_MINUTES": "60"}, clear=False):
+            session_manager.heartbeat("0x1234567890123456789012345678901234567890")
+
+        update_calls = [
+            c for c in cur.execute.call_args_list
+            if c[0]
+            and "last_heartbeat" in str(c[0][0])
+            and "last_billed_at" in str(c[0][0])
+            and "expires_at" in str(c[0][0])
+        ]
+        self.assertEqual(len(update_calls), 1)
+        self.assertEqual(update_calls[0][0][1][2], 1500.0 + 60 * 60)
+
+    @patch("axonos_gate.deposit_ledger._deduct_usage_on_cursor")
     @patch("axonos_gate.deposit_ledger.get_remaining_minutes", return_value=50.0)
     @patch("axonos_gate.deposit_ledger.init_once", return_value=True)
     @patch("axonos_gate.session_manager.time.time", return_value=1500.0)
