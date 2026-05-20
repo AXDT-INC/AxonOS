@@ -32,8 +32,24 @@ else
   echo "No BusID detected; using default Xorg config."
   cp "$CONFIG_SRC" "$CONFIG_TMP"
 fi
+# Mesa libglx.so left in place => dual GLX vendors => SIGSEGV/SIGABRT (see fix-libglx-nvidia-symlink.sh).
+GLX_LINK="/usr/lib/xorg/modules/extensions/libglx.so"
+if [ -e "$GLX_LINK" ]; then
+  echo "start-xorg-nvidia: libglx.so -> $(readlink -f "$GLX_LINK" 2>/dev/null || ls -l "$GLX_LINK")"
+else
+  echo "start-xorg-nvidia: WARNING missing $GLX_LINK (Xorg may abort)"
+fi
 # Do not use -keeptty here: supervisord/docker often have no controlling TTY, and Xorg
 # exits immediately (clients then see "unable to open display :0"). See VirtualGL headless NV.
-echo "start-xorg-nvidia: exec Xorg :0 config=${CONFIG_TMP}"
-exec /usr/bin/Xorg :0 -config "$CONFIG_TMP" -noreset -nolisten tcp -novtswitch -sharevts \
+_xorg_on_exit() {
+  local code=$?
+  if [ "$code" -ne 0 ]; then
+    echo "start-xorg-nvidia: Xorg exited $code; last 80 lines of /var/log/Xorg.0.log:"
+    tail -n 80 /var/log/Xorg.0.log 2>/dev/null || true
+  fi
+  exit "$code"
+}
+trap '_xorg_on_exit' EXIT
+echo "start-xorg-nvidia: starting Xorg :0 config=${CONFIG_TMP}"
+/usr/bin/Xorg :0 -config "$CONFIG_TMP" -noreset -nolisten tcp -novtswitch -sharevts \
   -logfile /var/log/Xorg.0.log
