@@ -15,7 +15,7 @@
 Originally inspired by the idea of a Stadia-like environment, **AxonOS** evolves that vision toward enabling:
 
 - Local-first scientific computing
-- AI-assistance (with Ollama and command-r7b model)
+- AI-assistance (with Ollama and gemma4:31b model)
 - Peer-to-peer workflows (IPFS support included)
 - Modular scientific desktop environments for students, researchers, and citizen scientists
 
@@ -84,7 +84,7 @@ AxonOS provides a comprehensive scientific computing environment with extensive 
 ## 🛠️ Features
 
 - 🌐 **Full Linux desktop streaming from any modern browser**
-- 🤖 **Native AI assistant with dual-model Ollama integration (command-r7b for text, granite3.2-vision for vision) with automatic screenshot analysis capabilities**
+- 🤖 **Native AI assistant with dual-model Ollama integration (gemma4:31b for text, granite3.2-vision for vision) with automatic screenshot analysis capabilities**
 - 📁 **Persistent scientific workspace (home folder mountable)**
 - 🧬 **Comprehensive scientific software suite**
 - 📊 **Data analysis tools (R, Python, Octave)**
@@ -124,7 +124,7 @@ AxonOS provides a comprehensive scientific computing environment with extensive 
 
 **AxonOS Assistant** is a native GTK application that provides AI-powered assistance within the AxonOS environment. It features:
 
-- **Dual-Model Ollama Integration**: Connects to local Ollama instance with command-r7b for text responses and granite3.2-vision for vision analysis
+- **Dual-Model Ollama Integration**: Connects to local Ollama instance with gemma4:31b for text responses and granite3.2-vision for vision analysis
 - **Vision Capabilities**: Desktop screenshot analysis with intelligent image resizing (1920x1080 → 1344x1344) for visual context understanding
 - **Scientific Context**: Aware of AxonOS environment and available tools
 - **Web Search**: Can search and summarize web content for research queries using Brave search

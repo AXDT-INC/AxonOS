@@ -39,7 +39,7 @@ The build process includes:
 3. **Ollama Installation**: AI model server
 4. **Model Downloads**: 
    - granite3-guardian (safety model)
-   - command-r7b (text model)
+   - gemma4:31b (text model)
    - granite3.2-vision (vision model)
 5. **Scientific Applications**: JupyterLab, RStudio, Spyder, UGENE, etc.
 6. **AxonOS Assistant**: Custom AI assistant application

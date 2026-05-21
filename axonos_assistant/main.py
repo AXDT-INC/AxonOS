@@ -241,14 +241,14 @@ class AxonOSChatWidget(Gtk.Window):
         self.messages = []  # Store (sender, message) tuples for re-rendering
         self.ollama_url = "http://localhost:11434/api/generate"
         self.vision_model = "granite3.2-vision"
-        self.text_model = "command-r7b"
+        self.text_model = "gemma4:31b"
         self.guardrail_model = "granite3-guardian"  # Added guardrail model
         self.current_screenshot = None  # Store the current screenshot for vision queries
         self.mcp_manager = None  # MCP client manager for OS context awareness
         self.mcp_context_enabled = True  # Enable MCP context by default
         
         # Guardrail settings
-        self.guardrail_enabled = True
+        self.guardrail_enabled = False
         self.guardrail_categories = ["harm", "jailbreak", "violence", "profanity"]  # Default categories
         self.guardrail_prompt_check = True   # Check user prompts
         self.guardrail_response_check = True  # Check AI responses
@@ -272,7 +272,7 @@ class AxonOSChatWidget(Gtk.Window):
             "• **Data Visualization**: Fiji (ImageJ), QGIS for geospatial analysis, GRASS GIS\n"
             "• **Molecular Modeling**: Web-based NGL Viewer for computational chemistry\n"
             "• **Decentralized Tools**: IPFS Desktop, Syncthing, EtherCalc, Remix IDE, Nault wallet(nault.cc)\n"
-            "• **AI/ML**: Ollama with command-r7b model for local inference\n"
+            "• **AI/ML**: Ollama with gemma4:31b model for local inference\n"
             "• **Computer Vision**: Integrated vision capabilities with automatic screenshot analysis - when users ask visual questions, I can see and analyze the screen content, scientific visualizations, and images\n"
             "• **Development**: Multi-language support via BeakerX, browser-based development tools\n"
             "• **Hardware Acceleration**: OpenCL support, NVIDIA GPU compatibility\n"
@@ -2446,10 +2446,10 @@ Please answer the user's question using this visual information along with your 
                 test_response = requests.get("http://localhost:11434/api/tags", timeout=5)
                 if test_response.status_code != 200:
                     print(f"Ollama connection test failed: {test_response.status_code}")
-                    return "Error: Cannot connect to Ollama service. Please ensure Ollama is running and the command-r7b model is loaded."
+                    return "Error: Cannot connect to Ollama service. Please ensure Ollama is running and the gemma4:31b model is loaded."
             except Exception as e:
                 print(f"Ollama connection test failed: {e}")
-                return "Error: Cannot connect to Ollama service. Please ensure Ollama is running and the command-r7b model is loaded."
+                return "Error: Cannot connect to Ollama service. Please ensure Ollama is running and the gemma4:31b model is loaded."
             
             response = requests.post(self.ollama_url, json=data, stream=True)
             print(f"Response status code: {response.status_code}")

@@ -71,6 +71,8 @@ const UI = {
     clipboardApplyingRemoteText: false,
     /** Single in-flight `readText()` — overlapping reads hang after host paste. */
     clipboardReadInFlight: null,
+    /** Host→remote clipboard only via the sidebar panel (avoids desktop input stalls). */
+    clipboardPanelOnly: true,
     /** WebRTC: last time/text we pushed from host to remote (pull or Ctrl+V paste). */
     webrtcHostPushAt: 0,
     webrtcHostPushText: "",
@@ -381,7 +383,9 @@ const UI = {
         if (clipboardClearButton) {
             clipboardClearButton.addEventListener('click', UI.clipboardClear);
         }
-        document.addEventListener('paste', UI.handleLocalClipboardPaste, true);
+        if (!UI.clipboardPanelOnly) {
+            document.addEventListener('paste', UI.handleLocalClipboardPaste, true);
+        }
     },
 
     clipboardHasBrowserPermission() {
@@ -518,6 +522,7 @@ const UI = {
 
     startClipboardAutoSync() {
         UI.stopClipboardAutoSync();
+        if (UI.clipboardPanelOnly) return;
         UI.clipboardAutoSyncEnabled = UI.clipboardHasBrowserPermission();
         if (!UI.clipboardAutoSyncEnabled) return;
         UI.pullLocalClipboardToRemote({ timeoutMs: 800 });
@@ -536,7 +541,7 @@ const UI = {
     },
 
     handleLocalClipboardPaste(e) {
-        if (!UI.connected) return;
+        if (!UI.connected || UI.clipboardPanelOnly) return;
         // WebRTC path registers its own capture-phase paste handler.
         if (typeof window.axonosWebRtcPasteClipboard === 'function') {
             return;
@@ -1213,6 +1218,19 @@ const UI = {
             .classList.add("noVNC_open");
         document.getElementById('noVNC_clipboard_button')
             .classList.add("noVNC_selected");
+
+        if (UI.clipboardPanelOnly) {
+            const sync = UI.syncClipboardPanelValueFromLocal();
+            if (sync && typeof sync.then === 'function') {
+                sync.then((ok) => {
+                    if (!ok) return;
+                    const text = document.getElementById('noVNC_clipboard_text').value;
+                    if (text && text !== UI.clipboardLastRemoteText) {
+                        UI.clipboardSend();
+                    }
+                });
+            }
+        }
     },
 
     closeClipboardPanel() {

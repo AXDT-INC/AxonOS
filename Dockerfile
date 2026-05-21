@@ -92,8 +92,9 @@ RUN curl --proto '=https' --tlsv1.2 -fsSL https://ollama.com/install.sh -o /tmp/
     sh /tmp/ollama_install.sh && \
     rm -f /tmp/ollama_install.sh
 
-# Pull the command-r7b model
-RUN ollama serve & sleep 5 && ollama pull granite3-guardian && ollama pull command-r7b && ollama pull granite3.2-vision
+# Pull the gemma4:31b model and install opencode
+RUN ollama serve & sleep 5 && ollama pull granite3-guardian && ollama pull gemma4:31b && ollama pull granite3.2-vision && \
+    curl -fsSL https://opencode.ai/install | bash
 
 # Create user and set password
 RUN useradd -ms /bin/bash $USER && echo "$USER:$PASSWORD" | chpasswd && adduser $USER sudo

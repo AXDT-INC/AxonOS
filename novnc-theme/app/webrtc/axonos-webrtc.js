@@ -205,20 +205,6 @@ export async function connectAxonOSWebRTC(opts) {
     ].join(';');
     cursor.innerHTML = '<svg width="18" height="24" viewBox="0 0 18 24" xmlns="http://www.w3.org/2000/svg"><path d="M1 1v18l5-5 3 8 3-1-3-8h7z" fill="white" stroke="black" stroke-width="1"/></svg>';
 
-    const pasteSink = document.createElement('textarea');
-    pasteSink.id = 'axonos_webrtc_paste_sink';
-    pasteSink.setAttribute('aria-hidden', 'true');
-    pasteSink.tabIndex = -1;
-    pasteSink.style.cssText = [
-        'position:fixed',
-        'left:-10000px',
-        'top:-10000px',
-        'width:1px',
-        'height:1px',
-        'opacity:0',
-        'pointer-events:none',
-    ].join(';');
-
     const pc = new RTCPeerConnection({ iceServers });
     const CLIPBOARD_MAX_CHARS = 512 * 1024;
     function clampClipboardText(text) {
@@ -407,11 +393,9 @@ export async function connectAxonOSWebRTC(opts) {
     if (container) {
         container.appendChild(video);
         container.appendChild(cursor);
-        container.appendChild(pasteSink);
     } else {
         document.body.appendChild(video);
         document.body.appendChild(cursor);
-        document.body.appendChild(pasteSink);
     }
 
     let inputScaleX = 1;
@@ -443,7 +427,6 @@ export async function connectAxonOSWebRTC(opts) {
     // session spawns cannot accumulate duplicate window handlers.
     const inputAbort = new AbortController();
     const inputSignal = inputAbort.signal;
-    const clipboardBeforeClickMs = 200;
 
     video.addEventListener('loadeddata', syncInputScale, { signal: inputSignal });
     window.addEventListener('resize', syncInputScale, { signal: inputSignal });
@@ -521,35 +504,6 @@ export async function connectAxonOSWebRTC(opts) {
             x: Math.round(localX * inputScaleX),
             y: Math.round(localY * inputScaleY),
         };
-    }
-
-    // Keeping pasteSink focused (rather than video) lets the browser deliver
-    // native paste events to it on Ctrl+V without needing clipboard permission.
-    function focusPasteSink() {
-        try {
-            pasteSink.focus({ preventScroll: true });
-        } catch {
-            try { pasteSink.focus(); } catch { /* ignore */ }
-        }
-    }
-
-    // Push host clipboard into the remote X CLIPBOARD on user gestures. The
-    // 1.5 s `startClipboardAutoSync` interval covers the steady state, but it
-    // can lag user actions (e.g. user copies on host then immediately right-
-    // clicks in remote — the context menu would open before the next tick),
-    // and `navigator.clipboard.readText()` from setInterval also silently
-    // rejects when the document briefly loses focus. Tying a pull to the
-    // mousedown that OPENS the remote context menu (and to focus /
-    // visibilitychange when the tab returns to foreground) makes the X
-    // CLIPBOARD fresh by the time the user lands on "Paste".
-    function kickClipboardSync() {
-        if (typeof UI.pullLocalClipboardToRemote !== 'function') return;
-        try {
-            const p = UI.pullLocalClipboardToRemote({ timeoutMs: 800 });
-            if (p && typeof p.catch === 'function') {
-                p.catch(() => { /* readText can reject when document lost focus */ });
-            }
-        } catch { /* ignore */ }
     }
 
     function domButtonMask(button) {
@@ -689,32 +643,10 @@ export async function connectAxonOSWebRTC(opts) {
     }
     window.addEventListener('mousemove', onWindowMouseMove, { signal: inputSignal });
 
-    function syncClipboardBeforeClick(ev) {
-        // Only right-click needs host clipboard on X CLIPBOARD before the
-        // remote context menu opens. Left/middle clicks must not call
-        // `readText()` — after host paste the API can hang for seconds.
-        // Never await on the click path; pointerdown may start this earlier.
-        if (ev.button !== 2) {
-            return;
-        }
-        if (typeof UI.pullLocalClipboardToRemote !== 'function') {
-            return;
-        }
-        try {
-            const p = UI.pullLocalClipboardToRemote({ timeoutMs: clipboardBeforeClickMs });
-            if (p && typeof p.catch === 'function') {
-                p.catch(() => { /* readText can reject when document lost focus */ });
-            }
-        } catch { /* ignore */ }
-    }
-
     /** Retain pointer coords when dragging outside the letterboxed video bounds. */
     function onVideoPointerDown(ev) {
         if (ev.pointerType === 'touch') {
             return;
-        }
-        if (ev.button === 2) {
-            syncClipboardBeforeClick(ev);
         }
         if (video.setPointerCapture && typeof video.setPointerCapture === 'function') {
             try {
@@ -793,10 +725,6 @@ export async function connectAxonOSWebRTC(opts) {
 
     function onVideoMouseDown(ev) {
         ev.preventDefault();
-        focusPasteSink();
-        if (ev.button === 2) {
-            syncClipboardBeforeClick(ev);
-        }
         pendingPress = {
             button: ev.button,
             clientX: ev.clientX,
@@ -826,7 +754,6 @@ export async function connectAxonOSWebRTC(opts) {
     window.addEventListener('pointerup', onPointerUp, { signal: inputSignal });
     window.addEventListener('pointercancel', onPointerCancel, { signal: inputSignal });
 
-    video.addEventListener('mouseenter', focusPasteSink, { signal: inputSignal });
     video.addEventListener('contextmenu', (ev) => {
         ev.preventDefault();
     }, { signal: inputSignal });
@@ -854,7 +781,6 @@ export async function connectAxonOSWebRTC(opts) {
 
     function onVisibilityChange() {
         if (document.visibilityState === 'visible') {
-            kickClipboardSync();
             if (currentMouseButtons !== 0) {
                 releaseMouseOnFocusLoss();
             }
@@ -863,53 +789,15 @@ export async function connectAxonOSWebRTC(opts) {
         }
     }
     window.addEventListener('blur', releaseMouseOnFocusLoss, { signal: inputSignal });
-    window.addEventListener('focus', kickClipboardSync, { signal: inputSignal });
     document.addEventListener('visibilitychange', onVisibilityChange, { signal: inputSignal });
 
-    function pasteTextToRemote(text) {
-        const s = clampClipboardText(String(text || ''));
-        sendClipboard({ t: 'paste', text: s });
-        if (UI && s) {
-            UI.clipboardLastLocalText = s;
-            UI.clipboardLastRemoteText = s;
-            if (typeof UI.markHostClipboardSentToRemote === 'function') {
-                UI.markHostClipboardSentToRemote(s);
-            }
-        }
-    }
-
     function isLocalTextTarget(target) {
-        if (!target || target === pasteSink) {
+        if (!target) {
             return false;
         }
         const tag = target.tagName ? target.tagName.toLowerCase() : '';
         return tag === 'input' || tag === 'textarea' || target.isContentEditable === true;
     }
-
-    window.addEventListener('paste', (ev) => {
-        if (!UI.connected) {
-            return;
-        }
-        if (isLocalTextTarget(ev.target)) {
-            return;
-        }
-        const text = ev.clipboardData ? ev.clipboardData.getData('text/plain') : '';
-        if (text) {
-            ev.preventDefault();
-            ev.stopImmediatePropagation();
-            pasteTextToRemote(text);
-            // Drain the sink so subsequent pastes start clean and keep focus on
-            // pasteSink so future Ctrl+V keystrokes also receive paste events.
-            pasteSink.value = '';
-            focusPasteSink();
-        }
-    }, { capture: true, signal: inputSignal });
-
-    // Tracks keys whose keydown we deliberately suppressed (e.g. Ctrl+V's V) so
-    // we can also drop the matching keyup and avoid sending the remote a stray
-    // keyup for a key it never saw pressed. Keyed by ev.code for browser-stable
-    // identity (independent of modifier-altered ev.key values).
-    const suppressedKeyups = new Set();
 
     window.addEventListener('keydown', (ev) => {
         if (!UI.connected) {
@@ -919,21 +807,6 @@ export async function connectAxonOSWebRTC(opts) {
             return;
         }
         if (ev.key) {
-            if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'v') {
-                // If pasteSink is focused (or we can focus it before the browser's
-                // paste action), let the browser dispatch a native paste event with
-                // clipboardData populated. The window paste listener forwards it to
-                // the remote desktop. This path needs no clipboard permission and
-                // therefore works even on freshly-rotated trycloudflare hostnames.
-                if (ev.target !== pasteSink) {
-                    pasteSink.value = '';
-                    focusPasteSink();
-                }
-                if (ev.code) {
-                    suppressedKeyups.add(ev.code);
-                }
-                return;
-            }
             ev.preventDefault();
             sendInput({
                 t: 'keydown',
@@ -956,11 +829,6 @@ export async function connectAxonOSWebRTC(opts) {
         }
         if (ev.key) {
             ev.preventDefault();
-            if (ev.code && suppressedKeyups.delete(ev.code)) {
-                // Matching keydown was intentionally not forwarded (paste shortcut).
-                // Drop the orphan keyup so the remote keymap state stays consistent.
-                return;
-            }
             sendInput({
                 t: 'keyup',
                 key: ev.key,
@@ -1045,24 +913,6 @@ export async function connectAxonOSWebRTC(opts) {
     UI.showStatus('Connected (WebRTC)');
     _setBanner('WebRTC: Connected', 'connected');
     setTimeout(_hideBanner, 2000);
-    try {
-        pasteSink.focus({ preventScroll: true });
-    } catch {
-        try { pasteSink.focus(); } catch { /* ignore */ }
-    }
-
-    // Host → remote clipboard auto-sync. Without this, the X CLIPBOARD inside
-    // the axonos session is only updated when the user explicitly hits Ctrl+V
-    // (which forwards clipboardData via the native paste event). Right-click →
-    // Paste in a remote app would then paste a stale X selection. Starting the
-    // poll here mirrors what the classic RFB path does in connectFinished.
-    if (typeof UI.startClipboardAutoSync === 'function') {
-        try {
-            UI.startClipboardAutoSync();
-        } catch (e) {
-            console.warn('AxonOS WebRTC clipboard auto-sync start failed', e);
-        }
-    }
 
     if (typeof UI._axgtStartSessionBillingPoll === 'function') {
         UI._axgtStartSessionBillingPoll();
@@ -1107,10 +957,6 @@ async function _cleanup(pc, video, sessionId, wallet) {
     const cursor = document.getElementById('axonos_webrtc_cursor');
     if (cursor && cursor.parentNode) {
         cursor.parentNode.removeChild(cursor);
-    }
-    const pasteSink = document.getElementById('axonos_webrtc_paste_sink');
-    if (pasteSink && pasteSink.parentNode) {
-        pasteSink.parentNode.removeChild(pasteSink);
     }
     _hideBanner();
 }

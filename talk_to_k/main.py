@@ -99,7 +99,7 @@ class TalkToKChatWidget(Gtk.Window):
         self.connect("button-press-event", self.on_window_button_press)
         self.messages = []  # Store (sender, message) tuples for re-rendering
         self.ollama_url = "http://localhost:11434/api/generate"
-        self.text_model = "command-r7b"
+        self.text_model = "gemma4:31b"
         
         self.conversation_history = []  # Store conversation for context
         
