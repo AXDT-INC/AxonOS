@@ -1029,6 +1029,81 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     }
 
+    function axonosResetQueueClientState() {
+        hideQueueOverlay();
+        axonosQueueJoinInFlight = false;
+        axonosLastAutoQueueJoinMs = 0;
+    }
+
+    window.axonosResetQueueClientState = axonosResetQueueClientState;
+    window.axonosHideQueueOverlay = function () {
+        axonosResetQueueClientState();
+    };
+
+    /** Clear stale queue/WebRTC gate state before a user-initiated Launch / Resume. */
+    window.axonosPrepareDesktopLaunch = function () {
+        axonosResetQueueClientState();
+        if (typeof UI !== 'undefined') {
+            UI.inhibitReconnect = false;
+            if (typeof UI.hideStatus === 'function') {
+                UI.hideStatus();
+            }
+        }
+        if (typeof UI !== 'undefined' && !UI.connected) {
+            var staleVideo = document.getElementById('axonos_webrtc_video');
+            if (staleVideo && staleVideo.parentNode) {
+                staleVideo.parentNode.removeChild(staleVideo);
+            }
+            if (typeof window.axonosWebRtcTeardown === 'function') {
+                Promise.resolve(window.axonosWebRtcTeardown()).catch(function () {});
+                window.axonosWebRtcTeardown = null;
+            }
+        }
+    };
+
+    function axonosClaimReasonNeedsWalletOrResume(claim) {
+        var reason = claim && claim.reason ? String(claim.reason) : '';
+        if (/prepaid|deposit|credit exhausted|billing unavailable|paused session|no longer available|expired/i.test(reason)) {
+            return true;
+        }
+        if (claim && (claim.paused_for_resume === true || claim.can_resume === true || claim.paused === true)) {
+            return true;
+        }
+        return !!window.axonosPausedResume;
+    }
+
+    function axonosOpenWalletForRecharge(claim, displayReason) {
+        window.axonosAllowVncConnect = false;
+        var creditDlg = document.getElementById('noVNC_credentials_dlg');
+        if (creditDlg) creditDlg.classList.add('noVNC_open');
+        var msg = displayReason || (claim && claim.reason) || 'Add prepaid credit to continue.';
+        setWalletUIState('axonos_wallet_state_insufficient', { balanceDisplay: String(msg) });
+        if (window.verifiedWalletAddress && typeof refreshDiscountQuote === 'function') {
+            refreshDiscountQuote(window.verifiedWalletAddress);
+        }
+    }
+
+    function axonosRouteClaimDeniedToRechargeOrResume(claim) {
+        if (window.axonosPausedResume && window.verifiedWalletAddress) {
+            if (window.axonosResumeClaimRetry) {
+                axonosOpenWalletForRecharge(claim, claim && claim.reason);
+                return;
+            }
+            axonosSyncWalletAccessForResume(window.verifiedWalletAddress).then(function (access) {
+                if (access.verified && window.axonosPausedResume.canResumeWithCredit !== false) {
+                    window.axonosResumeClaimRetry = true;
+                    axonosTryResumeDesktopAfterCredit().finally(function () {
+                        window.axonosResumeClaimRetry = false;
+                    });
+                    return;
+                }
+                axonosOpenWalletForRecharge(claim, claim && claim.reason);
+            });
+            return;
+        }
+        axonosOpenWalletForRecharge(claim, claim && claim.reason);
+    }
+
     function getRequestedProfile() {
         if (window.axonosPausedResume && window.axonosPausedResume.profile) {
             return window.axonosPausedResume.profile;
@@ -1339,51 +1414,8 @@ document.addEventListener("DOMContentLoaded", function() {
         return main;
     }
 
-    function handleSessionClaimDenied(claim, fallbackReason) {
-        if (typeof window.axonosHideConnectionLoader === 'function') {
-            window.axonosHideConnectionLoader(true);
-        }
+    function axonosRouteClaimDeniedToQueueOrStatus(claim, fallbackReason) {
         var reason = axonosFormatClaimDeniedMessage(claim, fallbackReason);
-        if (claim && claim.reason && /prepaid credit|insufficient prepaid/i.test(String(claim.reason))) {
-            if (window.axonosPausedResume && window.verifiedWalletAddress) {
-                if (window.axonosResumeClaimRetry) {
-                    window.axonosAllowVncConnect = false;
-                    var creditDlgBusy = document.getElementById('noVNC_credentials_dlg');
-                    if (creditDlgBusy) creditDlgBusy.classList.add('noVNC_open');
-                    setWalletUIState('axonos_wallet_state_insufficient', {
-                        balanceDisplay: String(claim.reason)
-                    });
-                    return;
-                }
-                axonosSyncWalletAccessForResume(window.verifiedWalletAddress).then(function (access) {
-                    if (access.verified && window.axonosPausedResume.canResumeWithCredit !== false) {
-                        window.axonosResumeClaimRetry = true;
-                        axonosTryResumeDesktopAfterCredit().finally(function () {
-                            window.axonosResumeClaimRetry = false;
-                        });
-                        return;
-                    }
-                    window.axonosAllowVncConnect = false;
-                    var creditDlg = document.getElementById('noVNC_credentials_dlg');
-                    if (creditDlg) creditDlg.classList.add('noVNC_open');
-                    setWalletUIState('axonos_wallet_state_insufficient', {
-                        balanceDisplay: String(claim.reason)
-                    });
-                    if (typeof refreshDiscountQuote === 'function') {
-                        refreshDiscountQuote(window.verifiedWalletAddress);
-                    }
-                });
-                return;
-            }
-            window.axonosAllowVncConnect = false;
-            var creditDlg = document.getElementById('noVNC_credentials_dlg');
-            if (creditDlg) creditDlg.classList.add('noVNC_open');
-            setWalletUIState('axonos_wallet_state_insufficient', { balanceDisplay: String(claim.reason) });
-            if (window.verifiedWalletAddress && typeof refreshDiscountQuote === 'function') {
-                refreshDiscountQuote(window.verifiedWalletAddress);
-            }
-            return;
-        }
         if (claim && claim.allocation_status === 'failed') {
             showQueueOverlay({
                 reason: reason + ' Choose a smaller profile or retry after administrators fix launcher/Docker GPU access.',
@@ -1470,13 +1502,32 @@ document.addEventListener("DOMContentLoaded", function() {
         });
     }
 
+    function handleSessionClaimDenied(claim, fallbackReason) {
+        if (typeof window.axonosHideConnectionLoader === 'function') {
+            window.axonosHideConnectionLoader(true);
+        }
+        if (axonosClaimReasonNeedsWalletOrResume(claim)) {
+            axonosRouteClaimDeniedToRechargeOrResume(claim);
+            return;
+        }
+        if (window.verifiedWalletAddress && typeof axonosRefreshPausedResumeStatus === 'function') {
+            axonosRefreshPausedResumeStatus().then(function () {
+                if (window.axonosPausedResume) {
+                    axonosRouteClaimDeniedToRechargeOrResume(claim);
+                    return;
+                }
+                axonosRouteClaimDeniedToQueueOrStatus(claim, fallbackReason);
+            }).catch(function () {
+                axonosRouteClaimDeniedToQueueOrStatus(claim, fallbackReason);
+            });
+            return;
+        }
+        axonosRouteClaimDeniedToQueueOrStatus(claim, fallbackReason);
+    }
+
     /** Called from ui.js when Launch runs connect while session is not claimed (e.g. after queue leave). */
     window.axonosOnSessionClaimDenied = function (claim) {
         handleSessionClaimDenied(claim, 'Desktop in use.');
-    };
-    // Called from ui.js on explicit disconnect / teardown to prevent stale "false queue" UI.
-    window.axonosHideQueueOverlay = function () {
-        hideQueueOverlay();
     };
 
     function tryConnectAfterClaim() {
@@ -1493,9 +1544,18 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 
     function startQueuePolling() {
-        if (axonosQueuePollId) return;
+        if (axonosQueuePollId || window.axonosPausedResume) return;
         function poll() {
+            if (window.axonosPausedResume) {
+                axonosResetQueueClientState();
+                return;
+            }
             sessionStatus().then(function (data) {
+                if (data && (data.can_resume === true || data.paused === true)) {
+                    axonosApplySessionStatusToResumeUi(data, window.verifiedWalletAddress);
+                    axonosResetQueueClientState();
+                    return;
+                }
                 var qOverlay = document.getElementById('axonos_queue_overlay');
                 var queueVisible = qOverlay && !qOverlay.classList.contains('axonos-queue-overlay--hidden');
                 if (data.reason) {

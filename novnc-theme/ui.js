@@ -1466,11 +1466,12 @@ const UI = {
             return;
         }
 
-        if (window.axonosPausedResume &&
-            typeof window.axonosResumeDesktopConnectIfPaused === 'function' &&
-            window.axonosResumeDesktopConnectIfPaused()) {
-            return;
+        if (typeof window.axonosPrepareDesktopLaunch === 'function') {
+            window.axonosPrepareDesktopLaunch();
+        } else if (typeof window.axonosHideQueueOverlay === 'function') {
+            window.axonosHideQueueOverlay();
         }
+        UI.inhibitReconnect = false;
 
         // Check if wallet is verified before connecting
         if (!window.verifiedWalletAddress) {
@@ -1507,64 +1508,79 @@ const UI = {
         // AxonOS gate rejects WebSocket upgrade unless this wallet owns the active session
         // (see websockify_gate / gate_server). Launch previously skipped claim if the user
         // left the queue and clicked connect — server returned 403 / abnormal close (1006).
-        UI._axonosFetchSessionClaim().then((claim) => {
-            const granted = claim && (claim.granted === true || claim.granted === 'true');
-            if (!granted) {
+        const runSessionClaim = () => {
+            if (window.axonosPausedResume &&
+                typeof window.axonosResumeDesktopConnectIfPaused === 'function' &&
+                window.axonosResumeDesktopConnectIfPaused()) {
+                return;
+            }
+            UI._axonosFetchSessionClaim().then((claim) => {
+                const granted = claim && (claim.granted === true || claim.granted === 'true');
+                if (!granted) {
+                    if (typeof window.axonosHideConnectionLoader === 'function') {
+                        window.axonosHideConnectionLoader(true);
+                    }
+                    UI.updateVisualState('disconnected');
+                    const reason = (claim && claim.reason) ? String(claim.reason) : _('Could not claim desktop session.');
+                    UI.showStatus(reason, 'warn');
+                    if (typeof window.axonosOnSessionClaimDenied === 'function') {
+                        window.axonosOnSessionClaimDenied(claim || {});
+                    }
+                    return;
+                }
+                if (claim && claim.resumed === true && typeof window.axonosRefreshPausedResumeStatus === 'function') {
+                    window.axonosPausedResume = null;
+                    window.axonosRefreshPausedResumeStatus();
+                    UI.showStatus(_('Resumed your saved desktop session'), 'normal', 2500);
+                } else if (Array.isArray(claim.assigned_gpu_ids) && claim.assigned_gpu_ids.length > 0) {
+                    UI.showStatus(`Session active on GPU(s): ${claim.assigned_gpu_ids.join(',')}`, 'normal', 2500);
+                } else if (claim && claim.allocation_status === 'allocating') {
+                    UI.showStatus(_('Allocating GPUs...'), 'normal', 2000);
+                }
+                UI.closeConnectPanel();
+                UI.updateVisualState('connecting');
+                (async () => {
+                    let usedWebRtc = false;
+                    const cfgPeek = await fetch('./api/config', { credentials: 'include' })
+                        .then((r) => r.json())
+                        .catch(() => ({}));
+                    if (cfgPeek.webrtc_enabled) {
+                        try {
+                            const mod = await import('./webrtc/axonos-webrtc.js');
+                            usedWebRtc = await mod.connectAxonOSWebRTC({ UI });
+                        } catch (weErr) {
+                            Log.Warn('AxonOS WebRTC path failed: ' + weErr);
+                        }
+                        if (!usedWebRtc && cfgPeek.webrtc_fallback_enabled === false) {
+                            if (typeof window.axonosHideConnectionLoader === 'function') {
+                                window.axonosHideConnectionLoader(true);
+                            }
+                            UI.updateVisualState('disconnected');
+                            UI.showStatus(_('WebRTC connection is required but failed. Check STUN/TURN or try again.'), 'error');
+                            return;
+                        }
+                    }
+                    if (!usedWebRtc) {
+                        UI._axonosCreateRfbConnection(password, includeQueryAuthToken);
+                    }
+                })();
+            }).catch((err) => {
+                Log.Error('AxonOS session claim failed: ' + err);
                 if (typeof window.axonosHideConnectionLoader === 'function') {
                     window.axonosHideConnectionLoader(true);
                 }
                 UI.updateVisualState('disconnected');
-                const reason = (claim && claim.reason) ? String(claim.reason) : _('Could not claim desktop session.');
-                UI.showStatus(reason, 'warn');
-                if (typeof window.axonosOnSessionClaimDenied === 'function') {
-                    window.axonosOnSessionClaimDenied(claim || {});
-                }
-                return;
-            }
-            if (claim && claim.resumed === true && typeof window.axonosRefreshPausedResumeStatus === 'function') {
-                window.axonosPausedResume = null;
-                window.axonosRefreshPausedResumeStatus();
-                UI.showStatus(_('Resumed your saved desktop session'), 'normal', 2500);
-            } else if (Array.isArray(claim.assigned_gpu_ids) && claim.assigned_gpu_ids.length > 0) {
-                UI.showStatus(`Session active on GPU(s): ${claim.assigned_gpu_ids.join(',')}`, 'normal', 2500);
-            } else if (claim && claim.allocation_status === 'allocating') {
-                UI.showStatus(_('Allocating GPUs...'), 'normal', 2000);
-            }
-            UI.closeConnectPanel();
-            UI.updateVisualState('connecting');
-            (async () => {
-                let usedWebRtc = false;
-                const cfgPeek = await fetch('./api/config', { credentials: 'include' })
-                    .then((r) => r.json())
-                    .catch(() => ({}));
-                if (cfgPeek.webrtc_enabled) {
-                    try {
-                        const mod = await import('./webrtc/axonos-webrtc.js');
-                        usedWebRtc = await mod.connectAxonOSWebRTC({ UI });
-                    } catch (weErr) {
-                        Log.Warn('AxonOS WebRTC path failed: ' + weErr);
-                    }
-                    if (!usedWebRtc && cfgPeek.webrtc_fallback_enabled === false) {
-                        if (typeof window.axonosHideConnectionLoader === 'function') {
-                            window.axonosHideConnectionLoader(true);
-                        }
-                        UI.updateVisualState('disconnected');
-                        UI.showStatus(_('WebRTC connection is required but failed. Check STUN/TURN or try again.'), 'error');
-                        return;
-                    }
-                }
-                if (!usedWebRtc) {
-                    UI._axonosCreateRfbConnection(password, includeQueryAuthToken);
-                }
-            })();
-        }).catch((err) => {
-            Log.Error('AxonOS session claim failed: ' + err);
-            if (typeof window.axonosHideConnectionLoader === 'function') {
-                window.axonosHideConnectionLoader(true);
-            }
-            UI.updateVisualState('disconnected');
-            UI.showStatus(_('Could not claim desktop session. Check network.'), 'error');
-        });
+                UI.showStatus(_('Could not claim desktop session. Check network.'), 'error');
+            });
+        };
+
+        if (typeof window.axonosRefreshPausedResumeStatus === 'function') {
+            window.axonosRefreshPausedResumeStatus()
+                .catch(() => null)
+                .finally(runSessionClaim);
+        } else {
+            runSessionClaim();
+        }
     },
 
     disconnect(options) {
@@ -1584,7 +1600,13 @@ const UI = {
         UI.updateVisualState('disconnecting');
 
         // Clear any stale queue overlay/poller immediately on explicit disconnect.
-        if (typeof window.axonosHideQueueOverlay === 'function') {
+        if (typeof window.axonosResetQueueClientState === 'function') {
+            try {
+                window.axonosResetQueueClientState();
+            } catch (err) {
+                Log.Warn("AxonOS queue overlay reset failed: " + err);
+            }
+        } else if (typeof window.axonosHideQueueOverlay === 'function') {
             try {
                 window.axonosHideQueueOverlay();
             } catch (err) {
@@ -1634,6 +1656,11 @@ const UI = {
         UI.inhibitReconnect = true;
         if (typeof window !== 'undefined') {
             window.axonosAllowVncConnect = false;
+        }
+        if (typeof window.axonosResetQueueClientState === 'function') {
+            window.axonosResetQueueClientState();
+        } else if (typeof window.axonosHideQueueOverlay === 'function') {
+            window.axonosHideQueueOverlay();
         }
         const resumeHint = ' Your desktop is saved — add credit, then use Resume desktop session (same GPUs).';
         UI._axgtUpdateUsageOverlay(
@@ -1733,7 +1760,13 @@ const UI = {
 
         UI.rfb = undefined;
 
-        if (typeof window.axonosHideQueueOverlay === 'function') {
+        if (typeof window.axonosResetQueueClientState === 'function') {
+            try {
+                window.axonosResetQueueClientState();
+            } catch (err) {
+                Log.Warn("AxonOS queue overlay reset failed: " + err);
+            }
+        } else if (typeof window.axonosHideQueueOverlay === 'function') {
             try {
                 window.axonosHideQueueOverlay();
             } catch (err) {
@@ -1786,7 +1819,7 @@ const UI = {
         if (typeof window.axonosWebRtcTeardown === 'function') {
             return true;
         }
-        return !!document.getElementById('axonos_webrtc_video');
+        return false;
     },
 
     /** True only on successful wallet-status when prepaid credit is actually exhausted. */
@@ -1863,7 +1896,13 @@ const UI = {
         if (typeof window.axonosHideConnectionLoader === 'function') {
             window.axonosHideConnectionLoader(true);
         }
-        if (typeof window.axonosHideQueueOverlay === 'function') {
+        if (typeof window.axonosResetQueueClientState === 'function') {
+            try {
+                window.axonosResetQueueClientState();
+            } catch (err) {
+                Log.Warn("AxonOS queue overlay reset failed: " + err);
+            }
+        } else if (typeof window.axonosHideQueueOverlay === 'function') {
             try {
                 window.axonosHideQueueOverlay();
             } catch (err) {
