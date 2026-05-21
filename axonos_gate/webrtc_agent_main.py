@@ -197,7 +197,7 @@ def _xdotool_key(obj: dict[str, Any]) -> str:
     return ""
 
 
-def _reap_xclip_popen(proc: subprocess.Popen[bytes] | None) -> None:
+def _reap_xclip_popen(proc: subprocess.Popen[bytes] | None, *, fast: bool = False) -> None:
     """Wait for a prior xclip Popen to finish; avoid SIGTERM during its handoff.
 
     xclip (silent mode) claims the selection, forks a child to serve it, and the
@@ -209,6 +209,14 @@ def _reap_xclip_popen(proc: subprocess.Popen[bytes] | None) -> None:
     failure mode; Ctrl+V usually sends a single ``t:paste`` so it did not hit it.
     """
     if proc is None:
+        return
+    if fast:
+        try:
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait(timeout=0.2)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
         return
     try:
         proc.wait(timeout=3.0)
@@ -236,7 +244,7 @@ def _set_x_clipboard(text: str, env: dict[str, str]) -> bool:
     ok = False
     for selection in ("clipboard", "primary"):
         old = _clipboard_owners.pop(selection, None)
-        _reap_xclip_popen(old)
+        _reap_xclip_popen(old, fast=True)
         try:
             p = subprocess.Popen(
                 ["xclip", "-selection", selection],
@@ -687,45 +695,43 @@ async def _run_session(job: dict[str, Any]) -> None:
     key = _agent_key()
     gate = _gate_url()
     applied_ice: set[str] = set()
+    clipboard_env = _display_env()
+    clip_channel_out: list[Any] = [None]
+    input_channel_out: list[Any] = [None]
+    last_clipboard = ""
+    clipboard_queue: asyncio.Queue[str] | None = None
+    clipboard_worker_task: asyncio.Task | None = None
+    clipboard_poll_task: asyncio.Task | None = None
+    input_worker_task: asyncio.Task | None = None
+    session_tasks_started = False
 
-    @pc.on("datachannel")
-    def on_dc(channel) -> None:  # type: ignore[no-untyped-def]
-        if channel.label != "axonos-input":
+    def _enqueue_client_clipboard(raw: str) -> None:
+        if clipboard_queue is None:
             return
-        clipboard_env = _display_env()
-        _reset_mouse_button_state(clipboard_env)
-        last_clipboard = ""
+        if len(raw) > 600_000:
+            logger.debug("clipboard message too large (%s bytes); dropped", len(raw))
+            return
+        try:
+            clipboard_queue.put_nowait(raw)
+        except asyncio.QueueFull:
+            try:
+                clipboard_queue.get_nowait()
+                clipboard_queue.task_done()
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                clipboard_queue.put_nowait(raw)
+            except asyncio.QueueFull:
+                logger.debug("clipboard queue full; dropped inbound")
 
-        async def poll_remote_clipboard() -> None:
-            nonlocal last_clipboard
-            while pc.connectionState not in ("failed", "closed"):
-                try:
-                    # Use CLIPBOARD only here. `_get_x_clipboard` also reads PRIMARY;
-                    # on Xfce the desktop icon label (e.g. "New File") lives in PRIMARY
-                    # when the icon is selected. Pushing that to the browser runs
-                    # `navigator.clipboard.writeText`, which stomps the host OS
-                    # clipboard so `readText()` + host→remote sync paste "New File"
-                    # instead of what the user copied on the host. Explicit remote
-                    # copies still hit CLIPBOARD; PRIMARY-only apps can set
-                    # WEBRTC_CLIPBOARD_POLL_PRIMARY=1 to restore the old behavior.
-                    text = await asyncio.to_thread(_get_x_clipboard_for_browser_poll, clipboard_env)
-                    if text and text != last_clipboard:
-                        last_clipboard = text
-                        channel.send(json.dumps({"t": "clipboard", "text": text}))
-                except Exception as e:
-                    logger.debug("clipboard poll: %s", e)
-                await asyncio.sleep(1.0)
-
-        clipboard_task = asyncio.create_task(poll_remote_clipboard())
-
-        # Single-consumer queue keeps the data-channel callback non-blocking while
-        # preserving message order. Without this, a blocking xdotool/xclip call in
-        # `_apply_input_json` (notably the 80 ms sleep + ctrl+v injection on paste)
-        # stalls the event loop and freezes subsequent mouse clicks.
-        input_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=512)
-        clipboard_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=32)
+    def _ensure_clipboard_worker() -> None:
+        nonlocal clipboard_queue, clipboard_worker_task
+        if clipboard_worker_task is not None:
+            return
+        clipboard_queue = asyncio.Queue(maxsize=32)
 
         async def clipboard_worker() -> None:
+            assert clipboard_queue is not None
             while True:
                 msg = await clipboard_queue.get()
                 try:
@@ -737,6 +743,64 @@ async def _run_session(job: dict[str, Any]) -> None:
 
         clipboard_worker_task = asyncio.create_task(clipboard_worker())
 
+    async def poll_remote_clipboard() -> None:
+        nonlocal last_clipboard
+        while pc.connectionState not in ("failed", "closed"):
+            try:
+                text = await asyncio.to_thread(_get_x_clipboard_for_browser_poll, clipboard_env)
+                if text and text != last_clipboard:
+                    last_clipboard = text
+                    outbound = clip_channel_out[0] or input_channel_out[0]
+                    if outbound is not None:
+                        try:
+                            outbound.send(json.dumps({"t": "clipboard", "text": text}))
+                        except Exception as e:
+                            logger.debug("clipboard poll send: %s", e)
+            except Exception as e:
+                logger.debug("clipboard poll: %s", e)
+            await asyncio.sleep(1.0)
+
+    def _start_session_io_tasks() -> None:
+        nonlocal clipboard_poll_task, session_tasks_started
+        if session_tasks_started:
+            return
+        session_tasks_started = True
+        _ensure_clipboard_worker()
+        clipboard_poll_task = asyncio.create_task(poll_remote_clipboard())
+
+    def _cancel_session_io_tasks() -> None:
+        if clipboard_poll_task is not None:
+            clipboard_poll_task.cancel()
+        if clipboard_worker_task is not None:
+            clipboard_worker_task.cancel()
+        if input_worker_task is not None:
+            input_worker_task.cancel()
+        _reset_mouse_button_state(clipboard_env)
+
+    @pc.on("datachannel")
+    def on_dc(channel) -> None:  # type: ignore[no-untyped-def]
+        nonlocal input_worker_task
+
+        if channel.label == "axonos-clipboard":
+            clip_channel_out[0] = channel
+            _start_session_io_tasks()
+
+            @channel.on("message")
+            def on_clip_msg(message) -> None:  # type: ignore[no-untyped-def]
+                if isinstance(message, str):
+                    _enqueue_client_clipboard(message)
+
+            return
+
+        if channel.label != "axonos-input":
+            return
+
+        input_channel_out[0] = channel
+        _reset_mouse_button_state(clipboard_env)
+        _start_session_io_tasks()
+
+        input_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=512)
+
         async def input_worker() -> None:
             while True:
                 msg = await input_queue.get()
@@ -747,35 +811,22 @@ async def _run_session(job: dict[str, Any]) -> None:
                 finally:
                     input_queue.task_done()
 
-        input_task = asyncio.create_task(input_worker())
+        input_worker_task = asyncio.create_task(input_worker())
 
         @channel.on("message")
         def on_msg(message) -> None:  # type: ignore[no-untyped-def]
             if not isinstance(message, str):
                 return
             kind = _input_kind_from_raw(message)
+            # Legacy clients still send clipboard on axonos-input.
             if kind in ("clipboard", "paste"):
-                try:
-                    clipboard_queue.put_nowait(message)
-                except asyncio.QueueFull:
-                    try:
-                        clipboard_queue.get_nowait()
-                        clipboard_queue.task_done()
-                    except asyncio.QueueEmpty:
-                        pass
-                    try:
-                        clipboard_queue.put_nowait(message)
-                    except asyncio.QueueFull:
-                        logger.debug("clipboard queue full; dropped %s", kind)
+                _enqueue_client_clipboard(message)
                 return
             _enqueue_rtc_input(input_queue, message)
 
         @channel.on("close")
         def on_close() -> None:
-            clipboard_task.cancel()
-            clipboard_worker_task.cancel()
-            input_task.cancel()
-            _reset_mouse_button_state(clipboard_env)
+            _cancel_session_io_tasks()
 
     try:
         from PIL import Image  # type: ignore[import-untyped]

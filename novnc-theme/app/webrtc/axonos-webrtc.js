@@ -188,13 +188,33 @@ export async function connectAxonOSWebRTC(opts) {
     ].join(';');
 
     const pc = new RTCPeerConnection({ iceServers });
-    const dc = pc.createDataChannel('axonos-input', { ordered: true });
-    window.axonosWebRtcPasteClipboard = (text, pasteNow) => {
-        if (dc.readyState !== 'open') {
+    const CLIPBOARD_MAX_CHARS = 512 * 1024;
+    function clampClipboardText(text) {
+        const s = String(text || '');
+        return s.length <= CLIPBOARD_MAX_CHARS ? s : s.slice(0, CLIPBOARD_MAX_CHARS);
+    }
+    // Separate channels so multi-MB clipboard JSON cannot queue ahead of clicks
+    // on the ordered SCTP stream (the root cause when host clipboard is large).
+    const dcInput = pc.createDataChannel('axonos-input', { ordered: true });
+    const dcClip = pc.createDataChannel('axonos-clipboard', { ordered: true });
+    function sendClipboard(obj) {
+        if (dcClip.readyState !== 'open') {
             return false;
         }
-        dc.send(JSON.stringify({ t: pasteNow ? 'paste' : 'clipboard', text: String(text || '') }));
-        return true;
+        try {
+            const payload = { ...obj };
+            if (payload.text !== undefined) {
+                payload.text = clampClipboardText(payload.text);
+            }
+            dcClip.send(JSON.stringify(payload));
+            return true;
+        } catch (e) {
+            console.warn('AxonOS WebRTC clipboard send failed', e);
+            return false;
+        }
+    }
+    window.axonosWebRtcPasteClipboard = (text, pasteNow) => {
+        return sendClipboard({ t: pasteNow ? 'paste' : 'clipboard', text });
     };
 
     pc.addTransceiver('video', { direction: 'recvonly' });
@@ -393,20 +413,21 @@ export async function connectAxonOSWebRTC(opts) {
     video.addEventListener('loadeddata', syncInputScale, { signal: inputSignal });
     window.addEventListener('resize', syncInputScale, { signal: inputSignal });
 
-    let inputChannelOpen = dc.readyState === 'open';
+    let inputChannelOpen = dcInput.readyState === 'open';
     // RFB-style bitmask: 1=left, 2=middle, 4=right (1 << DOM button index).
     let currentMouseButtons = 0;
     // Deferred press: simple clicks send one atomic `click`; drags send mousedown after move.
     const DRAG_THRESHOLD_PX = 4;
     /** @type {{ button: number, clientX: number, clientY: number } | null} */
     let pendingPress = null;
+    let capturedPointerId = null;
 
     function sendInput(obj) {
-        if (!inputChannelOpen || dc.readyState !== 'open') {
+        if (!inputChannelOpen || dcInput.readyState !== 'open') {
             return false;
         }
         try {
-            dc.send(JSON.stringify(obj));
+            dcInput.send(JSON.stringify(obj));
             return true;
         } catch (e) {
             console.warn('AxonOS WebRTC input send failed', e);
@@ -414,16 +435,16 @@ export async function connectAxonOSWebRTC(opts) {
         }
     }
 
-    dc.addEventListener('open', () => {
+    dcInput.addEventListener('open', () => {
         inputChannelOpen = true;
         currentMouseButtons = 0;
     });
-    dc.addEventListener('close', () => {
+    dcInput.addEventListener('close', () => {
         inputChannelOpen = false;
         currentMouseButtons = 0;
     });
 
-    dc.onmessage = (ev) => {
+    dcClip.onmessage = (ev) => {
         let msg = null;
         try {
             msg = JSON.parse(ev.data);
@@ -663,6 +684,7 @@ export async function connectAxonOSWebRTC(opts) {
         if (video.setPointerCapture && typeof video.setPointerCapture === 'function') {
             try {
                 video.setPointerCapture(ev.pointerId);
+                capturedPointerId = ev.pointerId;
             } catch {
                 /* ignore */
             }
@@ -683,6 +705,9 @@ export async function connectAxonOSWebRTC(opts) {
         }
         try {
             video.releasePointerCapture(ev.pointerId);
+            if (capturedPointerId === ev.pointerId) {
+                capturedPointerId = null;
+            }
         } catch {
             /* ignore: not capturing or unsupported */
         }
@@ -779,6 +804,16 @@ export async function connectAxonOSWebRTC(opts) {
 
     function releaseMouseOnFocusLoss() {
         pendingPress = null;
+        if (
+            capturedPointerId !== null &&
+            video.releasePointerCapture &&
+            typeof video.releasePointerCapture === 'function'
+        ) {
+            try {
+                video.releasePointerCapture(capturedPointerId);
+            } catch { /* ignore */ }
+            capturedPointerId = null;
+        }
         resetMouseInputState(null, true);
     }
 
@@ -797,8 +832,8 @@ export async function connectAxonOSWebRTC(opts) {
     document.addEventListener('visibilitychange', onVisibilityChange, { signal: inputSignal });
 
     function pasteTextToRemote(text) {
-        const s = String(text || '');
-        sendInput({ t: 'paste', text: s });
+        const s = clampClipboardText(String(text || ''));
+        sendClipboard({ t: 'paste', text: s });
         if (UI && s) {
             UI.clipboardLastLocalText = s;
             UI.clipboardLastRemoteText = s;

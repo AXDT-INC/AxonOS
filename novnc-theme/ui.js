@@ -440,6 +440,10 @@ const UI = {
 
     _pushLocalClipboardText(text) {
         if (typeof text !== 'string') return false;
+        const maxChars = 512 * 1024;
+        if (text.length > maxChars) {
+            text = text.slice(0, maxChars);
+        }
         // Dedupe only on text we have already pushed to the remote.
         if (text === UI.clipboardLastLocalText) {
             return false;
