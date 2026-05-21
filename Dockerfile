@@ -305,6 +305,14 @@ ENV LD_LIBRARY_PATH=/opt/openmpi/lib:/opt/ucx/lib:${NVHPC_COMM_LIBS}/nvshmem_cuf
 ENV OMPI_MCA_btl=vader,self,tcp
 ENV OMPI_MCA_btl_base_warn_component_unused=0
 
+# XFCE is started by supervisord with environment= (subset only); desktop shells do not inherit Docker ENV.
+RUN echo 'export OMPI_MCA_btl=vader,self,tcp' > /etc/profile.d/openmpi-mca.sh && \
+    echo 'export OMPI_MCA_btl_base_warn_component_unused=0' >> /etc/profile.d/openmpi-mca.sh && \
+    echo 'export OMPI_MCA_btl=vader,self,tcp' >> /home/aXonian/.bashrc && \
+    echo 'export OMPI_MCA_btl_base_warn_component_unused=0' >> /home/aXonian/.bashrc && \
+    echo 'export OMPI_MCA_btl=vader,self,tcp' >> /home/aXonian/.profile && \
+    echo 'export OMPI_MCA_btl_base_warn_component_unused=0' >> /home/aXonian/.profile
+
 # Ensure NVSHMEM runtime libraries are discoverable (libnvshmem_host.so.*)
 # Add all nvshmem lib dirs so gmx works in desktop terminals (e.g. 12.2 vs 12.9).
 RUN set -e; \
