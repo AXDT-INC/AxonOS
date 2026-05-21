@@ -69,3 +69,9 @@
   - [x] WebRTC billing poll regression (`ff3171d`): tighten wallet-status credit-exhausted check (ignore 401/400), restart poll on Launch when session active, keep poll alive after queue leave on active WebRTC
   - [x] Credit exhaustion: pause session + preserve container for resume after top-up (`AXGT_SESSION_PRESERVE_ON_CREDIT_EXHAUST`, default true)
   - [x] Resume workflow UI: hide GPU picker, show saved-session panel, claim uses paused profile/GPUs (not new selection)
+  - [ ] **GPU-accelerated WebRTC capture/encode (NVENC)** — current path is CPU-only (`mss` + Pillow resize + aiortc software encode); 200 MB/s link is not the bottleneck
+    - [ ] Add FFmpeg with `h264_nvenc` to image; verify `libnvidia-encode` in session containers (`--gpus all`)
+    - [ ] Optional `WEBRTC_CAPTURE_BACKEND=nvenc` — FFmpeg x11grab → NVENC pipeline fed into aiortc `MediaPlayer`; keep `mss`/`ScreenVideoTrack` as fallback
+    - [ ] Raise target FPS (`WEBRTC_CAPTURE_FPS=60` or default bump from 15); keep 5–60 clamp for degraded/config override
+    - [ ] Validate delivered FPS via client metrics / WebRTC stats on real GPU stack (capture may still cap below 60 on busy desktops)
+    - [ ] Longer term: PipeWire/DMA-BUF screencast for zero-copy GPU capture (requires desktop stack changes)
