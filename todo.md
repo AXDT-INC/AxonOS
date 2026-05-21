@@ -75,3 +75,23 @@
     - [ ] Raise target FPS (`WEBRTC_CAPTURE_FPS=60` or default bump from 15); keep 5–60 clamp for degraded/config override
     - [ ] Validate delivered FPS via client metrics / WebRTC stats on real GPU stack (capture may still cap below 60 on busy desktops)
     - [ ] Longer term: PipeWire/DMA-BUF screencast for zero-copy GPU capture (requires desktop stack changes)
+
+- [x] **Sidebar session controls — Detach vs End session (2026-05)**
+  - **Product model**
+    - [x] **End session** (power button): confirm → `POST /api/session/release` + viewer teardown
+    - [x] **Detach** (sidebar chain icon): confirm → `skipRelease` + home panel, session stays **`active`**
+    - [x] **Tab/window close**: `pagehide` + `fetch` keepalive release (F5/Ctrl+R skips via `sessionStorage`)
+  - **Proposal 1 — Power button → End session**
+    - [x] Removed `#noVNC_power` panel; single-click `UI.endSession()` → `UI.disconnect()`
+    - [x] Renamed control copy to **End session**
+    - [x] **Restart desktop services** moved to Settings → Advanced (`POST /api/session/restart`)
+  - **Proposal 2 — Disconnect → Detach**
+    - [x] `UI.detach()` + `window.axonosSessionDetached`; billing poll via `_axgtSessionBillingActive()`
+    - [x] Ticker + wallet hints updated in `vnc.html`
+  - **Tab close → release**
+    - [x] `addAxonosSessionLifecycleHandlers()` in `ui.js`
+    - [x] Reload detection (F5 / Ctrl+R / beforeunload)
+  - **Audit**
+    - [x] `_axgtUsageOverlayExitToHome()` uses `skipRelease` (paused session preserved)
+    - [x] Credit exhaustion + deposit/resume `skipRelease` paths unchanged
+  - [ ] Manual test checklist: Detach → home → heartbeats → relaunch; End session → container gone; tab close → release; credit pause/resume unaffected
