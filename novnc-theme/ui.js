@@ -410,22 +410,7 @@ const UI = {
 
     syncClipboardPanelValueFromLocal() {
         if (!UI.clipboardHasBrowserPermission()) return Promise.resolve(false);
-        return navigator.clipboard.readText()
-            .then((text) => {
-                if (typeof text !== 'string') return false;
-                // Only refresh the panel display; do NOT seed
-                // `clipboardLastLocalText`. Pre-seeding the dedup state from
-                // the post-connect prime made `pullLocalClipboardToRemote`'s
-                // very first tick (and every subsequent tick reading the same
-                // text) believe the value had already been pushed to the
-                // remote, so right-click → Paste in remote apps kept seeing a
-                // stale X CLIPBOARD until the user changed host clipboard
-                // content. The dedup state is now owned solely by the
-                // actual sync paths (push success, remote→host echo).
-                UI.setClipboardTextarea(text);
-                return true;
-            })
-            .catch(() => false);
+        return UI.pullLocalClipboardToRemote({ timeoutMs: 800, panelOnly: true });
     },
 
     pushRemoteClipboardToLocal(text) {
@@ -508,6 +493,10 @@ const UI = {
             .then((text) => {
                 if (text === '__clipboard_timeout__') return false;
                 if (typeof text !== 'string') return false;
+                if (opts && opts.panelOnly === true) {
+                    UI.setClipboardTextarea(text);
+                    return true;
+                }
                 return UI._pushLocalClipboardText(text);
             })
             .catch(() => false)
@@ -526,7 +515,6 @@ const UI = {
     startClipboardAutoSync() {
         UI.stopClipboardAutoSync();
         UI.clipboardAutoSyncEnabled = UI.clipboardHasBrowserPermission();
-        UI.syncClipboardPanelValueFromLocal();
         if (!UI.clipboardAutoSyncEnabled) return;
         UI.pullLocalClipboardToRemote({ timeoutMs: 800 });
         UI.clipboardAutoPollId = window.setInterval(

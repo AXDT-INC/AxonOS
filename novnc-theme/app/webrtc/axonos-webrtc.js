@@ -396,6 +396,10 @@ export async function connectAxonOSWebRTC(opts) {
     let inputChannelOpen = dc.readyState === 'open';
     // RFB-style bitmask: 1=left, 2=middle, 4=right (1 << DOM button index).
     let currentMouseButtons = 0;
+    // Deferred press: simple clicks send one atomic `click`; drags send mousedown after move.
+    const DRAG_THRESHOLD_PX = 4;
+    /** @type {{ button: number, clientX: number, clientY: number } | null} */
+    let pendingPress = null;
 
     function sendInput(obj) {
         if (!inputChannelOpen || dc.readyState !== 'open') {
@@ -531,6 +535,25 @@ export async function connectAxonOSWebRTC(opts) {
         currentMouseButtons = 0;
     }
 
+    function sendRemoteClick(ev) {
+        pendingPress = null;
+        resetMouseInputState(null, true);
+        sendInput({
+            t: 'click',
+            button: domButtonToXdotool(ev.button),
+            ...pointerToRemote(ev),
+        });
+    }
+
+    function beginDragPress(pending, ev) {
+        pendingPress = null;
+        pressMouseButton({
+            button: pending.button,
+            clientX: ev.clientX,
+            clientY: ev.clientY,
+        });
+    }
+
     function pressMouseButton(ev) {
         const bit = domButtonMask(ev.button);
         if (currentMouseButtons & bit) {
@@ -594,6 +617,13 @@ export async function connectAxonOSWebRTC(opts) {
     }
 
     function onWindowMouseMove(ev) {
+        if (pendingPress !== null) {
+            const dx = ev.clientX - pendingPress.clientX;
+            const dy = ev.clientY - pendingPress.clientY;
+            if (dx * dx + dy * dy >= DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
+                beginDragPress(pendingPress, ev);
+            }
+        }
         const dragging = currentMouseButtons !== 0;
         if (!dragging && !clientPointOverVideo(ev)) {
             return;
@@ -707,11 +737,20 @@ export async function connectAxonOSWebRTC(opts) {
         if (ev.button === 2) {
             syncClipboardBeforeClick(ev);
         }
-        pressMouseButton(ev);
+        pendingPress = {
+            button: ev.button,
+            clientX: ev.clientX,
+            clientY: ev.clientY,
+        };
     }
     video.addEventListener('mousedown', onVideoMouseDown, { signal: inputSignal });
 
     function onMouseUp(ev) {
+        if (pendingPress !== null && ev.button === pendingPress.button) {
+            sendRemoteClick(ev);
+            return;
+        }
+        pendingPress = null;
         releaseMouseButton(ev);
     }
     window.addEventListener('mouseup', onMouseUp, { signal: inputSignal });
@@ -721,6 +760,7 @@ export async function connectAxonOSWebRTC(opts) {
     }
     function onPointerCancel(ev) {
         releaseCapturedPointer(ev);
+        pendingPress = null;
         resetMouseInputState(ev, true);
     }
     window.addEventListener('pointerup', onPointerUp, { signal: inputSignal });
@@ -738,6 +778,7 @@ export async function connectAxonOSWebRTC(opts) {
     }, { signal: inputSignal });
 
     function releaseMouseOnFocusLoss() {
+        pendingPress = null;
         resetMouseInputState(null, true);
     }
 

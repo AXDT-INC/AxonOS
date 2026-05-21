@@ -38,6 +38,26 @@ class WebrtcInputTests(unittest.TestCase):
         self.assertIn(["xdotool", "mousemove", "10", "20"], cmds)
 
     @mock.patch("webrtc_agent_main.subprocess.run")
+    def test_click_clears_stuck_button_mask(self, run: mock.MagicMock) -> None:
+        env = {"DISPLAY": ":0"}
+        self.agent._sync_mouse_buttons(1, env)
+        run.reset_mock()
+        self.agent._apply_input_json('{"t":"click","button":1,"x":5,"y":5}')
+        cmds = [c.args[0] for c in run.call_args_list if c.args]
+        self.assertIn(["xdotool", "mouseup", "1"], cmds)
+        self.assertIn(["xdotool", "click", "1"], cmds)
+        self.assertEqual(self.agent._mouse_button_mask, 0)
+
+    @mock.patch("webrtc_agent_main.subprocess.run")
+    def test_apply_clipboard_json_paste(self, run: mock.MagicMock) -> None:
+        with mock.patch("webrtc_agent_main._set_x_clipboard", return_value=True) as clip:
+            with mock.patch("webrtc_agent_main.time.sleep"):
+                self.agent._apply_clipboard_json('{"t":"paste","text":"hello"}')
+        clip.assert_called_once()
+        cmds = [c.args[0] for c in run.call_args_list if c.args]
+        self.assertIn(["xdotool", "key", "--clearmodifiers", "ctrl+v"], cmds)
+
+    @mock.patch("webrtc_agent_main.subprocess.run")
     def test_mousedown_when_already_down_releases_then_presses(self, run: mock.MagicMock) -> None:
         env = {"DISPLAY": ":0"}
         self.agent._sync_mouse_buttons(1, env)
