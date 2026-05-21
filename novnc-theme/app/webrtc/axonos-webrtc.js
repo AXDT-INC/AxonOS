@@ -26,6 +26,38 @@ async function _fetchJson(url, opt) {
     return { ok: r.ok, status: r.status, json: j };
 }
 
+function _iceConnected(state) {
+    return state === 'connected' || state === 'completed';
+}
+
+/** Resolve when ICE reaches connected/completed, or reject on failed/closed/timeout. */
+function _waitIceConnected(pc, timeoutMs) {
+    return new Promise((resolve) => {
+        if (_iceConnected(pc.iceConnectionState)) {
+            resolve(true);
+            return;
+        }
+        let timer = null;
+        const finish = (ok) => {
+            pc.removeEventListener('iceconnectionstatechange', onIce);
+            if (timer) {
+                clearTimeout(timer);
+            }
+            resolve(ok);
+        };
+        const onIce = () => {
+            const st = pc.iceConnectionState;
+            if (_iceConnected(st)) {
+                finish(true);
+            } else if (st === 'failed' || st === 'closed') {
+                finish(false);
+            }
+        };
+        pc.addEventListener('iceconnectionstatechange', onIce);
+        timer = setTimeout(() => finish(_iceConnected(pc.iceConnectionState)), timeoutMs);
+    });
+}
+
 function _setBanner(text, state) {
     let el = document.getElementById('axonos_webrtc_banner');
     if (!el) {
@@ -366,8 +398,11 @@ export async function connectAxonOSWebRTC(opts) {
 
     await Promise.allSettled(pendingIce);
 
-    _setBanner('WebRTC: Connected', 'connected');
-    setTimeout(_hideBanner, 2000);
+    _setBanner('WebRTC: negotiating ICE…', 'connecting');
+    if (typeof UI.updateVisualState === 'function') {
+        UI.updateVisualState('connecting');
+    }
+    UI.showStatus('WebRTC: connecting…');
 
     if (container) {
         container.appendChild(video);
@@ -973,10 +1008,33 @@ export async function connectAxonOSWebRTC(opts) {
     };
 
     pc.onconnectionstatechange = () => {
+        if (!UI.connected) {
+            return;
+        }
         if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
             _setBanner('WebRTC disconnected.', 'failed');
         }
     };
+
+    const iceOk = await _waitIceConnected(pc, 90000);
+    if (!iceOk) {
+        inputAbort.abort();
+        await _cleanup(pc, video, sessionId, wallet);
+        window.axonosWebRtcPasteClipboard = null;
+        window.axonosWebRtcPc = null;
+        window.axonosWebRtcVideo = null;
+        if (webrtcFallbackOk) {
+            _setBanner('WebRTC ICE failed — falling back.', 'fallback');
+        } else {
+            _setBanner('WebRTC ICE failed.', 'failed');
+        }
+        setTimeout(_hideBanner, 5000);
+        if (typeof UI.updateVisualState === 'function') {
+            UI.updateVisualState('disconnected');
+        }
+        UI.showStatus('WebRTC connection failed (ICE).', 'error');
+        return false;
+    }
 
     metricsTimer = setInterval(pollStats, 5000);
     pollStats();
@@ -985,6 +1043,8 @@ export async function connectAxonOSWebRTC(opts) {
     UI.inhibitReconnect = false;
     UI.updateVisualState('connected');
     UI.showStatus('Connected (WebRTC)');
+    _setBanner('WebRTC: Connected', 'connected');
+    setTimeout(_hideBanner, 2000);
     try {
         pasteSink.focus({ preventScroll: true });
     } catch {
