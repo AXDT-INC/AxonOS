@@ -56,6 +56,21 @@ def subprocess_env_for_nested_docker() -> Dict[str, str]:
     return env
 
 
+# OpenMPI: avoid legacy sm BTL in session containers (see docs/GROMACS.md).
+_SESSION_OMPI_MCA_ENV: Dict[str, str] = {
+    "OMPI_MCA_btl": "vader,self,tcp",
+    "OMPI_MCA_btl_base_warn_component_unused": "0",
+}
+
+
+def session_container_ompi_mca_env_flags() -> List[str]:
+    """Return ``docker run -e …`` flags for OpenMPI MCA defaults in session containers."""
+    flags: List[str] = []
+    for key, value in _SESSION_OMPI_MCA_ENV.items():
+        flags.extend(["-e", f"{key}={value}"])
+    return flags
+
+
 def strip_conflicting_gpu_run_flags(tokens: List[str]) -> List[str]:
     """Remove redundant `--gpus`/`-g` clauses from AXGT_*_EXTRA_ARGS; we inject our own."""
     out: List[str] = []

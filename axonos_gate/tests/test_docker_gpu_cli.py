@@ -46,6 +46,19 @@ class DockerGpuCliTests(unittest.TestCase):
             env = subprocess_env_for_nested_docker()
         self.assertNotIn("NVIDIA_VISIBLE_DEVICES", env)
 
+    def test_session_container_ompi_mca_env_flags(self) -> None:
+        from docker_gpu_cli import session_container_ompi_mca_env_flags
+
+        self.assertEqual(
+            session_container_ompi_mca_env_flags(),
+            [
+                "-e",
+                "OMPI_MCA_btl=vader,self,tcp",
+                "-e",
+                "OMPI_MCA_btl_base_warn_component_unused=0",
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

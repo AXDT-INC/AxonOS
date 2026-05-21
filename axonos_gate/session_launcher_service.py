@@ -22,6 +22,7 @@ from flask import Flask, jsonify, request
 try:
     from .docker_gpu_cli import (
         docker_run_gpus_device_value,
+        session_container_ompi_mca_env_flags,
         subprocess_env_for_nested_docker,
         strip_conflicting_gpu_run_flags,
     )
@@ -29,12 +30,14 @@ except ImportError:
     try:
         from axonos_gate.docker_gpu_cli import (
             docker_run_gpus_device_value,
+            session_container_ompi_mca_env_flags,
             subprocess_env_for_nested_docker,
             strip_conflicting_gpu_run_flags,
         )
     except ImportError:
         from docker_gpu_cli import (
             docker_run_gpus_device_value,
+            session_container_ompi_mca_env_flags,
             subprocess_env_for_nested_docker,
             strip_conflicting_gpu_run_flags,
         )
@@ -207,6 +210,8 @@ def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], 
         env_value = os.getenv(env_name)
         if env_value is not None:
             cmd.extend(["-e", f"{env_name}={env_value}"])
+
+    cmd.extend(session_container_ompi_mca_env_flags())
 
     network = _network_name()
     if network:
