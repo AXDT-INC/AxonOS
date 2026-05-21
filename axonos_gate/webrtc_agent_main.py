@@ -228,7 +228,11 @@ def _reap_xclip_popen(proc: subprocess.Popen[bytes] | None) -> None:
 
 
 def _set_x_clipboard(text: str, env: dict[str, str]) -> bool:
+    max_bytes = max(4096, int(os.getenv("WEBRTC_CLIPBOARD_MAX_BYTES", "524288")))
     data = text.encode("utf-8", errors="ignore")
+    if len(data) > max_bytes:
+        data = data[:max_bytes]
+        logger.debug("clipboard truncated to %s bytes", max_bytes)
     ok = False
     for selection in ("clipboard", "primary"):
         old = _clipboard_owners.pop(selection, None)
@@ -520,6 +524,28 @@ def _enqueue_rtc_input(input_queue: asyncio.Queue[str], raw: str) -> None:
             logger.debug("input queue full; dropped %s", kind or "message")
 
 
+def _apply_clipboard_json(raw: str) -> None:
+    """Apply clipboard/paste on a background worker so xclip never blocks mouse input."""
+    try:
+        obj = json.loads(raw)
+    except json.JSONDecodeError:
+        return
+    if not isinstance(obj, dict):
+        return
+    t = (obj.get("t") or obj.get("type") or "").strip().lower()
+    if t not in ("clipboard", "paste"):
+        return
+    env = _display_env()
+    try:
+        text = str(obj.get("text") or "")
+        _set_x_clipboard(text, env)
+        if t == "paste":
+            time.sleep(0.08)
+            subprocess.run(["xdotool", "key", "--clearmodifiers", "ctrl+v"], check=False, timeout=2, env=env)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+        logger.debug("clipboard skip: %s", e)
+
+
 def _apply_input_json(raw: str) -> None:
     try:
         obj = json.loads(raw)
@@ -568,11 +594,7 @@ def _apply_input_json(raw: str) -> None:
             if text:
                 subprocess.run(["xdotool", "type", "--delay", "5", text], check=False, timeout=5, env=env)
         elif t in ("clipboard", "paste"):
-            text = str(obj.get("text") or "")
-            _set_x_clipboard(text, env)
-            if t == "paste":
-                time.sleep(0.08)
-                subprocess.run(["xdotool", "key", "--clearmodifiers", "ctrl+v"], check=False, timeout=2, env=env)
+            return
         elif t in ("keydown", "keyup"):
             key_name = _xdotool_key(obj)
             if not key_name:
@@ -701,6 +723,19 @@ async def _run_session(job: dict[str, Any]) -> None:
         # `_apply_input_json` (notably the 80 ms sleep + ctrl+v injection on paste)
         # stalls the event loop and freezes subsequent mouse clicks.
         input_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=512)
+        clipboard_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=32)
+
+        async def clipboard_worker() -> None:
+            while True:
+                msg = await clipboard_queue.get()
+                try:
+                    await asyncio.to_thread(_apply_clipboard_json, msg)
+                except Exception as e:
+                    logger.debug("clipboard worker: %s", e)
+                finally:
+                    clipboard_queue.task_done()
+
+        clipboard_worker_task = asyncio.create_task(clipboard_worker())
 
         async def input_worker() -> None:
             while True:
@@ -718,11 +753,27 @@ async def _run_session(job: dict[str, Any]) -> None:
         def on_msg(message) -> None:  # type: ignore[no-untyped-def]
             if not isinstance(message, str):
                 return
+            kind = _input_kind_from_raw(message)
+            if kind in ("clipboard", "paste"):
+                try:
+                    clipboard_queue.put_nowait(message)
+                except asyncio.QueueFull:
+                    try:
+                        clipboard_queue.get_nowait()
+                        clipboard_queue.task_done()
+                    except asyncio.QueueEmpty:
+                        pass
+                    try:
+                        clipboard_queue.put_nowait(message)
+                    except asyncio.QueueFull:
+                        logger.debug("clipboard queue full; dropped %s", kind)
+                return
             _enqueue_rtc_input(input_queue, message)
 
         @channel.on("close")
         def on_close() -> None:
             clipboard_task.cancel()
+            clipboard_worker_task.cancel()
             input_task.cancel()
             _reset_mouse_button_state(clipboard_env)
 
