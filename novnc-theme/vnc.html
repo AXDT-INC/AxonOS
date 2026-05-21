@@ -165,12 +165,13 @@ Copyright (C) 2019 The noVNC Authors
             <!-- Clipboard -->
             <input type="image" alt="Clipboard" src="app/images/clipboard.svg"
                 id="noVNC_clipboard_button" class="noVNC_button"
-                title="Clipboard">
+                title="Clipboard — paste to desktop via this panel only">
             <div class="noVNC_vcenter">
             <div id="noVNC_clipboard" class="noVNC_panel">
                 <div class="noVNC_heading">
                     <img alt="" src="app/images/clipboard.svg"> Clipboard
                 </div>
+                <p class="axonos-clipboard-panel__help">Copy on your device, then paste or edit here to send text to the desktop. Direct paste on the desktop is disabled to keep mouse and keyboard responsive.</p>
                 <textarea id="noVNC_clipboard_text" rows=5></textarea>
                 <br>
                 <input id="noVNC_clipboard_clear_button" type="button"

@@ -14,16 +14,13 @@
 /** @returns {Record<string, unknown>} */
 export function captureWebRtcInputSnapshot() {
     const video = document.getElementById('axonos_webrtc_video');
-    const pasteSink = document.getElementById('axonos_webrtc_paste_sink');
     const cursor = document.getElementById('axonos_webrtc_cursor');
     return {
         at: new Date().toISOString(),
         connected: !!(window.UI && window.UI.connected),
         videoCount: document.querySelectorAll('#axonos_webrtc_video').length,
-        pasteSinkCount: document.querySelectorAll('#axonos_webrtc_paste_sink').length,
         cursorCount: document.querySelectorAll('#axonos_webrtc_cursor').length,
         hasVideoEl: !!video,
-        hasPasteSink: !!pasteSink,
         hasCursor: !!cursor,
         hasTeardownFn: typeof window.axonosWebRtcTeardown === 'function',
         hasPasteFn: typeof window.axonosWebRtcPasteClipboard === 'function',
@@ -39,9 +36,6 @@ export function assertCleanTeardownSnapshot(snap) {
     const errors = [];
     if (snap.videoCount !== 0) {
         errors.push(`expected 0 #axonos_webrtc_video, got ${snap.videoCount}`);
-    }
-    if (snap.pasteSinkCount !== 0) {
-        errors.push(`expected 0 #axonos_webrtc_paste_sink, got ${snap.pasteSinkCount}`);
     }
     if (snap.cursorCount !== 0) {
         errors.push(`expected 0 #axonos_webrtc_cursor, got ${snap.cursorCount}`);
@@ -63,9 +57,6 @@ export function assertConnectedSnapshot(snap) {
     const errors = [];
     if (snap.videoCount !== 1) {
         errors.push(`expected 1 #axonos_webrtc_video, got ${snap.videoCount}`);
-    }
-    if (snap.pasteSinkCount !== 1) {
-        errors.push(`expected 1 #axonos_webrtc_paste_sink, got ${snap.pasteSinkCount}`);
     }
     if (snap.cursorCount !== 1) {
         errors.push(`expected 1 #axonos_webrtc_cursor, got ${snap.cursorCount}`);

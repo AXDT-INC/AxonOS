@@ -1084,7 +1084,7 @@ RUN git clone https://github.com/cellmodeller/CellModeller.git && \\
                                    relief='solid', borderwidth=1,
                                    font=('TkDefaultFont', 13))  # 11 * 1.2 = 13
         self.ollama_models.pack(fill='x', padx=15, pady=(0, 15))
-        self.ollama_models.insert('1.0', 'command-r7b\ngranite3.2-vision')
+        self.ollama_models.insert('1.0', 'gemma4:31b\ngranite3.2-vision')
         self.ollama_models.bind('<KeyRelease>', lambda e: self.update_config_status())
         
         # User settings
@@ -1353,7 +1353,7 @@ docker start axonos
         )
         
         # Check if default models and user settings
-        default_models = self.ollama_models.get('1.0', tk.END).strip() == 'command-r7b\ngranite3.2-vision'
+        default_models = self.ollama_models.get('1.0', tk.END).strip() == 'gemma4:31b\ngranite3.2-vision'
         default_user = self.username_var.get() == 'aXonian'
         default_password = self.password_var.get() == 'axonpassword'
         default_cuda_archs = getattr(self, "cuda_archs_var", tk.StringVar(value="70;75;86;89")).get() == '70;75;86;89'

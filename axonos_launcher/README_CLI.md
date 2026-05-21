@@ -97,7 +97,7 @@ axonos config load --file my-config.json
     "ugene": true
   },
   "ollama_models": [
-    "command-r7b",
+    "gemma4:31b",
     "granite3.2-vision"
   ],
   "username": "aXonian",

@@ -1817,6 +1817,13 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   order: 3 !important;
 }
 
+.axonos-clipboard-panel__help {
+  margin: 0.35rem 0 0.55rem;
+  font-size: 0.82em;
+  line-height: 1.35;
+  opacity: 0.85;
+}
+
 /* Adjust control bar width for better icon spacing */
 #noVNC_control_bar {
   min-width: 60px !important;
