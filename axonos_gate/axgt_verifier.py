@@ -642,7 +642,7 @@ def get_wallet_access_status(wallet_address: str, consume_usage: bool = False) -
             )
     elif remaining <= warning_threshold:
         response["reason"] = (
-            f"Warning: less than {warning_threshold} minutes of prepaid credit remaining."
+            f"Credits expired: Add more ETH to resume access (session expires in <2 hours)."
         )
     try:
         try:
