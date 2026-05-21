@@ -34,6 +34,16 @@ GROMACS was compiled without thread-MPI
 
 **Do not use `-ntmpi`.** Use `-ntomp`, `-gpu_id`, and/or `mpirun -np N` instead.
 
+**Multi-GPU on AxonOS requires `mpirun`.** Listing GPUs in `-gpu_id 0,1,2,...` does **not** create MPI ranks. If you see `Using 1 MPI process` and `1 GPU selected`, you forgot `mpirun -np N` (where `N` = number of GPUs).
+
+```bash
+# Wrong for 8 GPUs (library MPI):
+gmx_mpi mdrun ... -gpu_id 0,1,2,3,4,5,6,7    # → 1 rank, 1 GPU
+
+# Correct (8 ranks, 8 GPUs, GPU PME needs -npme in GROMACS 2026):
+mpirun -np 8 gmx_mpi mdrun ... -gpu_id 0,1,2,3,4,5,6,7 -nb gpu -pme gpu -npme 1
+```
+
 ---
 
 ## Prerequisites
@@ -116,7 +126,7 @@ mkdir -p ~/gmx-tutorial && cd ~/gmx-tutorial
 source /opt/gromacs/bin/GMXRC
 
 # Example structure (RCSB)
-curl -fL -o 1aki.pdb https://files.rcsb.org/download/1AKI.pdb
+curl -fsSL -o 1aki.pdb https://files.rcsb.org/download/1AKI.pdb
 
 # Topology (interactive: pick force field + water model; tutorial uses CHARMM36)
 gmx_mpi pdb2gmx -f 1aki.pdb -o processed.gro -water spce
@@ -137,19 +147,19 @@ The ions / minimization / equilibration / production stages need `.mdp` files fr
 ```bash
 cd ~/gmx-tutorial
 
-curl -fL -o ions.mdp \
+curl -fsSL -o ions.mdp \
   http://www.mdtutorials.com/gmx/lysozyme/Files/ions.mdp
 
-curl -fL -o minim.mdp \
+curl -fsSL -o minim.mdp \
   http://www.mdtutorials.com/gmx/lysozyme/Files/minim.mdp
 
-curl -fL -o nvt.mdp \
+curl -fsSL -o nvt.mdp \
   http://www.mdtutorials.com/gmx/lysozyme/Files/nvt.mdp
 
-curl -fL -o npt.mdp \
+curl -fsSL -o npt.mdp \
   http://www.mdtutorials.com/gmx/lysozyme/Files/npt.mdp
 
-curl -fL -o md.mdp \
+curl -fsSL -o md.mdp \
   http://www.mdtutorials.com/gmx/lysozyme/Files/md.mdp
 
 ls -l *.mdp
@@ -265,16 +275,14 @@ Requires a session with multiple GPUs visible (`nvidia-smi -L`).
 
 ### 8-GPU run
 
-```bash
-# Optional: separate output prefix so you keep the 1-GPU md.log
-gmx_mpi mdrun -deffnm md_8gpu -s md.tpr -ntomp 2 -gpu_id 0,1,2,3,4,5,6,7 -pin on
-```
-
-Alternative with explicit `mpirun`:
+On AxonOS you **must** launch with `mpirun` (library MPI). `-gpu_id` alone is not enough.
 
 ```bash
-mpirun -np 8 gmx_mpi mdrun -deffnm md_8gpu -s md.tpr -ntomp 2 -gpu_id 0,1,2,3,4,5,6,7 -pin on
+mpirun -np 8 gmx_mpi mdrun -deffnm md_8gpu -s md.tpr \
+  -ntomp 2 -gpu_id 0,1,2,3,4,5,6,7 -nb gpu -pme gpu -npme 1 -pin on
 ```
+
+Before trusting GPU util, confirm the log says **`Using 8 MPI processes`** and **`8 GPUs selected`**. If it says `Using 1 MPI process`, fix the launch command.
 
 ### Expected `mdrun` output (8 GPUs)
 
@@ -320,16 +328,19 @@ Lysozyme (~40k atoms after solvation) cannot saturate 8× V100s. For **high GPU 
 
 MPinat URLs serve **ZIP archives** (not bare `.tpr`). Unzip after download.
 
+The MPinat server can be **slow** (~50–80 KiB/s). A ~55 MB file may take **10–20 minutes**. Use a **progress bar** (omit `-s` from curl) or download in the browser and copy the zip into the session.
+
 ```bash
 mkdir -p ~/gmx-bench && cd ~/gmx-bench
 source /opt/gromacs/bin/GMXRC
 
 # Ribosome in water (~2M atoms) — good default for 8-GPU validation
-curl -fL -o benchRIB.zip https://www.mpinat.mpg.de/benchRIB
+# --progress-bar shows activity; expect several minutes
+curl -fL --progress-bar -o benchRIB.zip https://www.mpinat.mpg.de/benchRIB
 unzip -o benchRIB.zip
 
-# Peptide megasystem (~12M atoms) — use to max out GPUs (large download)
-curl -fL -o benchPEP-h.zip https://www.mpinat.mpg.de/benchPEP-h
+# Peptide megasystem (~12M atoms) — use to max out GPUs (~213 MB; very slow via curl)
+curl -fL --progress-bar -o benchPEP-h.zip https://www.mpinat.mpg.de/benchPEP-h
 unzip -o benchPEP-h.zip
 
 ls -lh *.tpr
@@ -338,7 +349,7 @@ ls -lh *.tpr
 Optional smaller sanity check:
 
 ```bash
-curl -fL -o benchMEM.zip https://www.mpinat.mpg.de/benchMEM
+curl -fsSL -o benchMEM.zip https://www.mpinat.mpg.de/benchMEM
 unzip -o benchMEM.zip
 ```
 
@@ -351,10 +362,22 @@ Requires **`max` profile** (8 GPUs visible in `nvidia-smi -L`). Limit steps for 
 ```bash
 cd ~/gmx-bench
 
-gmx_mpi mdrun -s benchRIB.tpr -deffnm rib_8gpu \
+mpirun -np 8 gmx_mpi mdrun -s benchRIB.tpr -deffnm rib_8gpu \
   -ntomp 4 -gpu_id 0,1,2,3,4,5,6,7 \
-  -nb gpu -pme gpu -pin on -nsteps 5000
+  -nb gpu -pme gpu -npme 1 -pin on -nsteps 5000
 ```
+
+GROMACS 2026 requires **`-npme`** when `-pme gpu` is used with **multiple MPI ranks** (e.g. `-npme 1` → 7 PP ranks + 1 PME rank). Without it you get: *"PME tasks were required to run on GPUs with multiple ranks but the `-npme` option was not specified."*
+
+Simpler fallback (GPU nonbonded only, PME on CPU — no `-npme` needed):
+
+```bash
+mpirun -np 8 gmx_mpi mdrun -s benchRIB.tpr -deffnm rib_8gpu \
+  -ntomp 4 -gpu_id 0,1,2,3,4,5,6,7 \
+  -nb gpu -pme cpu -pin on -nsteps 5000
+```
+
+Confirm: **`Using 8 MPI processes`**, **`8 GPUs selected`**, **`GPU direct communication`**.
 
 ### 8-GPU stress run — `benchPEP-h` (~12M atoms, max GPU load)
 
@@ -363,10 +386,12 @@ Uses the full GPU pipeline. Expect **much higher** `nvidia-smi` util than lysozy
 ```bash
 cd ~/gmx-bench
 
-gmx_mpi mdrun -s benchPEP-h.tpr -deffnm peph_8gpu \
+mpirun -np 8 gmx_mpi mdrun -s benchPEP-h.tpr -deffnm peph_8gpu \
   -ntomp 2 -gpu_id 0,1,2,3,4,5,6,7 \
-  -nb gpu -pme gpu -bonded gpu -update gpu -pin on -nsteps 2000
+  -nb gpu -pme gpu -npme 1 -bonded gpu -update gpu -pin on -nsteps 2000
 ```
+
+**Do not** run `benchPEP-h` with a single MPI rank (`gmx_mpi mdrun` alone) — 12M atoms on one rank often **core-dumps or OOMs**. Always use `mpirun -np 8` on an 8-GPU session.
 
 ### 1-GPU baseline (same systems)
 
@@ -458,7 +483,39 @@ Normal for this system size. Use [Step 6](#step-6--large-system-gpu-stress-test)
 
 ### OOM on `benchPEP-h`
 
-The 12M-atom system needs significant host memory. Reduce MPI ranks, use `benchRIB` instead, or shorten `-nsteps`. Check `dmesg | grep -i oom` on the host.
+The 12M-atom system needs significant host memory **per MPI rank**. Always launch with `mpirun -np 8` on 8 GPUs — never a single rank. If it still fails, use `benchRIB` instead, reduce ranks, or shorten `-nsteps`. Check `dmesg | grep -i oom` on the host.
+
+### `1 GPU selected` but I passed eight `-gpu_id`s
+
+You ran `gmx_mpi mdrun` without enough MPI ranks. On AxonOS (library MPI), use:
+
+```bash
+mpirun -np 8 gmx_mpi mdrun ... -gpu_id 0,1,2,3,4,5,6,7
+```
+
+The log must show `Using 8 MPI processes`, not `Using 1 MPI process`.
+
+### `-npme` required with `-pme gpu` and multiple ranks (GROMACS 2026)
+
+**Symptom:**
+
+```text
+Feature not implemented: PME tasks were required to run on GPUs with multiple ranks
+but the `-npme` option was not specified.
+```
+
+**Fix:** Add `-npme 1` (or another non-negative count ≤ MPI ranks), e.g.:
+
+```bash
+mpirun -np 8 gmx_mpi mdrun -s benchRIB.tpr -deffnm rib_8gpu \
+  -ntomp 4 -gpu_id 0,1,2,3,4,5,6,7 -nb gpu -pme gpu -npme 1 -nsteps 5000
+```
+
+Or use `-pme cpu` instead of `-pme gpu` if you only need to validate multi-GPU nonbonded offload.
+
+### `curl` appears stuck downloading benchmarks
+
+`-s` (silent) hides the progress bar. Use `curl -fL --progress-bar -o benchRIB.zip ...` instead, or download in the browser (~55 MB for `benchRIB`, ~213 MB for `benchPEP-h`). The MPinat server is often slow; a quiet terminal does not mean a hung download.
 
 ---
 
@@ -474,12 +531,13 @@ mpirun -np 2 gmx_mpi --version
 # Single GPU MD
 gmx_mpi mdrun -deffnm md -ntomp 8 -gpu_id 0
 
-# Multi-GPU MD (N = number of GPUs)
-gmx_mpi mdrun -deffnm md -ntomp 2 -gpu_id 0,1,2,3,4,5,6,7
+# Multi-GPU MD (N = number of GPUs — mpirun required; -npme if -pme gpu)
+mpirun -np 8 gmx_mpi mdrun -deffnm md -ntomp 2 -gpu_id 0,1,2,3,4,5,6,7 \
+  -nb gpu -pme gpu -npme 1
 
 # Large-system GPU stress (download + unzip first — see Step 6)
-gmx_mpi mdrun -s benchPEP-h.tpr -deffnm peph_8gpu -ntomp 2 \
-  -gpu_id 0,1,2,3,4,5,6,7 -nb gpu -pme gpu -bonded gpu -update gpu -nsteps 2000
+mpirun -np 8 gmx_mpi mdrun -s benchRIB.tpr -deffnm rib_8gpu -ntomp 4 \
+  -gpu_id 0,1,2,3,4,5,6,7 -nb gpu -pme gpu -npme 1 -nsteps 5000
 
 # Live GPU monitor
 watch -n 1 nvidia-smi
