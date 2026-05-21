@@ -92,9 +92,8 @@ RUN curl --proto '=https' --tlsv1.2 -fsSL https://ollama.com/install.sh -o /tmp/
     sh /tmp/ollama_install.sh && \
     rm -f /tmp/ollama_install.sh
 
-# Pull the gemma4:31b model and install opencode
-RUN ollama serve & sleep 5 && ollama pull granite3-guardian && ollama pull gemma4:31b && ollama pull granite3.2-vision && \
-    curl -fsSL https://opencode.ai/install | bash
+# Pull the gemma4:31b model
+RUN ollama serve & sleep 5 && ollama pull granite3-guardian && ollama pull gemma4:31b && ollama pull granite3.2-vision
 
 # Create user and set password
 RUN useradd -ms /bin/bash $USER && echo "$USER:$PASSWORD" | chpasswd && adduser $USER sudo
@@ -106,6 +105,13 @@ if [ -z "$HOSTNAME" ] || [[ "$HOSTNAME" =~ ^[0-9a-f]{12}$ ]]; then\n\
     export HOSTNAME=AxonOS\n\
 fi' >> /home/$USER/.bashrc && \
     chown $USER:$USER /home/$USER/.bashrc
+
+# OpenCode CLI: install as desktop user (not root) and expose on PATH for XFCE terminals
+RUN su - $USER -c 'curl -fsSL https://opencode.ai/install | bash' && \
+    ln -sf /home/$USER/.opencode/bin/opencode /usr/local/bin/opencode && \
+    echo 'export PATH="/home/'"$USER"'/.opencode/bin:$PATH"' > /etc/profile.d/opencode.sh && \
+    echo 'export PATH="/home/'"$USER"'/.opencode/bin:$PATH"' >> /home/$USER/.bashrc && \
+    echo 'export PATH="/home/'"$USER"'/.opencode/bin:$PATH"' >> /home/$USER/.profile
 
 # Install JupyterLab and other global Python tools with default pip
 RUN pip install --no-cache-dir jupyterlab
@@ -131,7 +137,8 @@ RUN apt update && apt install -y gdebi-core && \
     > /usr/share/applications/rstudio.desktop
 
 # Install Spyder (Scientific Python IDE)
-RUN pip install --no-cache-dir spyder
+# Ubuntu apt matplotlib is built against NumPy 1.x; pip NumPy 2.x breaks Spyder kernels (_ARRAY_API).
+RUN pip install --no-cache-dir 'numpy>=1.24.0,<2' matplotlib spyder
 
 # Install UGENE (Bioinformatics suite)
 RUN wget https://github.com/ugeneunipro/ugene/releases/download/52.1/ugene-52.1-linux-x86-64.tar.gz && \
@@ -547,6 +554,8 @@ COPY novnc-theme/images/linux.svg /usr/share/novnc/app/images/linux.svg
 # Install AXGT Gate
 COPY axonos_gate/ /axonos_gate/
 RUN /usr/bin/python3 -m pip install -r /axonos_gate/requirements.txt
+# Later pip layers may upgrade to NumPy 2.x; re-pin so apt/system matplotlib + Spyder stay compatible.
+RUN pip install --no-cache-dir 'numpy>=1.24.0,<2' matplotlib
 RUN chmod +x /axonos_gate/*.py
 
 # AXGT / gate configuration is provided via environment variables at runtime.
