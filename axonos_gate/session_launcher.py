@@ -18,6 +18,7 @@ from typing import List, Optional, Tuple
 try:
     from .docker_gpu_cli import (
         docker_run_gpus_device_value,
+        session_container_ompi_mca_env_flags,
         subprocess_env_for_nested_docker,
         strip_conflicting_gpu_run_flags,
     )
@@ -25,12 +26,14 @@ except ImportError:
     try:
         from axonos_gate.docker_gpu_cli import (
             docker_run_gpus_device_value,
+            session_container_ompi_mca_env_flags,
             subprocess_env_for_nested_docker,
             strip_conflicting_gpu_run_flags,
         )
     except ImportError:
         from docker_gpu_cli import (
             docker_run_gpus_device_value,
+            session_container_ompi_mca_env_flags,
             subprocess_env_for_nested_docker,
             strip_conflicting_gpu_run_flags,
         )
@@ -100,6 +103,7 @@ def _launch_via_docker_cli(session_id: int, wallet: str, profile: str, gpu_ids: 
         "-e", "AXGT_DESKTOP_ENABLED=true",
         "-e", "WEBRTC_AGENT_ENABLED=true",
     ]
+    cmd.extend(session_container_ompi_mca_env_flags())
     extra_raw = (os.getenv("AXGT_SESSION_CONTAINER_EXTRA_ARGS") or "").strip()
     if extra_raw:
         cmd.extend(strip_conflicting_gpu_run_flags(shlex.split(extra_raw)))
