@@ -908,6 +908,7 @@ export async function connectAxonOSWebRTC(opts) {
     pollStats();
 
     UI.connected = true;
+    window.axonosSessionDetached = false;
     UI.inhibitReconnect = false;
     UI.updateVisualState('connected');
     UI.showStatus('Connected (WebRTC)');
@@ -916,6 +917,9 @@ export async function connectAxonOSWebRTC(opts) {
 
     if (typeof UI._axgtStartSessionBillingPoll === 'function') {
         UI._axgtStartSessionBillingPoll();
+    }
+    if (typeof UI.updateSessionControlButtons === 'function') {
+        UI.updateSessionControlButtons();
     }
 
     window.axonosWebRtcTeardown = async () => {

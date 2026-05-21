@@ -84,7 +84,7 @@ Copyright (C) 2019 The noVNC Authors
                         <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
                         <span class="axonos-prerequisites-ticker__chunk">While <strong>connected</strong>, prepaid minutes are consumed at <strong>1× per GPU</strong> (wall-clock × profile GPUs), including <strong>idle time</strong> if this tab stays open</span>
                         <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
-                        <span class="axonos-prerequisites-ticker__chunk">Use <strong>Disconnect</strong> in the sidebar when finished; closing only the tab may <strong>delay release</strong> until session timeout</span>
+                        <span class="axonos-prerequisites-ticker__chunk"><strong>Detach</strong> returns to home while your desktop keeps running (minutes still count). <strong>End session</strong> or <strong>close this tab</strong> stops billing and removes the desktop</span>
                     </div>
                     <div class="axonos-prerequisites-ticker__seg" data-ticker-mirror="1" aria-hidden="true"></div>
                 </div>
@@ -149,18 +149,10 @@ Copyright (C) 2019 The noVNC Authors
             </div>
             </div>
 
-            <!-- Shutdown/Reboot -->
-            <input type="image" alt="Shutdown/Reboot" src="app/images/power.svg"
-                id="noVNC_power_button" class="noVNC_button"
-                title="Shutdown/Reboot...">
-            <div class="noVNC_vcenter">
-            <div id="noVNC_power" class="noVNC_panel">
-                <div class="noVNC_heading">
-                    <img alt="" src="app/images/power.svg"> Power
-                </div>
-                <input type="button" id="noVNC_restart_session_button" value="Restart Desktop Session">
-            </div>
-            </div>
+            <!-- End session (release container) -->
+            <input type="image" alt="End session" src="app/images/power.svg"
+                id="noVNC_power_button" class="noVNC_button noVNC_hidden"
+                title="End session">
 
             <!-- Clipboard -->
             <input type="image" alt="Clipboard" src="app/images/clipboard.svg"
@@ -262,6 +254,11 @@ Copyright (C) 2019 The noVNC Authors
                                 <label><input id="noVNC_setting_show_dot" type="checkbox"> Show Dot when No Cursor</label>
                             </li>
                             <li><hr></li>
+                            <li>
+                                <input type="button" id="noVNC_restart_session_button"
+                                    value="Restart desktop services" class="noVNC_submit">
+                            </li>
+                            <li><hr></li>
                             <!-- Logging selection dropdown -->
                             <li>
                                 <label>Logging:
@@ -281,9 +278,9 @@ Copyright (C) 2019 The noVNC Authors
             </div>
 
             <!-- Connection Controls -->
-            <input type="image" alt="Disconnect" src="app/images/disconnect.svg"
-                id="noVNC_disconnect_button" class="noVNC_button"
-                title="Disconnect">
+            <input type="image" alt="Detach" src="app/images/disconnect.svg"
+                id="noVNC_disconnect_button" class="noVNC_button noVNC_hidden"
+                title="Detach">
 
             </div>
         </div>
@@ -865,6 +862,7 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 
     window.axonosPausedResume = null;
+    window.axonosSessionDetached = false;
 
     function claimSession() {
         const wallet = window.verifiedWalletAddress;
@@ -1897,7 +1895,7 @@ document.addEventListener("DOMContentLoaded", function() {
                         ? (' While connected, usage burns <strong>' + axonosGpuCountForProfile(getRequestedProfile()) + '×</strong> prepaid minutes per real minute for your selected GPU profile (idle counts if this tab stays open).')
                         : ' While connected, minutes count for your session (idle included if this tab stays open).';
                     dlgHints.innerHTML = rateHint + legacyHint + '. ' + discountHint +
-                        '<span class="axonos-wallet-card__hints-session">' + billingHint + ' Use <strong>Disconnect</strong> when finished; closing the tab only may delay releasing the desktop.</span>';
+                        '<span class="axonos-wallet-card__hints-session">' + billingHint + ' Use <strong>Detach</strong> to leave the view (desktop keeps running) or <strong>End session</strong> / close this tab when finished.</span>';
                 }
                 var insRates = document.getElementById('axonos_insufficient_credit_rates');
                 if (insRates) {
@@ -1953,7 +1951,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 var dh = document.getElementById('axonos-dlg-credit-hints');
                 if (dh) {
                     dh.innerHTML = 'Connect wallet to see live rates from server, or check operator docs (100 AXGT → 60 min typical).' +
-                        '<span class="axonos-wallet-card__hints-session">While connected, minutes count for your session (idle included if this tab stays open). Use <strong>Disconnect</strong> when finished.</span>';
+                        '<span class="axonos-wallet-card__hints-session">While connected or detached, minutes count (idle included if this tab stays open). Use <strong>End session</strong> or close this tab when finished.</span>';
                 }
                 syncAxonosPrerequisiteTickerMirror();
             });

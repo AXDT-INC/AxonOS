@@ -146,6 +146,7 @@ const UI = {
         UI.addTouchSpecificHandlers();
         UI.addExtraKeysHandlers();
         UI.addMachineHandlers();
+        UI.addAxonosSessionLifecycleHandlers();
         UI.addConnectionControlHandlers();
         UI.addClipboardHandlers();
         UI.addSettingsHandlers();
@@ -170,6 +171,8 @@ const UI = {
             // Show the connect panel on first load unless autoconnecting
             UI.openConnectPanel();
         }
+
+        UI.updateSessionControlButtons();
 
         return Promise.resolve(UI.rfb);
     },
@@ -351,15 +354,57 @@ const UI = {
         if (restartButton) {
             restartButton.addEventListener('click', UI.restartDesktopSession);
         }
-        const powerButton = document.getElementById("noVNC_power_button");
-        if (powerButton) {
-            powerButton.addEventListener('click', UI.togglePowerPanel);
+        const endSessionButton = document.getElementById("noVNC_power_button");
+        if (endSessionButton) {
+            endSessionButton.addEventListener('click', UI.endSession);
         }
+    },
+
+    /** Tab close → release; F5/Ctrl+R → keep session (reload). */
+    addAxonosSessionLifecycleHandlers() {
+        if (window.axonosSessionLifecycleHandlersInstalled) {
+            return;
+        }
+        window.axonosSessionLifecycleHandlersInstalled = true;
+
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'F5' || ((e.ctrlKey || e.metaKey) && (e.key === 'r' || e.key === 'R'))) {
+                try {
+                    sessionStorage.setItem('axonos_nav', 'reload');
+                } catch (err) { /* ignore */ }
+            }
+        }, true);
+
+        window.addEventListener('beforeunload', () => {
+            try {
+                if (!sessionStorage.getItem('axonos_nav')) {
+                    sessionStorage.setItem('axonos_nav', 'close');
+                }
+            } catch (err) { /* ignore */ }
+        });
+
+        window.addEventListener('pagehide', (e) => {
+            if (e.persisted) {
+                return;
+            }
+            let nav = 'close';
+            try {
+                nav = sessionStorage.getItem('axonos_nav') || 'close';
+                sessionStorage.removeItem('axonos_nav');
+            } catch (err) { /* ignore */ }
+            if (nav === 'reload') {
+                return;
+            }
+            if (!UI._axonosSessionOwnsServerSlot()) {
+                return;
+            }
+            UI._axonosReleaseSessionBeacon();
+        });
     },
 
     addConnectionControlHandlers() {
         document.getElementById("noVNC_disconnect_button")
-            .addEventListener('click', UI.disconnect);
+            .addEventListener('click', UI.detach);
         document.getElementById("noVNC_connect_button")
             .addEventListener('click', UI.connect);
         document.getElementById("noVNC_cancel_reconnect_button")
@@ -667,7 +712,7 @@ const UI = {
             UI.enableSetting('port');
             UI.enableSetting('path');
             UI.enableSetting('repeaterID');
-            UI.updatePowerButton();
+            UI.updateSessionControlButtons();
             UI.keepControlbar();
         }
 
@@ -1058,7 +1103,6 @@ const UI = {
 
     closeAllPanels() {
         UI.closeSettingsPanel();
-        UI.closePowerPanel();
         UI.closeClipboardPanel();
         UI.closeExtraKeys();
     },
@@ -1112,37 +1156,38 @@ const UI = {
 /* ------^-------
  *   /SETTINGS
  * ==============
- *     POWER
+ *  SESSION CONTROLS
  * ------v------*/
 
-    openPowerPanel() {
-        UI.closeAllPanels();
-        UI.openControlbar();
-
-        document.getElementById('noVNC_power')
-            .classList.add("noVNC_open");
-        document.getElementById('noVNC_power_button')
-            .classList.add("noVNC_selected");
-    },
-
-    closePowerPanel() {
-        document.getElementById('noVNC_power')
-            .classList.remove("noVNC_open");
-        document.getElementById('noVNC_power_button')
-            .classList.remove("noVNC_selected");
-    },
-
-    togglePowerPanel() {
-        if (document.getElementById('noVNC_power')
-            .classList.contains("noVNC_open")) {
-            UI.closePowerPanel();
-        } else {
-            UI.openPowerPanel();
+    endSession() {
+        if (!UI.connected && !window.axonosSessionDetached) {
+            return;
         }
+        const confirmed = window.confirm(
+            _("End session now?\n\nThis stops billing, ends your session, and removes your remote desktop. Unsaved work may be lost.")
+        );
+        if (!confirmed) {
+            return;
+        }
+        window.axonosSessionDetached = false;
+        UI.disconnect();
+    },
+
+    detach() {
+        if (!UI.connected) {
+            return;
+        }
+        const confirmed = window.confirm(
+            _("Detach from the remote view?\n\nYou return to the home screen. Your desktop keeps running and prepaid minutes keep counting while this tab stays open.\n\nUse End session or close this tab when you are fully done.")
+        );
+        if (!confirmed) {
+            return;
+        }
+        UI.disconnect({ skipRelease: true, detach: true });
     },
 
     restartDesktopSession() {
-        if (!UI.connected) return;
+        if (!UI.connected && !window.axonosSessionDetached) return;
         const wallet = window.verifiedWalletAddress;
         if (!wallet) {
             UI.showStatus(_("Wallet verification required"), 'error');
@@ -1182,7 +1227,7 @@ const UI = {
                 const reason = data && data.reason ? String(data.reason) : _('Restart was not accepted');
                 throw new Error(reason);
             }
-            UI.closePowerPanel();
+            UI.closeSettingsPanel();
             UI.showStatus(_("Desktop session restart requested"), 'normal');
             UI.focusRemoteDesktop();
         }).catch((err) => {
@@ -1191,21 +1236,30 @@ const UI = {
         });
     },
 
-    // Disable/enable power button
-    updatePowerButton() {
-        if (UI.connected && !UI.rfb.viewOnly) {
-            document.getElementById('noVNC_power_button')
-                .classList.remove("noVNC_hidden");
-        } else {
-            document.getElementById('noVNC_power_button')
-                .classList.add("noVNC_hidden");
-            // Close power panel if open
-            UI.closePowerPanel();
+    _axonosViewerViewOnly() {
+        return !!(UI.rfb && UI.rfb.viewOnly);
+    },
+
+    updateSessionControlButtons() {
+        const endBtn = document.getElementById('noVNC_power_button');
+        const detachBtn = document.getElementById('noVNC_disconnect_button');
+        if (!endBtn || !detachBtn) {
+            return;
         }
+        const viewOnly = UI._axonosViewerViewOnly();
+        const showEnd = (UI.connected || window.axonosSessionDetached) && !viewOnly;
+        const showDetach = UI.connected && !window.axonosSessionDetached && !viewOnly;
+        endBtn.classList.toggle('noVNC_hidden', !showEnd);
+        detachBtn.classList.toggle('noVNC_hidden', !showDetach);
+    },
+
+    /** @deprecated alias */
+    updatePowerButton() {
+        UI.updateSessionControlButtons();
     },
 
 /* ------^-------
- *    /POWER
+ *    /SESSION CONTROLS
  * ==============
  *   CLIPBOARD
  * ------v------*/
@@ -1307,8 +1361,8 @@ const UI = {
             UI.reconnectCallback = null;
         }
         UI.inhibitReconnect = false;
-        const desktopStillActive = typeof UI._axgtSessionDesktopActive === 'function'
-            && UI._axgtSessionDesktopActive();
+        const keepBilling = typeof UI._axgtSessionBillingActive === 'function'
+            && UI._axgtSessionBillingActive();
         if (typeof UI.rfb !== 'undefined' && UI.rfb) {
             try {
                 UI.rfb.disconnect();
@@ -1316,7 +1370,7 @@ const UI = {
             UI.rfb = undefined;
             UI.connected = false;
         }
-        if (UI._axgtStatusPollId) {
+        if (!keepBilling && UI._axgtStatusPollId) {
             clearInterval(UI._axgtStatusPollId);
             UI._axgtStatusPollId = null;
         }
@@ -1324,11 +1378,13 @@ const UI = {
         if (!overlay || !overlay.classList.contains('axonos-usage-overlay--locked')) {
             UI._axgtUpdateUsageOverlay('hidden');
         }
-        if (desktopStillActive) {
+        if (keepBilling) {
             UI._axgtStartSessionBillingPoll();
+            UI.updateSessionControlButtons();
             return;
         }
         UI.updateVisualState('disconnected');
+        UI.updateSessionControlButtons();
     },
 
     /** POST /api/session/claim — required by AxonOS gate before WebSocket upgrade. */
@@ -1368,18 +1424,60 @@ const UI = {
         });
     },
 
-    /** POST /api/session/release — best effort on user-triggered disconnect. */
-    _axonosReleaseSessionBestEffort() {
+    _axonosReleaseSessionHeaders() {
         const wallet = window.verifiedWalletAddress;
-        if (!wallet) return Promise.resolve(false);
-
-        const url = new URL('/api/session/release', window.location.origin).toString();
+        if (!wallet) {
+            return null;
+        }
         const headers = {
             'Content-Type': 'application/json',
             'X-Wallet-Address': wallet,
         };
         if (window.verifiedWalletAuthToken) {
             headers['X-AXGT-Auth-Token'] = window.verifiedWalletAuthToken;
+        }
+        return headers;
+    },
+
+    _axonosSessionOwnsServerSlot() {
+        return !!(window.axonosSessionDetached ||
+            UI.connected ||
+            UI._axgtStatusPollId);
+    },
+
+    /** Fire-and-forget release for tab close (pagehide). */
+    _axonosReleaseSessionBeacon() {
+        const wallet = window.verifiedWalletAddress;
+        const headers = UI._axonosReleaseSessionHeaders();
+        if (!wallet || !headers) {
+            return;
+        }
+        const url = new URL('/api/session/release', window.location.origin).toString();
+        const body = JSON.stringify({ wallet_address: wallet });
+        fetch(url, {
+            method: 'POST',
+            credentials: 'include',
+            headers,
+            body,
+            keepalive: true,
+        }).catch(() => {
+            try {
+                if (typeof navigator.sendBeacon === 'function') {
+                    navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
+                }
+            } catch (err) { /* ignore */ }
+        });
+    },
+
+    /** POST /api/session/release — best effort on user-triggered disconnect. */
+    _axonosReleaseSessionBestEffort() {
+        const wallet = window.verifiedWalletAddress;
+        if (!wallet) return Promise.resolve(false);
+
+        const url = new URL('/api/session/release', window.location.origin).toString();
+        const headers = UI._axonosReleaseSessionHeaders();
+        if (!headers) {
+            return Promise.resolve(false);
         }
 
         const request = fetch(url, {
@@ -1399,6 +1497,21 @@ const UI = {
             setTimeout(() => resolve(false), 1500);
         });
         return Promise.race([request, timeout]);
+    },
+
+    _axonosCompleteDetachUI() {
+        UI.updateVisualState('disconnected');
+        UI.showStatus(
+            _("Detached — desktop still running. Launch again to reconnect, or End session when done."),
+            'normal'
+        );
+        document.title = PAGE_TITLE;
+        UI.openControlbar();
+        UI.openConnectPanel();
+        if (!UI._axgtStatusPollId) {
+            UI._axgtStartSessionBillingPoll();
+        }
+        UI.updateSessionControlButtons();
     },
 
     _axonosCreateRfbConnection(password, includeQueryAuthToken) {
@@ -1604,12 +1717,21 @@ const UI = {
     disconnect(options) {
         const opts = options && typeof options === 'object' ? options : {};
         const skipRelease = opts.skipRelease === true;
+        const detach = opts.detach === true;
+
+        if (detach) {
+            window.axonosSessionDetached = true;
+        } else if (!skipRelease) {
+            window.axonosSessionDetached = false;
+        }
 
         UI.connected = false;
 
-        if (UI._axgtStatusPollId) {
-            clearInterval(UI._axgtStatusPollId);
-            UI._axgtStatusPollId = null;
+        if (!detach && !window.axonosSessionDetached) {
+            if (UI._axgtStatusPollId) {
+                clearInterval(UI._axgtStatusPollId);
+                UI._axgtStatusPollId = null;
+            }
         }
 
         // Disable automatic reconnecting
@@ -1649,18 +1771,26 @@ const UI = {
                     UI.rfb.disconnect();
                 } catch (err) {
                     Log.Warn("AxonOS disconnect failed: " + err);
-                    UI.updateVisualState('disconnected');
-                    UI.openControlbar();
-                    UI.openConnectPanel();
+                    if (detach || window.axonosSessionDetached) {
+                        UI._axonosCompleteDetachUI();
+                    } else {
+                        UI.updateVisualState('disconnected');
+                        UI.openControlbar();
+                        UI.openConnectPanel();
+                        UI.updateSessionControlButtons();
+                    }
                 }
+            } else if (detach || window.axonosSessionDetached) {
+                UI._axonosCompleteDetachUI();
             } else {
                 UI.updateVisualState('disconnected');
                 UI.openControlbar();
                 UI.openConnectPanel();
+                UI.updateSessionControlButtons();
             }
         };
 
-        // Credit exhaustion must not release the session (server pauses + keeps container).
+        // Credit exhaustion / detach must not release the session (container preserved).
         if (skipRelease) {
             doDisconnect();
             return;
@@ -1748,6 +1878,7 @@ const UI = {
 
     connectFinished(e) {
         UI.connected = true;
+        window.axonosSessionDetached = false;
         UI.inhibitReconnect = false;
 
         let msg;
@@ -1761,6 +1892,7 @@ const UI = {
         UI.startClipboardAutoSync();
 
         UI._axgtStartSessionBillingPoll();
+        UI.updateSessionControlButtons();
 
         // Do this last because it can only be used on rendered elements
         UI.focusRemoteDesktop();
@@ -1768,6 +1900,7 @@ const UI = {
 
     disconnectFinished(e) {
         const wasConnected = UI.connected;
+        const detaching = window.axonosSessionDetached === true;
 
         // This variable is ideally set when disconnection starts, but
         // when the disconnection isn't clean or if it is initiated by
@@ -1790,6 +1923,15 @@ const UI = {
             } catch (err) {
                 Log.Warn("AxonOS queue overlay reset failed: " + err);
             }
+        }
+
+        if (detaching) {
+            const overlay = document.getElementById('axonos_usage_overlay');
+            if (!overlay || !overlay.classList.contains('axonos-usage-overlay--locked')) {
+                UI._axgtUpdateUsageOverlay('hidden');
+            }
+            UI._axonosCompleteDetachUI();
+            return;
         }
 
         if (UI._axgtStatusPollId) {
@@ -1817,16 +1959,17 @@ const UI = {
             return;
         } else {
             UI.updateVisualState('disconnected');
-            UI.showStatus(_("Disconnected"), 'normal');
+            UI.showStatus(_("Session ended"), 'normal');
         }
 
         document.title = PAGE_TITLE;
 
         UI.openControlbar();
         UI.openConnectPanel();
+        UI.updateSessionControlButtons();
     },
 
-    /** True when a desktop session is active (classic RFB or WebRTC). */
+    /** True when the remote viewer is connected (RFB or WebRTC). */
     _axgtSessionDesktopActive() {
         if (!UI.connected) {
             return false;
@@ -1838,6 +1981,14 @@ const UI = {
             return true;
         }
         return false;
+    },
+
+    /** True when server session should receive heartbeats (viewer or detached home). */
+    _axgtSessionBillingActive() {
+        if (window.axonosSessionDetached && window.verifiedWalletAddress) {
+            return true;
+        }
+        return UI._axgtSessionDesktopActive();
     },
 
     /** True only on successful wallet-status when prepaid credit is actually exhausted. */
@@ -1928,7 +2079,7 @@ const UI = {
             }
         }
         if (UI.connected || typeof window.axonosWebRtcTeardown === 'function') {
-            UI.disconnect();
+            UI.disconnect({ skipRelease: true });
             return;
         }
         UI.updateVisualState('disconnected');
@@ -1937,7 +2088,7 @@ const UI = {
     },
 
     _axgtPollWalletStatus() {
-        if (!window.verifiedWalletAddress || !UI._axgtSessionDesktopActive()) {
+        if (!window.verifiedWalletAddress || !UI._axgtSessionBillingActive()) {
             return;
         }
         const wallet = window.verifiedWalletAddress;
