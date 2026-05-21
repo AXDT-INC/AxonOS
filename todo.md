@@ -27,6 +27,8 @@
 - [x] Queue join: `deposit_ledger` import + unique index migration on `axgt_queue` (fixes ON CONFLICT / Internal error); user-facing reason + vnc copy without raw "Internal error"
 - [x] Queue overlay: unified styled Join / Leave buttons (gold border, dark gradient, hover/disabled) — `axonos-theme.css`
 - [x] Post session-expiry relaunch: reset stale queue/WebRTC gate state on Launch; route claim-denied to recharge/resume instead of deprecated queue overlay (`ui.js`, `vnc.html`)
+- [x] Deposit verify success: teardown stale WebRTC + auto-resume paused session after top-up (`vnc.html` `axonosDepositVerifiedSuccess`)
+- [x] WebRTC UI: defer `Connected (WebRTC)` and billing poll until ICE connected/completed (`axonos-webrtc.js`)
 - [x] **Launch must `POST /api/session/claim` before WebSocket** — gate rejects WS if not session owner (was 1006 after leave queue + Launch); `axonosOnSessionClaimDenied` → queue overlay (`ui.js` + `vnc.html`)
 - [x] noVNC landing + wallet dialog: network environment banner from `/api/config` `axgt_chain_id` (mainnet vs testnet); operator notes in `vnc.html` + `env.example`
 - [x] ETH deposit feature flag: `AXGT_ENABLE_ETH_DEPOSITS` gates backend crediting + `/api/config` and hides ETH top-up controls in wallet UI (`deposit_verifier.py`, `axgt_verifier.py`, `gate_server.py`, `websockify_gate.py`, `vnc.html`)

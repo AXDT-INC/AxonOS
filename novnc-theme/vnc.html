@@ -2477,17 +2477,10 @@ document.addEventListener("DOMContentLoaded", function() {
         window.axonosAllowVncConnect = true;
         var balanceDisplay = (typeof d.remaining_minutes === 'number') ? (d.remaining_minutes + ' min prepaid') : '—';
         var credDlg = document.getElementById('noVNC_credentials_dlg');
-        if (typeof UI !== 'undefined' && UI.connected &&
-            typeof UI._axgtSessionDesktopActive === 'function' && UI._axgtSessionDesktopActive()) {
-            if (credDlg) credDlg.classList.remove('noVNC_open');
-            if (typeof UI._axgtUpdateUsageOverlay === 'function') {
-                UI._axgtUpdateUsageOverlay('hidden');
-            }
-            return;
-        }
-        axonosRefreshPausedResumeStatus().then(function () {
+
+        function finishAfterCreditRefresh() {
             if (window.axonosPausedResume && msgEl) {
-                msgEl.textContent += ' Use Resume desktop session on the home screen.';
+                msgEl.textContent += ' Resuming your saved desktop…';
             } else if (msgEl) {
                 msgEl.textContent += ' Launch desktop when ready.';
             }
@@ -2515,6 +2508,44 @@ document.addEventListener("DOMContentLoaded", function() {
             }).catch(function () {
                 if (msgEl) msgEl.textContent = 'Credited, but session claim failed. Try Resume again.';
             });
+        }
+
+        axonosRefreshPausedResumeStatus().then(function () {
+            var liveSession = typeof UI !== 'undefined' && UI.connected &&
+                typeof UI._axgtSessionDesktopActive === 'function' && UI._axgtSessionDesktopActive();
+            var paused = !!window.axonosPausedResume;
+
+            if (typeof UI !== 'undefined' && typeof UI._axgtUpdateUsageOverlay === 'function') {
+                UI._axgtUpdateUsageOverlay('hidden');
+            }
+
+            // Credit restored on an active stream — stay connected (low-credit warning path).
+            if (liveSession && !paused) {
+                if (credDlg) credDlg.classList.remove('noVNC_open');
+                setWalletUIState('axonos_wallet_state_verified', {
+                    address: wallet,
+                    balanceDisplay: balanceDisplay
+                });
+                if (inp) inp.value = '';
+                return;
+            }
+
+            // Paused session or stale WebRTC — teardown then claim/resume with new credit.
+            if (paused || liveSession) {
+                if (typeof window.axonosPrepareDesktopLaunch === 'function') {
+                    window.axonosPrepareDesktopLaunch();
+                }
+                if (typeof UI !== 'undefined' && typeof UI.disconnect === 'function' &&
+                    (liveSession || typeof window.axonosWebRtcTeardown === 'function')) {
+                    UI.disconnect({ skipRelease: true });
+                    setTimeout(finishAfterCreditRefresh, 450);
+                    return;
+                }
+            }
+
+            finishAfterCreditRefresh();
+        }).catch(function () {
+            finishAfterCreditRefresh();
         });
     }
 
