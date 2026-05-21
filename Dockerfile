@@ -340,6 +340,7 @@ RUN apt update && apt install -y \
       -DGMX_BUILD_OWN_FFTW=ON \
       -DREGRESSIONTEST_DOWNLOAD=OFF \
       -DGMX_GPU=CUDA \
+      # Library MPI (OpenMPI): use mpirun / -gpu_id for multi-rank; mdrun -ntmpi is invalid.
       -DGMX_MPI=ON \
       -DGMX_OPENMP=ON \
       -DGMX_USE_CUFFTMP=ON \
