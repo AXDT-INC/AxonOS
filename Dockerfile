@@ -269,8 +269,12 @@ RUN apt update && apt install -y \
     ./configure --prefix=/opt/ucx --enable-mt --enable-cuda --with-cuda=/usr/local/cuda && \
     make -j"$(nproc)" && \
     make install && \
-    git clone --depth 1 --branch fc067265a0c66d9ea71837c5ea9ffc37a0435079 --recursive --shallow-submodules https://github.com/open-mpi/ompi.git /opt/ompi-src && \
+    git init /opt/ompi-src && \
     cd /opt/ompi-src && \
+    git remote add origin https://github.com/open-mpi/ompi.git && \
+    git fetch --depth 1 origin fc067265a0c66d9ea71837c5ea9ffc37a0435079 && \
+    git checkout FETCH_HEAD && \
+    git submodule update --init --recursive --depth 1 && \
     ./autogen.pl && \
     ./configure --prefix=/opt/openmpi --with-ucx=/opt/ucx --with-cuda=/usr/local/cuda --enable-mpirun-prefix-by-default && \
     make -j"$(nproc)" && \
