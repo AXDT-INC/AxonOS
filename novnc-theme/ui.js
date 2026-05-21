@@ -481,11 +481,27 @@ const UI = {
             return UI.clipboardReadInFlight;
         }
         const timeoutMs = (opts && typeof opts.timeoutMs === 'number') ? opts.timeoutMs : 0;
-        const readP = navigator.clipboard.readText();
+        const abort = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        let readP;
+        try {
+            readP = abort
+                ? navigator.clipboard.readText({ signal: abort.signal })
+                : navigator.clipboard.readText();
+        } catch {
+            return Promise.resolve(false);
+        }
+        let timeoutId = null;
         const raced = timeoutMs > 0
             ? Promise.race([
                 readP,
-                new Promise((resolve) => { setTimeout(() => resolve('__clipboard_timeout__'), timeoutMs); }),
+                new Promise((resolve) => {
+                    timeoutId = window.setTimeout(() => {
+                        if (abort) {
+                            try { abort.abort(); } catch { /* ignore */ }
+                        }
+                        resolve('__clipboard_timeout__');
+                    }, timeoutMs);
+                }),
             ])
             : readP;
         const p = raced
@@ -496,6 +512,9 @@ const UI = {
             })
             .catch(() => false)
             .finally(() => {
+                if (timeoutId !== null) {
+                    clearTimeout(timeoutId);
+                }
                 if (UI.clipboardReadInFlight === p) {
                     UI.clipboardReadInFlight = null;
                 }
