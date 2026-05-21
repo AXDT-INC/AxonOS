@@ -442,24 +442,12 @@ export async function connectAxonOSWebRTC(opts) {
         const pushAt = UI && typeof UI.webrtcHostPushAt === 'number' ? UI.webrtcHostPushAt : 0;
         const pushText = UI && typeof UI.webrtcHostPushText === 'string' ? UI.webrtcHostPushText : '';
         const recent = pushAt > 0 && Date.now() - pushAt < protectMs;
-        if (navigator.clipboard && typeof navigator.clipboard.readText === 'function' &&
-            typeof navigator.clipboard.writeText === 'function') {
-            navigator.clipboard.readText()
-                .then((host) => {
-                    if (
-                        recent &&
-                        pushText &&
-                        host === pushText &&
-                        incoming !== host
-                    ) {
-                        return;
-                    }
-                    return navigator.clipboard.writeText(incoming);
-                })
-                .catch(() => {
-                    navigator.clipboard.writeText(incoming).catch(() => {});
-                });
-        } else if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        // Avoid readText() here — it stacks with auto-sync/right-click pulls and can
+        // hang after host paste, starving the browser clipboard API for clicks.
+        if (recent && pushText && incoming !== pushText) {
+            return;
+        }
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
             navigator.clipboard.writeText(incoming).catch(() => {});
         }
     };
@@ -546,7 +534,16 @@ export async function connectAxonOSWebRTC(opts) {
     function pressMouseButton(ev) {
         const bit = domButtonMask(ev.button);
         if (currentMouseButtons & bit) {
-            return;
+            // Lost mouseup while focus was on the host OS (copy/paste) — release
+            // remotely and accept this press so the click still registers.
+            const coords = pointerToRemote(ev);
+            currentMouseButtons &= ~bit;
+            sendInput({
+                t: 'mouseup',
+                button: domButtonToXdotool(ev.button),
+                buttons: currentMouseButtons,
+                ...coords,
+            });
         }
         currentMouseButtons |= bit;
         const sent = sendInput({
@@ -740,11 +737,21 @@ export async function connectAxonOSWebRTC(opts) {
         cursor.style.transform = 'translate(-100px,-100px)';
     }, { signal: inputSignal });
 
+    function releaseMouseOnFocusLoss() {
+        resetMouseInputState(null, true);
+    }
+
     function onVisibilityChange() {
         if (document.visibilityState === 'visible') {
             kickClipboardSync();
+            if (currentMouseButtons !== 0) {
+                releaseMouseOnFocusLoss();
+            }
+        } else {
+            releaseMouseOnFocusLoss();
         }
     }
+    window.addEventListener('blur', releaseMouseOnFocusLoss, { signal: inputSignal });
     window.addEventListener('focus', kickClipboardSync, { signal: inputSignal });
     document.addEventListener('visibilitychange', onVisibilityChange, { signal: inputSignal });
 

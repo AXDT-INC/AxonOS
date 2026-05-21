@@ -371,6 +371,20 @@ def _wheel_scroll(dx: int, dy: int, env: dict[str, str]) -> None:
         )
 
 
+def _release_mouse_button_if_held(button: int, env: dict[str, str]) -> None:
+    """Release one X button when mask is stuck from a lost mouseup."""
+    global _mouse_button_mask
+    bit = _button_bit(button)
+    if _mouse_button_mask & bit:
+        subprocess.run(
+            ["xdotool", "mouseup", str(button)],
+            check=False,
+            timeout=2,
+            env=env,
+        )
+        _mouse_button_mask &= ~bit
+
+
 def _reset_mouse_button_state(env: dict[str, str] | None = None) -> None:
     """Clear tracked mask; optionally release stuck buttons on the X display."""
     global _mouse_button_mask
@@ -526,7 +540,11 @@ def _apply_input_json(raw: str) -> None:
             b = int(obj.get("button", 1))
             if "x" in obj and "y" in obj:
                 _mousemove(float(obj.get("x", 0)), float(obj.get("y", 0)), env)
-            mask = int(obj.get("buttons", _mouse_button_mask | _button_bit(b)))
+            bit = _button_bit(b)
+            # Lost mouseup leaves the X button down; _sync_mouse_buttons skips a
+            # repeat press, so clicks stop until agent restart. Release first.
+            _release_mouse_button_if_held(b, env)
+            mask = int(obj.get("buttons", _mouse_button_mask | bit))
             _sync_mouse_buttons(mask, env)
         elif t in ("mouseup",):
             b = int(obj.get("button", 1))

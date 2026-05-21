@@ -38,6 +38,19 @@ class WebrtcInputTests(unittest.TestCase):
         self.assertIn(["xdotool", "mousemove", "10", "20"], cmds)
 
     @mock.patch("webrtc_agent_main.subprocess.run")
+    def test_mousedown_when_already_down_releases_then_presses(self, run: mock.MagicMock) -> None:
+        env = {"DISPLAY": ":0"}
+        self.agent._sync_mouse_buttons(1, env)
+        run.reset_mock()
+        self.agent._apply_input_json(
+            '{"t":"mousedown","button":1,"buttons":1,"x":0,"y":0}'
+        )
+        cmds = [c.args[0] for c in run.call_args_list if c.args]
+        self.assertIn(["xdotool", "mouseup", "1"], cmds)
+        self.assertIn(["xdotool", "mousedown", "1"], cmds)
+        self.assertEqual(self.agent._mouse_button_mask, 1)
+
+    @mock.patch("webrtc_agent_main.subprocess.run")
     def test_mousedown_then_move_then_mouseup(self, run: mock.MagicMock) -> None:
         self.agent._apply_input_json(
             '{"t":"mousedown","button":1,"buttons":1,"x":0,"y":0}'
