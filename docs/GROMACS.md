@@ -116,7 +116,7 @@ mkdir -p ~/gmx-tutorial && cd ~/gmx-tutorial
 source /opt/gromacs/bin/GMXRC
 
 # Example structure (RCSB)
-curl -fsSL -o 1aki.pdb https://files.rcsb.org/download/1AKI.pdb
+curl -fL -o 1aki.pdb https://files.rcsb.org/download/1AKI.pdb
 
 # Topology (interactive: pick force field + water model; tutorial uses CHARMM36)
 gmx_mpi pdb2gmx -f 1aki.pdb -o processed.gro -water spce
@@ -137,19 +137,19 @@ The ions / minimization / equilibration / production stages need `.mdp` files fr
 ```bash
 cd ~/gmx-tutorial
 
-curl -fsSL -o ions.mdp \
+curl -fL -o ions.mdp \
   http://www.mdtutorials.com/gmx/lysozyme/Files/ions.mdp
 
-curl -fsSL -o minim.mdp \
+curl -fL -o minim.mdp \
   http://www.mdtutorials.com/gmx/lysozyme/Files/minim.mdp
 
-curl -fsSL -o nvt.mdp \
+curl -fL -o nvt.mdp \
   http://www.mdtutorials.com/gmx/lysozyme/Files/nvt.mdp
 
-curl -fsSL -o npt.mdp \
+curl -fL -o npt.mdp \
   http://www.mdtutorials.com/gmx/lysozyme/Files/npt.mdp
 
-curl -fsSL -o md.mdp \
+curl -fL -o md.mdp \
   http://www.mdtutorials.com/gmx/lysozyme/Files/md.mdp
 
 ls -l *.mdp
@@ -300,11 +300,119 @@ On 8× V100 with lysozyme you may see **~18–20% util** and **~2.5 GiB** on eac
 grep -E 'Performance|ns/day' md.log md_8gpu.log 2>/dev/null
 ```
 
-For lysozyme, **1 GPU often reports higher ns/day** than 8 GPUs. That is expected.
+For lysozyme, **1 GPU often reports higher ns/day** than 8 GPUs. That is expected. Use [Step 6](#step-6--large-system-gpu-stress-test) to actually load the GPUs.
 
 ---
 
-## Step 6 — Troubleshooting
+## Step 6 — Large-system GPU stress test
+
+Lysozyme (~40k atoms after solvation) cannot saturate 8× V100s. For **high GPU utilization** and meaningful **ns/day** comparisons, use pre-built benchmark `.tpr` files from the [Grubmüller / MPinat benchmark set](https://www.mpinat.mpg.de/grubmueller/bench) (CC-BY 4.0).
+
+| Benchmark | Atoms | Download size | Best for |
+|-----------|-------|---------------|----------|
+| `benchMEM` | ~82k | ~1.7 MB | Moderate test; still too small for 8× V100 |
+| **`benchRIB`** | **~2M** | **~55 MB** | **Recommended 8-GPU scaling test** |
+| **`benchPEP-h`** | **~12M** | **~213 MB** | **Highest GPU load** (full GPU pipeline) |
+
+`benchPEP-h` uses H-bonds-only constraints so you can run **bonded + update on GPU** (`-bonded gpu -update gpu`). That is what the benchmark authors recommend on GPU-heavy nodes.
+
+### Download and extract
+
+MPinat URLs serve **ZIP archives** (not bare `.tpr`). Unzip after download.
+
+```bash
+mkdir -p ~/gmx-bench && cd ~/gmx-bench
+source /opt/gromacs/bin/GMXRC
+
+# Ribosome in water (~2M atoms) — good default for 8-GPU validation
+curl -fL -o benchRIB.zip https://www.mpinat.mpg.de/benchRIB
+unzip -o benchRIB.zip
+
+# Peptide megasystem (~12M atoms) — use to max out GPUs (large download)
+curl -fL -o benchPEP-h.zip https://www.mpinat.mpg.de/benchPEP-h
+unzip -o benchPEP-h.zip
+
+ls -lh *.tpr
+```
+
+Optional smaller sanity check:
+
+```bash
+curl -fL -o benchMEM.zip https://www.mpinat.mpg.de/benchMEM
+unzip -o benchMEM.zip
+```
+
+**Attribution:** Dept. of Theoretical and Computational Biophysics, Max Planck Institute for Multidisciplinary Sciences — see the [benchmark page](https://www.mpinat.mpg.de/grubmueller/bench) for license and citations.
+
+### 8-GPU stress run — `benchRIB` (~2M atoms)
+
+Requires **`max` profile** (8 GPUs visible in `nvidia-smi -L`). Limit steps for a benchmark (`-nsteps`) instead of running the full production length baked into the `.tpr`.
+
+```bash
+cd ~/gmx-bench
+
+gmx_mpi mdrun -s benchRIB.tpr -deffnm rib_8gpu \
+  -ntomp 4 -gpu_id 0,1,2,3,4,5,6,7 \
+  -nb gpu -pme gpu -pin on -nsteps 5000
+```
+
+### 8-GPU stress run — `benchPEP-h` (~12M atoms, max GPU load)
+
+Uses the full GPU pipeline. Expect **much higher** `nvidia-smi` util than lysozyme. Needs substantial **host RAM** (~tens of GB); watch for OOM if the session node is memory-limited.
+
+```bash
+cd ~/gmx-bench
+
+gmx_mpi mdrun -s benchPEP-h.tpr -deffnm peph_8gpu \
+  -ntomp 2 -gpu_id 0,1,2,3,4,5,6,7 \
+  -nb gpu -pme gpu -bonded gpu -update gpu -pin on -nsteps 2000
+```
+
+### 1-GPU baseline (same systems)
+
+Compare against multi-GPU on the **same `.tpr`**:
+
+```bash
+gmx_mpi mdrun -s benchRIB.tpr -deffnm rib_1gpu \
+  -ntomp 16 -gpu_id 0 \
+  -nb gpu -pme gpu -pin on -nsteps 5000
+
+gmx_mpi mdrun -s benchPEP-h.tpr -deffnm peph_1gpu \
+  -ntomp 16 -gpu_id 0 \
+  -nb gpu -pme gpu -bonded gpu -update gpu -pin on -nsteps 2000
+```
+
+### What “maxed out” looks like
+
+In a second terminal:
+
+```bash
+watch -n 1 nvidia-smi
+# or
+nvidia-smi dmon -s pucvmet -d 1
+```
+
+| System | Typical 8× V100 signal |
+|--------|-------------------------|
+| Lysozyme | ~18–20% util, ~2.5 GiB/GPU |
+| `benchRIB` | Moderate–high util, more VRAM per GPU |
+| `benchPEP-h` | **High util (often 70–100%)**, many GB VRAM/GPU |
+
+Read performance after steady state (or Ctrl+C once past startup):
+
+```bash
+grep -E 'Performance|ns/day' rib_1gpu.log rib_8gpu.log peph_1gpu.log peph_8gpu.log 2>/dev/null
+```
+
+On large systems, **8 GPUs should beat 1 GPU in ns/day** when the platform and decomposition are healthy.
+
+### TPR version note
+
+These benchmarks predate GROMACS 2026. GROMACS usually reads older `.tpr` files; if `mdrun` rejects the input, check with `gmx_mpi check -s benchRIB.tpr` or regenerate from the benchmark authors’ source files (see their [PDF spec](https://www.mpinat.mpg.de/632182/bench.pdf)).
+
+---
+
+## Step 7 — Troubleshooting
 
 ### `sm BTL initialization` (OpenMPI)
 
@@ -346,7 +454,11 @@ The `sm BTL` warning alone rarely stops the container. Common causes:
 
 ### Low GPU utilization on multi-GPU lysozyme run
 
-Normal for this system size. For meaningful scaling benchmarks, use a **much larger** simulation (more atoms, longer `-nsteps`).
+Normal for this system size. Use [Step 6](#step-6--large-system-gpu-stress-test) (`benchRIB` or `benchPEP-h`) for meaningful load tests.
+
+### OOM on `benchPEP-h`
+
+The 12M-atom system needs significant host memory. Reduce MPI ranks, use `benchRIB` instead, or shorten `-nsteps`. Check `dmesg | grep -i oom` on the host.
 
 ---
 
@@ -364,6 +476,10 @@ gmx_mpi mdrun -deffnm md -ntomp 8 -gpu_id 0
 
 # Multi-GPU MD (N = number of GPUs)
 gmx_mpi mdrun -deffnm md -ntomp 2 -gpu_id 0,1,2,3,4,5,6,7
+
+# Large-system GPU stress (download + unzip first — see Step 6)
+gmx_mpi mdrun -s benchPEP-h.tpr -deffnm peph_8gpu -ntomp 2 \
+  -gpu_id 0,1,2,3,4,5,6,7 -nb gpu -pme gpu -bonded gpu -update gpu -nsteps 2000
 
 # Live GPU monitor
 watch -n 1 nvidia-smi
