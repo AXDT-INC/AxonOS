@@ -101,3 +101,4 @@
   - [x] Reset client state on disconnect, detach home, and heartbeat `No active session`
   - [x] `_axgtSessionDesktopActive()` requires live RFB/WebRTC media (not teardown fn alone)
   - [x] Connection loader on Launch; errors cleared via `axonosPrepareDesktopLaunch`
+- [x] **Environment variables reference** — `docs/ENVIRONMENT_VARIABLES.md` (full codebase audit vs `env.example`)
