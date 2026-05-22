@@ -749,10 +749,34 @@ document.addEventListener("DOMContentLoaded", function() {
     // Connection Loading Animation Handler
     let loaderStartTime = null;
     
-    function showConnectionLoader() {
+    function axonosSetConnectionLoaderPhase(phase) {
+        var titleEl = document.querySelector('#axonos-loader .axonos-loading-text');
+        var subEl = document.querySelector('#axonos-loader .axonos-loading-subtext');
+        var phases = {
+            preparing: ['Preparing session', 'Checking wallet and saved desktop status…'],
+            claiming: ['Claiming desktop', 'Reserving your GPU allocation…'],
+            webrtc: ['Connecting display', 'Negotiating WebRTC stream (this can take a minute)…'],
+            vnc: ['Connecting display', 'Opening remote desktop stream…']
+        };
+        var msg = phases[phase] || phases.preparing;
+        if (titleEl) titleEl.textContent = msg[0];
+        if (subEl) subEl.textContent = msg[1];
+    }
+
+    function axonosSetLaunchBusy(busy) {
+        var wrap = document.querySelector('.axonos-connect-wrapper');
+        var btn = document.getElementById('noVNC_connect_button');
+        if (wrap) wrap.classList.toggle('axonos-connect-wrapper--busy', !!busy);
+        if (btn) btn.setAttribute('aria-busy', busy ? 'true' : 'false');
+    }
+
+    function showConnectionLoader(phase) {
         const loader = document.getElementById('axonos-loader');
+        if (typeof phase === 'string') {
+            axonosSetConnectionLoaderPhase(phase);
+        }
+        axonosSetLaunchBusy(true);
         if (loader && !loader.classList.contains('active')) {
-            console.log('Showing connection loader');
             loader.classList.add('active');
             loaderStartTime = Date.now();
         }
@@ -771,10 +795,13 @@ document.addEventListener("DOMContentLoaded", function() {
                 console.log('Connection loader hidden');
             }, remainingTime);
         }
+        axonosSetLaunchBusy(false);
     }
 
     window.axonosHideConnectionLoader = hideConnectionLoader;
     window.showConnectionLoader = showConnectionLoader;
+    window.axonosSetConnectionLoaderPhase = axonosSetConnectionLoaderPhase;
+    window.axonosSetLaunchBusy = axonosSetLaunchBusy;
 
     // Function to setup credential listeners when elements become available
     function setupCredentialListeners() {
@@ -901,12 +928,14 @@ document.addEventListener("DOMContentLoaded", function() {
 
     window.axonosPausedResume = null;
     window.axonosSessionDetached = false;
+    /** Active session GPUs/profile while detached (desktop still running). */
+    window.axonosDetachedSession = null;
 
     function claimSession() {
         const wallet = window.verifiedWalletAddress;
         if (!wallet) return Promise.resolve({ granted: false });
         const payload = { wallet_address: wallet };
-        if (!window.axonosPausedResume) {
+        if (!window.axonosPausedResume && !window.axonosDetachedSession) {
             payload.requested_profile = getRequestedProfile();
         }
         return axonosFetch({
@@ -1035,9 +1064,82 @@ document.addEventListener("DOMContentLoaded", function() {
         axonosOpenWalletForRecharge(claim, claim && claim.reason);
     }
 
+    function axonosNormalizeProfileName(profile) {
+        var val = String(profile || 'small').toLowerCase();
+        if (val !== 'small' && val !== 'medium' && val !== 'large' && val !== 'max') return 'small';
+        return val;
+    }
+
+    function axonosSessionProfileContextFromPayload(payload) {
+        var data = payload || {};
+        var profile = axonosNormalizeProfileName(
+            data.requested_profile || data.owner_requested_profile || data.paused_requested_profile || 'small'
+        );
+        var gpuIds = data.assigned_gpu_ids || data.owner_assigned_gpu_ids || data.paused_assigned_gpu_ids || [];
+        var gpuCount = typeof data.owner_gpu_count === 'number'
+            ? data.owner_gpu_count
+            : (typeof data.paused_gpu_count === 'number'
+                ? data.paused_gpu_count
+                : (gpuIds.length || axonosGpuCountForProfile(profile)));
+        return { profile: profile, gpuCount: gpuCount, gpuIds: gpuIds };
+    }
+
+    window.axonosRememberOwnedSession = function (payload) {
+        window.axonosDetachedSession = axonosSessionProfileContextFromPayload(payload);
+    };
+
+    window.axonosClearDetachedSession = function () {
+        window.axonosDetachedSession = null;
+        axonosApplyDetachedSessionUi(false);
+    };
+
+    function axonosApplyDetachedSessionUi(detachedActive) {
+        var profileSel = document.getElementById('axonos_profile_select');
+        var hint = document.getElementById('axonos_profile_burn_hint');
+        var active = !!(detachedActive && window.axonosDetachedSession && !window.axonosPausedResume);
+        document.body.classList.toggle('axonos-detached-session-mode', active);
+        if (!active) {
+            if (profileSel && !window.axonosPausedResume) profileSel.disabled = false;
+            if (!window.axonosPausedResume) axonosUpdateProfileBurnHint();
+            return;
+        }
+        var profile = window.axonosDetachedSession.profile || 'small';
+        var gpus = window.axonosDetachedSession.gpuCount || axonosGpuCountForProfile(profile);
+        if (profileSel) {
+            profileSel.value = profile;
+            profileSel.disabled = true;
+        }
+        if (hint) {
+            hint.style.display = '';
+            hint.textContent = 'Desktop still running on ' + axonosProfileLabel(profile) + ' (' + gpus +
+                ' GPU' + (gpus === 1 ? '' : 's') + '). Reconnect uses the same allocation.';
+        }
+    }
+
+    window.axonosApplyDetachedSessionUi = axonosApplyDetachedSessionUi;
+
+    window.axonosOnDetachedToHome = function () {
+        var wallet = window.verifiedWalletAddress;
+        if (!wallet) {
+            axonosApplyDetachedSessionUi(!!window.axonosDetachedSession);
+            return Promise.resolve();
+        }
+        return sessionStatusForWallet(wallet).then(function (st) {
+            if (st && st.is_owner && st.owner_requested_profile) {
+                window.axonosDetachedSession = axonosSessionProfileContextFromPayload(st);
+            }
+            axonosApplyDetachedSessionUi(window.axonosSessionDetached && !!window.axonosDetachedSession);
+        }).catch(function () {
+            axonosApplyDetachedSessionUi(window.axonosSessionDetached && !!window.axonosDetachedSession);
+        });
+    };
+
     function getRequestedProfile() {
         if (window.axonosPausedResume && window.axonosPausedResume.profile) {
             return window.axonosPausedResume.profile;
+        }
+        if (window.axonosDetachedSession && window.axonosDetachedSession.profile) {
+            return window.axonosDetachedSession.profile;
         }
         var el = document.getElementById('axonos_profile_select');
         var val = el ? String(el.value || '').toLowerCase() : 'small';
@@ -1120,19 +1222,37 @@ document.addEventListener("DOMContentLoaded", function() {
                 }
             }
         } else {
-            if (profileSel) profileSel.disabled = false;
             if (connectText) connectText.textContent = 'Launch GPU-Native Desktop';
             if (connectSub) connectSub.textContent = 'Full Linux environment with direct GPU access';
             if (resumeDetail) resumeDetail.textContent = '';
             if (resumeTtl) resumeTtl.textContent = '';
+            if (!window.axonosDetachedSession) {
+                if (profileSel) profileSel.disabled = false;
+            }
+            axonosApplyDetachedSessionUi(!!window.axonosDetachedSession);
         }
         document.body.classList.toggle('axonos-resume-mode', !!resumeActive);
     }
 
     function axonosApplySessionStatusToResumeUi(st, walletHint) {
         var wallet = (walletHint || window.verifiedWalletAddress || '').trim().toLowerCase();
+        if (st && st.is_owner && st.owner_requested_profile && !st.paused) {
+            window.axonosDetachedSession = axonosSessionProfileContextFromPayload(st);
+            if (window.axonosSessionDetached) {
+                axonosApplyDetachedSessionUi(true);
+            }
+        } else if (!st || !st.paused) {
+            if (!window.axonosSessionDetached) {
+                window.axonosDetachedSession = null;
+                axonosApplyDetachedSessionUi(false);
+            } else if (st && !st.is_owner) {
+                window.axonosDetachedSession = null;
+                axonosApplyDetachedSessionUi(false);
+            }
+        }
         if (st && st.can_resume && st.paused &&
             (typeof st.paused_resume_seconds !== 'number' || st.paused_resume_seconds > 0)) {
+            window.axonosDetachedSession = null;
             var profile = String(st.paused_requested_profile || st.requested_profile || 'small').toLowerCase();
             var gpuIds = st.paused_assigned_gpu_ids || st.assigned_gpu_ids || [];
             var gpuCount = typeof st.paused_gpu_count === 'number'
