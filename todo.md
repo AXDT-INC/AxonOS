@@ -68,6 +68,7 @@
   - [ ] Compose E2E: negotiate WebRTC, verify video + input + fallback + unauthorized signaling denial
   - [x] WebRTC billing poll regression (`ff3171d`): tighten wallet-status credit-exhausted check (ignore 401/400), restart poll on Launch when session active, keep poll alive after queue leave on active WebRTC
   - [x] Credit exhaustion: pause session + preserve container for resume after top-up (`AXGT_SESSION_PRESERVE_ON_CREDIT_EXHAUST`, default true)
+  - [x] Deposit verify success: show credited time as desktop minutes for selected GPU profile (`axonosFormatDesktopTimeLabel` in `vnc.html`)
   - [x] Resume workflow UI: hide GPU picker, show saved-session panel, claim uses paused profile/GPUs (not new selection)
   - [ ] **GPU-accelerated WebRTC capture/encode (NVENC)** — current path is CPU-only (`mss` + Pillow resize + aiortc software encode); 200 MB/s link is not the bottleneck
     - [ ] Add FFmpeg with `h264_nvenc` to image; verify `libnvidia-encode` in session containers (`--gpus all`)
@@ -95,3 +96,8 @@
     - [x] `_axgtUsageOverlayExitToHome()` uses `skipRelease` (paused session preserved)
     - [x] Credit exhaustion + deposit/resume `skipRelease` paths unchanged
   - [ ] Manual test checklist: Detach → home → heartbeats → relaunch; End session → container gone; tab close → release; credit pause/resume unaffected
+- [x] **Launch button dead after Detach / End / server expiry (2026-05)**
+  - [x] `cancelAxonOSWebRTCNegotiation()` aborts in-flight signaling (no stale timeout banners on home)
+  - [x] Reset client state on disconnect, detach home, and heartbeat `No active session`
+  - [x] `_axgtSessionDesktopActive()` requires live RFB/WebRTC media (not teardown fn alone)
+  - [x] Connection loader on Launch; errors cleared via `axonosPrepareDesktopLaunch`

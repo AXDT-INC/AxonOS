@@ -774,6 +774,7 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 
     window.axonosHideConnectionLoader = hideConnectionLoader;
+    window.showConnectionLoader = showConnectionLoader;
 
     // Function to setup credential listeners when elements become available
     function setupCredentialListeners() {
@@ -966,21 +967,28 @@ document.addEventListener("DOMContentLoaded", function() {
     /** Clear stale session/WebRTC gate state before a user-initiated Launch / Resume. */
     window.axonosPrepareDesktopLaunch = function () {
         axonosResetQueueClientState();
+        window.axonosWebRtcConnectAborted = false;
+        if (typeof window.axonosCancelWebRtcNegotiation === 'function') {
+            window.axonosCancelWebRtcNegotiation();
+        } else if (typeof UI !== 'undefined' && typeof UI._axonosCancelWebRtcClient === 'function') {
+            UI._axonosCancelWebRtcClient();
+        }
         if (typeof UI !== 'undefined') {
             UI.inhibitReconnect = false;
             if (typeof UI.hideStatus === 'function') {
                 UI.hideStatus();
             }
+            if (typeof UI._axgtSessionDesktopActive !== 'function' || !UI._axgtSessionDesktopActive()) {
+                UI.connected = false;
+            }
         }
-        if (typeof UI !== 'undefined' && !UI.connected) {
-            var staleVideo = document.getElementById('axonos_webrtc_video');
-            if (staleVideo && staleVideo.parentNode) {
-                staleVideo.parentNode.removeChild(staleVideo);
-            }
-            if (typeof window.axonosWebRtcTeardown === 'function') {
-                Promise.resolve(window.axonosWebRtcTeardown()).catch(function () {});
-                window.axonosWebRtcTeardown = null;
-            }
+        var staleCursor = document.getElementById('axonos_webrtc_cursor');
+        if (staleCursor && staleCursor.parentNode) {
+            staleCursor.parentNode.removeChild(staleCursor);
+        }
+        var staleVideo = document.getElementById('axonos_webrtc_video');
+        if (staleVideo && staleVideo.parentNode) {
+            staleVideo.parentNode.removeChild(staleVideo);
         }
     };
 
@@ -2269,7 +2277,12 @@ document.addEventListener("DOMContentLoaded", function() {
     function axonosDepositVerifiedSuccess(d, wallet) {
         var msgEl = document.getElementById('axonos_verify_deposit_msg');
         var inp = document.getElementById('axonos_tx_hash_input');
-        if (msgEl) msgEl.textContent = 'Credited ' + (d.credited_minutes != null ? d.credited_minutes : '?') + ' min.';
+        if (msgEl) {
+            var creditedLabel = (d.credited_minutes != null)
+                ? axonosFormatDesktopTimeLabel(d.credited_minutes)
+                : '?';
+            msgEl.textContent = 'Credited ' + creditedLabel + '.';
+        }
         window.axonosAllowVncConnect = true;
         var balanceDisplay = (typeof d.remaining_minutes === 'number') ? (d.remaining_minutes + ' min prepaid') : '—';
         var credDlg = document.getElementById('noVNC_credentials_dlg');
