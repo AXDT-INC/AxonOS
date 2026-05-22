@@ -1324,6 +1324,15 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
                 owned = _active_session_for_wallet(cur, wallet)
                 if owned:
                     result["is_owner"] = True
+                    owner_profile = (owned.get("requested_profile") or "small").strip().lower()
+                    owner_gpu_ids = owned.get("gpu_ids", [])
+                    result["owner_requested_profile"] = owner_profile
+                    result["owner_assigned_gpu_ids"] = owner_gpu_ids
+                    result["owner_gpu_count"] = (
+                        len(owner_gpu_ids)
+                        if owner_gpu_ids
+                        else _billing_gpu_count(owner_gpu_ids, owner_profile)
+                    )
                 paused_owned = _paused_session_for_wallet(cur, wallet, now)
                 if paused_owned and _preserve_session_on_credit_exhaust():
                     paused_profile = paused_owned.get("requested_profile") or "small"

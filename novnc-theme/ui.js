@@ -1395,7 +1395,7 @@ const UI = {
             return Promise.resolve({ granted: false, reason: 'No wallet' });
         }
         const payload = { wallet_address: wallet };
-        if (!window.axonosPausedResume) {
+        if (!window.axonosPausedResume && !window.axonosDetachedSession) {
             payload.requested_profile = (typeof window.axonosGetRequestedProfile === 'function')
                 ? window.axonosGetRequestedProfile()
                 : 'small';
@@ -1537,6 +1537,9 @@ const UI = {
             return;
         }
         window.axonosSessionDetached = false;
+        if (typeof window.axonosClearDetachedSession === 'function') {
+            window.axonosClearDetachedSession();
+        }
         if (UI._axgtStatusPollId) {
             clearInterval(UI._axgtStatusPollId);
             UI._axgtStatusPollId = null;
@@ -1567,6 +1570,11 @@ const UI = {
             UI._axgtStartSessionBillingPoll();
         }
         UI.updateSessionControlButtons();
+        if (typeof window.axonosOnDetachedToHome === 'function') {
+            window.axonosOnDetachedToHome();
+        } else if (typeof window.axonosApplyDetachedSessionUi === 'function') {
+            window.axonosApplyDetachedSessionUi(!!window.axonosDetachedSession);
+        }
     },
 
     _axonosCreateRfbConnection(password, includeQueryAuthToken) {
@@ -1697,10 +1705,19 @@ const UI = {
             return;
         }
 
+        if (typeof window.showConnectionLoader === 'function') {
+            window.showConnectionLoader('preparing');
+        } else if (typeof window.axonosSetLaunchBusy === 'function') {
+            window.axonosSetLaunchBusy(true);
+        }
+
         // AxonOS gate rejects WebSocket upgrade unless this wallet owns the active session
         // (see websockify_gate / gate_server). Launch previously skipped claim if the user
         // left the queue and clicked connect — server returned 403 / abnormal close (1006).
         const runSessionClaim = () => {
+            if (typeof window.axonosSetConnectionLoaderPhase === 'function') {
+                window.axonosSetConnectionLoaderPhase('claiming');
+            }
             if (window.axonosPausedResume &&
                 typeof window.axonosResumeDesktopConnectIfPaused === 'function' &&
                 window.axonosResumeDesktopConnectIfPaused()) {
@@ -1711,6 +1728,8 @@ const UI = {
                 if (!granted) {
                     if (typeof window.axonosHideConnectionLoader === 'function') {
                         window.axonosHideConnectionLoader(true);
+                    } else if (typeof window.axonosSetLaunchBusy === 'function') {
+                        window.axonosSetLaunchBusy(false);
                     }
                     UI.updateVisualState('disconnected');
                     const reason = (claim && claim.reason) ? String(claim.reason) : _('Could not claim desktop session.');
@@ -1719,6 +1738,9 @@ const UI = {
                         window.axonosOnSessionClaimDenied(claim || {});
                     }
                     return;
+                }
+                if (typeof window.axonosRememberOwnedSession === 'function') {
+                    window.axonosRememberOwnedSession(claim);
                 }
                 if (claim && claim.resumed === true && typeof window.axonosRefreshPausedResumeStatus === 'function') {
                     window.axonosPausedResume = null;
@@ -1732,7 +1754,7 @@ const UI = {
                 UI.closeConnectPanel();
                 UI.updateVisualState('connecting');
                 if (typeof window.showConnectionLoader === 'function') {
-                    window.showConnectionLoader();
+                    window.showConnectionLoader('claiming');
                 }
                 (async () => {
                     let usedWebRtc = false;
@@ -1740,6 +1762,9 @@ const UI = {
                         .then((r) => r.json())
                         .catch(() => ({}));
                     if (cfgPeek.webrtc_enabled) {
+                        if (typeof window.axonosSetConnectionLoaderPhase === 'function') {
+                            window.axonosSetConnectionLoaderPhase('webrtc');
+                        }
                         try {
                             const mod = await import('./webrtc/axonos-webrtc.js');
                             if (typeof mod.cancelAxonOSWebRTCNegotiation === 'function') {
@@ -1768,6 +1793,9 @@ const UI = {
                         }
                     }
                     if (!usedWebRtc) {
+                        if (typeof window.axonosSetConnectionLoaderPhase === 'function') {
+                            window.axonosSetConnectionLoaderPhase('vnc');
+                        }
                         UI._axonosCreateRfbConnection(password, includeQueryAuthToken);
                     }
                 })();
@@ -1775,6 +1803,8 @@ const UI = {
                 Log.Error('AxonOS session claim failed: ' + err);
                 if (typeof window.axonosHideConnectionLoader === 'function') {
                     window.axonosHideConnectionLoader(true);
+                } else if (typeof window.axonosSetLaunchBusy === 'function') {
+                    window.axonosSetLaunchBusy(false);
                 }
                 UI.updateVisualState('disconnected');
                 UI.showStatus(_('Could not claim desktop session. Check network.'), 'error');
@@ -1804,6 +1834,9 @@ const UI = {
             window.axonosSessionDetached = true;
         } else if (!skipRelease) {
             window.axonosSessionDetached = false;
+            if (typeof window.axonosClearDetachedSession === 'function') {
+                window.axonosClearDetachedSession();
+            }
         }
 
         UI.connected = false;
@@ -2185,6 +2218,14 @@ const UI = {
                 }
                 if (hb && typeof hb.gpu_billing_enabled === 'boolean') {
                     window.axonosGpuBillingEnabled = hb.gpu_billing_enabled;
+                }
+                if (hb && hb.ok === true && hb.requested_profile &&
+                    typeof window.axonosRememberOwnedSession === 'function') {
+                    window.axonosRememberOwnedSession(hb);
+                    if (window.axonosSessionDetached &&
+                        typeof window.axonosApplyDetachedSessionUi === 'function') {
+                        window.axonosApplyDetachedSessionUi(true);
+                    }
                 }
                 if (hb && hb.ok === false) {
                     const hbReason = String(hb.reason || '');

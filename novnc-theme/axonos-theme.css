@@ -2249,6 +2249,23 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   }
 }
 
+.axonos-connect-wrapper--busy > #noVNC_connect_button {
+  opacity: 0.72;
+  pointer-events: none;
+  cursor: wait;
+}
+
+.axonos-connect-wrapper--busy .axonos-profile-picker__select {
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+.axonos-detached-session-mode .axonos-profile-picker__select:disabled {
+  opacity: 1;
+  cursor: not-allowed;
+  border-color: rgba(100, 180, 140, 0.45);
+}
+
 .axonos-connect-wrapper > #noVNC_connect_button {
   width: 100%;
   max-width: 480px;
