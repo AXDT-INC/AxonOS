@@ -565,8 +565,8 @@ Copyright (C) 2019 The noVNC Authors
                 <img class="axonos-loader-x-img" src="icon.png" alt="" width="48" height="48" decoding="async">
             </div>
         </div>
-        <div class="axonos-loading-text">Launching GPU-Native Desktop</div>
-        <div class="axonos-loading-subtext">Connecting to AxonOS with direct GPU access...</div>
+        <div class="axonos-loading-text">Preparing session</div>
+        <div class="axonos-loading-subtext">Connecting to AxonOS with direct GPU access…</div>
     </div>
 
     <!-- AxonOS Branding -->
@@ -749,19 +749,36 @@ document.addEventListener("DOMContentLoaded", function() {
     // Connection Loading Animation Handler
     let loaderStartTime = null;
     
+    function axonosIsReconnectLaunch() {
+        if (window.axonosPausedResume) return true;
+        if (window.axonosSessionDetached && window.axonosDetachedSession) return true;
+        return false;
+    }
+
     function axonosSetConnectionLoaderPhase(phase) {
         var titleEl = document.querySelector('#axonos-loader .axonos-loading-text');
         var subEl = document.querySelector('#axonos-loader .axonos-loading-subtext');
+        var reconnect = axonosIsReconnectLaunch();
         var phases = {
-            preparing: ['Preparing session', 'Checking wallet and saved desktop status…'],
-            claiming: ['Claiming desktop', 'Reserving your GPU allocation…'],
-            webrtc: ['Connecting display', 'Negotiating WebRTC stream (this can take a minute)…'],
-            vnc: ['Connecting display', 'Opening remote desktop stream…']
+            preparing: reconnect
+                ? ['Resuming session', 'Reconnecting to your running desktop…']
+                : ['Preparing session', 'Checking wallet and saved desktop status…'],
+            claiming: reconnect
+                ? ['Resuming session', 'Claiming your existing desktop and GPUs…']
+                : ['Claiming desktop', 'Reserving your GPU allocation…'],
+            webrtc: reconnect
+                ? ['Resuming session', 'Reconnecting display (WebRTC may take a minute)…']
+                : ['Connecting display', 'Negotiating WebRTC stream (this can take a minute)…'],
+            vnc: reconnect
+                ? ['Resuming session', 'Reconnecting to your remote desktop…']
+                : ['Connecting display', 'Opening remote desktop stream…']
         };
         var msg = phases[phase] || phases.preparing;
         if (titleEl) titleEl.textContent = msg[0];
         if (subEl) subEl.textContent = msg[1];
     }
+
+    window.axonosIsReconnectLaunch = axonosIsReconnectLaunch;
 
     function axonosSetLaunchBusy(busy) {
         var wrap = document.querySelector('.axonos-connect-wrapper');
