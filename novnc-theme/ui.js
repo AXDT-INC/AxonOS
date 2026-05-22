@@ -1570,10 +1570,11 @@ const UI = {
             UI._axgtStartSessionBillingPoll();
         }
         UI.updateSessionControlButtons();
+        if (typeof window.axonosSyncDetachedProfileUiImmediate === 'function') {
+            window.axonosSyncDetachedProfileUiImmediate();
+        }
         if (typeof window.axonosOnDetachedToHome === 'function') {
             window.axonosOnDetachedToHome();
-        } else if (typeof window.axonosApplyDetachedSessionUi === 'function') {
-            window.axonosApplyDetachedSessionUi(!!window.axonosDetachedSession);
         }
     },
 
@@ -1832,6 +1833,9 @@ const UI = {
 
         if (detach) {
             window.axonosSessionDetached = true;
+            if (typeof window.axonosSyncDetachedProfileUiImmediate === 'function') {
+                window.axonosSyncDetachedProfileUiImmediate();
+            }
         } else if (!skipRelease) {
             window.axonosSessionDetached = false;
             if (typeof window.axonosClearDetachedSession === 'function') {
@@ -1952,7 +1956,11 @@ const UI = {
         })
             .then((r) => (r.ok ? r.json() : null))
             .then((hb) => {
-                if (hb && hb.paused_for_resume && typeof window.axonosRefreshPausedResumeStatus === 'function') {
+                if (hb && hb.paused_for_resume &&
+                    typeof window.axonosApplyPausedResumeFromPayload === 'function') {
+                    window.axonosApplyPausedResumeFromPayload(hb);
+                }
+                if (typeof window.axonosRefreshPausedResumeStatus === 'function') {
                     window.axonosRefreshPausedResumeStatus();
                 }
             })
@@ -2230,6 +2238,10 @@ const UI = {
                 if (hb && hb.ok === false) {
                     const hbReason = String(hb.reason || '');
                     if (/credit exhausted/i.test(hbReason)) {
+                        if (hb.paused_for_resume &&
+                            typeof window.axonosApplyPausedResumeFromPayload === 'function') {
+                            window.axonosApplyPausedResumeFromPayload(hb);
+                        }
                         UI._axgtDisconnectForCreditExhaustion(
                             'Usage credit exhausted. Add more ETH to unlock access.'
                         );

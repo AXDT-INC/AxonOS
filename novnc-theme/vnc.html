@@ -945,6 +945,8 @@ document.addEventListener("DOMContentLoaded", function() {
 
     window.axonosPausedResume = null;
     window.axonosSessionDetached = false;
+    /** Profile/GPUs cached while a session is active (claim, heartbeat). */
+    window.axonosOwnedSession = null;
     /** Active session GPUs/profile while detached (desktop still running). */
     window.axonosDetachedSession = null;
 
@@ -1102,26 +1104,102 @@ document.addEventListener("DOMContentLoaded", function() {
     }
 
     window.axonosRememberOwnedSession = function (payload) {
-        window.axonosDetachedSession = axonosSessionProfileContextFromPayload(payload);
+        window.axonosOwnedSession = axonosSessionProfileContextFromPayload(payload);
+        if (window.axonosSessionDetached) {
+            window.axonosDetachedSession = window.axonosOwnedSession;
+            axonosApplyDetachedSessionUi(true);
+        }
     };
 
     window.axonosClearDetachedSession = function () {
         window.axonosDetachedSession = null;
+        window.axonosOwnedSession = null;
         axonosApplyDetachedSessionUi(false);
     };
+
+    function axonosEffectiveOwnedSession() {
+        return window.axonosDetachedSession || window.axonosOwnedSession;
+    }
+
+    /** Lock GPU picker synchronously when Detach is confirmed (before WebRTC teardown). */
+    window.axonosSyncDetachedProfileUiImmediate = function () {
+        if (!window.axonosSessionDetached || window.axonosPausedResume) {
+            return;
+        }
+        if (window.axonosOwnedSession) {
+            window.axonosDetachedSession = window.axonosOwnedSession;
+        }
+        axonosApplyDetachedSessionUi(!!axonosEffectiveOwnedSession());
+    };
+
+    /** Apply paused-resume UI immediately from heartbeat/claim (no status round-trip). */
+    window.axonosApplyPausedResumeFromPayload = function (payload) {
+        var data = payload || {};
+        if (!data.paused_for_resume && !data.paused && !data.can_resume) {
+            return false;
+        }
+        var profile = axonosNormalizeProfileName(
+            data.paused_requested_profile || data.requested_profile || 'small'
+        );
+        var gpuIds = data.paused_assigned_gpu_ids || data.assigned_gpu_ids || [];
+        var gpuCount = typeof data.paused_gpu_count === 'number'
+            ? data.paused_gpu_count
+            : (typeof data.billing_gpu_count === 'number'
+                ? data.billing_gpu_count
+                : (gpuIds.length || axonosGpuCountForProfile(profile)));
+        window.axonosDetachedSession = null;
+        window.axonosOwnedSession = axonosSessionProfileContextFromPayload(data);
+        window.axonosPausedResume = {
+            profile: profile,
+            gpuIds: gpuIds,
+            gpuCount: gpuCount,
+            minutesRequired: typeof data.resume_minutes_required === 'number'
+                ? data.resume_minutes_required
+                : gpuCount,
+            resumeSeconds: typeof data.paused_resume_seconds === 'number'
+                ? data.paused_resume_seconds
+                : null,
+            sessionId: data.paused_session_id || data.session_id || null,
+            walletHint: window.verifiedWalletAddress || null,
+            remainingMinutes: typeof data.remaining_minutes === 'number' ? data.remaining_minutes : null,
+            canResumeWithCredit: data.can_resume_with_credit !== false
+        };
+        axonosApplyResumeConnectUi(true);
+        return true;
+    };
+
+    function axonosSetLaunchConnectButtonCopy(mode) {
+        var connectText = document.querySelector('.axonos-connect-text');
+        var connectSub = document.querySelector('.axonos-connect-subtext');
+        if (!connectText || !connectSub) return;
+        if (mode === 'resume') {
+            connectText.textContent = 'Resume GPU-Native Desktop';
+            connectSub.textContent = 'Reconnect to your running desktop';
+            return;
+        }
+        connectText.textContent = 'Launch GPU-Native Desktop';
+        connectSub.textContent = 'Full Linux environment with direct GPU access';
+    }
 
     function axonosApplyDetachedSessionUi(detachedActive) {
         var profileSel = document.getElementById('axonos_profile_select');
         var hint = document.getElementById('axonos_profile_burn_hint');
-        var active = !!(detachedActive && window.axonosDetachedSession && !window.axonosPausedResume);
+        var session = detachedActive ? axonosEffectiveOwnedSession() : null;
+        var active = !!(detachedActive && session && !window.axonosPausedResume);
         document.body.classList.toggle('axonos-detached-session-mode', active);
         if (!active) {
             if (profileSel && !window.axonosPausedResume) profileSel.disabled = false;
-            if (!window.axonosPausedResume) axonosUpdateProfileBurnHint();
+            if (!window.axonosPausedResume) {
+                axonosUpdateProfileBurnHint();
+                axonosSetLaunchConnectButtonCopy('launch');
+            }
             return;
         }
-        var profile = window.axonosDetachedSession.profile || 'small';
-        var gpus = window.axonosDetachedSession.gpuCount || axonosGpuCountForProfile(profile);
+        if (!window.axonosDetachedSession) {
+            window.axonosDetachedSession = session;
+        }
+        var profile = session.profile || 'small';
+        var gpus = session.gpuCount || axonosGpuCountForProfile(profile);
         if (profileSel) {
             profileSel.value = profile;
             profileSel.disabled = true;
@@ -1131,23 +1209,29 @@ document.addEventListener("DOMContentLoaded", function() {
             hint.textContent = 'Desktop still running on ' + axonosProfileLabel(profile) + ' (' + gpus +
                 ' GPU' + (gpus === 1 ? '' : 's') + '). Reconnect uses the same allocation.';
         }
+        axonosSetLaunchConnectButtonCopy('resume');
     }
 
     window.axonosApplyDetachedSessionUi = axonosApplyDetachedSessionUi;
 
     window.axonosOnDetachedToHome = function () {
+        axonosSyncDetachedProfileUiImmediate();
         var wallet = window.verifiedWalletAddress;
         if (!wallet) {
-            axonosApplyDetachedSessionUi(!!window.axonosDetachedSession);
             return Promise.resolve();
         }
         return sessionStatusForWallet(wallet).then(function (st) {
-            if (st && st.is_owner && st.owner_requested_profile) {
-                window.axonosDetachedSession = axonosSessionProfileContextFromPayload(st);
+            if (st && st.can_resume && st.paused) {
+                axonosApplyPausedResumeFromPayload(st);
+                return;
             }
-            axonosApplyDetachedSessionUi(window.axonosSessionDetached && !!window.axonosDetachedSession);
+            if (st && st.is_owner && st.owner_requested_profile) {
+                window.axonosOwnedSession = axonosSessionProfileContextFromPayload(st);
+                window.axonosDetachedSession = window.axonosOwnedSession;
+            }
+            axonosApplyDetachedSessionUi(window.axonosSessionDetached && !!axonosEffectiveOwnedSession());
         }).catch(function () {
-            axonosApplyDetachedSessionUi(window.axonosSessionDetached && !!window.axonosDetachedSession);
+            axonosApplyDetachedSessionUi(window.axonosSessionDetached && !!axonosEffectiveOwnedSession());
         });
     };
 
@@ -1155,8 +1239,9 @@ document.addEventListener("DOMContentLoaded", function() {
         if (window.axonosPausedResume && window.axonosPausedResume.profile) {
             return window.axonosPausedResume.profile;
         }
-        if (window.axonosDetachedSession && window.axonosDetachedSession.profile) {
-            return window.axonosDetachedSession.profile;
+        var owned = axonosEffectiveOwnedSession();
+        if (owned && owned.profile) {
+            return owned.profile;
         }
         var el = document.getElementById('axonos_profile_select');
         var val = el ? String(el.value || '').toLowerCase() : 'small';
@@ -1227,7 +1312,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 profileSel.value = profile;
                 profileSel.disabled = true;
             }
-            if (connectText) connectText.textContent = 'Resume desktop session';
+            axonosSetLaunchConnectButtonCopy('resume');
             if (connectSub) {
                 if (!window.verifiedWalletAddress) {
                     connectSub.textContent = 'Connect the same wallet to resume — GPUs already assigned';
@@ -1239,8 +1324,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 }
             }
         } else {
-            if (connectText) connectText.textContent = 'Launch GPU-Native Desktop';
-            if (connectSub) connectSub.textContent = 'Full Linux environment with direct GPU access';
+            axonosSetLaunchConnectButtonCopy('launch');
             if (resumeDetail) resumeDetail.textContent = '';
             if (resumeTtl) resumeTtl.textContent = '';
             if (!window.axonosDetachedSession) {
@@ -1254,8 +1338,9 @@ document.addEventListener("DOMContentLoaded", function() {
     function axonosApplySessionStatusToResumeUi(st, walletHint) {
         var wallet = (walletHint || window.verifiedWalletAddress || '').trim().toLowerCase();
         if (st && st.is_owner && st.owner_requested_profile && !st.paused) {
-            window.axonosDetachedSession = axonosSessionProfileContextFromPayload(st);
+            window.axonosOwnedSession = axonosSessionProfileContextFromPayload(st);
             if (window.axonosSessionDetached) {
+                window.axonosDetachedSession = window.axonosOwnedSession;
                 axonosApplyDetachedSessionUi(true);
             }
         } else if (!st || !st.paused) {
