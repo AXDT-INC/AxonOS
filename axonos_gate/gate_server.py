@@ -66,8 +66,6 @@ try:
         get_active_session,
         heartbeat as session_heartbeat,
         is_session_owner,
-        join_queue,
-        leave_queue,
         release_session,
         restart_desktop_session,
         session_status,
@@ -80,8 +78,6 @@ except ImportError:
             get_active_session,
             heartbeat as session_heartbeat,
             is_session_owner,
-            join_queue,
-            leave_queue,
             release_session,
             restart_desktop_session,
             session_status,
@@ -417,8 +413,8 @@ def api_config():
         'min_eth_deposit_minutes': policy.get("min_eth_deposit_minutes"),
         'axgt_direct_deposits_enabled': policy.get("axgt_direct_deposits_enabled"),
         'axgt_discount_tiers': policy.get("axgt_discount_tiers", []),
-        'multi_session_enabled': (os.getenv("AXGT_MULTI_SESSION_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")),
-        'gpu_profiles_enabled': (os.getenv("AXGT_GPU_PROFILES_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")),
+        'multi_session_enabled': (os.getenv("AXGT_MULTI_SESSION_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")),
+        'gpu_profiles_enabled': (os.getenv("AXGT_GPU_PROFILES_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")),
         'gpu_profiles': {'small': 1, 'medium': 2, 'large': 4, 'max': 8},
         'gpu_weighted_billing_enabled': policy.get("gpu_weighted_billing_enabled", False),
         **(
@@ -722,39 +718,6 @@ def api_session_restart():
     if auth_err:
         return auth_err
     return jsonify(restart_desktop_session(wallet_address))
-
-
-@app.route('/api/queue/join', methods=['POST', 'OPTIONS'])
-def api_queue_join():
-    if request.method == 'OPTIONS':
-        return '', 200
-    if not _session_mgr_available:
-        return jsonify({"joined": False, "error": "Session manager unavailable"}), 503
-    data = request.get_json() or {}
-    wallet_address = (data.get('wallet_address') or '').strip()
-    requested_profile = (data.get('requested_profile') or '').strip() or None
-    if not wallet_address or not validate_wallet_address(wallet_address):
-        return jsonify({"joined": False, "error": "Valid wallet_address required"}), 400
-    auth_err = _require_auth_token(wallet_address)
-    if auth_err:
-        return auth_err
-    return jsonify(join_queue(wallet_address, requested_profile=requested_profile))
-
-
-@app.route('/api/queue/leave', methods=['POST', 'OPTIONS'])
-def api_queue_leave():
-    if request.method == 'OPTIONS':
-        return '', 200
-    if not _session_mgr_available:
-        return jsonify({"left": False, "error": "Session manager unavailable"}), 503
-    data = request.get_json() or {}
-    wallet_address = (data.get('wallet_address') or '').strip()
-    if not wallet_address or not validate_wallet_address(wallet_address):
-        return jsonify({"left": False, "error": "Valid wallet_address required"}), 400
-    auth_err = _require_auth_token(wallet_address)
-    if auth_err:
-        return auth_err
-    return jsonify(leave_queue(wallet_address))
 
 
 def _webrtc_sig_allow(wallet_key: str) -> bool:

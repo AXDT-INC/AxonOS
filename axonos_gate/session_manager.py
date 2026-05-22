@@ -1,9 +1,9 @@
 """
 Session manager for AxonOS.
 
-Default mode preserves private-beta behavior (single active session + FIFO queue).
-Public-beta mode (feature-gated) enables profile-aware, multi-session scheduling
-with exclusive full-GPU allocation and per-session container lifecycle hooks.
+Profile-aware multi-session scheduling with exclusive full-GPU allocation and
+per-session container lifecycle hooks. When GPUs are unavailable, claim fails
+immediately (no waitlist).
 """
 
 import logging
@@ -16,7 +16,6 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 logger = logging.getLogger(__name__)
 
 _SESSION_TABLE = "axgt_sessions"
-_QUEUE_TABLE = "axgt_queue"
 
 _pg_init_done = False
 _pg_init_lock = Lock()
@@ -41,11 +40,11 @@ def _truthy(name: str, default: bool = False) -> bool:
 
 
 def _multi_session_enabled() -> bool:
-    return _truthy("AXGT_MULTI_SESSION_ENABLED", False)
+    return _truthy("AXGT_MULTI_SESSION_ENABLED", True)
 
 
 def _gpu_profiles_enabled() -> bool:
-    return _truthy("AXGT_GPU_PROFILES_ENABLED", False)
+    return _truthy("AXGT_GPU_PROFILES_ENABLED", True)
 
 
 def _default_profile() -> str:
@@ -432,56 +431,6 @@ def _ensure_tables(conn) -> None:
             CREATE INDEX IF NOT EXISTS idx_{_SESSION_TABLE}_status
             ON {_SESSION_TABLE} (status)
         """)
-        cur.execute(f"""
-            CREATE TABLE IF NOT EXISTS {_QUEUE_TABLE} (
-                id             SERIAL PRIMARY KEY,
-                wallet_address TEXT NOT NULL UNIQUE,
-                requested_profile TEXT NOT NULL DEFAULT 'small',
-                requested_gpus INTEGER NOT NULL DEFAULT 1,
-                queue_reason TEXT,
-                queued_at      DOUBLE PRECISION NOT NULL,
-                notified_at    DOUBLE PRECISION
-            )
-        """)
-        for col_name, col_sql in (
-            ("requested_profile", "TEXT NOT NULL DEFAULT 'small'"),
-            ("requested_gpus", "INTEGER NOT NULL DEFAULT 1"),
-            ("queue_reason", "TEXT"),
-        ):
-            cur.execute(
-                """
-                SELECT 1 FROM information_schema.columns
-                WHERE table_schema = current_schema() AND table_name = %s AND column_name = %s
-                """,
-                (_QUEUE_TABLE, col_name),
-            )
-            if cur.fetchone() is None:
-                cur.execute(f"ALTER TABLE {_QUEUE_TABLE} ADD COLUMN {col_name} {col_sql}")
-        # Legacy DBs may have axgt_queue without UNIQUE(wallet_address); INSERT ... ON CONFLICT
-        # requires a unique index on that column.
-        cur.execute(
-            """
-            SELECT 1 FROM pg_indexes
-            WHERE schemaname = current_schema()
-              AND tablename = %s
-              AND indexdef LIKE '%%UNIQUE%%'
-              AND indexdef LIKE '%%wallet_address%%'
-            """,
-            (_QUEUE_TABLE,),
-        )
-        if cur.fetchone() is None:
-            try:
-                cur.execute(
-                    f"CREATE UNIQUE INDEX IF NOT EXISTS axgt_queue_wallet_address_uq "
-                    f"ON {_QUEUE_TABLE} (wallet_address)"
-                )
-            except Exception as exc:
-                logger.warning(
-                    "session_manager: could not add unique index on %s.wallet_address "
-                    "(queue join needs this; fix duplicates then re-run): %s",
-                    _QUEUE_TABLE,
-                    exc,
-                )
     conn.commit()
 
 
@@ -699,25 +648,6 @@ def _free_gpu_ids(rows: List[Dict[str, Any]]) -> List[int]:
     return [gid for gid in all_gpu_ids if gid not in allocated]
 
 
-def _queue_entries(cur) -> List[Dict[str, Any]]:
-    cur.execute(
-        f"""SELECT wallet_address, requested_profile, requested_gpus, queued_at, queue_reason
-            FROM {_QUEUE_TABLE}
-            ORDER BY queued_at ASC""",
-    )
-    rows = cur.fetchall() or []
-    return [
-        {
-            "wallet_address": r[0],
-            "requested_profile": (r[1] or "small"),
-            "requested_gpus": int(r[2] or 1),
-            "queued_at": r[3],
-            "queue_reason": r[4],
-        }
-        for r in rows
-    ]
-
-
 def _choose_allocation(rows: List[Dict[str, Any]], requested_gpus: int) -> Optional[List[int]]:
     free_ids = _free_gpu_ids(rows)
     if len(free_ids) < requested_gpus:
@@ -725,12 +655,12 @@ def _choose_allocation(rows: List[Dict[str, Any]], requested_gpus: int) -> Optio
     return free_ids[:requested_gpus]
 
 
-def _gpu_queue_capacity_fields(
+def _gpu_capacity_fields(
     requested_gpus: int,
     active_rows: List[Dict[str, Any]],
     profile_name: str,
 ) -> Dict[str, Any]:
-    """Human-oriented queue context for API + UI (multi-GPU allocation)."""
+    """Human-oriented GPU capacity context for API + UI (multi-GPU allocation)."""
     total = len(_gpu_device_ids())
     free_n = len(_free_gpu_ids(active_rows))
     impossible = requested_gpus > total
@@ -738,62 +668,19 @@ def _gpu_queue_capacity_fields(
         "machine_total_gpus": total,
         "machine_free_gpus": free_n,
         "requested_gpus": requested_gpus,
-        "queue_impossible_on_host": impossible,
+        "profile_impossible_on_host": impossible,
     }
     if impossible:
         out["capacity_note"] = (
             f"This host exposes {total} GPU(s), but the \"{profile_name}\" profile needs {requested_gpus}. "
-            "Leave the queue, pick a smaller profile (Small = 1, Medium = 2, Large = 4, Max = 8 GPUs), then connect again."
+            "Pick a smaller profile (Small = 1, Medium = 2, Large = 4, Max = 8 GPUs), then connect again."
         )
     elif free_n < requested_gpus:
         out["capacity_note"] = (
             f"Right now {free_n} GPU(s) are free; your profile needs {requested_gpus}. "
-            "You will connect when enough GPUs are available (or leave the queue and choose a smaller profile)."
+            "Try again later or choose a smaller profile."
         )
     return out
-
-
-def _queue_position(cur, wallet_address: str) -> Optional[int]:
-    """1-indexed position, or None if not in queue."""
-    cur.execute(
-        f"""SELECT COUNT(*) FROM {_QUEUE_TABLE}
-            WHERE queued_at <= (
-                SELECT queued_at FROM {_QUEUE_TABLE}
-                WHERE wallet_address = %s
-            )""",
-        (wallet_address,),
-    )
-    row = cur.fetchone()
-    if not row or row[0] == 0:
-        return None
-    return row[0]
-
-
-def _queue_length(cur) -> int:
-    """Number of wallets currently waiting in the FIFO queue."""
-    cur.execute(f"SELECT COUNT(*) FROM {_QUEUE_TABLE}")
-    row = cur.fetchone()
-    if not row or row[0] is None:
-        return 0
-    return int(row[0])
-
-
-def _next_in_queue(cur) -> Optional[str]:
-    cur.execute(
-        f"""SELECT wallet_address FROM {_QUEUE_TABLE}
-            ORDER BY queued_at ASC
-            LIMIT 1""",
-    )
-    row = cur.fetchone()
-    return row[0] if row else None
-
-
-def _remove_from_queue(cur, wallet_address: str) -> bool:
-    cur.execute(
-        f"DELETE FROM {_QUEUE_TABLE} WHERE wallet_address = %s",
-        (wallet_address,),
-    )
-    return cur.rowcount > 0
 
 
 def _run_reset_script() -> None:
@@ -928,21 +815,6 @@ def _spawn_session_container(session_id: int, wallet: str, profile: str, gpu_ids
     )
 
 
-def _queue_blocks_allocation(cur, wallet: str, requested_gpus: int, rows: List[Dict[str, Any]]) -> bool:
-    if not _multi_session_enabled():
-        return False
-    entries = _queue_entries(cur)
-    free_count = len(_free_gpu_ids(rows))
-    for entry in entries:
-        if entry["wallet_address"] == wallet:
-            return False
-        # Practical schedulability: only block on requests that are actually schedulable now.
-        # This prevents a large unschedulable request from starving smaller ones.
-        if entry["requested_gpus"] <= free_count:
-            return True
-    return False
-
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -979,7 +851,7 @@ def try_claim_session(wallet_address: str, requested_profile: Optional[str] = No
     """Attempt to claim the desktop session for *wallet_address*.
 
     Returns a dict with at least ``granted`` (bool).  On failure, includes
-    ``queue_position`` and ``active_wallet`` (masked).
+    ``active_wallet`` (masked) when another session blocks access.
     """
     wallet = wallet_address.lower()
     profile_name, requested_gpus = _resolve_profile(requested_profile)
@@ -1043,87 +915,31 @@ def try_claim_session(wallet_address: str, requested_profile: Optional[str] = No
                 }
 
             if (not _multi_session_enabled()) and blocking and blocking["wallet_address"] != wallet:
-                pos = _queue_position(cur, wallet)
-                qlen = _queue_length(cur)
                 conn.commit()
                 return {
                     "granted": False,
                     "reason": "Desktop is in use by another researcher.",
                     "active_wallet": _mask(blocking["wallet_address"]),
-                    "queue_position": pos,
-                    "queue_length": qlen,
                 }
 
             if _multi_session_enabled():
                 allocated_gpu_ids = _choose_allocation(reserved_rows, requested_gpus)
                 if not allocated_gpu_ids:
-                    pos = _queue_position(cur, wallet)
-                    if pos is None:
-                        cur.execute(
-                            f"""INSERT INTO {_QUEUE_TABLE} (wallet_address, requested_profile, requested_gpus, queue_reason, queued_at)
-                                VALUES (%s, %s, %s, %s, %s)
-                                ON CONFLICT (wallet_address) DO UPDATE SET
-                                    requested_profile = EXCLUDED.requested_profile,
-                                    requested_gpus = EXCLUDED.requested_gpus,
-                                    queue_reason = EXCLUDED.queue_reason""",
-                            (wallet, profile_name, requested_gpus, f"insufficient free GPUs for requested profile ({profile_name})", now),
-                        )
-                        pos = _queue_position(cur, wallet)
-                    qlen = _queue_length(cur)
-                    cap_meta = _gpu_queue_capacity_fields(requested_gpus, reserved_rows, profile_name)
+                    cap_meta = _gpu_capacity_fields(requested_gpus, reserved_rows, profile_name)
                     conn.commit()
                     return {
                         "granted": False,
-                        "allocation_status": "queued",
+                        "allocation_status": "unavailable",
                         "requested_profile": profile_name,
                         "requested_gpus": requested_gpus,
-                        "reason": f"Queued waiting for {requested_gpus} GPU(s)",
-                        "queue_reason": f"insufficient free GPUs for requested profile ({profile_name})",
-                        "queue_position": pos,
-                        "queue_length": qlen,
+                        "reason": (
+                            f"No GPUs available for profile \"{profile_name}\" "
+                            f"({requested_gpus} GPU(s) required)"
+                        ),
                         "free_gpu_count": len(_free_gpu_ids(reserved_rows)),
                         **cap_meta,
                     }
-                if _queue_blocks_allocation(cur, wallet, requested_gpus, reserved_rows):
-                    pos = _queue_position(cur, wallet)
-                    if pos is None:
-                        cur.execute(
-                            f"""INSERT INTO {_QUEUE_TABLE} (wallet_address, requested_profile, requested_gpus, queue_reason, queued_at)
-                                VALUES (%s, %s, %s, %s, %s)
-                                ON CONFLICT (wallet_address) DO UPDATE SET
-                                    requested_profile = EXCLUDED.requested_profile,
-                                    requested_gpus = EXCLUDED.requested_gpus,
-                                    queue_reason = EXCLUDED.queue_reason""",
-                            (wallet, profile_name, requested_gpus, "waiting turn behind schedulable queued request", now),
-                        )
-                        pos = _queue_position(cur, wallet)
-                    qlen = _queue_length(cur)
-                    cap_meta = _gpu_queue_capacity_fields(requested_gpus, reserved_rows, profile_name)
-                    cap_note = cap_meta.get("capacity_note")
-                    if cap_note:
-                        fifo_note = (
-                            "Another request is ahead of you for the next free GPUs; you will connect in FIFO order.\n\n"
-                            + cap_note
-                        )
-                    else:
-                        fifo_note = (
-                            "Another request is ahead of you for the next free GPUs; you will connect in FIFO order."
-                        )
-                    cap_meta = {**cap_meta, "capacity_note": fifo_note}
-                    conn.commit()
-                    return {
-                        "granted": False,
-                        "allocation_status": "queued",
-                        "requested_profile": profile_name,
-                        "requested_gpus": requested_gpus,
-                        "reason": f"Queued waiting for {requested_gpus} GPU(s)",
-                        "queue_reason": "waiting turn behind schedulable queued request",
-                        "queue_position": pos,
-                        "queue_length": qlen,
-                        **cap_meta,
-                    }
 
-                _remove_from_queue(cur, wallet)
                 max_secs = _session_max_seconds()
                 cur.execute(
                     f"""INSERT INTO {_SESSION_TABLE}
@@ -1192,21 +1008,7 @@ def try_claim_session(wallet_address: str, requested_profile: Optional[str] = No
                     "remaining_seconds": max_secs,
                 }
 
-            # Legacy single-session queue gate
-            first = _next_in_queue(cur)
-            if first and first != wallet:
-                pos = _queue_position(cur, wallet)
-                qlen = _queue_length(cur)
-                conn.commit()
-                return {
-                    "granted": False,
-                    "reason": "Another researcher is next in the queue.",
-                    "queue_position": pos,
-                    "queue_length": qlen,
-                }
-
-            # Grant session (with last_billed_at for heartbeat billing)
-            _remove_from_queue(cur, wallet)
+            # Legacy single-session mode (explicitly disabled multi-session)
             max_secs = _session_max_seconds()
             cur.execute(
                 f"""INSERT INTO {_SESSION_TABLE}
@@ -1463,7 +1265,7 @@ def restart_desktop_session(wallet_address: str) -> Dict[str, Any]:
 
 
 def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
-    """Return current session and queue state visible to *wallet_address*."""
+    """Return current session state visible to *wallet_address*."""
     wallet = wallet_address.lower() if wallet_address else None
     if not _init_once():
         return {"active": False, "reason": "Session DB unavailable"}
@@ -1482,12 +1284,10 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
             active_rows = _get_active_rows(cur)
             reserved_rows = _get_gpu_reserved_rows(cur, now)
             active = active_rows[-1] if active_rows else None
-            queue_len = _queue_length(cur)
             free_gpu_ids = _free_gpu_ids(reserved_rows)
 
             result: Dict[str, Any] = {
                 "active": active is not None,
-                "queue_length": queue_len,
                 "multi_session_enabled": _multi_session_enabled(),
                 "gpu_profiles_enabled": _gpu_profiles_enabled(),
                 "total_gpus": len(_gpu_device_ids()),
@@ -1521,26 +1321,6 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
                 ]
 
             if wallet:
-                pos = _queue_position(cur, wallet)
-                result["queue_position"] = pos
-                cur.execute(
-                    f"SELECT requested_profile, requested_gpus, queue_reason FROM {_QUEUE_TABLE} WHERE wallet_address = %s",
-                    (wallet,),
-                )
-                qrow = cur.fetchone()
-                if qrow:
-                    result["queued_profile"] = qrow[0] or "small"
-                    result["queued_gpus"] = int(qrow[1] or 1)
-                    result["queue_reason"] = qrow[2]
-                    result["allocation_status"] = "queued"
-                    result["reason"] = f"Queued waiting for {result['queued_gpus']} GPU(s)"
-                    result.update(
-                        _gpu_queue_capacity_fields(
-                            result["queued_gpus"],
-                            reserved_rows,
-                            result["queued_profile"],
-                        )
-                    )
                 owned = _active_session_for_wallet(cur, wallet)
                 if owned:
                     result["is_owner"] = True
@@ -1583,122 +1363,6 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
     except Exception as exc:
         logger.warning("session_status failed: %s", exc)
         return {"active": False, "reason": "Internal error"}
-    finally:
-        conn.close()
-
-
-def join_queue(wallet_address: str, requested_profile: Optional[str] = None) -> Dict[str, Any]:
-    """Add *wallet_address* to the waiting queue. Idempotent. Requires prepaid credit (deposit-credit policy)."""
-    wallet = wallet_address.lower()
-    profile_name, requested_gpus = _resolve_profile(requested_profile)
-    if not _init_once():
-        return {"joined": False, "reason": "Session DB unavailable"}
-    conn = _get_connection()
-    if not conn:
-        return {"joined": False, "reason": "Session DB unavailable"}
-    try:
-        ok_credit, credit_reason = _prepaid_credit_allows_profile(
-            wallet, requested_gpus, profile_name
-        )
-        if not ok_credit:
-            return {"joined": False, "reason": credit_reason}
-
-        now = time.time()
-        with conn.cursor() as cur:
-            active_rows_snapshot = _get_active_rows(cur)
-            # Already the active user? No need to queue.
-            active = _active_session_for_wallet(cur, wallet)
-            if active:
-                conn.commit()
-                return {
-                    "joined": False,
-                    "reason": "You already own the active session.",
-                    "queue_position": None,
-                }
-            cur.execute(
-                f"""INSERT INTO {_QUEUE_TABLE} (wallet_address, requested_profile, requested_gpus, queue_reason, queued_at)
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (wallet_address) DO UPDATE SET
-                        requested_profile = EXCLUDED.requested_profile,
-                        requested_gpus = EXCLUDED.requested_gpus,
-                        queue_reason = EXCLUDED.queue_reason""",
-                (wallet, profile_name, requested_gpus, f"queued waiting for {requested_gpus} GPU(s)", now),
-            )
-            pos = _queue_position(cur, wallet)
-            qlen = _queue_length(cur)
-        conn.commit()
-        cap_join = _gpu_queue_capacity_fields(requested_gpus, active_rows_snapshot, profile_name)
-        logger.info("session_manager: %s joined queue at position %s", _mask(wallet), pos)
-        return {
-            "joined": True,
-            "queue_position": pos,
-            "queue_length": qlen,
-            "requested_profile": profile_name,
-            "requested_gpus": requested_gpus,
-            "allocation_status": "queued",
-            "reason": f"Queued waiting for {requested_gpus} GPU(s)",
-            **cap_join,
-        }
-    except Exception as exc:
-        conn.rollback()
-        logger.warning("join_queue failed: %s", exc, exc_info=True)
-        return {
-            "joined": False,
-            "reason": "Could not join the queue. Please try again.",
-        }
-    finally:
-        conn.close()
-
-
-def leave_queue(wallet_address: str) -> Dict[str, Any]:
-    """Remove *wallet_address* from the queue."""
-    wallet = wallet_address.lower()
-    if not _init_once():
-        return {"left": False, "reason": "Session DB unavailable"}
-    conn = _get_connection()
-    if not conn:
-        return {"left": False, "reason": "Session DB unavailable"}
-    try:
-        with conn.cursor() as cur:
-            removed = _remove_from_queue(cur, wallet)
-        conn.commit()
-        return {"left": removed}
-    except Exception as exc:
-        conn.rollback()
-        logger.warning("leave_queue failed: %s", exc)
-        return {"left": False, "reason": "Internal error"}
-    finally:
-        conn.close()
-
-
-def get_queue() -> List[Dict[str, Any]]:
-    """Return the full queue (for admin/debug). Wallets are masked."""
-    if not _init_once():
-        return []
-    conn = _get_connection()
-    if not conn:
-        return []
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                f"""SELECT wallet_address, requested_profile, requested_gpus, queued_at, queue_reason
-                    FROM {_QUEUE_TABLE} ORDER BY queued_at ASC""",
-            )
-            rows = cur.fetchall()
-        return [
-            {
-                "wallet": _mask(r[0]),
-                "requested_profile": r[1] or "small",
-                "requested_gpus": int(r[2] or 1),
-                "queued_at": r[3],
-                "queue_reason": r[4],
-                "position": i + 1,
-            }
-            for i, r in enumerate(rows)
-        ]
-    except Exception as exc:
-        logger.warning("get_queue failed: %s", exc)
-        return []
     finally:
         conn.close()
 
