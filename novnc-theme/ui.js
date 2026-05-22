@@ -1355,6 +1355,7 @@ const UI = {
      * when recovering from a failed WS (e.g. 1006) before retrying.
      */
     axonosResetDesktopGateForRetry() {
+        UI._axonosCancelWebRtcClient();
         UI.hideStatus();
         if (UI.reconnectCallback !== null) {
             clearTimeout(UI.reconnectCallback);
@@ -1499,7 +1500,61 @@ const UI = {
         return Promise.race([request, timeout]);
     },
 
+    /** Cancel in-flight WebRTC negotiation and clear stale peer UI globals. */
+    _axonosCancelWebRtcClient() {
+        if (typeof window.axonosCancelWebRtcNegotiation === 'function') {
+            try {
+                window.axonosCancelWebRtcNegotiation();
+            } catch (err) {
+                Log.Warn('AxonOS WebRTC cancel failed: ' + err);
+            }
+        }
+    },
+
+    _axonosReturnToHomeAfterDisconnect(options) {
+        const opts = options && typeof options === 'object' ? options : {};
+        if (opts.resetWebRtc !== false) {
+            UI._axonosCancelWebRtcClient();
+        }
+        UI.connected = false;
+        if (!opts.preserveStatus) {
+            UI.hideStatus();
+        }
+        if (typeof window.axonosHideConnectionLoader === 'function') {
+            window.axonosHideConnectionLoader(true);
+        }
+        UI.updateVisualState('disconnected');
+        document.title = PAGE_TITLE;
+        UI.openControlbar();
+        UI.openConnectPanel();
+        UI.updateSessionControlButtons();
+    },
+
+    /** Server ended or released the session (heartbeat while detached or idle). */
+    _axonosOnServerSessionEnded() {
+        if (!window.axonosSessionDetached && UI._axgtSessionDesktopActive()) {
+            UI.disconnect();
+            return;
+        }
+        window.axonosSessionDetached = false;
+        if (UI._axgtStatusPollId) {
+            clearInterval(UI._axgtStatusPollId);
+            UI._axgtStatusPollId = null;
+        }
+        UI._axonosReturnToHomeAfterDisconnect();
+        UI.showStatus(_("Session ended on the server. Launch to start a new desktop."), 'normal', 4000);
+        if (typeof window.axonosRefreshPausedResumeStatus === 'function') {
+            window.axonosRefreshPausedResumeStatus();
+        }
+    },
+
     _axonosCompleteDetachUI() {
+        UI._axonosCancelWebRtcClient();
+        UI.connected = false;
+        UI.hideStatus();
+        if (typeof window.axonosHideConnectionLoader === 'function') {
+            window.axonosHideConnectionLoader(true);
+        }
         UI.updateVisualState('disconnected');
         UI.showStatus(
             _("Detached — desktop still running. Launch again to reconnect, or End session when done."),
@@ -1557,10 +1612,29 @@ const UI = {
 
     connect(event, password) {
 
+        UI.inhibitReconnect = false;
+
+        if (UI.connected && UI._axgtSessionDesktopActive()) {
+            UI.closeConnectPanel();
+            UI._axgtUpdateUsageOverlay('hidden');
+            if (!UI._axgtStatusPollId) {
+                UI._axgtStartSessionBillingPoll();
+            }
+            UI.focusRemoteDesktop();
+            return;
+        }
+
+        if (typeof window.axonosPrepareDesktopLaunch === 'function') {
+            window.axonosPrepareDesktopLaunch();
+        } else if (typeof window.axonosHideQueueOverlay === 'function') {
+            window.axonosHideQueueOverlay();
+        }
+
         // Stale RFB from a failed WebSocket (1006): disconnect may not always fire before
         // retry — hard-reset client state and recurse (short delay lets the stack unwind).
         if (typeof UI.rfb !== 'undefined' && UI.rfb) {
-            if (UI.connected) {
+            if (UI._axgtSessionDesktopActive()) {
+                UI.focusRemoteDesktop();
                 return;
             }
             Log.Info("AxonOS: hard reset stale RFB before connect");
@@ -1577,7 +1651,11 @@ const UI = {
             setTimeout(() => UI.connect(event, passwordArg), 50);
             return;
         }
-        
+
+        if (UI.connected) {
+            UI.connected = false;
+        }
+
         // Read AXGT WS auth mode from URL (or cookie/local storage), without registering
         // it as a noVNC setting (no corresponding UI control exists in vnc.html).
         const wsAuthMode = String(
@@ -1586,23 +1664,6 @@ const UI = {
             'cookie'
         ).toLowerCase();
         const includeQueryAuthToken = (wsAuthMode === 'query' || wsAuthMode === 'both');
-
-        if (typeof UI._axgtSessionDesktopActive === 'function' && UI._axgtSessionDesktopActive()) {
-            UI.closeConnectPanel();
-            UI._axgtUpdateUsageOverlay('hidden');
-            if (!UI._axgtStatusPollId) {
-                UI._axgtStartSessionBillingPoll();
-            }
-            UI.focusRemoteDesktop();
-            return;
-        }
-
-        if (typeof window.axonosPrepareDesktopLaunch === 'function') {
-            window.axonosPrepareDesktopLaunch();
-        } else if (typeof window.axonosHideQueueOverlay === 'function') {
-            window.axonosHideQueueOverlay();
-        }
-        UI.inhibitReconnect = false;
 
         // Check if wallet is verified before connecting
         if (!window.verifiedWalletAddress) {
@@ -1670,6 +1731,9 @@ const UI = {
                 }
                 UI.closeConnectPanel();
                 UI.updateVisualState('connecting');
+                if (typeof window.showConnectionLoader === 'function') {
+                    window.showConnectionLoader();
+                }
                 (async () => {
                     let usedWebRtc = false;
                     const cfgPeek = await fetch('./api/config', { credentials: 'include' })
@@ -1678,9 +1742,20 @@ const UI = {
                     if (cfgPeek.webrtc_enabled) {
                         try {
                             const mod = await import('./webrtc/axonos-webrtc.js');
+                            if (typeof mod.cancelAxonOSWebRTCNegotiation === 'function') {
+                                window.axonosCancelWebRtcNegotiation = mod.cancelAxonOSWebRTCNegotiation;
+                            }
                             usedWebRtc = await mod.connectAxonOSWebRTC({ UI });
                         } catch (weErr) {
                             Log.Warn('AxonOS WebRTC path failed: ' + weErr);
+                        }
+                        if (window.axonosWebRtcConnectAborted) {
+                            if (typeof window.axonosHideConnectionLoader === 'function') {
+                                window.axonosHideConnectionLoader(true);
+                            }
+                            UI.updateVisualState('disconnected');
+                            UI.openConnectPanel();
+                            return;
                         }
                         if (!usedWebRtc && cfgPeek.webrtc_fallback_enabled === false) {
                             if (typeof window.axonosHideConnectionLoader === 'function') {
@@ -1688,6 +1763,7 @@ const UI = {
                             }
                             UI.updateVisualState('disconnected');
                             UI.showStatus(_('WebRTC connection is required but failed. Check STUN/TURN or try again.'), 'error');
+                            UI.openConnectPanel();
                             return;
                         }
                     }
@@ -1718,6 +1794,11 @@ const UI = {
         const opts = options && typeof options === 'object' ? options : {};
         const skipRelease = opts.skipRelease === true;
         const detach = opts.detach === true;
+
+        UI._axonosCancelWebRtcClient();
+        if (typeof window.axonosHideConnectionLoader === 'function') {
+            window.axonosHideConnectionLoader(true);
+        }
 
         if (detach) {
             window.axonosSessionDetached = true;
@@ -1757,7 +1838,6 @@ const UI = {
         const doDisconnect = () => {
             if (typeof window.axonosWebRtcTeardown === 'function') {
                 Promise.resolve(window.axonosWebRtcTeardown()).finally(() => {
-                    window.axonosWebRtcTeardown = null;
                     doDisconnectRfb();
                 });
                 return;
@@ -1774,19 +1854,13 @@ const UI = {
                     if (detach || window.axonosSessionDetached) {
                         UI._axonosCompleteDetachUI();
                     } else {
-                        UI.updateVisualState('disconnected');
-                        UI.openControlbar();
-                        UI.openConnectPanel();
-                        UI.updateSessionControlButtons();
+                        UI._axonosReturnToHomeAfterDisconnect();
                     }
                 }
             } else if (detach || window.axonosSessionDetached) {
                 UI._axonosCompleteDetachUI();
             } else {
-                UI.updateVisualState('disconnected');
-                UI.openControlbar();
-                UI.openConnectPanel();
-                UI.updateSessionControlButtons();
+                UI._axonosReturnToHomeAfterDisconnect();
             }
         };
 
@@ -1880,6 +1954,9 @@ const UI = {
         UI.connected = true;
         window.axonosSessionDetached = false;
         UI.inhibitReconnect = false;
+        if (typeof window.axonosHideConnectionLoader === 'function') {
+            window.axonosHideConnectionLoader(true);
+        }
 
         let msg;
         if (UI.getSetting('encrypt')) {
@@ -1906,6 +1983,7 @@ const UI = {
         // when the disconnection isn't clean or if it is initiated by
         // the server, we need to do it here as well since
         // UI.disconnect() won't be used in those cases.
+        UI._axonosCancelWebRtcClient();
         UI.connected = false;
         UI.stopClipboardAutoSync();
 
@@ -1962,14 +2040,10 @@ const UI = {
             UI.showStatus(_("Session ended"), 'normal');
         }
 
-        document.title = PAGE_TITLE;
-
-        UI.openControlbar();
-        UI.openConnectPanel();
-        UI.updateSessionControlButtons();
+        UI._axonosReturnToHomeAfterDisconnect({ preserveStatus: true, resetWebRtc: false });
     },
 
-    /** True when the remote viewer is connected (RFB or WebRTC). */
+    /** True when the remote viewer is connected (RFB or WebRTC with live media). */
     _axgtSessionDesktopActive() {
         if (!UI.connected) {
             return false;
@@ -1977,7 +2051,8 @@ const UI = {
         if (UI.rfb) {
             return true;
         }
-        if (typeof window.axonosWebRtcTeardown === 'function') {
+        const video = document.getElementById('axonos_webrtc_video');
+        if (video && video.srcObject) {
             return true;
         }
         return false;
@@ -2111,10 +2186,15 @@ const UI = {
                 if (hb && typeof hb.gpu_billing_enabled === 'boolean') {
                     window.axonosGpuBillingEnabled = hb.gpu_billing_enabled;
                 }
-                if (hb && hb.ok === false && /credit exhausted/i.test(String(hb.reason || ''))) {
-                    UI._axgtDisconnectForCreditExhaustion(
-                        'Usage credit exhausted. Add more ETH to unlock access.'
-                    );
+                if (hb && hb.ok === false) {
+                    const hbReason = String(hb.reason || '');
+                    if (/credit exhausted/i.test(hbReason)) {
+                        UI._axgtDisconnectForCreditExhaustion(
+                            'Usage credit exhausted. Add more ETH to unlock access.'
+                        );
+                    } else if (/no active session|session ended/i.test(hbReason)) {
+                        UI._axonosOnServerSessionEnded();
+                    }
                 }
             })
             .catch(() => {});

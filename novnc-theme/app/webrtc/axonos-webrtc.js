@@ -85,6 +85,55 @@ function _hideBanner() {
     }
 }
 
+/** Bumped on cancel and at each new connect attempt — stale loops must not touch UI. */
+let _negotiationGeneration = 0;
+/** @type {{ pc: RTCPeerConnection, video: HTMLVideoElement, sessionId: string, wallet: string, generation: number } | null} */
+let _inFlightNegotiation = null;
+
+function _negotiationCancelled(generation) {
+    return generation !== _negotiationGeneration;
+}
+
+/**
+ * Stop in-flight WebRTC negotiation (poll loop, ICE wait) and tear down peer resources.
+ * Safe to call from disconnect, detach, or before a new Launch.
+ */
+export function cancelAxonOSWebRTCNegotiation() {
+    _negotiationGeneration += 1;
+    if (typeof window !== 'undefined') {
+        window.axonosWebRtcConnectAborted = true;
+    }
+    const snap = _inFlightNegotiation;
+    _inFlightNegotiation = null;
+    if (snap && snap.pc) {
+        _cleanup(snap.pc, snap.video, snap.sessionId, snap.wallet).catch(() => {});
+    }
+    window.axonosWebRtcPc = null;
+    window.axonosWebRtcVideo = null;
+    window.axonosWebRtcPasteClipboard = null;
+    if (typeof window.axonosWebRtcTeardown === 'function') {
+        const teardown = window.axonosWebRtcTeardown;
+        window.axonosWebRtcTeardown = null;
+        Promise.resolve(teardown()).catch(() => {});
+    }
+    _hideBanner();
+}
+
+async function _finishNegotiationCancelled(generation, pc, video, sessionId, wallet) {
+    if (!_negotiationCancelled(generation)) {
+        return false;
+    }
+    if (pc) {
+        await _cleanup(pc, video, sessionId, wallet);
+    } else {
+        _hideBanner();
+    }
+    if (_inFlightNegotiation && _inFlightNegotiation.generation === generation) {
+        _inFlightNegotiation = null;
+    }
+    return true;
+}
+
 function _normalizeSdp(sdp) {
     return String(sdp || '')
         .replace(/\r\n/g, '\n')
@@ -131,6 +180,9 @@ export async function connectAxonOSWebRTC(opts) {
     if (!wallet || !token) {
         return false;
     }
+
+    window.axonosWebRtcConnectAborted = false;
+    const negotiationGeneration = ++_negotiationGeneration;
 
     if (typeof window.axonosWebRtcTeardown === 'function') {
         try {
@@ -206,6 +258,7 @@ export async function connectAxonOSWebRTC(opts) {
     cursor.innerHTML = '<svg width="18" height="24" viewBox="0 0 18 24" xmlns="http://www.w3.org/2000/svg"><path d="M1 1v18l5-5 3 8 3-1-3-8h7z" fill="white" stroke="black" stroke-width="1"/></svg>';
 
     const pc = new RTCPeerConnection({ iceServers });
+    _inFlightNegotiation = { pc, video, sessionId, wallet, generation: negotiationGeneration };
     const CLIPBOARD_MAX_CHARS = 512 * 1024;
     function clampClipboardText(text) {
         const s = String(text || '');
@@ -286,6 +339,9 @@ export async function connectAxonOSWebRTC(opts) {
         }),
     });
     if (!offerRes.ok || !offerRes.json.ok) {
+        if (await _finishNegotiationCancelled(negotiationGeneration, pc, video, sessionId, wallet)) {
+            return false;
+        }
         await _cleanup(pc, video, sessionId, wallet);
         if (webrtcFallbackOk) {
             _setBanner('WebRTC negotiation failed — falling back.', 'fallback');
@@ -301,12 +357,19 @@ export async function connectAxonOSWebRTC(opts) {
     let serverIceCursor = 0;
 
     while (Date.now() < deadline && !answerApplied) {
+        if (_negotiationCancelled(negotiationGeneration)) {
+            await _finishNegotiationCancelled(negotiationGeneration, pc, video, sessionId, wallet);
+            return false;
+        }
         const st = await _fetchJson(
             `./api/webrtc/status?session_id=${encodeURIComponent(sessionId)}&wallet_address=${encodeURIComponent(wallet)}`,
             { headers: _authHeaders() }
         );
         if (!st.ok) {
             if (st.status === 401) {
+                if (await _finishNegotiationCancelled(negotiationGeneration, pc, video, sessionId, wallet)) {
+                    return false;
+                }
                 await _cleanup(pc, video, sessionId, wallet);
                 const msg = 'WebRTC auth expired — sign in again or use classic VNC if enabled.';
                 if (webrtcFallbackOk) {
@@ -321,6 +384,9 @@ export async function connectAxonOSWebRTC(opts) {
         }
         const j = st.json;
         if (j.state === 'failed' || j.last_error) {
+            if (await _finishNegotiationCancelled(negotiationGeneration, pc, video, sessionId, wallet)) {
+                return false;
+            }
             await _cleanup(pc, video, sessionId, wallet);
             const detail = (j.last_error && String(j.last_error).trim()) || 'signaling failed';
             const msg = `WebRTC failed: ${detail}`;
@@ -333,6 +399,9 @@ export async function connectAxonOSWebRTC(opts) {
             return false;
         }
         if (j.state === 'closed') {
+            if (await _finishNegotiationCancelled(negotiationGeneration, pc, video, sessionId, wallet)) {
+                return false;
+            }
             await _cleanup(pc, video, sessionId, wallet);
             if (webrtcFallbackOk) {
                 _setBanner('WebRTC session closed — falling back.', 'fallback');
@@ -372,6 +441,9 @@ export async function connectAxonOSWebRTC(opts) {
     }
 
     if (!answerApplied) {
+        if (await _finishNegotiationCancelled(negotiationGeneration, pc, video, sessionId, wallet)) {
+            return false;
+        }
         await _cleanup(pc, video, sessionId, wallet);
         if (webrtcFallbackOk) {
             _setBanner('WebRTC timed out — falling back.', 'fallback');
@@ -379,6 +451,11 @@ export async function connectAxonOSWebRTC(opts) {
             _setBanner('WebRTC timed out.', 'failed');
         }
         setTimeout(_hideBanner, 4000);
+        return false;
+    }
+
+    if (_negotiationCancelled(negotiationGeneration)) {
+        await _finishNegotiationCancelled(negotiationGeneration, pc, video, sessionId, wallet);
         return false;
     }
 
@@ -887,6 +964,9 @@ export async function connectAxonOSWebRTC(opts) {
     const iceOk = await _waitIceConnected(pc, 90000);
     if (!iceOk) {
         inputAbort.abort();
+        if (await _finishNegotiationCancelled(negotiationGeneration, pc, video, sessionId, wallet)) {
+            return false;
+        }
         await _cleanup(pc, video, sessionId, wallet);
         window.axonosWebRtcPasteClipboard = null;
         window.axonosWebRtcPc = null;
@@ -904,12 +984,20 @@ export async function connectAxonOSWebRTC(opts) {
         return false;
     }
 
+    if (await _finishNegotiationCancelled(negotiationGeneration, pc, video, sessionId, wallet)) {
+        return false;
+    }
+
     metricsTimer = setInterval(pollStats, 5000);
     pollStats();
 
+    _inFlightNegotiation = null;
     UI.connected = true;
     window.axonosSessionDetached = false;
     UI.inhibitReconnect = false;
+    if (typeof window.axonosHideConnectionLoader === 'function') {
+        window.axonosHideConnectionLoader(true);
+    }
     UI.updateVisualState('connected');
     UI.showStatus('Connected (WebRTC)');
     _setBanner('WebRTC: Connected', 'connected');
@@ -923,6 +1011,7 @@ export async function connectAxonOSWebRTC(opts) {
     }
 
     window.axonosWebRtcTeardown = async () => {
+        _negotiationGeneration += 1;
         resetMouseInputState(null, true);
         inputAbort.abort();
         if (metricsTimer) {
@@ -933,27 +1022,38 @@ export async function connectAxonOSWebRTC(opts) {
         }
         await _cleanup(pc, video, sessionId, wallet);
         window.axonosWebRtcPasteClipboard = null;
+        window.axonosWebRtcPc = null;
+        window.axonosWebRtcVideo = null;
         window.axonosWebRtcTeardown = null;
+        _inFlightNegotiation = null;
     };
 
     return true;
 }
 
+if (typeof window !== 'undefined') {
+    window.axonosCancelWebRtcNegotiation = cancelAxonOSWebRTCNegotiation;
+}
+
 async function _cleanup(pc, video, sessionId, wallet) {
-    try {
-        await _fetchJson('./api/webrtc/close', {
-            method: 'POST',
-            headers: _authHeaders(),
-            body: JSON.stringify({ wallet_address: wallet, session_id: sessionId }),
-        });
-    } catch {
-        /* ignore */
+    if (sessionId && wallet) {
+        try {
+            await _fetchJson('./api/webrtc/close', {
+                method: 'POST',
+                headers: _authHeaders(),
+                body: JSON.stringify({ wallet_address: wallet, session_id: sessionId }),
+            });
+        } catch {
+            /* ignore */
+        }
     }
-    try {
-        pc.getSenders().forEach((s) => s.track && s.track.stop());
-        await pc.close();
-    } catch {
-        /* ignore */
+    if (pc) {
+        try {
+            pc.getSenders().forEach((s) => s.track && s.track.stop());
+            await pc.close();
+        } catch {
+            /* ignore */
+        }
     }
     if (video && video.parentNode) {
         video.parentNode.removeChild(video);
