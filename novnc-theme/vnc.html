@@ -528,16 +528,13 @@ Copyright (C) 2019 The noVNC Authors
         </div>
     </div>
 
-    <!-- AXGT queue overlay: desktop in use, show position and join/leave queue. -->
-    <div id="axonos_queue_overlay" class="axonos-queue-overlay axonos-queue-overlay--hidden" aria-hidden="true">
+    <!-- Session unavailable overlay (GPU capacity / desktop in use). -->
+    <div id="axonos_session_unavailable_overlay" class="axonos-queue-overlay axonos-queue-overlay--hidden" aria-hidden="true">
         <div class="axonos-queue-overlay__panel">
-            <h2 id="axonos_queue_title" class="axonos-queue-overlay__title">Desktop In Use</h2>
-            <p id="axonos_queue_message" class="axonos-queue-overlay__message">Another researcher is currently using the desktop.</p>
-            <p class="axonos-queue-overlay__row">Your position: <strong id="axonos_queue_position">Not in queue yet</strong></p>
-            <p class="axonos-queue-overlay__row">People waiting in queue: <strong id="axonos_queue_length">—</strong></p>
+            <h2 id="axonos_session_unavailable_title" class="axonos-queue-overlay__title">Cannot connect</h2>
+            <p id="axonos_session_unavailable_message" class="axonos-queue-overlay__message">Another researcher is currently using the desktop.</p>
             <div class="axonos-queue-overlay__actions">
-                <button type="button" id="axonos_queue_join_btn" class="noVNC_submit axonos-queue-overlay__btn">Join Queue</button>
-                <button type="button" id="axonos_queue_leave_btn" class="noVNC_submit axonos-queue-overlay__btn" style="display:none">Leave Queue</button>
+                <button type="button" id="axonos_session_unavailable_dismiss_btn" class="noVNC_submit axonos-queue-overlay__btn">Close</button>
             </div>
         </div>
     </div>
@@ -849,10 +846,50 @@ document.addEventListener("DOMContentLoaded", function() {
     window.axonosAllowVncConnect = false;
     window.verifiedWalletAuthToken = null;
 
-    // Queue overlay polling (cleared when we connect or leave queue)
-    let axonosQueuePollId = null;
-    let axonosQueueJoinInFlight = false;
-    let axonosLastAutoQueueJoinMs = 0;
+    function showSessionUnavailableOverlay(data) {
+        const overlay = document.getElementById('axonos_session_unavailable_overlay');
+        const titleEl = document.getElementById('axonos_session_unavailable_title');
+        const msgEl = document.getElementById('axonos_session_unavailable_message');
+        if (!overlay) return;
+
+        if (titleEl) {
+            if (data && data.allocation_status === 'failed') {
+                titleEl.textContent = 'Could not start session';
+            } else if (data && (data.profile_impossible_on_host === true || data.queue_impossible_on_host === true)) {
+                titleEl.textContent = 'This GPU profile exceeds this host';
+            } else if (data && data.allocation_status === 'unavailable') {
+                titleEl.textContent = 'No GPUs available';
+            } else {
+                titleEl.textContent = 'Cannot connect';
+            }
+        }
+
+        overlay.classList.remove('axonos-queue-overlay--hidden');
+        overlay.setAttribute('aria-hidden', 'false');
+        if (msgEl) {
+            var parts = [];
+            if (data && data.reason) parts.push(data.reason);
+            if (data && data.capacity_note) parts.push(data.capacity_note);
+            msgEl.textContent = parts.length ? parts.join('\n\n') : 'Could not start a desktop session right now.';
+        }
+    }
+
+    function hideSessionUnavailableOverlay() {
+        const overlay = document.getElementById('axonos_session_unavailable_overlay');
+        if (overlay) {
+            overlay.classList.add('axonos-queue-overlay--hidden');
+            overlay.setAttribute('aria-hidden', 'true');
+        }
+    }
+
+    function axonosResetQueueClientState() {
+        hideSessionUnavailableOverlay();
+    }
+
+    window.axonosResetQueueClientState = axonosResetQueueClientState;
+    window.axonosHideQueueOverlay = function () {
+        axonosResetQueueClientState();
+    };
 
     function axonosFetch(opts) {
         const headers = { 'Content-Type': 'application/json' };
@@ -926,120 +963,7 @@ document.addEventListener("DOMContentLoaded", function() {
         });
     }
 
-    function joinQueue() {
-        const wallet = window.verifiedWalletAddress;
-        if (!wallet) return Promise.resolve({ joined: false, reason: 'Wallet not connected.' });
-        const requestedProfile = getRequestedProfile();
-        const url = new URL('/api/queue/join', window.location.origin).toString();
-        const headers = { 'Content-Type': 'application/json' };
-        if (window.verifiedWalletAddress) headers['X-Wallet-Address'] = window.verifiedWalletAddress;
-        if (window.verifiedWalletAuthToken) headers['X-AXGT-Auth-Token'] = window.verifiedWalletAuthToken;
-        return fetch(url, {
-            method: 'POST',
-            credentials: 'include',
-            headers: headers,
-            body: JSON.stringify({ wallet_address: wallet, requested_profile: requestedProfile })
-        }).then(function (resp) {
-            return resp.json().then(function (data) {
-                if (typeof data !== 'object' || data === null) data = {};
-                data._httpStatus = resp.status;
-                data._ok = resp.ok;
-                return data;
-            });
-        });
-    }
-
-    function leaveQueue() {
-        const wallet = window.verifiedWalletAddress;
-        if (!wallet) return Promise.resolve({ left: false });
-        return axonosFetch({
-            method: 'POST',
-            url: new URL('/api/queue/leave', window.location.origin).toString(),
-            body: JSON.stringify({ wallet_address: wallet })
-        });
-    }
-
-    function showQueueOverlay(data) {
-        const overlay = document.getElementById('axonos_queue_overlay');
-        const titleEl = document.getElementById('axonos_queue_title');
-        const msgEl = document.getElementById('axonos_queue_message');
-        const posEl = document.getElementById('axonos_queue_position');
-        const lenEl = document.getElementById('axonos_queue_length');
-        const joinBtn = document.getElementById('axonos_queue_join_btn');
-        const leaveBtn = document.getElementById('axonos_queue_leave_btn');
-        if (!overlay) return;
-
-        var queued =
-            !!(data &&
-                (axonosHasQueuePosition(data.queue_position) ||
-                    data.allocation_status === 'queued'));
-
-        if (titleEl) {
-            if (data && data.allocation_status === 'failed') {
-                titleEl.textContent = 'Could not start session';
-            } else if (queued && data && data.queue_impossible_on_host === true) {
-                titleEl.textContent = 'This GPU profile exceeds this host';
-            } else if (queued) {
-                titleEl.textContent = 'Waiting for GPU availability';
-            } else {
-                titleEl.textContent = 'Desktop In Use';
-            }
-        }
-
-        overlay.classList.remove('axonos-queue-overlay--hidden');
-        overlay.setAttribute('aria-hidden', 'false');
-        if (msgEl) {
-            var parts = [];
-            if (data && data.reason) parts.push(data.reason);
-            if (data && data.capacity_note) parts.push(data.capacity_note);
-            msgEl.textContent = parts.length ? parts.join('\n\n') : 'Waiting for GPU allocation.';
-        }
-        if (posEl) {
-            posEl.textContent = (data && data.queue_position != null && data.queue_position !== '')
-                ? String(data.queue_position)
-                : 'Not in queue yet';
-        }
-        if (lenEl) lenEl.textContent = (data && data.queue_length != null) ? String(data.queue_length) : '—';
-        if (joinBtn) {
-            if (data && data.allocation_status === 'failed') {
-                joinBtn.style.display = 'none';
-            } else {
-                joinBtn.style.display = (data && data.queue_position != null) ? 'none' : '';
-            }
-        }
-        if (leaveBtn) {
-            if (data && data.allocation_status === 'failed') {
-                leaveBtn.style.display = 'none';
-            } else {
-                leaveBtn.style.display = (data && data.queue_position != null) ? '' : 'none';
-            }
-        }
-    }
-
-    function hideQueueOverlay() {
-        const overlay = document.getElementById('axonos_queue_overlay');
-        if (overlay) {
-            overlay.classList.add('axonos-queue-overlay--hidden');
-            overlay.setAttribute('aria-hidden', 'true');
-        }
-        if (axonosQueuePollId) {
-            clearInterval(axonosQueuePollId);
-            axonosQueuePollId = null;
-        }
-    }
-
-    function axonosResetQueueClientState() {
-        hideQueueOverlay();
-        axonosQueueJoinInFlight = false;
-        axonosLastAutoQueueJoinMs = 0;
-    }
-
-    window.axonosResetQueueClientState = axonosResetQueueClientState;
-    window.axonosHideQueueOverlay = function () {
-        axonosResetQueueClientState();
-    };
-
-    /** Clear stale queue/WebRTC gate state before a user-initiated Launch / Resume. */
+    /** Clear stale session/WebRTC gate state before a user-initiated Launch / Resume. */
     window.axonosPrepareDesktopLaunch = function () {
         axonosResetQueueClientState();
         if (typeof UI !== 'undefined') {
@@ -1399,10 +1323,6 @@ document.addEventListener("DOMContentLoaded", function() {
     window.axonosGetRequestedProfile = getRequestedProfile;
     window.axonosGpuCountForProfile = axonosGpuCountForProfile;
 
-    function axonosHasQueuePosition(v) {
-        return v != null && v !== '';
-    }
-
     /** Append launcher/docker error when spawn fails (API field container_error). */
     function axonosFormatClaimDeniedMessage(claim, fallbackReason) {
         var main = (claim && claim.reason) ? claim.reason : (fallbackReason || 'Desktop in use.');
@@ -1413,91 +1333,16 @@ document.addEventListener("DOMContentLoaded", function() {
         return main;
     }
 
-    function axonosRouteClaimDeniedToQueueOrStatus(claim, fallbackReason) {
+    function axonosRouteClaimDeniedToStatus(claim, fallbackReason) {
         var reason = axonosFormatClaimDeniedMessage(claim, fallbackReason);
         if (claim && claim.allocation_status === 'failed') {
-            showQueueOverlay({
-                reason: reason + ' Choose a smaller profile or retry after administrators fix launcher/Docker GPU access.',
-                queue_position: null,
-                queue_length:
-                    claim && claim.queue_length != null ? claim.queue_length : null,
-                allocation_status: 'failed',
-                queue_impossible_on_host: claim.queue_impossible_on_host,
-                capacity_note: claim.capacity_note
-            });
-            return;
+            reason = reason + ' Choose a smaller profile or retry after administrators fix launcher/Docker GPU access.';
         }
-        var hasPos = axonosHasQueuePosition(claim && claim.queue_position);
-        if (hasPos) {
-            showQueueOverlay({
-                reason: reason,
-                queue_position: claim.queue_position,
-                queue_length: claim && claim.queue_length != null ? claim.queue_length : null,
-                allocation_status: claim && claim.allocation_status,
-                queue_impossible_on_host: claim && claim.queue_impossible_on_host,
-                capacity_note: claim && claim.capacity_note
-            });
-            startQueuePolling();
-            return;
-        }
-
-        // Avoid repeated auto-join spam when claim/status race in short bursts.
-        var now = Date.now();
-        var canAutoJoin = (now - axonosLastAutoQueueJoinMs) > 30000;
-        if (axonosQueueJoinInFlight || !canAutoJoin) {
-            showQueueOverlay({
-                reason: reason + ' Click Join queue to wait for availability.',
-                queue_position: null,
-                queue_length: claim && claim.queue_length != null ? claim.queue_length : null,
-                allocation_status: claim && claim.allocation_status,
-                queue_impossible_on_host: claim && claim.queue_impossible_on_host,
-                capacity_note: claim && claim.capacity_note
-            });
-            startQueuePolling();
-            return;
-        }
-
-        axonosQueueJoinInFlight = true;
-        axonosLastAutoQueueJoinMs = now;
-        showQueueOverlay({
-            reason: reason + ' Joining queue…',
-            queue_position: null,
-            queue_length: claim && claim.queue_length != null ? claim.queue_length : null,
+        showSessionUnavailableOverlay({
+            reason: reason,
             allocation_status: claim && claim.allocation_status,
-            queue_impossible_on_host: claim && claim.queue_impossible_on_host,
+            profile_impossible_on_host: claim && (claim.profile_impossible_on_host || claim.queue_impossible_on_host),
             capacity_note: claim && claim.capacity_note
-        });
-
-        joinQueue().then(function (r) {
-            var joinedOk = r && (r.joined === true || r.joined === 'true' || axonosHasQueuePosition(r.queue_position));
-            if (joinedOk) {
-                showQueueOverlay({
-                    reason: r.reason || 'You are in the queue. We will connect when enough GPUs are available.',
-                    queue_position: r.queue_position,
-                    queue_length: r.queue_length,
-                    allocation_status: r.allocation_status,
-                    queue_impossible_on_host: r.queue_impossible_on_host,
-                    capacity_note: r.capacity_note
-                });
-            } else {
-                showQueueOverlay({
-                    reason: reason + ' Click Join queue to wait for availability.',
-                    queue_position: axonosHasQueuePosition(r && r.queue_position) ? r.queue_position : null,
-                    queue_length: r && r.queue_length != null ? r.queue_length : null,
-                    allocation_status: r && r.allocation_status,
-                    queue_impossible_on_host: r && r.queue_impossible_on_host,
-                    capacity_note: r && r.capacity_note
-                });
-            }
-        }).catch(function () {
-            showQueueOverlay({
-                reason: reason + ' Network error while joining queue. Click Join queue to retry.',
-                queue_position: null,
-                queue_length: null
-            });
-        }).then(function () {
-            axonosQueueJoinInFlight = false;
-            startQueuePolling();
         });
     }
 
@@ -1515,22 +1360,22 @@ document.addEventListener("DOMContentLoaded", function() {
                     axonosRouteClaimDeniedToRechargeOrResume(claim);
                     return;
                 }
-                axonosRouteClaimDeniedToQueueOrStatus(claim, fallbackReason);
+                axonosRouteClaimDeniedToStatus(claim, fallbackReason);
             }).catch(function () {
-                axonosRouteClaimDeniedToQueueOrStatus(claim, fallbackReason);
+                axonosRouteClaimDeniedToStatus(claim, fallbackReason);
             });
             return;
         }
-        axonosRouteClaimDeniedToQueueOrStatus(claim, fallbackReason);
+        axonosRouteClaimDeniedToStatus(claim, fallbackReason);
     }
 
-    /** Called from ui.js when Launch runs connect while session is not claimed (e.g. after queue leave). */
+    /** Called from ui.js when Launch runs connect while session is not claimed. */
     window.axonosOnSessionClaimDenied = function (claim) {
         handleSessionClaimDenied(claim, 'Desktop in use.');
     };
 
     function tryConnectAfterClaim() {
-        hideQueueOverlay();
+        hideSessionUnavailableOverlay();
         const credentialsDialog = document.getElementById('noVNC_credentials_dlg');
         if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
         showConnectionLoader();
@@ -1540,54 +1385,6 @@ document.addEventListener("DOMContentLoaded", function() {
             var p = (typeof WebUtil !== 'undefined' && WebUtil.getConfigVar) ? WebUtil.getConfigVar('password') : null;
             UI.connect(null, p || 'axonpassword');
         }
-    }
-
-    function startQueuePolling() {
-        if (axonosQueuePollId || window.axonosPausedResume) return;
-        function poll() {
-            if (window.axonosPausedResume) {
-                axonosResetQueueClientState();
-                return;
-            }
-            sessionStatus().then(function (data) {
-                if (data && (data.can_resume === true || data.paused === true)) {
-                    axonosApplySessionStatusToResumeUi(data, window.verifiedWalletAddress);
-                    axonosResetQueueClientState();
-                    return;
-                }
-                var qOverlay = document.getElementById('axonos_queue_overlay');
-                var queueVisible = qOverlay && !qOverlay.classList.contains('axonos-queue-overlay--hidden');
-                if (data.reason) {
-                    showQueueOverlay({
-                        reason: data.reason,
-                        queue_position: data.queue_position,
-                        queue_length: data.queue_length,
-                        allocation_status: data.allocation_status,
-                        queue_impossible_on_host: data.queue_impossible_on_host,
-                        capacity_note: data.capacity_note
-                    });
-                } else if (queueVisible && data.active === true && !data.is_owner) {
-                    var qMsg = document.getElementById('axonos_queue_message');
-                    var keepMsg = (qMsg && qMsg.textContent) ? qMsg.textContent : 'Another researcher is currently using the desktop.';
-                    showQueueOverlay({
-                        reason: keepMsg,
-                        queue_position: data.queue_position,
-                        queue_length: data.queue_length,
-                        allocation_status: data.allocation_status,
-                        queue_impossible_on_host: data.queue_impossible_on_host,
-                        capacity_note: data.capacity_note
-                    });
-                }
-                if (data.active === false || data.is_owner === true) {
-                    claimSession().then(function (claim) {
-                        if (claim.granted) tryConnectAfterClaim();
-                        else handleSessionClaimDenied(claim, 'Desktop in use.');
-                    });
-                }
-            }).catch(function () {});
-        }
-        poll();
-        axonosQueuePollId = setInterval(poll, 8000);
     }
 
     const connectButton = document.getElementById('noVNC_connect_button');
@@ -2919,70 +2716,13 @@ document.addEventListener("DOMContentLoaded", function() {
         payAxgtInput.addEventListener('input', function () { payAxgtInput.dataset.axonosUserAmount = '1'; });
     }
 
-    var joinQueueBtn = document.getElementById('axonos_queue_join_btn');
-    var leaveQueueBtn = document.getElementById('axonos_queue_leave_btn');
-    if (joinQueueBtn) {
-        joinQueueBtn.addEventListener('click', function () {
-            var prevLabel = joinQueueBtn.textContent;
-            joinQueueBtn.disabled = true;
-            joinQueueBtn.textContent = 'Joining…';
-            joinQueue().then(function (r) {
-                var joinedOk = r.joined === true || r.joined === 'true';
-                var hasPos = r.queue_position != null && r.queue_position !== '';
-                if (joinedOk || hasPos) {
-                    showQueueOverlay({
-                        reason: r.reason || 'You are in the queue. We will connect when enough GPUs are available.',
-                        queue_position: r.queue_position,
-                        queue_length: r.queue_length,
-                        allocation_status: r.allocation_status,
-                        queue_impossible_on_host: r.queue_impossible_on_host,
-                        capacity_note: r.capacity_note
-                    });
-                    joinQueueBtn.style.display = 'none';
-                    if (leaveQueueBtn) leaveQueueBtn.style.display = '';
-                    startQueuePolling();
-                    return;
-                }
-                var rawErr = String(r.reason || r.error || (r._ok === false && r._httpStatus ? ('Request failed (HTTP ' + r._httpStatus + ')') : '') || '').trim();
-                var baseMsg = 'Desktop is in use by another researcher.';
-                // Avoid showing raw "Internal error" / generic server strings next to the desktop-in-use line.
-                var genericFail = !rawErr || /^internal error$/i.test(rawErr) || /^could not join the queue/i.test(rawErr);
-                var fullReason = genericFail
-                    ? baseMsg + '\n\n' + 'Could not update the queue. Please try again.'
-                    : baseMsg + '\n\n' + (rawErr || 'Could not join the queue.');
-                sessionStatus().then(function (st) {
-                    showQueueOverlay({
-                        reason: fullReason,
-                        queue_position: st.queue_position != null ? st.queue_position : r.queue_position,
-                        queue_length: st.queue_length != null ? st.queue_length : r.queue_length
-                    });
-                }).catch(function () {
-                    showQueueOverlay({
-                        reason: fullReason,
-                        queue_position: r.queue_position,
-                        queue_length: r.queue_length
-                    });
-                });
-            }).catch(function () {
-                showQueueOverlay({
-                    reason: 'Desktop is in use by another researcher.\n\nNetwork error — could not reach the server to join the queue.',
-                    queue_position: null,
-                    queue_length: null
-                });
-            }).then(function () {
-                joinQueueBtn.disabled = false;
-                joinQueueBtn.textContent = prevLabel;
-            });
-        });
-    }
-    if (leaveQueueBtn) {
-        leaveQueueBtn.addEventListener('click', function () {
-            leaveQueue().then(function () {
-                hideQueueOverlay();
-                if (typeof UI !== 'undefined' && typeof UI.axonosResetDesktopGateForRetry === 'function') {
-                    UI.axonosResetDesktopGateForRetry();
-                }
-            });
+    var sessionUnavailableDismissBtn = document.getElementById('axonos_session_unavailable_dismiss_btn');
+    if (sessionUnavailableDismissBtn) {
+        sessionUnavailableDismissBtn.addEventListener('click', function () {
+            hideSessionUnavailableOverlay();
+            if (typeof UI !== 'undefined' && typeof UI.axonosResetDesktopGateForRetry === 'function') {
+                UI.axonosResetDesktopGateForRetry();
+            }
         });
     }
 

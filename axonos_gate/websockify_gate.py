@@ -89,8 +89,6 @@ try:
         get_active_session,
         heartbeat as session_heartbeat,
         is_session_owner,
-        join_queue,
-        leave_queue,
         release_session,
         restart_desktop_session,
         session_status,
@@ -103,8 +101,6 @@ except ImportError:
             get_active_session,
             heartbeat as session_heartbeat,
             is_session_owner,
-            join_queue,
-            leave_queue,
             release_session,
             restart_desktop_session,
             session_status,
@@ -561,7 +557,6 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             self.path.startswith('/api/auth/')
             or self.path.startswith('/api/config')
             or self.path.startswith('/api/session/')
-            or self.path.startswith('/api/queue/')
             or self.path.startswith('/api/webrtc/')
         ):
             self.send_response(200)
@@ -611,8 +606,8 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 "min_eth_deposit_minutes": policy.get("min_eth_deposit_minutes"),
                 "axgt_direct_deposits_enabled": policy.get("axgt_direct_deposits_enabled"),
                 "axgt_discount_tiers": policy.get("axgt_discount_tiers", []),
-                "multi_session_enabled": (os.getenv("AXGT_MULTI_SESSION_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")),
-                "gpu_profiles_enabled": (os.getenv("AXGT_GPU_PROFILES_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")),
+                "multi_session_enabled": (os.getenv("AXGT_MULTI_SESSION_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")),
+                "gpu_profiles_enabled": (os.getenv("AXGT_GPU_PROFILES_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")),
                 "gpu_profiles": {"small": 1, "medium": 2, "large": 4, "max": 8},
                 "gpu_weighted_billing_enabled": policy.get("gpu_weighted_billing_enabled", False),
             }
@@ -958,29 +953,6 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
                 return self._send_json(401, {'restarted': False, 'error': 'Valid auth token required'})
             result = restart_desktop_session(wallet_address)
-            return self._send_json(200, result)
-
-        if _session_mgr_available and self.path.startswith('/api/queue/join'):
-            data = self._read_json_body()
-            wallet_address = (data.get('wallet_address') or '').strip()
-            requested_profile = (data.get('requested_profile') or '').strip() or None
-            if not wallet_address or not validate_wallet_address(wallet_address):
-                return self._send_json(400, {'joined': False, 'error': 'Valid wallet_address required'})
-            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
-            if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
-                return self._send_json(401, {'joined': False, 'error': 'Valid auth token required'})
-            result = join_queue(wallet_address, requested_profile=requested_profile)
-            return self._send_json(200, result)
-
-        if _session_mgr_available and self.path.startswith('/api/queue/leave'):
-            data = self._read_json_body()
-            wallet_address = (data.get('wallet_address') or '').strip()
-            if not wallet_address or not validate_wallet_address(wallet_address):
-                return self._send_json(400, {'left': False, 'error': 'Valid wallet_address required'})
-            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
-            if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
-                return self._send_json(401, {'left': False, 'error': 'Valid auth token required'})
-            result = leave_queue(wallet_address)
             return self._send_json(200, result)
 
         if self.path.startswith('/api/auth/verify-deposit'):
