@@ -111,6 +111,7 @@ export function cancelAxonOSWebRTCNegotiation() {
     window.axonosWebRtcPc = null;
     window.axonosWebRtcVideo = null;
     window.axonosWebRtcPasteClipboard = null;
+    window.axonosWebRtcReleasePointerState = null;
     if (typeof window.axonosWebRtcTeardown === 'function') {
         const teardown = window.axonosWebRtcTeardown;
         window.axonosWebRtcTeardown = null;
@@ -856,6 +857,29 @@ export async function connectAxonOSWebRTC(opts) {
         resetMouseInputState(null, true);
     }
 
+    function hasActivePointerCapture() {
+        return (
+            currentMouseButtons !== 0 ||
+            pendingPress !== null ||
+            capturedPointerId !== null
+        );
+    }
+
+    /** Focus moved off the video within the page (e.g. clipboard panel); window blur does not fire. */
+    function onVideoFocusOut(ev) {
+        const next = ev.relatedTarget;
+        if (next && video.contains(next)) {
+            return;
+        }
+        if (!hasActivePointerCapture()) {
+            return;
+        }
+        releaseMouseOnFocusLoss();
+    }
+    video.addEventListener('focusout', onVideoFocusOut, { signal: inputSignal });
+
+    window.axonosWebRtcReleasePointerState = releaseMouseOnFocusLoss;
+
     function onVisibilityChange() {
         if (document.visibilityState === 'visible') {
             if (currentMouseButtons !== 0) {
@@ -971,6 +995,7 @@ export async function connectAxonOSWebRTC(opts) {
         window.axonosWebRtcPasteClipboard = null;
         window.axonosWebRtcPc = null;
         window.axonosWebRtcVideo = null;
+        window.axonosWebRtcReleasePointerState = null;
         if (webrtcFallbackOk) {
             _setBanner('WebRTC ICE failed — falling back.', 'fallback');
         } else {
@@ -1024,6 +1049,7 @@ export async function connectAxonOSWebRTC(opts) {
         window.axonosWebRtcPasteClipboard = null;
         window.axonosWebRtcPc = null;
         window.axonosWebRtcVideo = null;
+        window.axonosWebRtcReleasePointerState = null;
         window.axonosWebRtcTeardown = null;
         _inFlightNegotiation = null;
     };
