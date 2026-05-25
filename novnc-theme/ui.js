@@ -795,6 +795,13 @@ const UI = {
         }
     },
 
+    /** Release stuck WebRTC mouse state when local UI (clipboard panel, etc.) takes focus. */
+    releaseWebRtcPointerState() {
+        if (typeof window.axonosWebRtcReleasePointerState === 'function') {
+            window.axonosWebRtcReleasePointerState();
+        }
+    },
+
     activateControlbar(event) {
         clearTimeout(UI.idleControlbarTimeout);
         // We manipulate the anchor instead of the actual control
@@ -1115,6 +1122,7 @@ const UI = {
 
     openSettingsPanel() {
         UI.closeAllPanels();
+        UI.releaseWebRtcPointerState();
         UI.openControlbar();
 
         // Refresh UI elements from saved cookies
@@ -1266,6 +1274,7 @@ const UI = {
 
     openClipboardPanel() {
         UI.closeAllPanels();
+        UI.releaseWebRtcPointerState();
         UI.openControlbar();
 
         document.getElementById('noVNC_clipboard')
@@ -2762,6 +2771,7 @@ const UI = {
 
     openExtraKeys() {
         UI.closeAllPanels();
+        UI.releaseWebRtcPointerState();
         UI.openControlbar();
 
         document.getElementById('noVNC_modifiers')
