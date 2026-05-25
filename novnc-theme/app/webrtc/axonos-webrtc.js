@@ -220,6 +220,9 @@ export async function connectAxonOSWebRTC(opts) {
         return false;
     }
 
+    /** When false, NVENC embeds the host cursor — skip the browser overlay. */
+    const localCursor = cfgRes.json.webrtc_local_cursor === true;
+
     _setBanner('WebRTC: Connecting…', 'connecting');
 
     const sessRes = await _fetchJson('./api/webrtc/session', {
@@ -235,28 +238,64 @@ export async function connectAxonOSWebRTC(opts) {
     const iceServers = sessRes.json.ice_servers || [{ urls: 'stun:stun.l.google.com:19302' }];
 
     const container = document.getElementById('noVNC_container');
+    const prevContainerCursor = container ? container.style.cursor : '';
+    if (container) {
+        container.style.cursor = 'none';
+    }
     const video = document.createElement('video');
     video.id = 'axonos_webrtc_video';
     video.autoplay = true;
     video.playsInline = true;
     video.muted = true;
     video.tabIndex = 0;
-    video.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:5;cursor:none;';
+    video.style.cssText =
+        'position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:5;cursor:none;';
 
-    const cursor = document.createElement('div');
-    cursor.id = 'axonos_webrtc_cursor';
-    cursor.style.cssText = [
-        'position:absolute',
-        'left:0',
-        'top:0',
-        'width:18px',
-        'height:24px',
-        'z-index:6',
-        'pointer-events:none',
-        'transform:translate(-100px,-100px)',
-        'filter:drop-shadow(0 1px 1px #000)',
-    ].join(';');
-    cursor.innerHTML = '<svg width="18" height="24" viewBox="0 0 18 24" xmlns="http://www.w3.org/2000/svg"><path d="M1 1v18l5-5 3 8 3-1-3-8h7z" fill="white" stroke="black" stroke-width="1"/></svg>';
+    /** @type {HTMLDivElement | null} */
+    let cursor = null;
+    if (localCursor) {
+        cursor = document.createElement('div');
+        cursor.id = 'axonos_webrtc_cursor';
+        cursor.style.cssText = [
+            'position:absolute',
+            'left:0',
+            'top:0',
+            'width:18px',
+            'height:24px',
+            'z-index:6',
+            'pointer-events:none',
+            'transform:translate(-100px,-100px)',
+            'filter:drop-shadow(0 1px 1px #000)',
+        ].join(';');
+        cursor.innerHTML = '<svg width="18" height="24" viewBox="0 0 18 24" xmlns="http://www.w3.org/2000/svg"><path d="M1 1v18l5-5 3 8 3-1-3-8h7z" fill="white" stroke="black" stroke-width="1"/></svg>';
+    }
+
+    if (container) {
+        container.appendChild(video);
+        if (cursor) {
+            container.appendChild(cursor);
+        }
+    } else {
+        document.body.appendChild(video);
+        if (cursor) {
+            document.body.appendChild(cursor);
+        }
+    }
+
+    function ensureVideoPlaying() {
+        if (!video.isConnected || !video.srcObject) {
+            return;
+        }
+        const playPromise = video.play();
+        if (playPromise && typeof playPromise.catch === 'function') {
+            playPromise.catch((e) => {
+                if (e && e.name === 'AbortError') {
+                    return;
+                }
+                console.warn('AxonOS WebRTC video.play failed', e);
+            });
+        }
+    }
 
     const pc = new RTCPeerConnection({ iceServers });
     _inFlightNegotiation = { pc, video, sessionId, wallet, generation: negotiationGeneration };
@@ -267,6 +306,10 @@ export async function connectAxonOSWebRTC(opts) {
     }
     // Separate channels so multi-MB clipboard JSON cannot queue ahead of clicks
     // on the ordered SCTP stream (the root cause when host clipboard is large).
+    const dcMoves = pc.createDataChannel('axonos-input-moves', {
+        ordered: false,
+        maxRetransmits: 0,
+    });
     const dcInput = pc.createDataChannel('axonos-input', { ordered: true });
     const dcClip = pc.createDataChannel('axonos-clipboard', { ordered: true });
     function sendClipboard(obj) {
@@ -289,7 +332,25 @@ export async function connectAxonOSWebRTC(opts) {
         return sendClipboard({ t: pasteNow ? 'paste' : 'clipboard', text });
     };
 
-    pc.addTransceiver('video', { direction: 'recvonly' });
+    const videoTx = pc.addTransceiver('video', { direction: 'recvonly' });
+    try {
+        if (
+            videoTx &&
+            typeof videoTx.setCodecPreferences === 'function' &&
+            typeof RTCRtpReceiver !== 'undefined' &&
+            typeof RTCRtpReceiver.getCapabilities === 'function'
+        ) {
+            const caps = RTCRtpReceiver.getCapabilities('video');
+            const h264 = (caps.codecs || []).filter(
+                (c) => String(c.mimeType || '').toLowerCase() === 'video/h264'
+            );
+            if (h264.length) {
+                videoTx.setCodecPreferences(h264);
+            }
+        }
+    } catch (e) {
+        console.warn('AxonOS WebRTC H264 codec preference failed', e);
+    }
     window.axonosWebRtcPc = pc;
     window.axonosWebRtcVideo = video;
 
@@ -300,7 +361,7 @@ export async function connectAxonOSWebRTC(opts) {
         } else {
             video.srcObject = new MediaStream([ev.track]);
         }
-        video.play().catch((e) => console.warn('AxonOS WebRTC video.play failed', e));
+        ensureVideoPlaying();
     };
 
     const pendingIce = [];
@@ -468,14 +529,6 @@ export async function connectAxonOSWebRTC(opts) {
     }
     UI.showStatus('WebRTC: connecting…');
 
-    if (container) {
-        container.appendChild(video);
-        container.appendChild(cursor);
-    } else {
-        document.body.appendChild(video);
-        document.body.appendChild(cursor);
-    }
-
     let inputScaleX = 1;
     let inputScaleY = 1;
     let vidW = 1;
@@ -507,6 +560,7 @@ export async function connectAxonOSWebRTC(opts) {
     const inputSignal = inputAbort.signal;
 
     video.addEventListener('loadeddata', syncInputScale, { signal: inputSignal });
+    video.addEventListener('loadeddata', ensureVideoPlaying, { signal: inputSignal });
     window.addEventListener('resize', syncInputScale, { signal: inputSignal });
 
     let inputChannelOpen = dcInput.readyState === 'open';
@@ -518,17 +572,96 @@ export async function connectAxonOSWebRTC(opts) {
     let pendingPress = null;
     let capturedPointerId = null;
 
-    function sendInput(obj) {
-        if (!inputChannelOpen || dcInput.readyState !== 'open') {
+    function sendOnChannel(ch, obj) {
+        if (!inputChannelOpen || !ch || ch.readyState !== 'open') {
             return false;
         }
         try {
-            dcInput.send(JSON.stringify(obj));
+            ch.send(JSON.stringify(obj));
             return true;
         } catch (e) {
             console.warn('AxonOS WebRTC input send failed', e);
             return false;
         }
+    }
+
+    function moveChannel() {
+        return dcMoves.readyState === 'open' ? dcMoves : dcInput;
+    }
+
+    function sendInput(obj) {
+        return sendOnChannel(dcInput, obj);
+    }
+
+    /** @type {Record<string, unknown> | null} */
+    let pendingMovePayload = null;
+    let moveFlushTimer = null;
+    const MOVE_FLUSH_MS = 50;
+    const MOVE_FLUSH_DRAG_MS = 20;
+    const MAX_INPUT_BUFFERED = 32768;
+    const CONGESTED_INPUT_BUFFERED = 16384;
+
+    function inputCongested() {
+        if (dcInput.bufferedAmount > CONGESTED_INPUT_BUFFERED) {
+            return true;
+        }
+        return dcMoves.readyState === 'open' && dcMoves.bufferedAmount > CONGESTED_INPUT_BUFFERED;
+    }
+
+    function clearMoveFlushTimer() {
+        if (moveFlushTimer !== null) {
+            clearTimeout(moveFlushTimer);
+            moveFlushTimer = null;
+        }
+    }
+
+    function flushPendingMove() {
+        moveFlushTimer = null;
+        if (!pendingMovePayload) {
+            return;
+        }
+        const payload = pendingMovePayload;
+        pendingMovePayload = null;
+        sendOnChannel(moveChannel(), payload);
+    }
+
+    function queueMove(payload, urgent) {
+        pendingMovePayload = payload;
+        if (moveFlushTimer !== null) {
+            return;
+        }
+        const delay = urgent ? MOVE_FLUSH_DRAG_MS : MOVE_FLUSH_MS;
+        moveFlushTimer = setTimeout(flushPendingMove, delay);
+    }
+
+    /** Send click/key/wheel without flushing coalesced moves into a congested SCTP queue. */
+    function sendPriorityInput(obj) {
+        clearMoveFlushTimer();
+        pendingMovePayload = null;
+        return sendInput(obj);
+    }
+
+    function sendMove(payload, urgent) {
+        const ch = moveChannel();
+        pendingMovePayload = payload;
+        if (!urgent && inputCongested()) {
+            return;
+        }
+        if (ch.bufferedAmount > MAX_INPUT_BUFFERED) {
+            if (moveFlushTimer === null) {
+                moveFlushTimer = setTimeout(() => {
+                    moveFlushTimer = null;
+                    if (
+                        pendingMovePayload &&
+                        moveChannel().bufferedAmount <= MAX_INPUT_BUFFERED
+                    ) {
+                        flushPendingMove();
+                    }
+                }, 50);
+            }
+            return;
+        }
+        queueMove(payload, urgent);
     }
 
     dcInput.addEventListener('open', () => {
@@ -538,6 +671,11 @@ export async function connectAxonOSWebRTC(opts) {
     dcInput.addEventListener('close', () => {
         inputChannelOpen = false;
         currentMouseButtons = 0;
+        clearMoveFlushTimer();
+        pendingMovePayload = null;
+        if (UI.connected) {
+            _setBanner('Input channel closed — reconnect to restore mouse.', 'failed');
+        }
     });
 
     dcClip.onmessage = (ev) => {
@@ -577,7 +715,9 @@ export async function connectAxonOSWebRTC(opts) {
         const r = video.getBoundingClientRect();
         const localX = Math.max(0, Math.min(imageWidth, ev.clientX - r.left - imageLeft));
         const localY = Math.max(0, Math.min(imageHeight, ev.clientY - r.top - imageTop));
-        cursor.style.transform = `translate(${imageLeft + localX}px, ${imageTop + localY}px)`;
+        if (cursor) {
+            cursor.style.transform = `translate(${imageLeft + localX}px, ${imageTop + localY}px)`;
+        }
         return {
             x: Math.round(localX * inputScaleX),
             y: Math.round(localY * inputScaleY),
@@ -617,7 +757,7 @@ export async function connectAxonOSWebRTC(opts) {
                 if (coords) {
                     Object.assign(payload, coords);
                 }
-                sendInput(payload);
+                sendPriorityInput(payload);
             }
         }
         currentMouseButtons = 0;
@@ -625,12 +765,15 @@ export async function connectAxonOSWebRTC(opts) {
 
     function sendRemoteClick(ev) {
         pendingPress = null;
-        resetMouseInputState(null, true);
-        sendInput({
+        currentMouseButtons = 0;
+        const sent = sendPriorityInput({
             t: 'click',
             button: domButtonToXdotool(ev.button),
             ...pointerToRemote(ev),
         });
+        if (!sent) {
+            console.warn('AxonOS WebRTC click dropped — input channel unavailable');
+        }
     }
 
     function beginDragPress(pending, ev) {
@@ -649,7 +792,7 @@ export async function connectAxonOSWebRTC(opts) {
             // remotely and accept this press so the click still registers.
             const coords = pointerToRemote(ev);
             currentMouseButtons &= ~bit;
-            sendInput({
+            sendPriorityInput({
                 t: 'mouseup',
                 button: domButtonToXdotool(ev.button),
                 buttons: currentMouseButtons,
@@ -657,7 +800,7 @@ export async function connectAxonOSWebRTC(opts) {
             });
         }
         currentMouseButtons |= bit;
-        const sent = sendInput({
+        const sent = sendPriorityInput({
             t: 'mousedown',
             button: domButtonToXdotool(ev.button),
             buttons: currentMouseButtons,
@@ -674,7 +817,7 @@ export async function connectAxonOSWebRTC(opts) {
         if (!(currentMouseButtons & bit)) {
             // Orphan mouseup: mousedown may have been delayed, dropped on a closed
             // channel, or lost across session teardown — release remote anyway.
-            sendInput({
+            sendPriorityInput({
                 t: 'mouseup',
                 button: domButtonToXdotool(ev.button),
                 buttons: currentMouseButtons,
@@ -683,7 +826,7 @@ export async function connectAxonOSWebRTC(opts) {
             return;
         }
         currentMouseButtons &= ~bit;
-        sendInput({
+        sendPriorityInput({
             t: 'mouseup',
             button: domButtonToXdotool(ev.button),
             buttons: currentMouseButtons,
@@ -704,6 +847,7 @@ export async function connectAxonOSWebRTC(opts) {
         );
     }
 
+
     function onWindowMouseMove(ev) {
         if (pendingPress !== null) {
             const dx = ev.clientX - pendingPress.clientX;
@@ -717,7 +861,10 @@ export async function connectAxonOSWebRTC(opts) {
             return;
         }
         ev.preventDefault();
-        sendInput({ t: 'move', buttons: currentMouseButtons, ...pointerToRemote(ev) });
+        sendMove(
+            { t: 'move', buttons: currentMouseButtons, ...pointerToRemote(ev) },
+            dragging
+        );
     }
     window.addEventListener('mousemove', onWindowMouseMove, { signal: inputSignal });
 
@@ -792,7 +939,7 @@ export async function connectAxonOSWebRTC(opts) {
         if (dy === 0 && dx === 0) {
             return;
         }
-        sendInput({
+        sendPriorityInput({
             t: 'wheel',
             ...pointerToRemote(ev),
             dy,
@@ -839,7 +986,9 @@ export async function connectAxonOSWebRTC(opts) {
         if (currentMouseButtons !== 0) {
             return;
         }
-        cursor.style.transform = 'translate(-100px,-100px)';
+        if (cursor) {
+            cursor.style.transform = 'translate(-100px,-100px)';
+        }
     }, { signal: inputSignal });
 
     function releaseMouseOnFocusLoss() {
@@ -909,7 +1058,7 @@ export async function connectAxonOSWebRTC(opts) {
         }
         if (ev.key) {
             ev.preventDefault();
-            sendInput({
+            sendPriorityInput({
                 t: 'keydown',
                 key: ev.key,
                 code: ev.code,
@@ -930,7 +1079,7 @@ export async function connectAxonOSWebRTC(opts) {
         }
         if (ev.key) {
             ev.preventDefault();
-            sendInput({
+            sendPriorityInput({
                 t: 'keyup',
                 key: ev.key,
                 code: ev.code,
@@ -1027,6 +1176,7 @@ export async function connectAxonOSWebRTC(opts) {
     UI.showStatus('Connected (WebRTC)');
     _setBanner('WebRTC: Connected', 'connected');
     setTimeout(_hideBanner, 2000);
+    ensureVideoPlaying();
 
     if (typeof UI._axgtStartSessionBillingPoll === 'function') {
         UI._axgtStartSessionBillingPoll();
@@ -1039,11 +1189,16 @@ export async function connectAxonOSWebRTC(opts) {
         _negotiationGeneration += 1;
         resetMouseInputState(null, true);
         inputAbort.abort();
+        clearMoveFlushTimer();
+        pendingMovePayload = null;
         if (metricsTimer) {
             clearInterval(metricsTimer);
         }
         if (typeof UI.stopClipboardAutoSync === 'function') {
             try { UI.stopClipboardAutoSync(); } catch { /* ignore */ }
+        }
+        if (container) {
+            container.style.cursor = prevContainerCursor;
         }
         await _cleanup(pc, video, sessionId, wallet);
         window.axonosWebRtcPasteClipboard = null;

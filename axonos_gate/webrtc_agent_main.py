@@ -8,6 +8,9 @@ Environment:
   WEBRTC_CAPTURE_DISPLAY — X display (default :0)
   WEBRTC_CAPTURE_MAX_WIDTH — scale bound (default 1920; matches the current session display)
   WEBRTC_CAPTURE_FPS — target FPS (default 15)
+  WEBRTC_CAPTURE_BACKEND — auto | mss | nvenc (default auto; NVENC when GPU encode available)
+  WEBRTC_CAPTURE_BITRATE — H.264 target bitrate for NVENC (default 8000000)
+  WEBRTC_CAPTURE_NVENC_PRESET — NVENC preset (default p4)
 """
 
 from __future__ import annotations
@@ -19,7 +22,6 @@ import os
 import subprocess
 import sys
 import time
-from fractions import Fraction
 from typing import Any
 
 logging.basicConfig(
@@ -32,6 +34,7 @@ _AXT = "X-AxonOS-WebRTC-Agent-Key"
 _clipboard_owners: dict[str, subprocess.Popen[bytes]] = {}
 # RFB-style pressed buttons: 1=left, 2=middle, 4=right.
 _mouse_button_mask: int = 0
+_last_input_monotonic: float = 0.0
 _MOUSE_BUTTON_BITS = ((1, 1), (2, 2), (4, 3))
 
 
@@ -136,22 +139,6 @@ def _ensure_display_ready() -> bool:
         _display_ready_cached = True
         return True
     return False
-
-
-def _max_width() -> int:
-    raw = (os.getenv("WEBRTC_CAPTURE_MAX_WIDTH") or "1920").strip()
-    try:
-        return max(320, min(3840, int(raw)))
-    except ValueError:
-        return 1920
-
-
-def _fps() -> float:
-    raw = (os.getenv("WEBRTC_CAPTURE_FPS") or "15").strip()
-    try:
-        return float(raw)
-    except ValueError:
-        return 15.0
 
 
 def _normalize_sdp(sdp: str) -> str:
@@ -340,8 +327,16 @@ def _sync_mouse_buttons(mask: int, env: dict[str, str]) -> None:
 
 
 def _mousemove(x: float, y: float, env: dict[str, str]) -> None:
+    ix, iy = int(x), int(y)
+    try:
+        from webrtc.x11_input import warp_pointer
+
+        if warp_pointer(ix, iy, env):
+            return
+    except Exception:
+        pass
     subprocess.run(
-        ["xdotool", "mousemove", str(int(x)), str(int(y))],
+        ["xdotool", "mousemove", str(ix), str(iy)],
         check=False,
         timeout=2,
         env=env,
@@ -404,6 +399,24 @@ def _reset_mouse_button_state(env: dict[str, str] | None = None) -> None:
         _sync_mouse_buttons(0, env)
     else:
         _mouse_button_mask = 0
+
+
+def _force_release_all_mouse_buttons(env: dict[str, str]) -> None:
+    """Release every X mouse button even when the tracked mask is out of sync."""
+    global _mouse_button_mask
+    for btn in (1, 2, 3):
+        subprocess.run(
+            ["xdotool", "mouseup", str(btn)],
+            check=False,
+            timeout=1,
+            env=env,
+        )
+    _mouse_button_mask = 0
+
+
+def _touch_input_activity() -> None:
+    global _last_input_monotonic
+    _last_input_monotonic = time.monotonic()
 
 
 def _input_kind_from_raw(raw: str) -> str:
@@ -469,7 +482,7 @@ def _make_room_for_critical_event(input_queue: asyncio.Queue[str]) -> None:
             break
         input_queue.task_done()
         kind = _input_kind_from_raw(old)
-        if not dropped and kind not in ("mousedown", "mouseup"):
+        if not dropped and kind not in ("mousedown", "mouseup", "click", "wheel"):
             dropped = True
             continue
         backlog.append(old)
@@ -481,12 +494,30 @@ def _make_room_for_critical_event(input_queue: asyncio.Queue[str]) -> None:
             break
 
 
+def _drain_pending_moves(
+    input_queue: asyncio.Queue[str], first: str
+) -> tuple[str, str | None]:
+    """Coalesce a run of queued move events; return (latest_move, next_non_move_or_none)."""
+    latest = first
+    while True:
+        try:
+            nxt = input_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            return latest, None
+        input_queue.task_done()
+        if _input_kind_from_raw(nxt) in ("move", "mousemove"):
+            latest = nxt
+            continue
+        return latest, nxt
+
+
 def _enqueue_rtc_input(input_queue: asyncio.Queue[str], raw: str) -> None:
     kind = _input_kind_from_raw(raw)
     is_move = kind in ("move", "mousemove")
     buttons = _input_buttons_from_raw(raw) if is_move else 0
-    critical_button = kind in ("mousedown", "mouseup")
+    critical_button = kind in ("mousedown", "mouseup", "click")
     critical_move = is_move and buttons != 0
+    critical_wheel = kind == "wheel"
 
     # Plain hover moves may be dropped when the queue is saturated.
     if is_move and input_queue.full() and not critical_move:
@@ -498,7 +529,7 @@ def _enqueue_rtc_input(input_queue: asyncio.Queue[str], raw: str) -> None:
     except asyncio.QueueFull:
         pass
 
-    if critical_button or critical_move:
+    if critical_button or critical_move or critical_wheel:
         _make_room_for_critical_event(input_queue)
         try:
             input_queue.put_nowait(raw)
@@ -563,6 +594,7 @@ def _apply_input_json(raw: str) -> None:
         return
     t = (obj.get("t") or obj.get("type") or "").strip().lower()
     env = _display_env()
+    _touch_input_activity()
     try:
         if t in ("move", "mousemove"):
             x = float(obj.get("x", 0))
@@ -587,11 +619,16 @@ def _apply_input_json(raw: str) -> None:
             mask = int(obj.get("buttons", _mouse_button_mask & ~_button_bit(b)))
             _sync_mouse_buttons(mask, env)
         elif t in ("click",):
-            _sync_mouse_buttons(0, env)
+            _force_release_all_mouse_buttons(env)
             b = int(obj.get("button", 1))
-            if "x" in obj and "y" in obj:
-                _mousemove(float(obj.get("x", 0)), float(obj.get("y", 0)), env)
-            subprocess.run(["xdotool", "click", str(b)], check=False, timeout=2, env=env)
+            ix, iy = int(float(obj.get("x", 0))), int(float(obj.get("y", 0)))
+            _mousemove(float(ix), float(iy), env)
+            subprocess.run(
+                ["xdotool", "click", str(b)],
+                check=False,
+                timeout=2,
+                env=env,
+            )
         elif t in ("wheel",):
             x = float(obj.get("x", 0))
             y = float(obj.get("y", 0))
@@ -666,16 +703,20 @@ def _agent_fail(session_id: str, error: str) -> None:
 
 async def _run_session(job: dict[str, Any]) -> None:
     try:
-        from aiortc import RTCIceCandidate, RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
-        from av import VideoFrame
+        from aiortc import RTCIceCandidate, RTCPeerConnection, RTCSessionDescription
     except ImportError as e:
         logger.error("missing aiortc/av: %s", e)
         _agent_fail(job.get("session_id", ""), "missing_aiortc")
         return
 
     import aiohttp
-    import mss
-    import numpy as np
+
+    sys.path.insert(0, "/axonos_gate")
+    from webrtc.capture import (
+        _video_codec_label_from_sdp,
+        open_capture,
+        prefer_h264_for_pc,
+    )
 
     session_id = job["session_id"]
     if not _ensure_display_ready():
@@ -687,11 +728,9 @@ async def _run_session(job: dict[str, Any]) -> None:
 
     offer_sdp = job["offer_sdp"]
     offer_type = (job.get("offer_type") or "offer").lower()
-    max_w = _max_width()
-    target_fps = max(5.0, min(60.0, _fps()))
-    interval = 1.0 / target_fps
 
     pc = RTCPeerConnection(_build_rtc_configuration())
+    capture_handle = None
     key = _agent_key()
     gate = _gate_url()
     applied_ice: set[str] = set()
@@ -703,6 +742,8 @@ async def _run_session(job: dict[str, Any]) -> None:
     clipboard_worker_task: asyncio.Task | None = None
     clipboard_poll_task: asyncio.Task | None = None
     input_worker_task: asyncio.Task | None = None
+    mouse_watchdog_task: asyncio.Task | None = None
+    input_queue: asyncio.Queue[str] | None = None
     session_tasks_started = False
 
     def _enqueue_client_clipboard(raw: str) -> None:
@@ -760,27 +801,102 @@ async def _run_session(job: dict[str, Any]) -> None:
                 logger.debug("clipboard poll: %s", e)
             await asyncio.sleep(1.0)
 
+    async def poll_mouse_button_watchdog() -> None:
+        """Release stuck buttons when mouseup events were lost during congestion."""
+        while pc.connectionState not in ("failed", "closed"):
+            await asyncio.sleep(5.0)
+            if not _mouse_button_mask:
+                continue
+            idle_s = time.monotonic() - _last_input_monotonic
+            if idle_s < 3.0:
+                continue
+            logger.info(
+                "releasing stale mouse buttons after %.1fs idle (mask=%s)",
+                idle_s,
+                _mouse_button_mask,
+            )
+            await asyncio.to_thread(_reset_mouse_button_state, clipboard_env)
+
     def _start_session_io_tasks() -> None:
-        nonlocal clipboard_poll_task, session_tasks_started
+        nonlocal clipboard_poll_task, mouse_watchdog_task, session_tasks_started
         if session_tasks_started:
             return
         session_tasks_started = True
         _ensure_clipboard_worker()
         clipboard_poll_task = asyncio.create_task(poll_remote_clipboard())
+        mouse_watchdog_task = asyncio.create_task(poll_mouse_button_watchdog())
 
     def _cancel_session_io_tasks() -> None:
         if clipboard_poll_task is not None:
             clipboard_poll_task.cancel()
+        if mouse_watchdog_task is not None:
+            mouse_watchdog_task.cancel()
         if clipboard_worker_task is not None:
             clipboard_worker_task.cancel()
         if input_worker_task is not None:
             input_worker_task.cancel()
         _reset_mouse_button_state(clipboard_env)
 
+    def _ensure_input_worker() -> asyncio.Queue[str]:
+        nonlocal input_worker_task, input_queue
+        if input_queue is not None:
+            return input_queue
+        input_queue = asyncio.Queue(maxsize=512)
+
+        async def input_worker() -> None:
+            assert input_queue is not None
+            pending: str | None = None
+            while True:
+                msg = pending if pending is not None else await input_queue.get()
+                pending = None
+                try:
+                    kind = _input_kind_from_raw(msg)
+                    if kind in ("move", "mousemove"):
+                        latest, pending = _drain_pending_moves(input_queue, msg)
+                        _apply_input_json(latest)
+                        if pending is None:
+                            continue
+                        msg = pending
+                        pending = None
+                        kind = _input_kind_from_raw(msg)
+                    if kind not in ("move", "mousemove"):
+                        await asyncio.to_thread(_apply_input_json, msg)
+                    else:
+                        _apply_input_json(msg)
+                except Exception as e:
+                    logger.debug("input worker: %s", e)
+                finally:
+                    input_queue.task_done()
+
+        input_worker_task = asyncio.create_task(input_worker())
+        return input_queue
+
+    def _bind_input_channel(channel: Any, *, moves_only: bool) -> None:
+        queue = _ensure_input_worker()
+
+        @channel.on("message")
+        def on_msg(message) -> None:  # type: ignore[no-untyped-def]
+            if not isinstance(message, str):
+                return
+            kind = _input_kind_from_raw(message)
+            if moves_only:
+                if kind not in ("move", "mousemove"):
+                    return
+                _enqueue_rtc_input(queue, message)
+                return
+            if kind in ("clipboard", "paste"):
+                _enqueue_client_clipboard(message)
+                return
+            _enqueue_rtc_input(queue, message)
+
+        if not moves_only:
+
+            @channel.on("close")
+            def on_close() -> None:  # type: ignore[no-untyped-def]
+                _cancel_session_io_tasks()
+
     @pc.on("datachannel")
     def on_dc(channel) -> None:  # type: ignore[no-untyped-def]
-        nonlocal input_worker_task
-
         if channel.label == "axonos-clipboard":
             clip_channel_out[0] = channel
             _start_session_io_tasks()
@@ -792,98 +908,39 @@ async def _run_session(job: dict[str, Any]) -> None:
 
             return
 
+        if channel.label == "axonos-input-moves":
+            _reset_mouse_button_state(clipboard_env)
+            _start_session_io_tasks()
+            _bind_input_channel(channel, moves_only=True)
+            return
+
         if channel.label != "axonos-input":
             return
 
         input_channel_out[0] = channel
         _reset_mouse_button_state(clipboard_env)
         _start_session_io_tasks()
-
-        input_queue: asyncio.Queue[str] = asyncio.Queue(maxsize=512)
-
-        async def input_worker() -> None:
-            while True:
-                msg = await input_queue.get()
-                try:
-                    await asyncio.to_thread(_apply_input_json, msg)
-                except Exception as e:
-                    logger.debug("input worker: %s", e)
-                finally:
-                    input_queue.task_done()
-
-        input_worker_task = asyncio.create_task(input_worker())
-
-        @channel.on("message")
-        def on_msg(message) -> None:  # type: ignore[no-untyped-def]
-            if not isinstance(message, str):
-                return
-            kind = _input_kind_from_raw(message)
-            # Legacy clients still send clipboard on axonos-input.
-            if kind in ("clipboard", "paste"):
-                _enqueue_client_clipboard(message)
-                return
-            _enqueue_rtc_input(input_queue, message)
-
-        @channel.on("close")
-        def on_close() -> None:
-            _cancel_session_io_tasks()
+        _bind_input_channel(channel, moves_only=False)
 
     try:
-        from PIL import Image  # type: ignore[import-untyped]
-    except ImportError:
-        Image = None  # type: ignore[assignment, misc]
+        capture_handle = open_capture(
+            session_id=session_id,
+            display=_display(),
+            env=clipboard_env,
+        )
+        logger.info(
+            "WebRTC capture backend=%s session=%s",
+            capture_handle.backend,
+            session_id[:16],
+        )
+        pc.addTrack(capture_handle.track)
+        prefer_h264_for_pc(pc, capture_handle.backend, offer_sdp)
+    except Exception:
+        logger.exception("WebRTC capture setup failed session=%s", session_id[:16])
+        await pc.close()
+        _agent_fail(session_id, "capture_setup_failed")
+        return
 
-    class ScreenVideoTrack(VideoStreamTrack):  # type: ignore[misc, valid-type]
-        kind = "video"
-
-        def __init__(self) -> None:
-            super().__init__()
-            self._sct = mss.mss()
-            self._mon = self._sct.monitors[1] if len(self._sct.monitors) > 1 else self._sct.monitors[0]
-            self._last = 0.0
-            self._pts = 0
-            self._pts_step = max(1, int(90_000 / target_fps))
-            self._frames = 0
-
-        async def recv(self) -> VideoFrame:  # type: ignore[override]
-            try:
-                now = time.monotonic()
-                wait = interval - (now - self._last)
-                if wait > 0:
-                    await asyncio.sleep(wait)
-                self._last = time.monotonic()
-                shot = self._sct.grab(self._mon)
-                arr = np.array(shot)[:, :, :3].copy()
-                h, w = arr.shape[:2]
-                if w > max_w and Image is not None:
-                    nh = max(1, int(h * max_w / float(w)))
-                    rgb = arr[:, :, ::-1]
-                    im = Image.fromarray(rgb)
-                    try:
-                        im = im.resize((max_w, nh), Image.Resampling.LANCZOS)  # Pillow 9+
-                    except AttributeError:
-                        im = im.resize((max_w, nh), Image.LANCZOS)
-                    rgb = np.asarray(im)
-                elif w > max_w:
-                    step = w / max_w
-                    idx = (np.arange(max_w) * step).astype(int)
-                    arr = arr[:, idx, :]
-                    rgb = arr[:, :, ::-1]
-                else:
-                    rgb = arr[:, :, ::-1]
-                vf = VideoFrame.from_ndarray(rgb, format="rgb24")
-                vf.pts = self._pts
-                vf.time_base = Fraction(1, 90_000)
-                self._pts += self._pts_step
-                self._frames += 1
-                if self._frames == 1 or self._frames % 150 == 0:
-                    logger.info("WebRTC captured frame session=%s size=%sx%s frames=%s", session_id[:16], w, h, self._frames)
-                return vf
-            except Exception:
-                logger.exception("WebRTC frame capture failed session=%s", session_id[:16])
-                raise
-
-    pc.addTrack(ScreenVideoTrack())
     await pc.setRemoteDescription(RTCSessionDescription(sdp=offer_sdp, type=offer_type))
 
     async def poll_client_ice() -> None:
@@ -927,6 +984,12 @@ async def _run_session(job: dict[str, Any]) -> None:
     ice_task = asyncio.create_task(poll_client_ice())
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
+    if capture_handle.backend == "nvenc" and answer.sdp:
+        logger.info(
+            "WebRTC answer video codec=%s session=%s",
+            _video_codec_label_from_sdp(answer.sdp),
+            session_id[:16],
+        )
 
     done = asyncio.Event()
 
@@ -943,6 +1006,10 @@ async def _run_session(job: dict[str, Any]) -> None:
     sdp_local = pc.localDescription
     if sdp_local is None:
         ice_task.cancel()
+        try:
+            capture_handle.cleanup()
+        except Exception:
+            pass
         await pc.close()
         _agent_fail(session_id, "no_local_description")
         return
@@ -958,6 +1025,10 @@ async def _run_session(job: dict[str, Any]) -> None:
             if resp.status != 200:
                 logger.error("answer POST failed: %s %s", resp.status, (await resp.text())[:400])
                 ice_task.cancel()
+                try:
+                    capture_handle.cleanup()
+                except Exception:
+                    pass
                 await pc.close()
                 _agent_fail(session_id, "answer_post_failed")
                 return
@@ -969,6 +1040,11 @@ async def _run_session(job: dict[str, Any]) -> None:
             await asyncio.sleep(0.5)
     finally:
         ice_task.cancel()
+        if capture_handle is not None:
+            try:
+                capture_handle.cleanup()
+            except Exception:
+                pass
         try:
             await pc.close()
         except Exception:

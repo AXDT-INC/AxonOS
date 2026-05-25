@@ -1776,7 +1776,7 @@ const UI = {
                             window.axonosSetConnectionLoaderPhase('webrtc');
                         }
                         try {
-                            const mod = await import('./webrtc/axonos-webrtc.js');
+                            const mod = await import(`./webrtc/axonos-webrtc.js?v=${Date.now()}`);
                             if (typeof mod.cancelAxonOSWebRTCNegotiation === 'function') {
                                 window.axonosCancelWebRtcNegotiation = mod.cancelAxonOSWebRTCNegotiation;
                             }

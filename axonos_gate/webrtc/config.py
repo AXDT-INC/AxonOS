@@ -102,6 +102,36 @@ def ice_servers_for_client() -> list[dict[str, Any]]:
     return servers
 
 
+def capture_backend_hint() -> str:
+    """Client hint for capture path (mss, nvenc, or auto)."""
+    raw = (os.getenv("WEBRTC_CAPTURE_BACKEND") or "auto").strip().lower()
+    if raw in ("mss", "cpu", "software"):
+        return "mss"
+    if raw in ("nvenc", "h264", "gpu"):
+        return "nvenc"
+    return "auto"
+
+
+def local_cursor_mode() -> str:
+    """auto | true | false — whether the browser draws a local cursor overlay."""
+    raw = (os.getenv("WEBRTC_LOCAL_CURSOR") or "auto").strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return "false"
+    if raw in ("1", "true", "yes", "on"):
+        return "true"
+    return "auto"
+
+
+def client_wants_local_cursor() -> bool:
+    mode = local_cursor_mode()
+    if mode == "true":
+        return True
+    if mode == "false":
+        return False
+    # NVENC x11grab embeds the host cursor; MSS does not — overlay only for explicit MSS.
+    return capture_backend_hint() == "mss"
+
+
 def public_config() -> dict[str, Any]:
     """Subset exposed via GET /api/config and GET /api/webrtc/config."""
     return {
@@ -110,6 +140,8 @@ def public_config() -> dict[str, Any]:
         "webrtc_session_timeout_seconds": session_timeout_seconds(),
         "webrtc_max_reconnect_attempts": max_reconnect_attempts(),
         "webrtc_answer_wait_ms": answer_wait_ms(),
+        "webrtc_local_cursor": client_wants_local_cursor(),
+        "webrtc_capture_backend": capture_backend_hint(),
     }
 
 

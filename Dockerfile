@@ -612,5 +612,11 @@ RUN ( dpkg -L "xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}"; \
 # (sh expands $$ to PID, e.g. 1GLX_EXT).
 RUN /usr/local/bin/fix-libglx-nvidia-symlink.sh
 
+ENV NVIDIA_DRIVER_CAPABILITIES=graphics,utility,compute,display,video
+
+# WebRTC NVENC capture (late layer — keeps rebuilds fast when only app code changes above).
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
 # Start services
 CMD ["/startup.sh"]

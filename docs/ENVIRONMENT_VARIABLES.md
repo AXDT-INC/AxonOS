@@ -337,7 +337,13 @@ Configuration: [`axonos_gate/webrtc/config.py`](../axonos_gate/webrtc/config.py)
 |----------|---------|-------------|
 | `WEBRTC_CAPTURE_DISPLAY` | `:0` | X display to capture. |
 | `WEBRTC_CAPTURE_MAX_WIDTH` | `1920` | Scale bound for capture. |
-| `WEBRTC_CAPTURE_FPS` | `15` | Target capture frame rate. |
+| `WEBRTC_CAPTURE_FPS` | `15` | Target capture frame rate. Use `30` only on paths with headroom (watch `packetsLost` in webrtc-internals). |
+| `WEBRTC_CAPTURE_BACKEND` | `auto` | `auto` (NVENC when available, else MSS), `mss`, or `nvenc`. |
+| `WEBRTC_CAPTURE_BITRATE` | `8000000` | NVENC H.264 target bitrate (1M–20M bps). Default 8 Mbps at 1080p15 keeps SCTP input responsive. |
+| `WEBRTC_CAPTURE_LOW_LATENCY` | `false` | When `true`, uses minimal encoder buffer (sharper reaction, more blur under motion). Default favors quality. |
+| `WEBRTC_CAPTURE_NVENC_PRESET` | `p4` | FFmpeg `h264_nvenc` preset (`p1`–`p7`). |
+| `WEBRTC_CAPTURE_MAX_STALE_FRAMES` | `1` | NVENC live track: max extra frames to skip when the send queue runs ahead. `0` disables skip-ahead (may add latency). |
+| `WEBRTC_LOCAL_CURSOR` | `auto` | Browser overlay cursor: `auto` (off for NVENC/auto, on for MSS), `true`, or `false`. NVENC embeds the host cursor via x11grab. |
 | `WEBRTC_CLIPBOARD_MAX_BYTES` | `524288` | Max clipboard payload (floor 4096). |
 | `WEBRTC_CLIPBOARD_POLL_PRIMARY` | `false` | Include X PRIMARY selection (noisy); default CLIPBOARD only. |
 | `XAUTHORITY` | `/home/aXonian/.Xauthority` | X11 auth file for capture subprocesses. |
@@ -376,7 +382,7 @@ Set in [`Dockerfile`](../Dockerfile) — override only when debugging GPU issues
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NVIDIA_VISIBLE_DEVICES` | `all` | GPUs visible inside container. Stripped when launcher spawns nested `docker run`. |
-| `NVIDIA_DRIVER_CAPABILITIES` | `graphics,utility,compute,display` | NVIDIA Container Toolkit capabilities. |
+| `NVIDIA_DRIVER_CAPABILITIES` | `graphics,utility,compute,display,video` | NVIDIA Container Toolkit capabilities (`video` required for NVENC WebRTC capture). |
 | `__GLX_VENDOR_LIBRARY_NAME` | `nvidia` | Force NVIDIA GLX vendor. |
 | `LIBGL_DRI3_DISABLE` | `1` | Disable DRI3 (VirtualGL / headless stability). |
 

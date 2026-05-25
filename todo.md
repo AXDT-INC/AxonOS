@@ -70,12 +70,19 @@
   - [x] Credit exhaustion: pause session + preserve container for resume after top-up (`AXGT_SESSION_PRESERVE_ON_CREDIT_EXHAUST`, default true)
   - [x] Deposit verify success: show credited time as desktop minutes for selected GPU profile (`axonosFormatDesktopTimeLabel` in `vnc.html`)
   - [x] Resume workflow UI: hide GPU picker, show saved-session panel, claim uses paused profile/GPUs (not new selection)
-  - [ ] **GPU-accelerated WebRTC capture/encode (NVENC)** — current path is CPU-only (`mss` + Pillow resize + aiortc software encode); 200 MB/s link is not the bottleneck
-    - [ ] Add FFmpeg with `h264_nvenc` to image; verify `libnvidia-encode` in session containers (`--gpus all`)
-    - [ ] Optional `WEBRTC_CAPTURE_BACKEND=nvenc` — FFmpeg x11grab → NVENC pipeline fed into aiortc `MediaPlayer`; keep `mss`/`ScreenVideoTrack` as fallback
-    - [ ] Raise target FPS (`WEBRTC_CAPTURE_FPS=60` or default bump from 15); keep 5–60 clamp for degraded/config override
-    - [ ] Validate delivered FPS via client metrics / WebRTC stats on real GPU stack (capture may still cap below 60 on busy desktops)
+  - [x] **GPU-accelerated WebRTC capture/encode (NVENC)** — `WEBRTC_CAPTURE_BACKEND=auto|nvenc|mss`; FFmpeg x11grab → h264_nvenc → aiortc H.264 passthrough; MSS/VP8 fallback
+    - [x] Add `ffmpeg` to image; runtime probe for `h264_nvenc` + `libnvidia-encode`
+    - [x] `axonos_gate/webrtc/capture.py` + env: `WEBRTC_CAPTURE_BITRATE`, `WEBRTC_CAPTURE_NVENC_PRESET`
+    - [ ] Validate delivered FPS / scroll sharpness via client metrics on real GPU stack
+    - [x] **Black screen fix (2026-05)**: NVENC sent H.264 but SDP negotiated VP8 — `prefer_h264_for_pc()` + browser `setCodecPreferences(H264)` before offer/answer
     - [ ] Longer term: PipeWire/DMA-BUF screencast for zero-copy GPU capture (requires desktop stack changes)
+    - [ ] **NVENC runtime**: ensure session containers get `NVIDIA_DRIVER_CAPABILITIES` including `video` (required for `libnvidia-encode` / `h264_nvenc`); Dockerfile sets this at end of image build
+
+- [ ] **Docker build — WhiteSur GTK theme step fails (2026-05)**
+  - `docker compose build` fails at Dockerfile ~491: `WhiteSur-gtk-theme` `install.sh --silent-mode -c Dark` exits before themes land
+  - Likely fixes to try: pin theme tag (e.g. `2024.09.02`), use `-c dark`, add `imagemagick`/`gawk` to that RUN, relax `grep -i white` verification
+  - Workaround for now: build from cached image / skip layer until investigated
+  - Related: duplicate `ENV NVIDIA_DRIVER_CAPABILITIES` lines in Dockerfile (early without `video`, late with `video` — late wins); consolidate when touching Dockerfile again
 
 - [x] **Sidebar session controls — Detach vs End session (2026-05)**
   - **Product model**

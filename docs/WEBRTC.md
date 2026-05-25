@@ -57,6 +57,22 @@ For **WebSocket-only** proxies, signaling still uses **HTTPS fetch** on the same
 | Stuck on “Connecting” | STUN/TURN reachability; restrictive NAT → configure TURN. |
 | 403 on signaling | Auth token or session claim missing/expired. |
 | Agent idle | `WEBRTC_AGENT_INTERNAL_KEY` must match between environment for gate and agent. |
+| Scroll blur / hazy video | Default **1080p @ 15 fps, 8 Mbps** NVENC H.264. Raise `WEBRTC_CAPTURE_FPS` (e.g. `30`) and/or `WEBRTC_CAPTURE_BITRATE` only if the path stays stable in `chrome://webrtc-internals` (flat `packetsLost`, low per-frame jitter buffer delay). |
+| Lag / clicks stop / jitter buffer climbs | Path saturated — defaults favor stable 1080p15 @ 8M. Do not raise bitrate until `packetsLost` and `nackCount` stay flat. Reconnect after deploy; hard-refresh the page. |
+| Black screen, ICE connected | In `chrome://webrtc-internals`, if **inbound video codec is VP8** while the agent runs **ffmpeg h264_nvenc**, SDP negotiated the wrong codec. Agent + browser must prefer **H.264** (fixed in `capture.prefer_h264_for_pc` and `axonos-webrtc.js`). Hard-refresh the page after deploy. |
+| Two cursors / sluggish clicks | NVENC embeds the host cursor (`x11grab -draw_mouse 1`); disable the browser overlay with `WEBRTC_LOCAL_CURSOR=auto` (default) or `false`. Click lag from mousemove floods is reduced by server-side move coalescing and client throttling. |
+| Multi-second video/input lag | aiortc `MediaPlayer(mpegts pipe)` treated live NVENC as a file and paced frames to timestamps; combined with large `thread_queue_size` this stacked ~10s delay. Fixed via `_throttle_playback = false`, `thread_queue_size=4`, and optional stale-packet dropping (`WEBRTC_CAPTURE_MAX_STALE_FRAMES`, default `1`). Reconnect after deploy. |
+| Still 30 fps / frame loss at 1080p | Confirm ffmpeg shows `-framerate 15`. The agent must use `capture.capture_fps()` (not a duplicate default). If `packetsLost` still climbs through TURN, try `WEBRTC_CAPTURE_BITRATE=6000000` before lowering resolution. |
+
+## Capture backends
+
+| Backend | Path | When |
+|---------|------|------|
+| `nvenc` | FFmpeg `x11grab` → `h264_nvenc` → WebRTC H.264 | GPU with NVENC (`libnvidia-encode`); sharp motion, ~100–300 MB VRAM |
+| `mss` | Python `mss` → software VP8 (~0.5–1.5 Mbps) | Fallback when NVENC unavailable |
+| `auto` | Try NVENC, else MSS | **Default** |
+
+Set `WEBRTC_CAPTURE_BACKEND=nvenc` to require GPU encode (falls back to MSS with a warning if NVENC probe fails).
 
 ## Input lifecycle validation
 
