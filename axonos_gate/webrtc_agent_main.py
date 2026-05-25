@@ -8,6 +8,9 @@ Environment:
   WEBRTC_CAPTURE_DISPLAY — X display (default :0)
   WEBRTC_CAPTURE_MAX_WIDTH — scale bound (default 1920; matches the current session display)
   WEBRTC_CAPTURE_FPS — target FPS (default 15)
+  WEBRTC_VP8_MAX_BITRATE — VP8 encoder ceiling for MSS capture (default 2500000 bps)
+  WEBRTC_VP8_DEFAULT_BITRATE — VP8 start target (default: same as max)
+  WEBRTC_VP8_MIN_BITRATE — VP8 floor (default 500000)
 """
 
 from __future__ import annotations
@@ -152,6 +155,46 @@ def _fps() -> float:
         return float(raw)
     except ValueError:
         return 15.0
+
+
+_vp8_bitrate_patch_applied = False
+
+
+def _parse_bps_env(name: str, default: int, *, lo: int, hi: int) -> int:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return max(lo, min(hi, int(raw)))
+    except ValueError:
+        logger.warning("invalid %s=%r; using %s", name, raw, default)
+        return default
+
+
+def _apply_vp8_bitrate_patch() -> None:
+    """Raise aiortc VP8 bitrate limits (stock default 500k, max 1.5M is soft for 1080p)."""
+    global _vp8_bitrate_patch_applied
+    if _vp8_bitrate_patch_applied:
+        return
+    try:
+        import aiortc.codecs.vpx as vpx
+    except ImportError:
+        return
+    stock_max = int(getattr(vpx, "MAX_BITRATE", 1_500_000))
+    max_bps = _parse_bps_env("WEBRTC_VP8_MAX_BITRATE", 2_500_000, lo=500_000, hi=8_000_000)
+    min_bps = _parse_bps_env("WEBRTC_VP8_MIN_BITRATE", min(500_000, max_bps), lo=250_000, hi=max_bps)
+    default_bps = _parse_bps_env("WEBRTC_VP8_DEFAULT_BITRATE", max_bps, lo=min_bps, hi=max_bps)
+    vpx.MAX_BITRATE = max_bps
+    vpx.MIN_BITRATE = min_bps
+    vpx.DEFAULT_BITRATE = default_bps
+    _vp8_bitrate_patch_applied = True
+    logger.info(
+        "WebRTC VP8 bitrate patch applied default=%s min=%s max=%s (aiortc stock max=%s)",
+        default_bps,
+        min_bps,
+        max_bps,
+        stock_max,
+    )
 
 
 def _normalize_sdp(sdp: str) -> str:
@@ -672,6 +715,8 @@ async def _run_session(job: dict[str, Any]) -> None:
         logger.error("missing aiortc/av: %s", e)
         _agent_fail(job.get("session_id", ""), "missing_aiortc")
         return
+
+    _apply_vp8_bitrate_patch()
 
     import aiohttp
     import mss

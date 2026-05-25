@@ -502,10 +502,12 @@ RUN apt update && apt install -y \
     apt autoremove -y && \
     apt clean
 
-# Set WhiteSur theme as default for XFCE (without changing wallpaper)
-RUN mkdir -p /home/$USER/.config/xfce4/xfconf/xfce-perchannel-xml && \
-    echo -e '<?xml version="1.0" encoding="UTF-8"?>\n<channel name="xfce4-desktop" version="1.0">\n  <property name="backdrop" type="empty">\n    <property name="screen0" type="empty">\n      <property name="monitor0" type="empty">\n        <property name="workspace0" type="empty">\n          <property name="color-style" type="int" value="0"/>\n          <property name="image-style" type="int" value="5"/>\n          <property name="last-image" type="string" value="/usr/share/desktop-base/active-theme/wallpaper/contents/images/1920x1080.svg"/>\n        </property>\n      </property>\n    </property>\n  </property>\n</channel>' \
-    > /home/$USER/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml && \
+# Set WhiteSur theme and AxonOS wallpaper defaults for XFCE (system + user channels).
+COPY scripts/xfce4-desktop.xml /tmp/xfce4-desktop.xml
+RUN mkdir -p /home/$USER/.config/xfce4/xfconf/xfce-perchannel-xml \
+    /etc/xdg/xfce4/xfconf/xfce-perchannel-xml && \
+    cp /tmp/xfce4-desktop.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml && \
+    cp /tmp/xfce4-desktop.xml /home/$USER/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml && \
     echo -e '<?xml version="1.0" encoding="UTF-8"?>\n<channel name="xfwm4" version="1.0">\n  <property name="general" type="empty">\n    <property name="theme" type="string" value="WhiteSur-Dark"/>\n  </property>\n</channel>' \
     > /home/$USER/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml && \
     echo -e '<?xml version="1.0" encoding="UTF-8"?>\n<channel name="xsettings" version="1.0">\n  <property name="Net" type="empty">\n    <property name="ThemeName" type="string" value="WhiteSur-Dark"/>\n    <property name="IconThemeName" type="string" value="Adwaita"/>\n  </property>\n</channel>' \
@@ -517,6 +519,13 @@ COPY startup.sh /startup.sh
 RUN chmod +x /startup.sh
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY os.svg /usr/share/desktop-base/active-theme/wallpaper/contents/images/1920x1080.svg
+# XFCE stock backgrounds (xfce-teal.jpg etc.) flash before xfconf loads — point at AxonOS art.
+RUN AXW="/usr/share/desktop-base/active-theme/wallpaper/contents/images/1920x1080.svg" && \
+    if [ -d /usr/share/backgrounds/xfce ]; then \
+      for f in /usr/share/backgrounds/xfce/*; do \
+        ln -sfn "$AXW" "$f"; \
+      done; \
+    fi
 
 # Set clean default XFCE panel layout (no power manager plugin)
 COPY xfce4-panel.xml /etc/xdg/xfce4/panel/default.xml
@@ -569,6 +578,10 @@ COPY scripts/apply_theme_session.sh /usr/local/bin/apply_theme_session.sh
 RUN chmod +x /usr/local/bin/apply_theme_session.sh
 COPY scripts/reset_session.sh /usr/local/bin/reset_session.sh
 RUN chmod +x /usr/local/bin/reset_session.sh
+COPY scripts/start-axonos-xfce.sh /usr/local/bin/start-axonos-xfce.sh
+RUN chmod +x /usr/local/bin/start-axonos-xfce.sh
+COPY scripts/ensure-xdg-runtime.sh /usr/local/bin/ensure-xdg-runtime.sh
+RUN chmod +x /usr/local/bin/ensure-xdg-runtime.sh
 COPY scripts/fix-libglx-nvidia-symlink.sh /usr/local/bin/fix-libglx-nvidia-symlink.sh
 RUN chmod +x /usr/local/bin/fix-libglx-nvidia-symlink.sh
 RUN mkdir -p /home/aXonian/.config/autostart

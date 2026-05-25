@@ -57,6 +57,7 @@ For **WebSocket-only** proxies, signaling still uses **HTTPS fetch** on the same
 | Stuck on “Connecting” | STUN/TURN reachability; restrictive NAT → configure TURN. |
 | 403 on signaling | Auth token or session claim missing/expired. |
 | Agent idle | `WEBRTC_AGENT_INTERNAL_KEY` must match between environment for gate and agent. |
+| Soft / blurry WebRTC video (MSS + VP8) | aiortc defaults to ~500 kbps VP8 (max 1.5 Mbps). Raise `WEBRTC_VP8_MAX_BITRATE` (e.g. `2500000`) on session containers. NVENC H.264 on `feat/webrtc-nvenc-stability` is sharper at 1080p. |
 
 ## Input lifecycle validation
 

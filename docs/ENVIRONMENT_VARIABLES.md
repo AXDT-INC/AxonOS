@@ -338,6 +338,9 @@ Configuration: [`axonos_gate/webrtc/config.py`](../axonos_gate/webrtc/config.py)
 | `WEBRTC_CAPTURE_DISPLAY` | `:0` | X display to capture. |
 | `WEBRTC_CAPTURE_MAX_WIDTH` | `1920` | Scale bound for capture. |
 | `WEBRTC_CAPTURE_FPS` | `15` | Target capture frame rate. |
+| `WEBRTC_VP8_MAX_BITRATE` | `2500000` | VP8 encoder ceiling (bps) for MSS/software capture. aiortc stock max is 1.5M. |
+| `WEBRTC_VP8_DEFAULT_BITRATE` | *(max)* | VP8 starting target (bps). Defaults to `WEBRTC_VP8_MAX_BITRATE`. |
+| `WEBRTC_VP8_MIN_BITRATE` | `500000` | VP8 floor (bps). |
 | `WEBRTC_CLIPBOARD_MAX_BYTES` | `524288` | Max clipboard payload (floor 4096). |
 | `WEBRTC_CLIPBOARD_POLL_PRIMARY` | `false` | Include X PRIMARY selection (noisy); default CLIPBOARD only. |
 | `XAUTHORITY` | `/home/aXonian/.Xauthority` | X11 auth file for capture subprocesses. |

@@ -21,6 +21,7 @@ rm -rf /tmp/.X*-lock 2>/dev/null || true
 
 # Restart XFCE so the desktop comes up clean (supervisord is PID 1 in container)
 if command -v supervisorctl >/dev/null 2>&1; then
+  /usr/local/bin/ensure-xdg-runtime.sh "$USER" 2>/dev/null || true
   supervisorctl restart xfce4 2>/dev/null || true
   # Give XFCE time to start, then re-apply AxonOS theme and wallpaper
   sleep 5

@@ -91,6 +91,7 @@ elif [ -z "${AXGT_SESSION_ID:-}" ]; then
 fi
 
 # Start supervisord
+/usr/local/bin/ensure-xdg-runtime.sh aXonian 2>/dev/null || true
 /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf &
 
 # Wait for VNC server to start
@@ -124,7 +125,7 @@ done
 xhost +local:
 
 # Wait a bit more for XFCE to initialize
-sleep 10
+sleep 5
 
 # Apply WhiteSur theme (using the working script)
 if [ -d "/usr/share/themes/WhiteSur-Dark" ]; then
@@ -262,7 +263,7 @@ chmod +x /tmp/setup_x.sh
 # Gate-only base (AXGT_DESKTOP_ENABLED=false): skip XFCE/VNC setup — desktops run in axgt-session-*.
 if [ "${AXGT_DESKTOP_ENABLED:-true}" != "false" ]; then
     su - aXonian -c '/tmp/setup_x.sh'
-    ( sleep 35; /usr/local/bin/post_deploy_theme.sh ) &
+    ( sleep 8; /usr/local/bin/post_deploy_theme.sh ) &
     echo "== Xorg log =="; ls -l /var/log/Xorg.0.log 2>/dev/null || true
     test -f /var/log/Xorg.0.log && tail -n 80 /var/log/Xorg.0.log || true
     ls -l /tmp/.X11-unix/X0 /tmp/.X0-lock 2>/dev/null || true
