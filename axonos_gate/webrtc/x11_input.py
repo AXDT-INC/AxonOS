@@ -89,6 +89,11 @@ def warp_pointer(x: int, y: int, env: dict[str, str]) -> bool:
             return True
         except Exception as exc:
             logger.debug("XWarpPointer failed: %s", exc)
+            if _display_ptr is not None:
+                try:
+                    lib.XCloseDisplay(_display_ptr)
+                except Exception:
+                    pass
             _display_ptr = None
             _display_key = None
             import time
