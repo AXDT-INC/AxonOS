@@ -22,6 +22,7 @@ import os
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 logging.basicConfig(
@@ -36,6 +37,10 @@ _clipboard_owners: dict[str, subprocess.Popen[bytes]] = {}
 _mouse_button_mask: int = 0
 _last_input_monotonic: float = 0.0
 _MOUSE_BUTTON_BITS = ((1, 1), (2, 2), (4, 3))
+# Dedicated thread pool for input processing — avoids starving the asyncio event
+# loop (which aiortc needs for SCTP acks / data-channel reads) and avoids
+# competing with clipboard ops on the default executor.
+_input_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="rtc-input")
 
 
 def _truthy(name: str) -> bool:
@@ -326,15 +331,34 @@ def _sync_mouse_buttons(mask: int, env: dict[str, str]) -> None:
     _mouse_button_mask = mask
 
 
-def _mousemove(x: float, y: float, env: dict[str, str]) -> None:
-    ix, iy = int(x), int(y)
+# Cache warp_pointer at module level to avoid repeated import overhead on every
+# move event (import machinery acquires locks, which adds latency under contention).
+_warp_pointer_fn = None
+_warp_pointer_loaded = False
+
+
+def _get_warp_pointer():
+    global _warp_pointer_fn, _warp_pointer_loaded
+    if _warp_pointer_loaded:
+        return _warp_pointer_fn
+    _warp_pointer_loaded = True
     try:
         from webrtc.x11_input import warp_pointer
-
-        if warp_pointer(ix, iy, env):
-            return
+        _warp_pointer_fn = warp_pointer
     except Exception:
-        pass
+        _warp_pointer_fn = None
+    return _warp_pointer_fn
+
+
+def _mousemove(x: float, y: float, env: dict[str, str]) -> None:
+    ix, iy = int(x), int(y)
+    warp = _get_warp_pointer()
+    if warp is not None:
+        try:
+            if warp(ix, iy, env):
+                return
+        except Exception:
+            pass
     subprocess.run(
         ["xdotool", "mousemove", str(ix), str(iy)],
         check=False,
@@ -842,6 +866,7 @@ async def _run_session(job: dict[str, Any]) -> None:
         if input_queue is not None:
             return input_queue
         input_queue = asyncio.Queue(maxsize=512)
+        loop = asyncio.get_running_loop()
 
         async def input_worker() -> None:
             assert input_queue is not None
@@ -853,22 +878,45 @@ async def _run_session(job: dict[str, Any]) -> None:
                     kind = _input_kind_from_raw(msg)
                     if kind in ("move", "mousemove"):
                         latest, pending = _drain_pending_moves(input_queue, msg)
-                        _apply_input_json(latest)
+                        # Run ALL input in the dedicated thread pool so the
+                        # asyncio event loop is never blocked.  A blocked loop
+                        # starves aiortc SCTP acks and eventually kills the
+                        # data channels — the root cause of input dying.
+                        await loop.run_in_executor(_input_executor, _apply_input_json, latest)
                         if pending is None:
                             continue
                         msg = pending
                         pending = None
                         kind = _input_kind_from_raw(msg)
-                    if kind not in ("move", "mousemove"):
-                        await asyncio.to_thread(_apply_input_json, msg)
-                    else:
-                        _apply_input_json(msg)
+                    if kind == "ping":
+                        # Health check from the client — echo back immediately.
+                        outbound = input_channel_out[0]
+                        if outbound is not None:
+                            try:
+                                outbound.send('{"t":"pong"}')
+                            except Exception:
+                                pass
+                        continue
+                    await loop.run_in_executor(_input_executor, _apply_input_json, msg)
+                except asyncio.CancelledError:
+                    raise
                 except Exception as e:
                     logger.debug("input worker: %s", e)
                 finally:
                     input_queue.task_done()
 
-        input_worker_task = asyncio.create_task(input_worker())
+        async def input_worker_guarded() -> None:
+            """Restart the inner worker on crash so input can recover."""
+            while True:
+                try:
+                    await input_worker()
+                except asyncio.CancelledError:
+                    return
+                except Exception:
+                    logger.exception("input worker crashed — restarting in 0.5s")
+                    await asyncio.sleep(0.5)
+
+        input_worker_task = asyncio.create_task(input_worker_guarded())
         return input_queue
 
     def _bind_input_channel(channel: Any, *, moves_only: bool) -> None:

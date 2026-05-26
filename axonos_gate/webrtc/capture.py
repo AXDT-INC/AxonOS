@@ -171,6 +171,12 @@ def resolve_capture_backend(env: dict[str, str]) -> str:
     return "mss"
 
 
+def _local_cursor_enabled() -> bool:
+    """True when the browser draws a local cursor overlay (WEBRTC_LOCAL_CURSOR)."""
+    raw = (os.getenv("WEBRTC_LOCAL_CURSOR") or "auto").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
 def build_nvenc_ffmpeg_cmd(
     *,
     display: str,
@@ -182,6 +188,7 @@ def build_nvenc_ffmpeg_cmd(
     fps: float,
     bitrate_bps: int,
     preset: str,
+    draw_mouse: bool = True,
 ) -> list[str]:
     disp = x11grab_input(display)
     fps_i = max(1, int(round(fps)))
@@ -201,7 +208,7 @@ def build_nvenc_ffmpeg_cmd(
         "-f",
         "x11grab",
         "-draw_mouse",
-        "1",
+        "1" if draw_mouse else "0",
         "-framerate",
         str(int(round(fps))),
         "-video_size",
@@ -404,6 +411,7 @@ def open_nvenc_capture(
     max_w: int,
     bitrate_bps: int,
     preset: str,
+    local_cursor: bool = False,
 ) -> CaptureHandle:
     from aiortc.contrib.media import MediaPlayer
 
@@ -418,6 +426,7 @@ def open_nvenc_capture(
         fps=target_fps,
         bitrate_bps=bitrate_bps,
         preset=preset,
+        draw_mouse=not local_cursor,
     )
     proc = subprocess.Popen(
         cmd,
@@ -551,6 +560,7 @@ def open_capture(
 ) -> CaptureHandle:
     fps = max(5.0, min(60.0, target_fps if target_fps is not None else capture_fps()))
     bound_w = max_w if max_w is not None else capture_max_width()
+    local_cursor = _local_cursor_enabled()
     backend = resolve_capture_backend(env)
     if backend == "nvenc":
         try:
@@ -562,6 +572,7 @@ def open_capture(
                 max_w=bound_w,
                 bitrate_bps=bitrate_bps if bitrate_bps is not None else capture_bitrate_bps(),
                 preset=preset if preset is not None else capture_nvenc_preset(),
+                local_cursor=local_cursor,
             )
         except Exception:
             logger.exception("NVENC capture setup failed session=%s; falling back to mss", session_id[:16])

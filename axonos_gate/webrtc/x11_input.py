@@ -62,22 +62,37 @@ def _open_display(env: dict[str, str]) -> Any:
     return _display_ptr
 
 
+_reconnect_cooldown = 0.0  # monotonic time after which we may retry _open_display
+_RECONNECT_INTERVAL = 2.0  # seconds between retry attempts
+
+
 def warp_pointer(x: int, y: int, env: dict[str, str]) -> bool:
+    global _display_ptr, _display_key, _reconnect_cooldown
     with _lock:
         try:
             lib = _load_lib()
-            dpy = _open_display(env)
+            dpy = _display_ptr
             if not dpy:
-                return False
+                # Respect the cooldown so we don't spam XOpenDisplay on every
+                # move when X11 is genuinely down.
+                import time
+                now = time.monotonic()
+                if now < _reconnect_cooldown:
+                    return False
+                dpy = _open_display(env)
+                if not dpy:
+                    _reconnect_cooldown = now + _RECONNECT_INTERVAL
+                    return False
             root = lib.XDefaultRootWindow(dpy)
             lib.XWarpPointer(dpy, 0, root, 0, 0, 0, 0, int(x), int(y))
             lib.XFlush(dpy)
             return True
         except Exception as exc:
             logger.debug("XWarpPointer failed: %s", exc)
-            global _display_ptr, _display_key
             _display_ptr = None
             _display_key = None
+            import time
+            _reconnect_cooldown = time.monotonic() + _RECONNECT_INTERVAL
             return False
 
 

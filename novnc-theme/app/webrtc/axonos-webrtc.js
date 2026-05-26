@@ -573,7 +573,7 @@ export async function connectAxonOSWebRTC(opts) {
     let capturedPointerId = null;
 
     function sendOnChannel(ch, obj) {
-        if (!inputChannelOpen || !ch || ch.readyState !== 'open') {
+        if (!ch || ch.readyState !== 'open') {
             return false;
         }
         try {
@@ -673,10 +673,68 @@ export async function connectAxonOSWebRTC(opts) {
         currentMouseButtons = 0;
         clearMoveFlushTimer();
         pendingMovePayload = null;
+        if (inputHealthTimer) {
+            clearInterval(inputHealthTimer);
+            inputHealthTimer = null;
+        }
         if (UI.connected) {
-            _setBanner('Input channel closed — reconnect to restore mouse.', 'failed');
+            _setBanner('Input channel lost — reconnecting…', 'reconnecting');
+            // Attempt an automatic full session reconnect after a brief delay
+            // so the user doesn't have to manually click anything.
+            setTimeout(() => {
+                if (typeof window.axonosWebRtcTeardown === 'function' && UI.connected) {
+                    console.warn('AxonOS WebRTC: dcInput closed, triggering reconnect');
+                    if (typeof UI.reconnect_webrtc === 'function') {
+                        UI.reconnect_webrtc();
+                    } else if (typeof UI.connect === 'function') {
+                        window.axonosWebRtcTeardown().then(() => UI.connect()).catch(() => {});
+                    }
+                }
+            }, 1500);
         }
     });
+
+    // --- Input health check (ping/pong) --------------------------------
+    // Send a ping every 10s.  If 3 consecutive pings go unanswered the
+    // channel is treated as dead and we trigger reconnection.
+    let inputHealthTimer = null;
+    let inputPingPending = 0;
+    const INPUT_PING_INTERVAL_MS = 10000;
+    const INPUT_PING_MAX_MISSED = 3;
+
+    dcInput.addEventListener('message', (ev) => {
+        let msg;
+        try { msg = JSON.parse(ev.data); } catch { return; }
+        if (msg && msg.t === 'pong') {
+            inputPingPending = 0;
+        }
+    });
+
+    function startInputHealthCheck() {
+        if (inputHealthTimer) return;
+        inputPingPending = 0;
+        inputHealthTimer = setInterval(() => {
+            if (dcInput.readyState !== 'open') {
+                clearInterval(inputHealthTimer);
+                inputHealthTimer = null;
+                return;
+            }
+            if (inputPingPending >= INPUT_PING_MAX_MISSED) {
+                console.warn('AxonOS WebRTC: input health check failed (%d missed pongs)', inputPingPending);
+                clearInterval(inputHealthTimer);
+                inputHealthTimer = null;
+                _setBanner('Input stalled — reconnecting…', 'reconnecting');
+                if (typeof UI.reconnect_webrtc === 'function') {
+                    UI.reconnect_webrtc();
+                } else if (typeof window.axonosWebRtcTeardown === 'function' && typeof UI.connect === 'function') {
+                    window.axonosWebRtcTeardown().then(() => UI.connect()).catch(() => {});
+                }
+                return;
+            }
+            inputPingPending += 1;
+            try { dcInput.send(JSON.stringify({ t: 'ping' })); } catch { /* ignore */ }
+        }, INPUT_PING_INTERVAL_MS);
+    }
 
     dcClip.onmessage = (ev) => {
         let msg = null;
@@ -1164,6 +1222,7 @@ export async function connectAxonOSWebRTC(opts) {
 
     metricsTimer = setInterval(pollStats, 5000);
     pollStats();
+    startInputHealthCheck();
 
     _inFlightNegotiation = null;
     UI.connected = true;
@@ -1193,6 +1252,10 @@ export async function connectAxonOSWebRTC(opts) {
         pendingMovePayload = null;
         if (metricsTimer) {
             clearInterval(metricsTimer);
+        }
+        if (inputHealthTimer) {
+            clearInterval(inputHealthTimer);
+            inputHealthTimer = null;
         }
         if (typeof UI.stopClipboardAutoSync === 'function') {
             try { UI.stopClipboardAutoSync(); } catch { /* ignore */ }
