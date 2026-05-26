@@ -28,6 +28,35 @@ logging.basicConfig(
 )
 logger = logging.getLogger("axonos.webrtc_agent")
 
+# Monkeypatch aiortc video codec bitrates to allow higher streaming quality.
+try:
+    import aiortc.codecs.vpx
+    aiortc.codecs.vpx.DEFAULT_BITRATE = int(os.getenv("WEBRTC_VP8_DEFAULT_BITRATE", "3500000"))
+    aiortc.codecs.vpx.MIN_BITRATE = int(os.getenv("WEBRTC_VP8_MIN_BITRATE", "1000000"))
+    aiortc.codecs.vpx.MAX_BITRATE = int(os.getenv("WEBRTC_VP8_MAX_BITRATE", "8000000"))
+    logger.info(
+        "Monkeypatched aiortc.codecs.vpx bitrates (min=%d, default=%d, max=%d)",
+        aiortc.codecs.vpx.MIN_BITRATE,
+        aiortc.codecs.vpx.DEFAULT_BITRATE,
+        aiortc.codecs.vpx.MAX_BITRATE,
+    )
+except ImportError:
+    pass
+
+try:
+    import aiortc.codecs.h264
+    aiortc.codecs.h264.DEFAULT_BITRATE = int(os.getenv("WEBRTC_H264_DEFAULT_BITRATE", "4000000"))
+    aiortc.codecs.h264.MIN_BITRATE = int(os.getenv("WEBRTC_H264_MIN_BITRATE", "1500000"))
+    aiortc.codecs.h264.MAX_BITRATE = int(os.getenv("WEBRTC_H264_MAX_BITRATE", "10000000"))
+    logger.info(
+        "Monkeypatched aiortc.codecs.h264 bitrates (min=%d, default=%d, max=%d)",
+        aiortc.codecs.h264.MIN_BITRATE,
+        aiortc.codecs.h264.DEFAULT_BITRATE,
+        aiortc.codecs.h264.MAX_BITRATE,
+    )
+except ImportError:
+    pass
+
 _AXT = "X-AxonOS-WebRTC-Agent-Key"
 _clipboard_owners: dict[str, subprocess.Popen[bytes]] = {}
 # RFB-style pressed buttons: 1=left, 2=middle, 4=right.

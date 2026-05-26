@@ -70,6 +70,7 @@
   - [x] Credit exhaustion: pause session + preserve container for resume after top-up (`AXGT_SESSION_PRESERVE_ON_CREDIT_EXHAUST`, default true)
   - [x] Deposit verify success: show credited time as desktop minutes for selected GPU profile (`axonosFormatDesktopTimeLabel` in `vnc.html`)
   - [x] Resume workflow UI: hide GPU picker, show saved-session panel, claim uses paused profile/GPUs (not new selection)
+  - [ ] Investigate/fix desktop clicks not working randomly when clipboard is full
   - [ ] **GPU-accelerated WebRTC capture/encode (NVENC)** — current path is CPU-only (`mss` + Pillow resize + aiortc software encode); 200 MB/s link is not the bottleneck
     - [ ] Add FFmpeg with `h264_nvenc` to image; verify `libnvidia-encode` in session containers (`--gpus all`)
     - [ ] Optional `WEBRTC_CAPTURE_BACKEND=nvenc` — FFmpeg x11grab → NVENC pipeline fed into aiortc `MediaPlayer`; keep `mss`/`ScreenVideoTrack` as fallback
