@@ -36,6 +36,7 @@ _clipboard_owners: dict[str, subprocess.Popen[bytes]] = {}
 # RFB-style pressed buttons: 1=left, 2=middle, 4=right.
 _mouse_button_mask: int = 0
 _last_input_monotonic: float = 0.0
+_last_clipboard_write_monotonic: float = 0.0
 _MOUSE_BUTTON_BITS = ((1, 1), (2, 2), (4, 3))
 # Dedicated thread pool for input processing — avoids starving the asyncio event
 # loop (which aiortc needs for SCTP acks / data-channel reads) and avoids
@@ -245,12 +246,14 @@ def _set_x_clipboard(text: str, env: dict[str, str]) -> bool:
                 stderr=subprocess.DEVNULL,
                 env=env,
             )
-            if p.stdin:
-                p.stdin.write(data)
-                p.stdin.close()
-            _clipboard_owners[selection] = p
-            ok = True
-        except (BrokenPipeError, OSError):
+            try:
+                p.communicate(input=data, timeout=5.0)
+                _clipboard_owners[selection] = p
+                ok = True
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.communicate()
+        except OSError:
             continue
     return ok
 
@@ -589,6 +592,8 @@ def _enqueue_rtc_input(input_queue: asyncio.Queue[str], raw: str) -> None:
 
 def _apply_clipboard_json(raw: str) -> None:
     """Apply clipboard/paste on a background worker so xclip never blocks mouse input."""
+    global _last_clipboard_write_monotonic
+    _last_clipboard_write_monotonic = time.monotonic()
     try:
         obj = json.loads(raw)
     except json.JSONDecodeError:
@@ -796,10 +801,22 @@ async def _run_session(job: dict[str, Any]) -> None:
         clipboard_queue = asyncio.Queue(maxsize=32)
 
         async def clipboard_worker() -> None:
+            nonlocal last_clipboard
             assert clipboard_queue is not None
             while True:
                 msg = await clipboard_queue.get()
                 try:
+                    # Sync incoming text to last_clipboard to prevent echo-back loop
+                    try:
+                        obj = json.loads(msg)
+                        if isinstance(obj, dict):
+                            t = (obj.get("t") or obj.get("type") or "").strip().lower()
+                            if t in ("clipboard", "paste"):
+                                text = str(obj.get("text") or "")
+                                if text:
+                                    last_clipboard = text
+                    except Exception:
+                        pass
                     await asyncio.to_thread(_apply_clipboard_json, msg)
                 except Exception as e:
                     logger.debug("clipboard worker: %s", e)
@@ -811,6 +828,18 @@ async def _run_session(job: dict[str, Any]) -> None:
     async def poll_remote_clipboard() -> None:
         nonlocal last_clipboard
         while pc.connectionState not in ("failed", "closed"):
+            # Skip polling when there is active user interaction to avoid X11 server contention
+            idle_s = time.monotonic() - _last_input_monotonic
+            if idle_s < 1.0:
+                await asyncio.sleep(0.5)
+                continue
+
+            # Skip polling if the agent recently wrote to the clipboard (to avoid stale X11 read race)
+            write_elapsed = time.monotonic() - _last_clipboard_write_monotonic
+            if write_elapsed < 2.0:
+                await asyncio.sleep(0.5)
+                continue
+
             try:
                 text = await asyncio.to_thread(_get_x_clipboard_for_browser_poll, clipboard_env)
                 if text and text != last_clipboard:

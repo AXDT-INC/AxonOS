@@ -764,7 +764,9 @@ export async function connectAxonOSWebRTC(opts) {
         if (recent && pushText && incoming !== pushText) {
             return;
         }
-        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        if (typeof UI.pushRemoteClipboardToLocal === 'function') {
+            UI.pushRemoteClipboardToLocal(incoming);
+        } else if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
             navigator.clipboard.writeText(incoming).catch(() => {});
         }
     };
