@@ -2153,6 +2153,7 @@ const UI = {
         const msgEl = document.getElementById('axonos_usage_overlay_message');
         const btn = document.getElementById('axonos_usage_overlay_verify_btn');
         const exitBtn = document.getElementById('axonos_usage_overlay_exit_btn');
+        const addCreditsBtn = document.getElementById('axonos_usage_overlay_add_credits_btn');
         if (!overlay || !msgEl) return;
         overlay.classList.remove('axonos-usage-overlay--hidden', 'axonos-usage-overlay--warning', 'axonos-usage-overlay--locked');
         if (state === 'hidden') {
@@ -2160,6 +2161,7 @@ const UI = {
             overlay.classList.add('axonos-usage-overlay--hidden');
             overlay.setAttribute('aria-hidden', 'true');
             if (exitBtn) exitBtn.hidden = true;
+            if (addCreditsBtn) addCreditsBtn.hidden = true;
             return;
         }
         UI._axgtUsageOverlayState = state;
@@ -2169,6 +2171,7 @@ const UI = {
             overlay.classList.add('axonos-usage-overlay--warning');
             if (btn) btn.textContent = 'Continue session';
             if (exitBtn) exitBtn.hidden = true;
+            if (addCreditsBtn) addCreditsBtn.hidden = false;
         } else if (state === 'locked') {
             overlay.classList.add('axonos-usage-overlay--locked');
             if (btn) {
@@ -2177,6 +2180,7 @@ const UI = {
                     : 'Add credit';
             }
             if (exitBtn) exitBtn.hidden = false;
+            if (addCreditsBtn) addCreditsBtn.hidden = true;
         }
     },
 
@@ -2326,6 +2330,18 @@ const UI = {
                 }
                 UI._axgtUpdateUsageOverlay('hidden');
                 UI.credentials({ detail: { types: ['password'] } });
+            });
+        }
+        const addBtn = document.getElementById('axonos_usage_overlay_add_credits_btn');
+        if (addBtn && !addBtn.hasAttribute('data-axgt-listener')) {
+            addBtn.setAttribute('data-axgt-listener', 'true');
+            addBtn.addEventListener('click', () => {
+                UI._axgtUpdateUsageOverlay('hidden');
+                if (typeof window.axonosOpenWalletTopUpDialog === 'function') {
+                    window.axonosOpenWalletTopUpDialog();
+                } else {
+                    UI.credentials({ detail: { types: ['password'] } });
+                }
             });
         }
         const exitBtn = document.getElementById('axonos_usage_overlay_exit_btn');
