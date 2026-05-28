@@ -1555,7 +1555,7 @@ document.addEventListener("DOMContentLoaded", function() {
 
     /** Append launcher/docker error when spawn fails (API field container_error). */
     function axonosFormatClaimDeniedMessage(claim, fallbackReason) {
-        var main = (claim && claim.reason) ? claim.reason : (fallbackReason || 'Desktop in use.');
+        var main = (claim && claim.reason) ? claim.reason : (fallbackReason || 'Session claim denied.');
         var err = claim && claim.container_error ? String(claim.container_error).trim() : '';
         if (err && main.indexOf(err) === -1) {
             return main + '\n\n' + err;
@@ -1601,7 +1601,7 @@ document.addEventListener("DOMContentLoaded", function() {
 
     /** Called from ui.js when Launch runs connect while session is not claimed. */
     window.axonosOnSessionClaimDenied = function (claim) {
-        handleSessionClaimDenied(claim, 'Desktop in use.');
+        handleSessionClaimDenied(claim, 'Session claim denied.');
     };
 
     function tryConnectAfterClaim() {
@@ -2366,7 +2366,7 @@ document.addEventListener("DOMContentLoaded", function() {
                         if (claim.granted) {
                             tryConnectAfterClaim();
                         } else {
-                            handleSessionClaimDenied(claim, 'Desktop in use.');
+                            handleSessionClaimDenied(claim, 'Session claim denied.');
                             var credentialsDialog = document.getElementById('noVNC_credentials_dlg');
                             if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
                         }
@@ -2533,7 +2533,7 @@ document.addEventListener("DOMContentLoaded", function() {
             claimSession().then(function (claim) {
                 if (claim.granted) tryConnectAfterClaim();
                 else {
-                    handleSessionClaimDenied(claim, 'Desktop in use.');
+                    handleSessionClaimDenied(claim, 'Session claim denied.');
                     if (credDlg) credDlg.classList.remove('noVNC_open');
                 }
             }).catch(function () {

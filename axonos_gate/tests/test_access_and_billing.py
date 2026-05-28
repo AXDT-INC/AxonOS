@@ -311,6 +311,69 @@ class TestBillingAndSession(unittest.TestCase):
             alloc = session_manager._choose_allocation(active_rows, 2)
         self.assertIsNone(alloc)
 
+    @patch("axonos_gate.session_manager._get_connection")
+    @patch("axonos_gate.session_manager._init_once", return_value=True)
+    @patch("axonos_gate.session_manager._expire_stale_session", return_value=(None, []))
+    @patch("axonos_gate.session_manager._expire_stale_paused_sessions", return_value=[])
+    @patch("axonos_gate.session_manager._active_session_for_wallet", return_value=None)
+    @patch("axonos_gate.session_manager._paused_session_for_wallet", return_value=None)
+    @patch("axonos_gate.session_manager._prepaid_credit_allows_profile", return_value=(True, None))
+    @patch("axonos_gate.session_manager._gpu_device_ids", return_value=[0, 1, 2, 3])
+    def test_try_claim_session_all_gpus_used_up(
+        self, mock_gpus, mock_credit, mock_paused_w, mock_active_w, mock_exp_p, mock_exp, mock_init, mock_conn
+    ):
+        from axonos_gate import session_manager
+        
+        # All 4 GPUs are used up
+        active_rows = [
+            {"id": 1, "wallet_address": "0xaaa", "gpu_ids": [0]},
+            {"id": 2, "wallet_address": "0xbbb", "gpu_ids": [1]},
+            {"id": 3, "wallet_address": "0xccc", "gpu_ids": [2]},
+            {"id": 4, "wallet_address": "0xddd", "gpu_ids": [3]},
+        ]
+        
+        conn = MagicMock()
+        mock_conn.return_value = conn
+        
+        with patch("axonos_gate.session_manager._get_active_rows", return_value=active_rows), \
+             patch("axonos_gate.session_manager._get_paused_rows", return_value=[]):
+            result = session_manager.try_claim_session("0x123", "small")
+            
+        self.assertFalse(result["granted"])
+        self.assertEqual(result["reason"], "Desktop is in use by another researcher.")
+
+    @patch("axonos_gate.session_manager._get_connection")
+    @patch("axonos_gate.session_manager._init_once", return_value=True)
+    @patch("axonos_gate.session_manager._expire_stale_session", return_value=(None, []))
+    @patch("axonos_gate.session_manager._expire_stale_paused_sessions", return_value=[])
+    @patch("axonos_gate.session_manager._active_session_for_wallet", return_value=None)
+    @patch("axonos_gate.session_manager._paused_session_for_wallet", return_value=None)
+    @patch("axonos_gate.session_manager._prepaid_credit_allows_profile", return_value=(True, None))
+    @patch("axonos_gate.session_manager._gpu_device_ids", return_value=[0, 1, 2, 3])
+    def test_try_claim_session_some_gpus_free_but_insufficient(
+        self, mock_gpus, mock_credit, mock_paused_w, mock_active_w, mock_exp_p, mock_exp, mock_init, mock_conn
+    ):
+        from axonos_gate import session_manager
+        
+        # 3 of 4 GPUs are used up, 1 is free (GPU 3)
+        active_rows = [
+            {"id": 1, "wallet_address": "0xaaa", "gpu_ids": [0]},
+            {"id": 2, "wallet_address": "0xbbb", "gpu_ids": [1]},
+            {"id": 3, "wallet_address": "0xccc", "gpu_ids": [2]},
+        ]
+        
+        conn = MagicMock()
+        mock_conn.return_value = conn
+        
+        # We request "medium" profile (requires 2 GPUs)
+        with patch("axonos_gate.session_manager._get_active_rows", return_value=active_rows), \
+             patch("axonos_gate.session_manager._get_paused_rows", return_value=[]), \
+             patch.dict(os.environ, {"AXGT_GPU_PROFILES_ENABLED": "true"}, clear=False):
+            result = session_manager.try_claim_session("0x123", "medium")
+            
+        self.assertFalse(result["granted"])
+        self.assertEqual(result["reason"], "No GPUs available for profile \"medium\" (2 GPU(s) required)")
+
 
 class TestGpuDeviceDiscovery(unittest.TestCase):
     """AXGT_GPU_* env overrides vs nvidia-smi auto-detect for session_manager._gpu_device_ids."""

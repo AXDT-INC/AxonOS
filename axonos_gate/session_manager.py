@@ -927,16 +927,22 @@ def try_claim_session(wallet_address: str, requested_profile: Optional[str] = No
                 if not allocated_gpu_ids:
                     cap_meta = _gpu_capacity_fields(requested_gpus, reserved_rows, profile_name)
                     conn.commit()
+                    free_gpus = len(_free_gpu_ids(reserved_rows))
+                    total_gpus = len(_gpu_device_ids())
+                    if total_gpus > 0 and free_gpus == 0:
+                        reason = "Desktop is in use by another researcher."
+                    else:
+                        reason = (
+                            f"No GPUs available for profile \"{profile_name}\" "
+                            f"({requested_gpus} GPU(s) required)"
+                        )
                     return {
                         "granted": False,
                         "allocation_status": "unavailable",
                         "requested_profile": profile_name,
                         "requested_gpus": requested_gpus,
-                        "reason": (
-                            f"No GPUs available for profile \"{profile_name}\" "
-                            f"({requested_gpus} GPU(s) required)"
-                        ),
-                        "free_gpu_count": len(_free_gpu_ids(reserved_rows)),
+                        "reason": reason,
+                        "free_gpu_count": free_gpus,
                         **cap_meta,
                     }
 
