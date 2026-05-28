@@ -1271,12 +1271,14 @@ document.addEventListener("DOMContentLoaded", function() {
         var connectText = document.querySelector('.axonos-connect-text');
         var connectSub = document.querySelector('.axonos-connect-subtext');
         var profileSel = document.getElementById('axonos_profile_select');
+        var hint = document.getElementById('axonos_profile_burn_hint');
+
         if (resumePanel) {
-            resumePanel.classList.toggle('axonos-resume-panel--hidden', !resumeActive);
-            resumePanel.setAttribute('aria-hidden', resumeActive ? 'false' : 'true');
+            resumePanel.classList.add('axonos-resume-panel--hidden');
+            resumePanel.setAttribute('aria-hidden', 'true');
         }
         if (pickerWrap) {
-            pickerWrap.hidden = !!resumeActive;
+            pickerWrap.hidden = false;
         }
         if (resumeActive && window.axonosPausedResume) {
             var profile = window.axonosPausedResume.profile || 'small';
@@ -1287,30 +1289,21 @@ document.addEventListener("DOMContentLoaded", function() {
             var remaining = typeof window.axonosPausedResume.remainingMinutes === 'number'
                 ? window.axonosPausedResume.remainingMinutes
                 : null;
-            var detailParts = [
-                axonosProfileLabel(profile) + ' · ' + gpus + ' GPU' + (gpus === 1 ? '' : 's') +
-                ' — same desktop and apps as before your session paused.'
-            ];
-            if (remaining !== null && remaining > 0) {
-                if (axonosGpuWeightedBillingEnabled() && required > 1) {
-                    detailParts.push('Prepaid balance: ' + remaining.toFixed(1) + ' min (' +
-                        (remaining / required).toFixed(1) + ' min desktop time at ' + required + '× billing).');
-                } else {
-                    detailParts.push('Prepaid balance: ' + remaining.toFixed(1) + ' min remaining.');
-                }
-            } else if (remaining !== null && remaining <= 0) {
-                detailParts.push('Add prepaid credit, then resume — no GPU re-selection needed.');
-            }
-            if (resumeDetail) {
-                resumeDetail.textContent = detailParts.join(' ');
-            }
-            if (resumeTtl) {
-                var ttl = axonosFormatResumeTtl(window.axonosPausedResume.resumeSeconds);
-                resumeTtl.textContent = ttl || 'Saved session window expired — start a new desktop.';
-            }
+            var ttl = axonosFormatResumeTtl(window.axonosPausedResume.resumeSeconds);
+
             if (profileSel) {
                 profileSel.value = profile;
                 profileSel.disabled = true;
+            }
+            if (hint) {
+                hint.style.display = '';
+                var hintText = 'Desktop saved on ' + axonosProfileLabel(profile) + ' (' + gpus +
+                    ' GPU' + (gpus === 1 ? '' : 's') + '). ';
+                if (ttl) {
+                    hintText += ttl + ' ';
+                }
+                hintText += 'Reconnect uses the same allocation.';
+                hint.textContent = hintText;
             }
             axonosSetLaunchConnectButtonCopy('resume');
             if (connectSub) {
