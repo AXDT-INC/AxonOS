@@ -441,6 +441,22 @@ def _force_release_all_mouse_buttons(env: dict[str, str]) -> None:
     _mouse_button_mask = 0
 
 
+def _release_all_modifiers(env: dict[str, str]) -> None:
+    """Release all keyboard modifier keys in X11 to prevent stuck key states."""
+    cmd = [
+        "xdotool",
+        "keyup", "Shift_L",
+        "keyup", "Shift_R",
+        "keyup", "Control_L",
+        "keyup", "Control_R",
+        "keyup", "Alt_L",
+        "keyup", "Alt_R",
+        "keyup", "Super_L",
+        "keyup", "Super_R",
+    ]
+    subprocess.run(cmd, check=False, timeout=2, env=env)
+
+
 def _touch_input_activity() -> None:
     global _last_input_monotonic
     _last_input_monotonic = time.monotonic()
@@ -764,6 +780,7 @@ async def _run_session(job: dict[str, Any]) -> None:
     gate = _gate_url()
     applied_ice: set[str] = set()
     clipboard_env = _display_env()
+    _release_all_modifiers(clipboard_env)
     clip_channel_out: list[Any] = [None]
     input_channel_out: list[Any] = [None]
     last_clipboard = ""
@@ -889,6 +906,7 @@ async def _run_session(job: dict[str, Any]) -> None:
         if input_worker_task is not None:
             input_worker_task.cancel()
         _reset_mouse_button_state(clipboard_env)
+        _release_all_modifiers(clipboard_env)
 
     def _ensure_input_worker() -> asyncio.Queue[str]:
         nonlocal input_worker_task, input_queue

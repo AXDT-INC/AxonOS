@@ -566,11 +566,31 @@ export async function connectAxonOSWebRTC(opts) {
     let inputChannelOpen = dcInput.readyState === 'open';
     // RFB-style bitmask: 1=left, 2=middle, 4=right (1 << DOM button index).
     let currentMouseButtons = 0;
+    // Track currently pressed keys to avoid stuck modifier states.
+    const activeKeys = new Map();
     // Deferred press: simple clicks send one atomic `click`; drags send mousedown after move.
     const DRAG_THRESHOLD_PX = 4;
     /** @type {{ button: number, clientX: number, clientY: number } | null} */
     let pendingPress = null;
     let capturedPointerId = null;
+
+    function releaseAllKeys() {
+        if (activeKeys.size === 0) {
+            return;
+        }
+        for (const [id, keyObj] of activeKeys.entries()) {
+            sendPriorityInput({
+                t: 'keyup',
+                key: keyObj.key,
+                code: keyObj.code,
+                ctrlKey: false,
+                altKey: false,
+                shiftKey: false,
+                metaKey: false,
+            });
+        }
+        activeKeys.clear();
+    }
 
     function sendOnChannel(ch, obj) {
         if (!ch || ch.readyState !== 'open') {
@@ -671,6 +691,7 @@ export async function connectAxonOSWebRTC(opts) {
     dcInput.addEventListener('close', () => {
         inputChannelOpen = false;
         currentMouseButtons = 0;
+        activeKeys.clear();
         clearMoveFlushTimer();
         pendingMovePayload = null;
         if (inputHealthTimer) {
@@ -1064,6 +1085,7 @@ export async function connectAxonOSWebRTC(opts) {
             capturedPointerId = null;
         }
         resetMouseInputState(null, true);
+        releaseAllKeys();
     }
 
     function hasActivePointerCapture() {
@@ -1118,6 +1140,7 @@ export async function connectAxonOSWebRTC(opts) {
         }
         if (ev.key) {
             ev.preventDefault();
+            activeKeys.set(ev.code || ev.key, { key: ev.key, code: ev.code });
             sendPriorityInput({
                 t: 'keydown',
                 key: ev.key,
@@ -1139,6 +1162,7 @@ export async function connectAxonOSWebRTC(opts) {
         }
         if (ev.key) {
             ev.preventDefault();
+            activeKeys.delete(ev.code || ev.key);
             sendPriorityInput({
                 t: 'keyup',
                 key: ev.key,
@@ -1249,6 +1273,7 @@ export async function connectAxonOSWebRTC(opts) {
     window.axonosWebRtcTeardown = async () => {
         _negotiationGeneration += 1;
         resetMouseInputState(null, true);
+        releaseAllKeys();
         inputAbort.abort();
         clearMoveFlushTimer();
         pendingMovePayload = null;
