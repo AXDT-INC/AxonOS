@@ -318,6 +318,12 @@ def _sync_mouse_buttons(mask: int, env: dict[str, str]) -> None:
         was = (_mouse_button_mask & bit) != 0
         now = (mask & bit) != 0
         if now and not was:
+            try:
+                from webrtc.x11_input import xtest_mousedown
+                if xtest_mousedown(btn, env):
+                    continue
+            except Exception:
+                pass
             subprocess.run(
                 ["xdotool", "mousedown", str(btn)],
                 check=False,
@@ -325,6 +331,12 @@ def _sync_mouse_buttons(mask: int, env: dict[str, str]) -> None:
                 env=env,
             )
         elif was and not now:
+            try:
+                from webrtc.x11_input import xtest_mouseup
+                if xtest_mouseup(btn, env):
+                    continue
+            except Exception:
+                pass
             subprocess.run(
                 ["xdotool", "mouseup", str(btn)],
                 check=False,
@@ -353,15 +365,22 @@ def _get_warp_pointer():
     return _warp_pointer_fn
 
 
-def _mousemove(x: float, y: float, env: dict[str, str]) -> None:
+def _mousemove(x: float, y: float, env: dict[str, str], drag: bool = False) -> None:
     ix, iy = int(x), int(y)
-    warp = _get_warp_pointer()
-    if warp is not None:
-        try:
-            if warp(ix, iy, env):
-                return
-        except Exception:
-            pass
+    try:
+        from webrtc.x11_input import xtest_mousemove
+        if xtest_mousemove(ix, iy, env):
+            return
+    except Exception:
+        pass
+    if not drag:
+        warp = _get_warp_pointer()
+        if warp is not None:
+            try:
+                if warp(ix, iy, env):
+                    return
+            except Exception:
+                pass
     subprocess.run(
         ["xdotool", "mousemove", str(ix), str(iy)],
         check=False,
@@ -375,6 +394,22 @@ def _wheel_scroll(dx: int, dy: int, env: dict[str, str]) -> None:
     cap = 40
     dv = max(-cap, min(cap, int(dy)))
     dh = max(-cap, min(cap, int(dx)))
+    try:
+        from webrtc.x11_input import xtest_click
+        xtest_ok = True
+        if dv > 0:
+            xtest_ok = xtest_ok and xtest_click(5, dv, env)
+        elif dv < 0:
+            xtest_ok = xtest_ok and xtest_click(4, -dv, env)
+        if dh > 0:
+            xtest_ok = xtest_ok and xtest_click(7, dh, env)
+        elif dh < 0:
+            xtest_ok = xtest_ok and xtest_click(6, -dh, env)
+        if xtest_ok and (dv != 0 or dh != 0):
+            return
+    except Exception:
+        pass
+
     if dv > 0:
         subprocess.run(
             ["xdotool", "click", "--repeat", str(dv), "5"],
@@ -410,6 +445,13 @@ def _release_mouse_button_if_held(button: int, env: dict[str, str]) -> None:
     global _mouse_button_mask
     bit = _button_bit(button)
     if _mouse_button_mask & bit:
+        try:
+            from webrtc.x11_input import xtest_mouseup
+            if xtest_mouseup(button, env):
+                _mouse_button_mask &= ~bit
+                return
+        except Exception:
+            pass
         subprocess.run(
             ["xdotool", "mouseup", str(button)],
             check=False,
@@ -432,6 +474,12 @@ def _force_release_all_mouse_buttons(env: dict[str, str]) -> None:
     """Release every X mouse button even when the tracked mask is out of sync."""
     global _mouse_button_mask
     for btn in (1, 2, 3):
+        try:
+            from webrtc.x11_input import xtest_mouseup
+            if xtest_mouseup(btn, env):
+                continue
+        except Exception:
+            pass
         subprocess.run(
             ["xdotool", "mouseup", str(btn)],
             check=False,
@@ -644,9 +692,10 @@ def _apply_input_json(raw: str) -> None:
         if t in ("move", "mousemove"):
             x = float(obj.get("x", 0))
             y = float(obj.get("y", 0))
+            buttons = int(obj.get("buttons", 0)) if "buttons" in obj else _mouse_button_mask
             if "buttons" in obj:
-                _sync_mouse_buttons(int(obj.get("buttons", 0)), env)
-            _mousemove(x, y, env)
+                _sync_mouse_buttons(buttons, env)
+            _mousemove(x, y, env, drag=(buttons != 0))
         elif t in ("mousedown",):
             b = int(obj.get("button", 1))
             if "x" in obj and "y" in obj:
@@ -668,6 +717,12 @@ def _apply_input_json(raw: str) -> None:
             b = int(obj.get("button", 1))
             ix, iy = int(float(obj.get("x", 0))), int(float(obj.get("y", 0)))
             _mousemove(float(ix), float(iy), env)
+            try:
+                from webrtc.x11_input import xtest_click
+                if xtest_click(b, 1, env):
+                    return
+            except Exception:
+                pass
             subprocess.run(
                 ["xdotool", "click", str(b)],
                 check=False,
@@ -787,6 +842,7 @@ async def _run_session(job: dict[str, Any]) -> None:
     clipboard_queue: asyncio.Queue[str] | None = None
     clipboard_worker_task: asyncio.Task | None = None
     clipboard_poll_task: asyncio.Task | None = None
+    cursor_poll_task: asyncio.Task | None = None
     input_worker_task: asyncio.Task | None = None
     mouse_watchdog_task: asyncio.Task | None = None
     input_queue: asyncio.Queue[str] | None = None
@@ -887,20 +943,59 @@ async def _run_session(job: dict[str, Any]) -> None:
             )
             await asyncio.to_thread(_reset_mouse_button_state, clipboard_env)
 
+    last_cursor_serial = 0
+
+    async def poll_cursor_shape() -> None:
+        nonlocal last_cursor_serial
+        await asyncio.sleep(0.5)
+        try:
+            from webrtc.x11_input import get_cursor_info
+        except ImportError:
+            return
+
+        while pc.connectionState not in ("failed", "closed"):
+            try:
+                res = await asyncio.to_thread(get_cursor_info, clipboard_env, last_cursor_serial)
+                if res is not None:
+                    if res.get("changed"):
+                        last_cursor_serial = res["serial"]
+                        outbound = input_channel_out[0]
+                        if outbound is not None and outbound.readyState == "open":
+                            try:
+                                outbound.send(json.dumps({
+                                    "t": "cursor",
+                                    "name": res.get("name"),
+                                    "width": res.get("width"),
+                                    "height": res.get("height"),
+                                    "xhot": res.get("xhot"),
+                                    "yhot": res.get("yhot"),
+                                    "img": res.get("img")
+                                }))
+                            except Exception:
+                                pass
+                    else:
+                        last_cursor_serial = res["serial"]
+            except Exception as e:
+                logger.debug("cursor poll: %s", e)
+            await asyncio.sleep(0.12)
+
     def _start_session_io_tasks() -> None:
-        nonlocal clipboard_poll_task, mouse_watchdog_task, session_tasks_started
+        nonlocal clipboard_poll_task, mouse_watchdog_task, cursor_poll_task, session_tasks_started
         if session_tasks_started:
             return
         session_tasks_started = True
         _ensure_clipboard_worker()
         clipboard_poll_task = asyncio.create_task(poll_remote_clipboard())
         mouse_watchdog_task = asyncio.create_task(poll_mouse_button_watchdog())
+        cursor_poll_task = asyncio.create_task(poll_cursor_shape())
 
     def _cancel_session_io_tasks() -> None:
         if clipboard_poll_task is not None:
             clipboard_poll_task.cancel()
         if mouse_watchdog_task is not None:
             mouse_watchdog_task.cancel()
+        if cursor_poll_task is not None:
+            cursor_poll_task.cancel()
         if clipboard_worker_task is not None:
             clipboard_worker_task.cancel()
         if input_worker_task is not None:

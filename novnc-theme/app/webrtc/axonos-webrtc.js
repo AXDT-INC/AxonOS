@@ -538,6 +538,36 @@ export async function connectAxonOSWebRTC(opts) {
     let imageWidth = 1;
     let imageHeight = 1;
 
+    let cursorHotX = 1;
+    let cursorHotY = 1;
+    let lastLocalX = -100;
+    let lastLocalY = -100;
+
+    const updateCursorShape = (data) => {
+        if (!cursor) return;
+        if (data && data.img) {
+            cursor.innerHTML = '';
+            cursor.style.width = data.width + 'px';
+            cursor.style.height = data.height + 'px';
+            cursor.style.backgroundImage = `url(data:image/png;base64,${data.img})`;
+            cursor.style.backgroundSize = 'contain';
+            cursor.style.backgroundRepeat = 'no-repeat';
+            cursorHotX = Number(data.xhot);
+            cursorHotY = Number(data.yhot);
+        } else {
+            // Default fallback
+            cursor.innerHTML = '<svg width="18" height="24" viewBox="0 0 18 24" xmlns="http://www.w3.org/2000/svg"><path d="M1 1v18l5-5 3 8 3-1-3-8h7z" fill="white" stroke="black" stroke-width="1.5" stroke-linejoin="round"/></svg>';
+            cursor.style.width = '18px';
+            cursor.style.height = '24px';
+            cursor.style.backgroundImage = 'none';
+            cursorHotX = 1;
+            cursorHotY = 1;
+        }
+        if (lastLocalX >= 0 && lastLocalY >= 0) {
+            cursor.style.transform = `translate(${imageLeft + lastLocalX - cursorHotX}px, ${imageTop + lastLocalY - cursorHotY}px)`;
+        }
+    };
+
     const syncInputScale = () => {
         const rw = video.videoWidth || video.clientWidth || 1;
         const rh = video.videoHeight || video.clientHeight || 1;
@@ -729,6 +759,9 @@ export async function connectAxonOSWebRTC(opts) {
         if (msg && msg.t === 'pong') {
             inputPingPending = 0;
         }
+        if (msg && msg.t === 'cursor') {
+            updateCursorShape(msg);
+        }
     });
 
     function startInputHealthCheck() {
@@ -796,8 +829,10 @@ export async function connectAxonOSWebRTC(opts) {
         const r = video.getBoundingClientRect();
         const localX = Math.max(0, Math.min(imageWidth, ev.clientX - r.left - imageLeft));
         const localY = Math.max(0, Math.min(imageHeight, ev.clientY - r.top - imageTop));
+        lastLocalX = localX;
+        lastLocalY = localY;
         if (cursor) {
-            cursor.style.transform = `translate(${imageLeft + localX}px, ${imageTop + localY}px)`;
+            cursor.style.transform = `translate(${imageLeft + localX - cursorHotX}px, ${imageTop + localY - cursorHotY}px)`;
         }
         return {
             x: Math.round(localX * inputScaleX),
@@ -861,8 +896,8 @@ export async function connectAxonOSWebRTC(opts) {
         pendingPress = null;
         pressMouseButton({
             button: pending.button,
-            clientX: ev.clientX,
-            clientY: ev.clientY,
+            clientX: pending.clientX,
+            clientY: pending.clientY,
         });
     }
 
@@ -1067,6 +1102,8 @@ export async function connectAxonOSWebRTC(opts) {
         if (currentMouseButtons !== 0) {
             return;
         }
+        lastLocalX = -100;
+        lastLocalY = -100;
         if (cursor) {
             cursor.style.transform = 'translate(-100px,-100px)';
         }
