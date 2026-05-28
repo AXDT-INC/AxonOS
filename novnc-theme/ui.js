@@ -2322,7 +2322,7 @@ const UI = {
                 if (mode === 'locked') {
                     UI._axgtUpdateUsageOverlay('hidden');
                     if (typeof window.axonosOpenWalletTopUpDialog === 'function') {
-                        window.axonosOpenWalletTopUpDialog();
+                        window.axonosOpenWalletTopUpDialog(true);
                     } else {
                         UI.credentials({ detail: { types: ['password'] } });
                     }
@@ -2338,7 +2338,7 @@ const UI = {
             addBtn.addEventListener('click', () => {
                 UI._axgtUpdateUsageOverlay('hidden');
                 if (typeof window.axonosOpenWalletTopUpDialog === 'function') {
-                    window.axonosOpenWalletTopUpDialog();
+                    window.axonosOpenWalletTopUpDialog(true);
                 } else {
                     UI.credentials({ detail: { types: ['password'] } });
                 }
