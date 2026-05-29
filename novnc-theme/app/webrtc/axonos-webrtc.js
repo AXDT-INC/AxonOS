@@ -356,6 +356,9 @@ export async function connectAxonOSWebRTC(opts) {
 
     pc.ontrack = (ev) => {
         console.log('AxonOS WebRTC track', ev.track && ev.track.kind, ev.streams);
+        if (ev.receiver && 'playoutDelayHint' in ev.receiver) {
+            ev.receiver.playoutDelayHint = 0;
+        }
         if (ev.streams && ev.streams[0]) {
             video.srcObject = ev.streams[0];
         } else {

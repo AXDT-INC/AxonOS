@@ -39,6 +39,10 @@ def _load_lib() -> Any:
         ctypes.c_int,
     ]
     lib.XFlush.argtypes = [ctypes.c_void_p]
+    lib.XStringToKeysym.argtypes = [ctypes.c_char_p]
+    lib.XStringToKeysym.restype = ctypes.c_ulong
+    lib.XKeysymToKeycode.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    lib.XKeysymToKeycode.restype = ctypes.c_ubyte
     _lib = lib
     return lib
 
@@ -252,6 +256,9 @@ def _load_libxtst() -> Any:
     # int XTestFakeButtonEvent(Display *display, unsigned int button, Bool is_press, unsigned long delay);
     lib.XTestFakeButtonEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_ulong]
     lib.XTestFakeButtonEvent.restype = ctypes.c_int
+    # int XTestFakeKeyEvent(Display *display, unsigned int keycode, Bool is_press, unsigned long delay);
+    lib.XTestFakeKeyEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_ulong]
+    lib.XTestFakeKeyEvent.restype = ctypes.c_int
     _libxtst = lib
     return lib
 
@@ -390,6 +397,48 @@ def xtest_click(button: int, repeat: int, env: dict[str, str]) -> bool:
             return True
         except Exception as exc:
             logger.warning("XTestFakeButtonEvent (click) failed: %s", exc)
+            if _display_ptr is not None:
+                try:
+                    lib.XCloseDisplay(_display_ptr)
+                except Exception:
+                    pass
+            _display_ptr = None
+            _display_key = None
+            import time
+            _reconnect_cooldown = time.monotonic() + _RECONNECT_INTERVAL
+            return False
+
+
+def xtest_keyevent(key_name: str, is_press: bool, env: dict[str, str]) -> bool:
+    global _display_ptr, _display_key, _reconnect_cooldown
+    with _lock:
+        try:
+            lib = _load_lib()
+            libxtst = _load_libxtst()
+            dpy = _display_ptr
+            if not dpy:
+                import time
+                now = time.monotonic()
+                if now < _reconnect_cooldown:
+                    return False
+                dpy = _open_display(env)
+                if not dpy:
+                    _reconnect_cooldown = now + _RECONNECT_INTERVAL
+                    return False
+            
+            keysym = lib.XStringToKeysym(key_name.encode("utf-8"))
+            if not keysym:
+                return False
+            
+            keycode = lib.XKeysymToKeycode(dpy, keysym)
+            if not keycode:
+                return False
+            
+            libxtst.XTestFakeKeyEvent(dpy, int(keycode), 1 if is_press else 0, 0)
+            lib.XFlush(dpy)
+            return True
+        except Exception as exc:
+            logger.warning("XTestFakeKeyEvent failed: %s", exc)
             if _display_ptr is not None:
                 try:
                     lib.XCloseDisplay(_display_ptr)

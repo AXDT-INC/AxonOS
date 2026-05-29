@@ -178,6 +178,36 @@ def _xdotool_key(obj: dict[str, Any]) -> str:
         "Alt": "Alt_L" if code != "AltRight" else "Alt_R",
         "Meta": "Super_L" if code != "MetaRight" else "Super_R",
         "CapsLock": "Caps_Lock",
+        "-": "minus",
+        "=": "equal",
+        "[": "bracketleft",
+        "]": "bracketright",
+        ";": "semicolon",
+        "'": "apostrophe",
+        ",": "comma",
+        ".": "period",
+        "/": "slash",
+        "\\": "backslash",
+        "`": "grave",
+        "~": "asciitilde",
+        "!": "exclam",
+        "@": "at",
+        "#": "numbersign",
+        "$": "dollar",
+        "%": "percent",
+        "^": "asciicircum",
+        "&": "ampersand",
+        "*": "asterisk",
+        "(": "parenleft",
+        ")": "parenright",
+        "_": "underscore",
+        "+": "plus",
+        ":": "colon",
+        '"': "quotedbl",
+        "<": "less",
+        ">": "greater",
+        "?": "question",
+        "|": "bar",
     }
     if key in by_key:
         return by_key[key]
@@ -744,13 +774,20 @@ def _apply_input_json(raw: str) -> None:
             key_name = _xdotool_key(obj)
             if not key_name:
                 return
+            is_press = (t == "keydown")
+            try:
+                from webrtc.x11_input import xtest_keyevent
+                if xtest_keyevent(key_name, is_press, env):
+                    return
+            except Exception:
+                pass
             if t == "keydown" and len(str(obj.get("key") or "")) == 1 and not any(
                 bool(obj.get(k)) for k in ("ctrlKey", "altKey", "metaKey")
             ):
                 subprocess.run(["xdotool", "type", "--delay", "5", str(obj.get("key"))], check=False, timeout=5, env=env)
                 return
             action = "keydown" if t == "keydown" else "keyup"
-            subprocess.run(["xdotool", action, key_name], check=False, timeout=2, env=env)
+            subprocess.run(["xdotool", action, "--", key_name], check=False, timeout=2, env=env)
     except (OSError, ValueError, subprocess.TimeoutExpired) as e:
         logger.debug("input skip: %s", e)
 

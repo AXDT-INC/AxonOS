@@ -227,7 +227,7 @@ def build_nvenc_ffmpeg_cmd(
             "-preset",
             preset,
             "-tune",
-            "ll",
+            "zerolatency",
             "-rc",
             "cbr",
             "-b:v",
