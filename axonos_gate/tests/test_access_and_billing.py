@@ -448,7 +448,10 @@ class TestGpuDeviceDiscovery(unittest.TestCase):
                 "AXGT_GPU_DEVICE_CACHE_SECONDS": "0",
             },
             clear=False,
-        ), patch.object(session_manager, "_detect_nvidia_smi_gpu_indices", return_value=None):
+        ), patch.object(session_manager, "_detect_nvidia_smi_gpu_indices", return_value=None), patch(
+            "axonos_gate.session_launcher.enumerate_host_gpus_via_http",
+            return_value=None,
+        ):
             self.assertEqual(session_manager._gpu_device_ids(), [0])
 
     def test_auto_detect_disabled_falls_back_to_single_gpu(self):

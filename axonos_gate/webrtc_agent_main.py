@@ -1044,7 +1044,7 @@ async def _run_session(job: dict[str, Any]) -> None:
         nonlocal input_worker_task, input_queue
         if input_queue is not None:
             return input_queue
-        input_queue = asyncio.Queue(maxsize=512)
+        input_queue = asyncio.Queue(maxsize=96)
         loop = asyncio.get_running_loop()
 
         async def input_worker() -> None:
@@ -1173,7 +1173,7 @@ async def _run_session(job: dict[str, Any]) -> None:
     async def poll_client_ice() -> None:
         async with aiohttp.ClientSession() as session:
             url = f"{gate}/api/webrtc/agent/row"
-            while pc.connectionState not in ("failed", "closed"):
+            while pc.connectionState not in ("failed", "closed", "connected", "completed"):
                 try:
                     async with session.get(
                         url,

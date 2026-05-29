@@ -501,7 +501,7 @@ export async function connectAxonOSWebRTC(opts) {
             }
         }
         if (!answerApplied) {
-            await new Promise((r) => setTimeout(r, 280));
+            await new Promise((r) => setTimeout(r, 800));
         }
     }
 
@@ -649,10 +649,10 @@ export async function connectAxonOSWebRTC(opts) {
     /** @type {Record<string, unknown> | null} */
     let pendingMovePayload = null;
     let moveFlushTimer = null;
+    let moveFlushRaf = null;
     const MOVE_FLUSH_MS = 50;
-    const MOVE_FLUSH_DRAG_MS = 20;
-    const MAX_INPUT_BUFFERED = 32768;
-    const CONGESTED_INPUT_BUFFERED = 16384;
+    const MAX_INPUT_BUFFERED = 8192;
+    const CONGESTED_INPUT_BUFFERED = 4096;
 
     function inputCongested() {
         if (dcInput.bufferedAmount > CONGESTED_INPUT_BUFFERED) {
@@ -666,25 +666,40 @@ export async function connectAxonOSWebRTC(opts) {
             clearTimeout(moveFlushTimer);
             moveFlushTimer = null;
         }
+        if (moveFlushRaf !== null) {
+            cancelAnimationFrame(moveFlushRaf);
+            moveFlushRaf = null;
+        }
     }
 
     function flushPendingMove() {
         moveFlushTimer = null;
+        moveFlushRaf = null;
         if (!pendingMovePayload) {
+            return;
+        }
+        const ch = moveChannel();
+        if (ch.bufferedAmount > MAX_INPUT_BUFFERED) {
+            if (moveFlushTimer === null) {
+                moveFlushTimer = setTimeout(flushPendingMove, 16);
+            }
             return;
         }
         const payload = pendingMovePayload;
         pendingMovePayload = null;
-        sendOnChannel(moveChannel(), payload);
+        sendOnChannel(ch, payload);
     }
 
     function queueMove(payload, urgent) {
         pendingMovePayload = payload;
-        if (moveFlushTimer !== null) {
+        if (moveFlushTimer !== null || moveFlushRaf !== null) {
             return;
         }
-        const delay = urgent ? MOVE_FLUSH_DRAG_MS : MOVE_FLUSH_MS;
-        moveFlushTimer = setTimeout(flushPendingMove, delay);
+        if (urgent) {
+            moveFlushRaf = requestAnimationFrame(flushPendingMove);
+        } else {
+            moveFlushTimer = setTimeout(flushPendingMove, MOVE_FLUSH_MS);
+        }
     }
 
     /** Send click/key/wheel without flushing coalesced moves into a congested SCTP queue. */
@@ -701,7 +716,7 @@ export async function connectAxonOSWebRTC(opts) {
             return;
         }
         if (ch.bufferedAmount > MAX_INPUT_BUFFERED) {
-            if (moveFlushTimer === null) {
+            if (moveFlushTimer === null && moveFlushRaf === null) {
                 moveFlushTimer = setTimeout(() => {
                     moveFlushTimer = null;
                     if (
@@ -710,7 +725,7 @@ export async function connectAxonOSWebRTC(opts) {
                     ) {
                         flushPendingMove();
                     }
-                }, 50);
+                }, 16);
             }
             return;
         }

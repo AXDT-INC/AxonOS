@@ -26,6 +26,8 @@ class WebrtcCaptureTests(unittest.TestCase):
         self.assertEqual(capture_backend_name(), "mss")
         os.environ["WEBRTC_CAPTURE_BACKEND"] = "gpu"
         self.assertEqual(capture_backend_name(), "nvenc")
+        os.environ["WEBRTC_CAPTURE_BACKEND"] = "capture-sdk"
+        self.assertEqual(capture_backend_name(), "nvfbc")
         os.environ["WEBRTC_CAPTURE_BACKEND"] = "auto"
         self.assertEqual(capture_backend_name(), "auto")
 
@@ -37,7 +39,7 @@ class WebrtcCaptureTests(unittest.TestCase):
         os.environ["WEBRTC_CAPTURE_BITRATE"] = "12000000"
         self.assertEqual(capture_bitrate_bps(), 12_000_000)
         os.environ["WEBRTC_CAPTURE_BITRATE"] = "999999999"
-        self.assertEqual(capture_bitrate_bps(), 20_000_000)
+        self.assertEqual(capture_bitrate_bps(), 30_000_000)
         os.environ["WEBRTC_CAPTURE_BITRATE"] = "8000000"
         os.environ["WEBRTC_CAPTURE_FPS"] = "30"
         self.assertEqual(capture_bitrate_bps(), 8_000_000)
@@ -45,7 +47,13 @@ class WebrtcCaptureTests(unittest.TestCase):
     def test_default_fps(self) -> None:
         from webrtc.capture import capture_fps
 
-        self.assertEqual(capture_fps(), 15.0)
+        self.assertEqual(capture_fps(), 30.0)
+
+    def test_default_nvenc_latency_settings(self) -> None:
+        from webrtc.capture import capture_nvenc_low_latency, capture_nvenc_preset
+
+        self.assertEqual(capture_nvenc_preset(), "p1")
+        self.assertTrue(capture_nvenc_low_latency())
 
     def test_x11grab_input(self) -> None:
         from webrtc.capture import x11grab_input
@@ -82,6 +90,10 @@ class WebrtcCaptureTests(unittest.TestCase):
         self.assertIn("h264_nvenc", joined)
         self.assertIn(":0.0+0,0", joined)
         self.assertIn("-b:v 8000000", joined)
+        self.assertIn("-rc-lookahead 0", joined)
+        self.assertIn("-zerolatency 1", joined)
+        self.assertIn("-spatial-aq 1", joined)
+        self.assertIn("-flush_packets 1", joined)
         self.assertNotIn("scale=", joined)
 
     def test_build_nvenc_ffmpeg_cmd_scales(self) -> None:
@@ -100,15 +112,50 @@ class WebrtcCaptureTests(unittest.TestCase):
         )
         self.assertIn("scale=1920:1080:flags=lanczos", cmd)
 
+    def test_build_nvfbc_streamer_cmd(self) -> None:
+        from webrtc.capture import build_nvfbc_streamer_cmd
+
+        cmd = build_nvfbc_streamer_cmd(
+            src_w=1920,
+            src_h=1080,
+            out_w=1920,
+            out_h=1080,
+            fps=30.0,
+            bitrate_bps=8_000_000,
+            preset="llhp",
+        )
+        joined = " ".join(cmd)
+        self.assertIn("nvfbc_nvenc_streamer", joined)
+        self.assertIn("--size 1920x1080", joined)
+        self.assertIn("--bitrate 8000000", joined)
+        self.assertIn("--preset llhp", joined)
+        self.assertIn("--mux mpegts", joined)
+
+    @mock.patch("webrtc.capture.nvfbc_runtime_ok", return_value=False)
     @mock.patch("webrtc.capture.nvenc_runtime_ok", return_value=False)
-    def test_resolve_backend_falls_back_to_mss(self, _mock_nvenc: mock.Mock) -> None:
+    def test_resolve_backend_falls_back_to_mss(
+        self, _mock_nvenc: mock.Mock, _mock_nvfbc: mock.Mock
+    ) -> None:
         from webrtc.capture import resolve_capture_backend
 
         os.environ["WEBRTC_CAPTURE_BACKEND"] = "auto"
         self.assertEqual(resolve_capture_backend({}), "mss")
 
+    @mock.patch("webrtc.capture.nvfbc_runtime_ok", return_value=True)
     @mock.patch("webrtc.capture.nvenc_runtime_ok", return_value=True)
-    def test_resolve_backend_auto_prefers_nvenc(self, _mock_nvenc: mock.Mock) -> None:
+    def test_resolve_backend_auto_prefers_nvfbc(
+        self, _mock_nvenc: mock.Mock, _mock_nvfbc: mock.Mock
+    ) -> None:
+        from webrtc.capture import resolve_capture_backend
+
+        os.environ["WEBRTC_CAPTURE_BACKEND"] = "auto"
+        self.assertEqual(resolve_capture_backend({}), "nvfbc")
+
+    @mock.patch("webrtc.capture.nvfbc_runtime_ok", return_value=False)
+    @mock.patch("webrtc.capture.nvenc_runtime_ok", return_value=True)
+    def test_resolve_backend_auto_prefers_nvenc(
+        self, _mock_nvenc: mock.Mock, _mock_nvfbc: mock.Mock
+    ) -> None:
         from webrtc.capture import resolve_capture_backend
 
         os.environ["WEBRTC_CAPTURE_BACKEND"] = "auto"
@@ -134,7 +181,7 @@ class WebrtcCaptureTests(unittest.TestCase):
 
         with mock.patch("aiortc.RTCRtpSender") as sender:
             sender.getCapabilities.return_value = mock.Mock(codecs=[FakeCap()])
-            prefer_h264_for_pc(pc, "nvenc")
+            prefer_h264_for_pc(pc, "nvfbc")
 
         transceiver.setCodecPreferences.assert_called_once()
 

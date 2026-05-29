@@ -38,6 +38,7 @@ dist/
 *.deb
 *.dmg
 *.exe
+vendor/
 
 # PyInstaller
 *.manifest

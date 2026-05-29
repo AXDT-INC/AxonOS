@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import re
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass
@@ -19,27 +20,53 @@ def capture_backend_name() -> str:
     raw = (os.getenv("WEBRTC_CAPTURE_BACKEND") or "auto").strip().lower()
     if raw in ("mss", "cpu", "software"):
         return "mss"
+    if raw in ("nvfbc", "fbc", "capture-sdk"):
+        return "nvfbc"
     if raw in ("nvenc", "h264", "gpu"):
         return "nvenc"
     return "auto"
 
 
 def capture_bitrate_bps() -> int:
-    raw = (os.getenv("WEBRTC_CAPTURE_BITRATE") or "8000000").strip()
+    raw = (os.getenv("WEBRTC_CAPTURE_BITRATE") or "12000000").strip()
     try:
         n = int(raw)
     except ValueError:
-        n = 8_000_000
-    return max(1_000_000, min(20_000_000, n))
+        n = 12_000_000
+    return max(1_000_000, min(30_000_000, n))
 
 
 def capture_nvenc_low_latency() -> bool:
-    raw = (os.getenv("WEBRTC_CAPTURE_LOW_LATENCY") or "false").strip().lower()
+    raw = (os.getenv("WEBRTC_CAPTURE_LOW_LATENCY") or "true").strip().lower()
     return raw in ("1", "true", "yes", "on")
 
 
 def capture_nvenc_preset() -> str:
-    return (os.getenv("WEBRTC_CAPTURE_NVENC_PRESET") or "p4").strip() or "p4"
+    return (os.getenv("WEBRTC_CAPTURE_NVENC_PRESET") or "p1").strip() or "p1"
+
+
+def capture_nvenc_tune() -> str:
+    raw = (os.getenv("WEBRTC_CAPTURE_NVENC_TUNE") or "ll").strip().lower()
+    if raw in ("hq", "ll", "ull", "lossless"):
+        return raw
+    return "ll"
+
+
+def capture_nvfbc_bin() -> str:
+    return (
+        os.getenv("WEBRTC_CAPTURE_NVFBC_BIN") or "/usr/local/bin/nvfbc_nvenc_streamer"
+    ).strip() or "/usr/local/bin/nvfbc_nvenc_streamer"
+
+
+def capture_nvfbc_preset() -> str:
+    raw = (os.getenv("WEBRTC_CAPTURE_NVFBC_PRESET") or "").strip().lower()
+    if raw in ("llhp", "llhq", "ll", "hp", "hq", "default"):
+        return raw
+    # Map the existing FFmpeg-oriented p1 default to the nearest old SDK preset.
+    nvenc = capture_nvenc_preset().lower()
+    if nvenc in ("p1", "p2", "hp"):
+        return "llhp"
+    return "llhq"
 
 
 def capture_max_width() -> int:
@@ -53,17 +80,17 @@ def capture_max_width() -> int:
 def capture_max_stale_frames() -> int:
     raw = (os.getenv("WEBRTC_CAPTURE_MAX_STALE_FRAMES") or "1").strip()
     try:
-        return max(0, min(8, int(raw)))
+        return max(0, min(60, int(raw)))
     except ValueError:
         return 1
 
 
 def capture_fps() -> float:
-    raw = (os.getenv("WEBRTC_CAPTURE_FPS") or "15").strip()
+    raw = (os.getenv("WEBRTC_CAPTURE_FPS") or "30").strip()
     try:
         return float(raw)
     except ValueError:
-        return 15.0
+        return 30.0
 
 
 def x11grab_input(display: str) -> str:
@@ -157,15 +184,44 @@ def nvenc_runtime_ok(env: dict[str, str] | None = None) -> bool:
     return p.returncode == 0
 
 
+def nvfbc_runtime_ok(env: dict[str, str] | None = None) -> bool:
+    raw = capture_nvfbc_bin()
+    path = raw if os.path.sep in raw else shutil.which(raw, path=(env or os.environ).get("PATH"))
+    if not path:
+        return False
+    try:
+        p = subprocess.run(
+            [path, "--help"],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.debug("nvfbc runtime probe failed: %s", exc)
+        return False
+    return p.returncode == 0
+
+
 def resolve_capture_backend(env: dict[str, str]) -> str:
     requested = capture_backend_name()
     if requested == "mss":
+        return "mss"
+    if requested == "nvfbc":
+        if nvfbc_runtime_ok(env):
+            return "nvfbc"
+        logger.warning("WEBRTC_CAPTURE_BACKEND=nvfbc but NvFBC streamer unavailable; falling back")
+        if nvenc_runtime_ok(env):
+            return "nvenc"
         return "mss"
     if requested == "nvenc":
         if nvenc_runtime_ok(env):
             return "nvenc"
         logger.warning("WEBRTC_CAPTURE_BACKEND=nvenc but NVENC unavailable; falling back to mss")
         return "mss"
+    if nvfbc_runtime_ok(env):
+        return "nvfbc"
     if nvenc_runtime_ok(env):
         return "nvenc"
     return "mss"
@@ -194,8 +250,11 @@ def build_nvenc_ffmpeg_cmd(
     fps_i = max(1, int(round(fps)))
     gop = fps_i
     frame_bits = max(bitrate_bps // fps_i, 100_000)
-    # ~3 frames of CBR buffer — sharp enough at 16M/30fps without 0.5s+ encoder delay.
-    bufsize = str(max(frame_bits * 3, 300_000))
+    low_latency = capture_nvenc_low_latency()
+    # 2-3 frames keeps rate control from crushing detailed desktop updates while
+    # staying small enough that VBV cannot build a visible backlog.
+    buf_frames = 1 if low_latency else 3
+    bufsize = str(max(frame_bits * buf_frames, 300_000))
     # x11grab thread_queue_size is in frames; 512 @ 30fps ≈ 17s of capture latency.
     queue_size = "4"
     bitrate = str(bitrate_bps)
@@ -227,7 +286,7 @@ def build_nvenc_ffmpeg_cmd(
             "-preset",
             preset,
             "-tune",
-            "zerolatency",
+            capture_nvenc_tune(),
             "-rc",
             "cbr",
             "-b:v",
@@ -240,15 +299,75 @@ def build_nvenc_ffmpeg_cmd(
             str(gop),
             "-bf",
             "0",
+            "-rc-lookahead",
+            "0",
+            "-zerolatency",
+            "1",
+            "-spatial-aq",
+            "1",
+            "-temporal-aq",
+            "1",
+            "-aq-strength",
+            "8",
             "-pix_fmt",
             "yuv420p",
             "-profile:v",
             "baseline",
+            "-flush_packets",
+            "1",
+            "-muxdelay",
+            "0",
+            "-muxpreload",
+            "0",
             "-f",
             "mpegts",
             "pipe:1",
         ]
     )
+    return cmd
+
+
+def build_nvfbc_streamer_cmd(
+    *,
+    src_w: int,
+    src_h: int,
+    out_w: int,
+    out_h: int,
+    fps: float,
+    bitrate_bps: int,
+    preset: str,
+    draw_mouse: bool = True,
+) -> list[str]:
+    fps_i = max(1, int(round(fps)))
+    gop = fps_i
+    size_w = out_w if out_w > 0 else src_w
+    size_h = out_h if out_h > 0 else src_h
+    cmd = [
+        capture_nvfbc_bin(),
+        "--size",
+        f"{size_w}x{size_h}",
+        "--fps",
+        str(fps_i),
+        "--bitrate",
+        str(bitrate_bps),
+        "--max-bitrate",
+        str(bitrate_bps),
+        "--vbv-frames",
+        "1" if capture_nvenc_low_latency() else "3",
+        "--gop",
+        str(gop),
+        "--timeout-ms",
+        str(max(1, int(round(1000 / fps_i)))),
+        "--preset",
+        preset,
+        "--profile",
+        "baseline",
+        "--mux",
+        "mpegts",
+        "--quiet",
+    ]
+    if not draw_mouse:
+        cmd.append("--no-cursor")
     return cmd
 
 
@@ -481,6 +600,80 @@ def open_nvenc_capture(
     return CaptureHandle(track=track, backend="nvenc", cleanup=cleanup)
 
 
+def open_nvfbc_capture(
+    *,
+    session_id: str,
+    env: dict[str, str],
+    target_fps: float,
+    max_w: int,
+    bitrate_bps: int,
+    preset: str,
+    local_cursor: bool = False,
+) -> CaptureHandle:
+    from aiortc.contrib.media import MediaPlayer
+
+    src_w, src_h, out_w, out_h = scaled_output_size(*probe_display_size(env), max_w)
+    cmd = build_nvfbc_streamer_cmd(
+        src_w=src_w,
+        src_h=src_h,
+        out_w=out_w,
+        out_h=out_h,
+        fps=target_fps,
+        bitrate_bps=bitrate_bps,
+        preset=preset,
+        draw_mouse=not local_cursor,
+    )
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+    )
+    if proc.stdout is None:
+        _terminate_process(proc)
+        raise RuntimeError("NvFBC capture did not provide stdout pipe")
+
+    player = MediaPlayer(
+        proc.stdout,
+        format="mpegts",
+        options={
+            "fflags": "nobuffer+flush_packets+discardcorrupt",
+            "flags": "low_delay",
+            "probesize": "32",
+            "analyzeduration": "0",
+            "max_delay": "0",
+        },
+        decode=False,
+    )
+    player._throttle_playback = False
+    inner = player.video
+    if inner is None:
+        _terminate_process(proc)
+        raise RuntimeError("NvFBC capture produced no video track")
+    track = LiveNvencVideoTrack(inner).track
+
+    logger.info(
+        "WebRTC nvfbc capture session=%s src=%sx%s out=%sx%s fps=%s bitrate=%s preset=%s",
+        session_id[:16],
+        src_w,
+        src_h,
+        out_w,
+        out_h,
+        int(round(target_fps)),
+        bitrate_bps,
+        preset,
+    )
+
+    def cleanup() -> None:
+        try:
+            track.stop()
+        except Exception:
+            pass
+        _terminate_process(proc)
+
+    return CaptureHandle(track=track, backend="nvfbc", cleanup=cleanup)
+
+
 def _h264_profile_ids_from_offer(offer_sdp: str) -> list[str]:
     profiles: list[str] = []
     seen: set[str] = set()
@@ -515,7 +708,7 @@ def prefer_h264_for_pc(
     pc: Any, backend: str, offer_sdp: str | None = None
 ) -> None:
     """NVENC sends pre-encoded H.264; force H.264 in SDP before setRemoteDescription."""
-    if backend != "nvenc":
+    if backend not in ("nvenc", "nvfbc"):
         return
     try:
         from aiortc import RTCRtpSender
@@ -562,6 +755,23 @@ def open_capture(
     bound_w = max_w if max_w is not None else capture_max_width()
     local_cursor = _local_cursor_enabled()
     backend = resolve_capture_backend(env)
+    if backend == "nvfbc":
+        try:
+            return open_nvfbc_capture(
+                session_id=session_id,
+                env=env,
+                target_fps=fps,
+                max_w=bound_w,
+                bitrate_bps=bitrate_bps if bitrate_bps is not None else capture_bitrate_bps(),
+                preset=capture_nvfbc_preset(),
+                local_cursor=local_cursor,
+            )
+        except Exception:
+            logger.exception("NvFBC capture setup failed session=%s; falling back", session_id[:16])
+            if nvenc_runtime_ok(env):
+                backend = "nvenc"
+            else:
+                backend = "mss"
     if backend == "nvenc":
         try:
             return open_nvenc_capture(

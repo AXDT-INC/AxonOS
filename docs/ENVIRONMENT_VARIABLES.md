@@ -337,13 +337,16 @@ Configuration: [`axonos_gate/webrtc/config.py`](../axonos_gate/webrtc/config.py)
 |----------|---------|-------------|
 | `WEBRTC_CAPTURE_DISPLAY` | `:0` | X display to capture. |
 | `WEBRTC_CAPTURE_MAX_WIDTH` | `1920` | Scale bound for capture. |
-| `WEBRTC_CAPTURE_FPS` | `15` | Target capture frame rate. Use `30` only on paths with headroom (watch `packetsLost` in webrtc-internals). |
-| `WEBRTC_CAPTURE_BACKEND` | `auto` | `auto` (NVENC when available, else MSS), `mss`, or `nvenc`. |
-| `WEBRTC_CAPTURE_BITRATE` | `8000000` | NVENC H.264 target bitrate (1M–20M bps). Default 8 Mbps at 1080p15 keeps SCTP input responsive. |
-| `WEBRTC_CAPTURE_LOW_LATENCY` | `false` | When `true`, uses minimal encoder buffer (sharper reaction, more blur under motion). Default favors quality. |
-| `WEBRTC_CAPTURE_NVENC_PRESET` | `p4` | FFmpeg `h264_nvenc` preset (`p1`–`p7`). |
+| `WEBRTC_CAPTURE_FPS` | `30` | Target capture frame rate. Use `15` for constrained TURN/mobile paths; watch `packetsLost` in webrtc-internals. |
+| `WEBRTC_CAPTURE_BACKEND` | `auto` | `auto` (NvFBC streamer when installed, else NVENC, else MSS), `nvfbc`, `nvenc`, or `mss`. |
+| `WEBRTC_CAPTURE_BITRATE` | `12000000` | NVENC H.264 target bitrate (1M–30M bps). 10-14 Mbps is the normal 1080p30 range; lower it when packet loss climbs. |
+| `WEBRTC_CAPTURE_LOW_LATENCY` | `true` | When `true`, uses a minimal encoder buffer. Set `false` for a little more quality cushion at the cost of latency. |
+| `WEBRTC_CAPTURE_NVENC_PRESET` | `p1` | FFmpeg `h264_nvenc` preset (`p1`–`p7`). `p1` is lowest latency; `p4` is cleaner but can lag. |
+| `WEBRTC_CAPTURE_NVENC_TUNE` | `ll` | NVENC tune (`ll`, `ull`, `hq`, `lossless`). Use `ull` only when latency matters more than motion quality. |
+| `WEBRTC_CAPTURE_NVFBC_BIN` | `/usr/local/bin/nvfbc_nvenc_streamer` | Native NvFBC→NVENC streamer path. Requires the NVIDIA Capture SDK-built helper. |
+| `WEBRTC_CAPTURE_NVFBC_PRESET` | `llhp` | Native streamer preset (`llhp`, `llhq`, `ll`, `hp`, `hq`, `default`). `llhp` is the lowest-latency starting point. |
 | `WEBRTC_CAPTURE_MAX_STALE_FRAMES` | `1` | NVENC live track: max extra frames to skip when the send queue runs ahead. `0` disables skip-ahead (may add latency). |
-| `WEBRTC_LOCAL_CURSOR` | `auto` | Browser overlay cursor: `auto` (off for NVENC/auto, on for MSS), `true`, or `false`. NVENC embeds the host cursor via x11grab. |
+| `WEBRTC_LOCAL_CURSOR` | `auto` | Browser overlay cursor: `auto` (off for H.264 capture, on for MSS), `true`, or `false`. H.264 capture embeds the host cursor. |
 | `WEBRTC_CLIPBOARD_MAX_BYTES` | `524288` | Max clipboard payload (floor 4096). |
 | `WEBRTC_CLIPBOARD_POLL_PRIMARY` | `false` | Include X PRIMARY selection (noisy); default CLIPBOARD only. |
 | `XAUTHORITY` | `/home/aXonian/.Xauthority` | X11 auth file for capture subprocesses. |

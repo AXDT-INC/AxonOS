@@ -57,22 +57,23 @@ For **WebSocket-only** proxies, signaling still uses **HTTPS fetch** on the same
 | Stuck on “Connecting” | STUN/TURN reachability; restrictive NAT → configure TURN. |
 | 403 on signaling | Auth token or session claim missing/expired. |
 | Agent idle | `WEBRTC_AGENT_INTERNAL_KEY` must match between environment for gate and agent. |
-| Scroll blur / hazy video | Default **1080p @ 15 fps, 8 Mbps** NVENC H.264. Raise `WEBRTC_CAPTURE_FPS` (e.g. `30`) and/or `WEBRTC_CAPTURE_BITRATE` only if the path stays stable in `chrome://webrtc-internals` (flat `packetsLost`, low per-frame jitter buffer delay). |
-| Lag / clicks stop / jitter buffer climbs | Path saturated — defaults favor stable 1080p15 @ 8M. Do not raise bitrate until `packetsLost` and `nackCount` stay flat. Reconnect after deploy; hard-refresh the page. |
-| Black screen, ICE connected | In `chrome://webrtc-internals`, if **inbound video codec is VP8** while the agent runs **ffmpeg h264_nvenc**, SDP negotiated the wrong codec. Agent + browser must prefer **H.264** (fixed in `capture.prefer_h264_for_pc` and `axonos-webrtc.js`). Hard-refresh the page after deploy. |
-| Two cursors / sluggish clicks | NVENC embeds the host cursor (`x11grab -draw_mouse 1`); disable the browser overlay with `WEBRTC_LOCAL_CURSOR=auto` (default) or `false`. Click lag from mousemove floods is reduced by server-side move coalescing and client throttling. |
+| Scroll blur / hazy video | Default H.264 capture is tuned for **lowest-latency 1080p desktop** (`p1`/`llhp`, 12 Mbps, one-frame buffer). If latency is clean, try `WEBRTC_CAPTURE_BITRATE=14000000`; if loss appears, use `WEBRTC_CAPTURE_MAX_WIDTH=1600` or `1280` rather than pushing bitrate higher. |
+| Lag / clicks stop / jitter buffer climbs | Path saturated or buffering. Confirm `packetsLost`, `nackCount`, and jitter buffer delay in `chrome://webrtc-internals`. Keep `WEBRTC_CAPTURE_NVENC_PRESET=p1` and `WEBRTC_CAPTURE_LOW_LATENCY=true`, then try `WEBRTC_CAPTURE_BITRATE=8000000` or `WEBRTC_CAPTURE_MAX_WIDTH=1600`; reconnect after deploy and hard-refresh the page. |
+| Black screen, ICE connected | In `chrome://webrtc-internals`, if **inbound video codec is VP8** while the agent runs H.264 capture, SDP negotiated the wrong codec. Agent + browser must prefer **H.264** (fixed in `capture.prefer_h264_for_pc` and `axonos-webrtc.js`). Hard-refresh the page after deploy. |
+| Two cursors / sluggish clicks | H.264 capture embeds the host cursor; disable the browser overlay with `WEBRTC_LOCAL_CURSOR=auto` (default) or `false`. Click lag from mousemove floods is reduced by server-side move coalescing and client throttling. |
 | Multi-second video/input lag | aiortc `MediaPlayer(mpegts pipe)` treated live NVENC as a file and paced frames to timestamps; combined with large `thread_queue_size` this stacked ~10s delay. Fixed via `_throttle_playback = false`, `thread_queue_size=4`, and optional stale-packet dropping (`WEBRTC_CAPTURE_MAX_STALE_FRAMES`, default `1`). Reconnect after deploy. |
-| Still 30 fps / frame loss at 1080p | Confirm ffmpeg shows `-framerate 15`. The agent must use `capture.capture_fps()` (not a duplicate default). If `packetsLost` still climbs through TURN, try `WEBRTC_CAPTURE_BITRATE=6000000` before lowering resolution. |
+| Still frame loss at 1080p30 | Confirm ffmpeg shows the intended `-framerate` and bitrate. If `packetsLost` climbs through TURN, try `WEBRTC_CAPTURE_BITRATE=6000000` to `8000000` and/or `WEBRTC_CAPTURE_MAX_WIDTH=1280`. |
 
 ## Capture backends
 
 | Backend | Path | When |
 |---------|------|------|
+| `nvfbc` | Native NvFBC → NVENC → MPEG-TS → WebRTC H.264 | Best low-latency GPU desktop path when the Capture SDK helper is installed |
 | `nvenc` | FFmpeg `x11grab` → `h264_nvenc` → WebRTC H.264 | GPU with NVENC (`libnvidia-encode`); sharp motion, ~100–300 MB VRAM |
 | `mss` | Python `mss` → software VP8 (~0.5–1.5 Mbps) | Fallback when NVENC unavailable |
-| `auto` | Try NVENC, else MSS | **Default** |
+| `auto` | Try NvFBC, then NVENC, else MSS | **Default** |
 
-Set `WEBRTC_CAPTURE_BACKEND=nvenc` to require GPU encode (falls back to MSS with a warning if NVENC probe fails).
+Set `WEBRTC_CAPTURE_BACKEND=nvfbc` to require the native GPU capture path (falls back with a warning if the helper is missing). Build `tools/nvfbc_nvenc_streamer.c` against the NVIDIA Capture SDK headers and install it at `/usr/local/bin/nvfbc_nvenc_streamer`.
 
 ## Input lifecycle validation
 

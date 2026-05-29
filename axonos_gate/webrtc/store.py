@@ -23,7 +23,43 @@ def _db_url() -> Optional[str]:
     return os.getenv("AXGT_CHALLENGE_DB_URL") or None
 
 
+_pool = None
+_pool_lock = threading.Lock()
+_active_pool_conns = set()
+
+
+def _get_pool():
+    global _pool
+    if _pool is not None:
+        return _pool
+    with _pool_lock:
+        if _pool is not None:
+            return _pool
+        url = _db_url()
+        if not url:
+            return None
+        try:
+            from psycopg2.pool import ThreadedConnectionPool
+
+            _pool = ThreadedConnectionPool(2, 20, url)
+            logger.info("Created WebRTC store ThreadedConnectionPool")
+            return _pool
+        except Exception as e:
+            logger.warning("webrtc store: failed to create connection pool: %s", e)
+            return None
+
+
 def _conn():
+    pool = _get_pool()
+    if pool:
+        try:
+            conn = pool.getconn()
+            with _pool_lock:
+                _active_pool_conns.add(id(conn))
+            return conn
+        except Exception as e:
+            logger.warning("webrtc store: getconn failed: %s", e)
+    # Fallback to direct connection if pool couldn't be created
     url = _db_url()
     if not url:
         return None
@@ -32,8 +68,30 @@ def _conn():
 
         return psycopg2.connect(url)
     except Exception as e:
-        logger.warning("webrtc store: connect failed: %s", e)
+        logger.warning("webrtc store: connect fallback failed: %s", e)
         return None
+
+
+def _close_conn(c):
+    if c is None:
+        return
+    is_pool_conn = False
+    with _pool_lock:
+        if id(c) in _active_pool_conns:
+            _active_pool_conns.remove(id(c))
+            is_pool_conn = True
+    if is_pool_conn:
+        pool = _get_pool()
+        if pool:
+            try:
+                pool.putconn(c)
+                return
+            except Exception as e:
+                logger.warning("webrtc store: putconn failed: %s", e)
+    try:
+        c.close()
+    except Exception:
+        pass
 
 
 def ensure_table() -> bool:
@@ -81,7 +139,7 @@ def ensure_table() -> bool:
             c.rollback()
             return False
         finally:
-            c.close()
+            _close_conn(c)
 
 
 def _new_id() -> str:
@@ -115,7 +173,7 @@ def create_session(wallet_norm: str) -> Optional[str]:
         c.rollback()
         return None
     finally:
-        c.close()
+        _close_conn(c)
 
 
 def get_row(session_id: str) -> Optional[dict[str, Any]]:
@@ -139,7 +197,7 @@ def get_row(session_id: str) -> Optional[dict[str, Any]]:
                 return None
             return _row_to_dict(row)
     finally:
-        c.close()
+        _close_conn(c)
 
 
 def _row_to_dict(row) -> dict[str, Any]:
@@ -193,7 +251,7 @@ def set_offer(session_id: str, wallet_norm: str, offer_sdp: str, offer_type: str
             pass
         return False
     finally:
-        c.close()
+        _close_conn(c)
 
 
 def set_answer(session_id: str, answer_sdp: str, answer_type: str) -> bool:
@@ -228,7 +286,7 @@ def set_answer(session_id: str, answer_sdp: str, answer_type: str) -> bool:
             pass
         return False
     finally:
-        c.close()
+        _close_conn(c)
 
 
 def append_client_ice(session_id: str, wallet_norm: str, candidates: list[dict[str, Any]]) -> bool:
@@ -275,7 +333,7 @@ def append_client_ice(session_id: str, wallet_norm: str, candidates: list[dict[s
             pass
         return False
     finally:
-        c.close()
+        _close_conn(c)
 
 
 def append_server_ice(session_id: str, candidates: list[dict[str, Any]]) -> bool:
@@ -321,7 +379,7 @@ def append_server_ice(session_id: str, candidates: list[dict[str, Any]]) -> bool
             pass
         return False
     finally:
-        c.close()
+        _close_conn(c)
 
 
 def _parse_json_list(raw: Optional[str]) -> list[Any]:
@@ -356,7 +414,7 @@ def mark_failed(session_id: str, message: str) -> None:
         logger.warning("webrtc mark_failed: %s", e)
         c.rollback()
     finally:
-        c.close()
+        _close_conn(c)
 
 
 def close_session(session_id: str, wallet_norm: Optional[str] = None) -> None:
@@ -383,7 +441,7 @@ def close_session(session_id: str, wallet_norm: Optional[str] = None) -> None:
         logger.warning("webrtc close_session: %s", e)
         c.rollback()
     finally:
-        c.close()
+        _close_conn(c)
 
 
 def prune_expired() -> None:
@@ -398,7 +456,7 @@ def prune_expired() -> None:
             cur.execute(f"DELETE FROM {_TABLE} WHERE expires_at < %s", (now,))
         c.commit()
     finally:
-        c.close()
+        _close_conn(c)
 
 
 def fetch_next_pending_offer_for_agent() -> Optional[dict[str, Any]]:
@@ -454,7 +512,7 @@ def fetch_next_pending_offer_for_agent() -> Optional[dict[str, Any]]:
         c.rollback()
         return None
     finally:
-        c.close()
+        _close_conn(c)
 
 
 def reset_agent_stale(sid: str) -> None:
@@ -478,4 +536,4 @@ def reset_agent_stale(sid: str) -> None:
             )
         c.commit()
     finally:
-        c.close()
+        _close_conn(c)
