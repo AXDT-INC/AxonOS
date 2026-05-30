@@ -110,6 +110,8 @@ services:
     ports:
       - "${AXONOS_PUBLISH_NOVNC:-6080}:6080"
       - "${AXONOS_PUBLISH_GATE:-8889}:8889"
+      # UDP range for WebRTC ICE srflx is published per-session by the launcher,
+      # not here — base container does not run the WebRTC agent in multi-user mode.
     # No GPUs on base when AXGT_USER_CONTAINER_ENABLED: axgt-session-* uses --gpus device=N.
     # Reserving all GPUs here prevents session Xorg from binding :0 (WebRTC capture fails).
     # GPU pool auto-detect: base axonos runs nvidia-smi if available; otherwise the gate calls

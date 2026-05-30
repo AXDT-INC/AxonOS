@@ -249,15 +249,19 @@ def build_nvenc_ffmpeg_cmd(
     disp = x11grab_input(display)
     fps_i = max(1, int(round(fps)))
     gop = fps_i
-    frame_bits = max(bitrate_bps // fps_i, 100_000)
     low_latency = capture_nvenc_low_latency()
-    # 2-3 frames keeps rate control from crushing detailed desktop updates while
-    # staying small enough that VBV cannot build a visible backlog.
+    # VBR burst ceiling: 1.5× target lets the encoder spend extra bits on fast
+    # motion (window drags, scrolling) without exceeding link capacity on average.
+    maxrate_bps = int(bitrate_bps * 1.5)
+    max_frame_bits = max(maxrate_bps // fps_i, 100_000)
+    # 1-frame VBV in low-latency mode: encoder cannot hold back output waiting
+    # for future frames, keeping pipeline latency at a single frame interval.
     buf_frames = 1 if low_latency else 3
-    bufsize = str(max(frame_bits * buf_frames, 300_000))
+    bufsize = str(max(max_frame_bits * buf_frames, 300_000))
     # x11grab thread_queue_size is in frames; 512 @ 30fps ≈ 17s of capture latency.
     queue_size = "4"
     bitrate = str(bitrate_bps)
+    maxrate = str(maxrate_bps)
     cmd = [
         "ffmpeg",
         "-hide_banner",
@@ -288,13 +292,15 @@ def build_nvenc_ffmpeg_cmd(
             "-tune",
             capture_nvenc_tune(),
             "-rc",
-            "cbr",
+            "vbr",
             "-b:v",
             bitrate,
             "-maxrate",
-            bitrate,
+            maxrate,
             "-bufsize",
             bufsize,
+            "-cq",
+            "26",
             "-g",
             str(gop),
             "-bf",
@@ -308,11 +314,11 @@ def build_nvenc_ffmpeg_cmd(
             "-temporal-aq",
             "1",
             "-aq-strength",
-            "8",
+            "4",
             "-pix_fmt",
             "yuv420p",
             "-profile:v",
-            "baseline",
+            "high",
             "-flush_packets",
             "1",
             "-muxdelay",
@@ -361,7 +367,7 @@ def build_nvfbc_streamer_cmd(
         "--preset",
         preset,
         "--profile",
-        "baseline",
+        "high",
         "--mux",
         "mpegts",
         "--quiet",

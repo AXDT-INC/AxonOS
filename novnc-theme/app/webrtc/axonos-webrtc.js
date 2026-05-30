@@ -297,7 +297,11 @@ export async function connectAxonOSWebRTC(opts) {
         }
     }
 
-    const pc = new RTCPeerConnection({ iceServers });
+    const pc = new RTCPeerConnection({
+        iceServers,
+        bundlePolicy: 'max-bundle',
+        rtcpMuxPolicy: 'require',
+    });
     _inFlightNegotiation = { pc, video, sessionId, wallet, generation: negotiationGeneration };
     const CLIPBOARD_MAX_CHARS = 512 * 1024;
     function clampClipboardText(text) {
@@ -358,6 +362,9 @@ export async function connectAxonOSWebRTC(opts) {
         console.log('AxonOS WebRTC track', ev.track && ev.track.kind, ev.streams);
         if (ev.receiver && 'playoutDelayHint' in ev.receiver) {
             ev.receiver.playoutDelayHint = 0;
+        }
+        if (ev.receiver && 'jitterBufferTarget' in ev.receiver) {
+            ev.receiver.jitterBufferTarget = 0;
         }
         if (ev.streams && ev.streams[0]) {
             video.srcObject = ev.streams[0];
@@ -650,7 +657,7 @@ export async function connectAxonOSWebRTC(opts) {
     let pendingMovePayload = null;
     let moveFlushTimer = null;
     let moveFlushRaf = null;
-    const MOVE_FLUSH_MS = 50;
+    const MOVE_FLUSH_MS = 8;
     const MAX_INPUT_BUFFERED = 8192;
     const CONGESTED_INPUT_BUFFERED = 4096;
 
