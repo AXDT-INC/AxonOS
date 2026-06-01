@@ -27,7 +27,7 @@ header { display:flex; align-items:center; justify-content:space-between; paddin
 .logo { display:flex; align-items:center; gap:10px; }
 .logo-dot { width:8px; height:8px; border-radius:50%; background:var(--accent); box-shadow:0 0 8px var(--accent); animation:pulse 2s ease-in-out infinite; }
 @keyframes pulse { 0%,100%{opacity:1}50%{opacity:.4} }
-.logo-text { font-size:13px; font-weight:700; letter-spacing:2px; text-transform:uppercase; color:var(--text); }
+.logo-text { font-size:13px; font-weight:700; letter-spacing:2px; color:var(--text); }
 .logo-sub  { font-size:11px; color:var(--muted); margin-left:4px; }
 .header-right { display:flex; align-items:center; gap:16px; }
 #status-chip { font-size:11px; padding:3px 10px; border-radius:20px; background:rgba(34,197,94,.12); color:var(--green); border:1px solid rgba(34,197,94,.25); }
@@ -132,7 +132,7 @@ tbody tr:hover td { background:var(--surface2); }
 <header>
   <div class="logo">
     <div class="logo-dot"></div>
-    <span class="logo-text">AxonOS</span>
+    <a href="https://desktop.axonos.io" target="_blank" rel="noopener" style="text-decoration:none;"><span class="logo-text">Axon<span style="color:#f5c518;">OS</span></span></a>
     <span class="logo-sub">Live Telemetry</span>
   </div>
   <div class="header-right">
@@ -199,6 +199,10 @@ tbody tr:hover td { background:var(--surface2); }
 
 </main>
 
+<footer style="text-align:center;padding:20px 28px 24px;font-size:11px;color:var(--muted);border-top:1px solid var(--border);margin-top:8px;">
+  &copy; 2026 <a href="https://axondao.io" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;">AxonDAO</a>. All rights reserved.
+</footer>
+
 <script>
 const API = '';
 let chartTL = null, chartDur = null;
@@ -258,6 +262,7 @@ function renderGpus(gpus) {
     return `<div class="gpu-card${isActive ? ' active-gpu' : ''}">
       <div class="gpu-idx">GPU ${g.index}</div>
       <div class="gpu-util" style="color:${utilColor}">${util}%</div>
+      <div style="font-size:9px;color:var(--muted);margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${g.name || ''}</div>
       <div class="bar-wrap"><div class="bar-fill bar-util" style="width:${util}%"></div></div>
       <div class="bar-wrap"><div class="bar-fill bar-mem" style="width:${memPct}%"></div></div>
       <div class="gpu-meta">
