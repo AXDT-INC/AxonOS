@@ -626,6 +626,216 @@ def api_admin_ledger():
     return jsonify({"wallet_address": wallet, "ledger": entries})
 
 
+# ---------------------------------------------------------------------------
+# Telemetry admin endpoints
+# ---------------------------------------------------------------------------
+
+def _telemetry_pg_query(query, params=None):
+    conn = _gate_pg_get_connection()
+    if not conn:
+        return None, "Database unavailable"
+    try:
+        with conn.cursor() as cur:
+            cur.execute(query, params or ())
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+        return rows, None
+    except Exception as exc:
+        logger.warning("Telemetry query failed: %s", exc)
+        return None, str(exc)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+@app.route('/api/admin/telemetry/summary', methods=['GET', 'OPTIONS'])
+def api_admin_telemetry_summary():
+    if request.method == 'OPTIONS':
+        return '', 200
+    err = _require_admin()
+    if err:
+        return err
+    rows, e = _telemetry_pg_query("""
+        SELECT
+            COUNT(*) AS total_sessions,
+            COUNT(DISTINCT wallet_address) AS unique_wallets,
+            COUNT(CASE WHEN allocation_status='failed' THEN 1 END) AS failed_allocations,
+            COUNT(CASE WHEN status='active' THEN 1 END) AS active_sessions,
+            COALESCE(ROUND(SUM(last_heartbeat - started_at)::numeric / 60, 2), 0) AS total_wall_minutes,
+            COALESCE(MIN(started_at), 0) AS first_session_ts,
+            COALESCE(MAX(started_at), 0) AS last_session_ts
+        FROM axgt_sessions
+    """)
+    if e:
+        return jsonify({"error": e}), 500
+    s = rows[0]
+    dep, _ = _telemetry_pg_query("""
+        SELECT
+            COALESCE(SUM(credited_minutes_total), 0) AS total_credited,
+            COALESCE(SUM(consumed_minutes_total), 0) AS total_consumed,
+            COALESCE(SUM(remaining_minutes), 0) AS total_remaining
+        FROM axgt_deposits
+    """)
+    d = (dep or [{}])[0]
+    wr, _ = _telemetry_pg_query("""
+        SELECT
+            COUNT(*) AS total,
+            COUNT(CASE WHEN state='closed' THEN 1 END) AS closed,
+            COUNT(CASE WHEN state='failed' THEN 1 END) AS failed,
+            COUNT(CASE WHEN answer_sdp IS NOT NULL THEN 1 END) AS answered
+        FROM axgt_webrtc_signaling
+    """)
+    w = (wr or [{}])[0]
+    return jsonify({
+        "sessions": {
+            "total": int(s.get("total_sessions") or 0),
+            "unique_wallets": int(s.get("unique_wallets") or 0),
+            "failed_allocations": int(s.get("failed_allocations") or 0),
+            "active": int(s.get("active_sessions") or 0),
+            "total_wall_minutes": float(s.get("total_wall_minutes") or 0),
+            "first_session_ts": float(s.get("first_session_ts") or 0),
+            "last_session_ts": float(s.get("last_session_ts") or 0),
+        },
+        "deposits": {
+            "total_credited_minutes": float(d.get("total_credited") or 0),
+            "total_consumed_minutes": float(d.get("total_consumed") or 0),
+            "total_remaining_minutes": float(d.get("total_remaining") or 0),
+        },
+        "webrtc": {
+            "total": int(w.get("total") or 0),
+            "closed": int(w.get("closed") or 0),
+            "failed": int(w.get("failed") or 0),
+            "answered": int(w.get("answered") or 0),
+        },
+    })
+
+
+@app.route('/api/admin/telemetry/sessions', methods=['GET', 'OPTIONS'])
+def api_admin_telemetry_sessions():
+    if request.method == 'OPTIONS':
+        return '', 200
+    err = _require_admin()
+    if err:
+        return err
+    limit = min(1000, max(1, int(request.args.get("limit", "300") or "300")))
+    rows, e = _telemetry_pg_query("""
+        SELECT
+            id, wallet_address, requested_profile, gpu_ids,
+            container_id, allocation_status, status,
+            started_at, last_heartbeat, expires_at,
+            ROUND(((last_heartbeat - started_at) / 60)::numeric, 2) AS duration_minutes
+        FROM axgt_sessions
+        ORDER BY started_at DESC
+        LIMIT %s
+    """, (limit,))
+    if e:
+        return jsonify({"error": e}), 500
+    for r in rows:
+        r["id"] = int(r["id"])
+        r["duration_minutes"] = float(r.get("duration_minutes") or 0)
+        for k in ("started_at", "last_heartbeat", "expires_at"):
+            r[k] = float(r.get(k) or 0)
+    return jsonify({"sessions": rows, "count": len(rows)})
+
+
+@app.route('/api/admin/telemetry/wallets', methods=['GET', 'OPTIONS'])
+def api_admin_telemetry_wallets():
+    if request.method == 'OPTIONS':
+        return '', 200
+    err = _require_admin()
+    if err:
+        return err
+    rows, e = _telemetry_pg_query("""
+        SELECT
+            s.wallet_address,
+            COUNT(*) AS total_sessions,
+            COUNT(CASE WHEN s.allocation_status='failed' THEN 1 END) AS failed_sessions,
+            COUNT(CASE WHEN s.requested_profile='max' THEN 1 END) AS max_sessions,
+            COUNT(CASE WHEN s.requested_profile='small' THEN 1 END) AS small_sessions,
+            ROUND(SUM((s.last_heartbeat - s.started_at) / 60)::numeric, 2) AS total_wall_minutes,
+            COALESCE(MIN(s.started_at), 0) AS first_session_ts,
+            COALESCE(MAX(s.started_at), 0) AS last_session_ts,
+            COALESCE(d.credited_minutes_total, 0) AS credited_minutes,
+            COALESCE(d.consumed_minutes_total, 0) AS consumed_minutes,
+            COALESCE(d.remaining_minutes, 0) AS remaining_minutes
+        FROM axgt_sessions s
+        LEFT JOIN axgt_deposits d ON d.wallet_address = s.wallet_address
+        GROUP BY s.wallet_address, d.credited_minutes_total, d.consumed_minutes_total, d.remaining_minutes
+        ORDER BY total_sessions DESC
+    """)
+    if e:
+        return jsonify({"error": e}), 500
+    for r in rows:
+        for k in ("first_session_ts", "last_session_ts"):
+            r[k] = float(r.get(k) or 0)
+        for k in ("total_wall_minutes", "credited_minutes", "consumed_minutes", "remaining_minutes"):
+            r[k] = float(r.get(k) or 0)
+        for k in ("total_sessions", "failed_sessions", "max_sessions", "small_sessions"):
+            r[k] = int(r.get(k) or 0)
+    return jsonify({"wallets": rows})
+
+
+@app.route('/api/admin/telemetry/events', methods=['GET', 'OPTIONS'])
+def api_admin_telemetry_events():
+    if request.method == 'OPTIONS':
+        return '', 200
+    err = _require_admin()
+    if err:
+        return err
+    limit = min(500, max(1, int(request.args.get("limit", "100") or "100")))
+    rows, e = _telemetry_pg_query("""
+        SELECT
+            id, wallet_address, event_type,
+            ROUND(minutes_delta::numeric, 4) AS minutes_delta,
+            ROUND(balance_after_minutes::numeric, 2) AS balance_after_minutes,
+            reference_tx_hash, reference_session_id, notes, created_at, created_by
+        FROM axgt_ledger
+        ORDER BY id DESC
+        LIMIT %s
+    """, (limit,))
+    if e:
+        return jsonify({"error": e}), 500
+    for r in rows:
+        r["id"] = int(r["id"])
+        r["created_at"] = float(r.get("created_at") or 0)
+        for k in ("minutes_delta", "balance_after_minutes"):
+            r[k] = float(r.get(k) or 0)
+    return jsonify({"events": rows, "count": len(rows)})
+
+
+@app.route('/api/admin/telemetry/webrtc', methods=['GET', 'OPTIONS'])
+def api_admin_telemetry_webrtc():
+    if request.method == 'OPTIONS':
+        return '', 200
+    err = _require_admin()
+    if err:
+        return err
+    rows, e = _telemetry_pg_query("""
+        SELECT
+            wallet_address, state,
+            offer_sdp IS NOT NULL AS has_offer,
+            answer_sdp IS NOT NULL AS has_answer,
+            last_error, created_at, updated_at,
+            ROUND((updated_at - created_at)::numeric, 1) AS duration_seconds
+        FROM axgt_webrtc_signaling
+        ORDER BY created_at DESC
+        LIMIT 500
+    """)
+    if e:
+        return jsonify({"error": e}), 500
+    for r in rows:
+        for k in ("created_at", "updated_at"):
+            r[k] = float(r.get(k) or 0)
+        r["duration_seconds"] = float(r.get("duration_seconds") or 0)
+    brows, _ = _telemetry_pg_query("""
+        SELECT state, COUNT(*) AS count FROM axgt_webrtc_signaling GROUP BY state
+    """)
+    breakdown = {r["state"]: int(r["count"]) for r in (brows or [])}
+    return jsonify({"sessions": rows, "count": len(rows), "breakdown": breakdown})
+
+
 def _require_auth_token(wallet_address: str):
     """Validate auth token from cookie / header / query. Returns None on success, or (response, status)."""
     from flask import request as _req

@@ -169,6 +169,79 @@ def _auth_pg_get_connection():
         return None
 
 
+def _telemetry_query(query, params=None):
+    conn = _auth_pg_get_connection()
+    if not conn:
+        return None, "Database unavailable"
+    try:
+        with conn.cursor() as cur:
+            cur.execute(query, params or ())
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+        return rows, None
+    except Exception as exc:
+        logger.warning("Telemetry query failed: %s", exc)
+        return None, str(exc)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _telemetry_summary():
+    rows, e = _telemetry_query("""
+        SELECT COUNT(*) AS total_sessions,
+               COUNT(DISTINCT wallet_address) AS unique_wallets,
+               COUNT(CASE WHEN allocation_status='failed' THEN 1 END) AS failed_allocations,
+               COUNT(CASE WHEN status='active' THEN 1 END) AS active_sessions,
+               COALESCE(ROUND(SUM(last_heartbeat - started_at)::numeric / 60, 2), 0) AS total_wall_minutes,
+               COALESCE(MIN(started_at), 0) AS first_session_ts,
+               COALESCE(MAX(started_at), 0) AS last_session_ts
+        FROM axgt_sessions
+    """)
+    if e:
+        return None, e
+    s = rows[0]
+    dep, _ = _telemetry_query("""
+        SELECT COALESCE(SUM(credited_minutes_total), 0) AS total_credited,
+               COALESCE(SUM(consumed_minutes_total), 0) AS total_consumed,
+               COALESCE(SUM(remaining_minutes), 0) AS total_remaining
+        FROM axgt_deposits
+    """)
+    d = (dep or [{}])[0]
+    wr, _ = _telemetry_query("""
+        SELECT COUNT(*) AS total,
+               COUNT(CASE WHEN state='closed' THEN 1 END) AS closed,
+               COUNT(CASE WHEN state='failed' THEN 1 END) AS failed,
+               COUNT(CASE WHEN answer_sdp IS NOT NULL THEN 1 END) AS answered
+        FROM axgt_webrtc_signaling
+    """)
+    w = (wr or [{}])[0]
+    return {
+        "sessions": {
+            "total": int(s.get("total_sessions") or 0),
+            "unique_wallets": int(s.get("unique_wallets") or 0),
+            "failed_allocations": int(s.get("failed_allocations") or 0),
+            "active": int(s.get("active_sessions") or 0),
+            "total_wall_minutes": float(s.get("total_wall_minutes") or 0),
+            "first_session_ts": float(s.get("first_session_ts") or 0),
+            "last_session_ts": float(s.get("last_session_ts") or 0),
+        },
+        "deposits": {
+            "total_credited_minutes": float(d.get("total_credited") or 0),
+            "total_consumed_minutes": float(d.get("total_consumed") or 0),
+            "total_remaining_minutes": float(d.get("total_remaining") or 0),
+        },
+        "webrtc": {
+            "total": int(w.get("total") or 0),
+            "closed": int(w.get("closed") or 0),
+            "failed": int(w.get("failed") or 0),
+            "answered": int(w.get("answered") or 0),
+        },
+    }, None
+
+
 def _auth_pg_ensure_table(conn) -> None:
     with conn.cursor() as cur:
         cur.execute(
@@ -558,6 +631,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             or self.path.startswith('/api/config')
             or self.path.startswith('/api/session/')
             or self.path.startswith('/api/webrtc/')
+            or self.path.startswith('/api/public/')
         ):
             self.send_response(200)
             origin = cors_origin_for_request(
@@ -582,6 +656,19 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
 
     def do_GET(self):
         from urllib.parse import urlparse as _up_cfg
+
+        if _up_cfg(self.path).path == '/telemetry':
+            try:
+                with open('/usr/share/novnc/telemetry.html', 'rb') as f:
+                    body = f.read()
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except Exception as exc:
+                self.send_error(500, str(exc))
+            return
 
         if _up_cfg(self.path).path == '/api/config':
             policy = get_credit_policy()
@@ -808,6 +895,100 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             wallet_address = _extract_wallet_from_path_and_headers(self.path, self.headers)
             result = session_status(wallet_address)
             return self._send_json(200, result)
+
+        # ---- Public telemetry (no auth required) ----
+        if pu.path == '/api/public/telemetry/summary':
+            data, err = _telemetry_summary()
+            if err:
+                return self._send_json(500, {"error": err})
+            return self._send_json(200, data)
+
+        if pu.path == '/api/public/telemetry/sessions':
+            qs = parse_qs(pu.query)
+            limit = min(1000, max(1, int((qs.get('limit') or ['300'])[0])))
+            rows, err = _telemetry_query("""
+                SELECT id, wallet_address, requested_profile, gpu_ids,
+                       allocation_status, status, started_at, last_heartbeat,
+                       ROUND(((last_heartbeat - started_at) / 60)::numeric, 2) AS duration_minutes
+                FROM axgt_sessions ORDER BY started_at DESC LIMIT %s
+            """, (limit,))
+            if err:
+                return self._send_json(500, {"error": err})
+            for r in rows:
+                r["id"] = int(r["id"])
+                r["duration_minutes"] = float(r.get("duration_minutes") or 0)
+                for k in ("started_at", "last_heartbeat"):
+                    r[k] = float(r.get(k) or 0)
+            return self._send_json(200, {"sessions": rows, "count": len(rows)})
+
+        if pu.path == '/api/public/telemetry/wallets':
+            rows, err = _telemetry_query("""
+                SELECT s.wallet_address,
+                       COUNT(*) AS total_sessions,
+                       COUNT(CASE WHEN s.allocation_status='failed' THEN 1 END) AS failed_sessions,
+                       COUNT(CASE WHEN s.requested_profile='max' THEN 1 END) AS max_sessions,
+                       COUNT(CASE WHEN s.requested_profile='small' THEN 1 END) AS small_sessions,
+                       ROUND(SUM((s.last_heartbeat - s.started_at) / 60)::numeric, 2) AS total_wall_minutes,
+                       COALESCE(MIN(s.started_at), 0) AS first_session_ts,
+                       COALESCE(MAX(s.started_at), 0) AS last_session_ts,
+                       COALESCE(d.credited_minutes_total, 0) AS credited_minutes,
+                       COALESCE(d.consumed_minutes_total, 0) AS consumed_minutes,
+                       COALESCE(d.remaining_minutes, 0) AS remaining_minutes
+                FROM axgt_sessions s
+                LEFT JOIN axgt_deposits d ON d.wallet_address = s.wallet_address
+                GROUP BY s.wallet_address, d.credited_minutes_total, d.consumed_minutes_total, d.remaining_minutes
+                ORDER BY total_sessions DESC
+            """)
+            if err:
+                return self._send_json(500, {"error": err})
+            for r in rows:
+                for k in ("first_session_ts", "last_session_ts"):
+                    r[k] = float(r.get(k) or 0)
+                for k in ("total_wall_minutes", "credited_minutes", "consumed_minutes", "remaining_minutes"):
+                    r[k] = float(r.get(k) or 0)
+                for k in ("total_sessions", "failed_sessions", "max_sessions", "small_sessions"):
+                    r[k] = int(r.get(k) or 0)
+            return self._send_json(200, {"wallets": rows})
+
+        if pu.path == '/api/public/telemetry/events':
+            qs = parse_qs(pu.query)
+            limit = min(500, max(1, int((qs.get('limit') or ['100'])[0])))
+            rows, err = _telemetry_query("""
+                SELECT id, wallet_address, event_type,
+                       ROUND(minutes_delta::numeric, 4) AS minutes_delta,
+                       ROUND(balance_after_minutes::numeric, 2) AS balance_after_minutes,
+                       reference_session_id, notes, created_at
+                FROM axgt_ledger ORDER BY id DESC LIMIT %s
+            """, (limit,))
+            if err:
+                return self._send_json(500, {"error": err})
+            for r in rows:
+                r["id"] = int(r["id"])
+                r["created_at"] = float(r.get("created_at") or 0)
+                for k in ("minutes_delta", "balance_after_minutes"):
+                    r[k] = float(r.get(k) or 0)
+            return self._send_json(200, {"events": rows, "count": len(rows)})
+
+        if pu.path == '/api/public/telemetry/webrtc':
+            rows, err = _telemetry_query("""
+                SELECT wallet_address, state,
+                       offer_sdp IS NOT NULL AS has_offer,
+                       answer_sdp IS NOT NULL AS has_answer,
+                       last_error, created_at, updated_at,
+                       ROUND((updated_at - created_at)::numeric, 1) AS duration_seconds
+                FROM axgt_webrtc_signaling ORDER BY created_at DESC LIMIT 200
+            """)
+            if err:
+                return self._send_json(500, {"error": err})
+            for r in rows:
+                for k in ("created_at", "updated_at"):
+                    r[k] = float(r.get(k) or 0)
+                r["duration_seconds"] = float(r.get("duration_seconds") or 0)
+            brows, _ = _telemetry_query("""
+                SELECT state, COUNT(*) AS count FROM axgt_webrtc_signaling GROUP BY state
+            """)
+            breakdown = {r["state"]: int(r["count"]) for r in (brows or [])}
+            return self._send_json(200, {"sessions": rows, "count": len(rows), "breakdown": breakdown})
 
         return super().do_GET()
 

@@ -550,6 +550,7 @@ COPY novnc-theme/app/webrtc/axonos-webrtc.js /usr/share/novnc/app/webrtc/axonos-
 COPY novnc-theme/icons/* /usr/share/novnc/app/images/icons/
 COPY novnc-theme/icon.png /usr/share/novnc/icon.png
 COPY novnc-theme/images/linux.svg /usr/share/novnc/app/images/linux.svg
+COPY novnc-theme/telemetry.html /usr/share/novnc/
 
 # Install AXGT Gate
 COPY axonos_gate/ /axonos_gate/
