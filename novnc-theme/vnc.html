@@ -335,11 +335,18 @@ Copyright (C) 2019 The noVNC Authors
             <!-- AxonOS Vision Header -->
             <div class="axonos-vision-header">
                 <div class="axonos-particles"></div>
-                <h1 class="axonos-main-title">Axon<span class="axonos-highlight">OS</span></h1>
+                <h1 class="axonos-main-title">Axon<span class="axonos-highlight">OS</span> <span
+                        style="font-size:0.38em;font-weight:600;letter-spacing:2px;color:#f5c518;vertical-align:middle;border:1px solid #f5c518;border-radius:4px;padding:2px 7px;opacity:0.9;">BETA</span>
+                </h1>
                 <p class="axonos-tagline">GPU-Native Scientific Computing Platform</p>
                 <!-- Network banner: filled by applyAxonosNetworkEnvironmentUi() from /api/config axgt_chain_id (server AXGT_CHAIN_ID). -->
                 <p id="axonos_landing_network" class="axonos-network-banner axonos-network-banner--hidden"
                     aria-live="polite"></p>
+                <p
+                    style="font-size:0.72em;color:rgba(255,255,255,0.5);margin:0.4rem auto 0;max-width:26rem;line-height:1.5;text-align:center;">
+                    Sessions are<strong style="color:rgba(255,255,255,0.7);margin-left:0.3em;">ephemeral</strong> —
+                    files and changes are NOT saved between sessions. Credits are consumed per GPU per wall-clock minute
+                    while your session is active. Unused credits remain in your wallet for future sessions.</p>
                 <div class="axonos-dna-animation"></div>
             </div>
 
@@ -409,6 +416,7 @@ Copyright (C) 2019 The noVNC Authors
                 <p>"The best way to predict the future is to invent it."</p>
                 <cite>— Alan Kay</cite>
             </div>
+
         </div>
     </div>
 
@@ -499,7 +507,8 @@ Copyright (C) 2019 The noVNC Authors
                                 <li
                                     style="display:flex;justify-content:space-between;gap:0.5rem;border-top:1px dashed rgba(255,255,255,0.18);margin-top:0.35rem;padding-top:0.35rem;">
                                     <span>Minimum ETH (your tier)</span><strong id="axonos_discount_min_eth"
-                                        style="color:#ffd166;">—</strong></li>
+                                        style="color:#ffd166;">—</strong>
+                                </li>
                                 <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
                                         style="opacity:0.78;">Minimum desktop time</span><strong
                                         id="axonos_discount_min_minutes">—</strong></li>
@@ -685,6 +694,16 @@ Copyright (C) 2019 The noVNC Authors
     <!-- AxonOS Branding -->
     <div class="axonos-branding">AxonOS v0.1</div>
     <div class="axonos-version">GPU-Native Scientific Computing</div>
+    <div
+        style="position:fixed;bottom:10px;left:0;right:0;text-align:center;font-size:11px;color:rgba(255,255,255,0.35);z-index:54;pointer-events:auto;font-family:'Orbitron',monospace;letter-spacing:0.5px;">
+        Built with<span
+            style="color:#e03;font-size:2em;margin:0 0.2em;vertical-align:middle;line-height:1;">♥</span>by<a
+            href="https://axondao.io" target="_blank" rel="noopener noreferrer"
+            style="color:rgba(255,255,255,0.55);text-decoration:underline;text-underline-offset:2px;margin-left:0.4em;">AxonDAO</a><span
+            style="margin:0 0.4em;opacity:0.5;">|</span><a href="https://github.com/AXDT-INC/AxonOS" target="_blank"
+            rel="noopener noreferrer"
+            style="color:rgba(255,255,255,0.55);text-decoration:underline;text-underline-offset:2px;">GitHub</a>
+    </div>
 </body>
 
 </html>
