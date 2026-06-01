@@ -169,6 +169,47 @@ def _auth_pg_get_connection():
         return None
 
 
+_gpu_cache = {"gpus": [], "ts": 0}
+_gpu_cache_lock = Lock()
+
+def _poll_gpus():
+    import subprocess as _sp, time as _t
+    while True:
+        try:
+            res = _sp.run(
+                ["nvidia-smi",
+                 "--query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=30
+            )
+            gpus = []
+            for line in res.stdout.strip().split("\n"):
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) < 7:
+                    continue
+                def _f(v):
+                    try: return float(v)
+                    except: return None
+                gpus.append({
+                    "index": int(parts[0]),
+                    "name": parts[1],
+                    "utilization_pct": _f(parts[2]),
+                    "memory_used_mb": _f(parts[3]),
+                    "memory_total_mb": _f(parts[4]),
+                    "temperature_c": _f(parts[5]),
+                    "power_draw_w": _f(parts[6]),
+                })
+            with _gpu_cache_lock:
+                _gpu_cache["gpus"] = gpus
+                _gpu_cache["ts"] = _t.time()
+        except Exception as exc:
+            logger.warning("GPU poller: %s", exc)
+        _t.sleep(10)
+
+import threading as _threading
+_threading.Thread(target=_poll_gpus, daemon=True).start()
+
+
 def _telemetry_query(query, params=None):
     conn = _auth_pg_get_connection()
     if not conn:
@@ -657,7 +698,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
     def do_GET(self):
         from urllib.parse import urlparse as _up_cfg
 
-        if _up_cfg(self.path).path == '/telemetry':
+        if _up_cfg(self.path).path in ('/telemetry', '/telemetry/'):
             try:
                 with open('/usr/share/novnc/telemetry.html', 'rb') as f:
                     body = f.read()
@@ -968,6 +1009,56 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 for k in ("minutes_delta", "balance_after_minutes"):
                     r[k] = float(r.get(k) or 0)
             return self._send_json(200, {"events": rows, "count": len(rows)})
+
+        if pu.path == '/api/public/telemetry/live':
+            import time as _t, urllib.request as _ur
+            now = _t.time()
+
+            # Active sessions with heartbeat staleness
+            sess_rows, _ = _telemetry_query("""
+                SELECT id, wallet_address, requested_profile, gpu_ids, container_id,
+                       started_at, last_heartbeat, expires_at,
+                       ROUND(((last_heartbeat - started_at) / 60)::numeric, 2) AS duration_minutes
+                FROM axgt_sessions WHERE status = 'active'
+                ORDER BY started_at DESC
+            """)
+            live_sessions = []
+            for r in (sess_rows or []):
+                r["id"] = int(r["id"])
+                r["duration_minutes"] = float(r.get("duration_minutes") or 0)
+                for k in ("started_at", "last_heartbeat", "expires_at"):
+                    r[k] = float(r.get(k) or 0)
+                r["heartbeat_age_seconds"] = round(now - r["last_heartbeat"], 1) if r["last_heartbeat"] else None
+                r["expires_in_seconds"] = round(r["expires_at"] - now, 1) if r["expires_at"] else None
+                live_sessions.append(r)
+
+            # GPU stats from background cache (updated every 10s)
+            with _gpu_cache_lock:
+                gpus = list(_gpu_cache["gpus"])
+                gpu_cache_age = round(now - _gpu_cache["ts"], 1) if _gpu_cache["ts"] else None
+
+            # Running session containers from launcher
+            containers = []
+            try:
+                launcher_url = (os.getenv("AXGT_SESSION_LAUNCHER_URL") or "").rstrip("/")
+                launcher_token = os.getenv("AXGT_SESSION_LAUNCHER_TOKEN") or ""
+                if launcher_url and launcher_token:
+                    req = _ur.Request(
+                        launcher_url + "/list-containers",
+                        headers={"Authorization": "Bearer " + launcher_token}
+                    )
+                    with _ur.urlopen(req, timeout=5) as resp:
+                        containers = json.loads(resp.read()).get("containers", [])
+            except Exception as exc:
+                logger.warning("launcher list-containers failed: %s", exc)
+
+            return self._send_json(200, {
+                "timestamp": now,
+                "active_sessions": live_sessions,
+                "gpus": gpus,
+                "gpu_cache_age_seconds": gpu_cache_age,
+                "containers": containers,
+            })
 
         if pu.path == '/api/public/telemetry/webrtc':
             rows, err = _telemetry_query("""

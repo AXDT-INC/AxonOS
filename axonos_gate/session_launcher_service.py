@@ -320,6 +320,33 @@ def stop():
     return jsonify({"ok": True, "stopped": target})
 
 
+@app.route("/list-containers", methods=["GET"])
+def list_containers():
+    auth_err = _require_token()
+    if auth_err:
+        return auth_err
+    ok, out = _run_cmd([
+        "docker", "ps",
+        "--filter", "name=axgt-session",
+        "--format", "{{.Names}}\t{{.ID}}\t{{.Status}}\t{{.CreatedAt}}"
+    ])
+    if not ok:
+        return jsonify({"ok": False, "error": out}), 500
+    containers = []
+    for line in (out or "").strip().split("\n"):
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        if len(parts) >= 4:
+            containers.append({
+                "name": parts[0],
+                "short_id": parts[1][:12],
+                "status": parts[2],
+                "created_at": parts[3],
+            })
+    return jsonify({"ok": True, "containers": containers})
+
+
 def main():
     host = (os.getenv("AXGT_SESSION_LAUNCHER_BIND_HOST") or "127.0.0.1").strip()
     port_raw = (os.getenv("AXGT_SESSION_LAUNCHER_BIND_PORT") or "8090").strip()
