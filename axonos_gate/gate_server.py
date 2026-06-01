@@ -1274,6 +1274,58 @@ def _application(environ, start_response):
     return app.wsgi_app(environ, start_response)
 
 
+def _init_all_tables():
+    """Eagerly create all DB tables at startup so the DB is ready before the first request."""
+    try:
+        from axonos_gate import deposit_ledger as _dl
+    except ImportError:
+        import deposit_ledger as _dl
+    try:
+        from axonos_gate import session_manager as _sm
+    except ImportError:
+        import session_manager as _sm
+    try:
+        from axonos_gate.webrtc import store as _ws
+    except ImportError:
+        try:
+            from webrtc import store as _ws
+        except ImportError:
+            _ws = None
+
+    # deposit_ledger tables (axgt_deposits, axgt_ledger, axgt_verified_deposits)
+    try:
+        conn = _dl._get_connection()
+        if conn:
+            _dl._ensure_tables(conn)
+            conn.commit()
+            conn.close()
+            logger.info("DB init: deposit_ledger tables ready")
+    except Exception as exc:
+        logger.warning("DB init: deposit_ledger tables failed: %s", exc)
+
+    # session_manager tables (axgt_sessions)
+    try:
+        conn = _sm._get_connection()
+        if conn:
+            _sm._ensure_tables(conn)
+            conn.commit()
+            conn.close()
+            logger.info("DB init: session_manager tables ready")
+    except Exception as exc:
+        logger.warning("DB init: session_manager tables failed: %s", exc)
+
+    # webrtc signaling table (axgt_webrtc_signaling)
+    if _ws:
+        try:
+            _ws.ensure_table()
+            logger.info("DB init: webrtc store table ready")
+        except Exception as exc:
+            logger.warning("DB init: webrtc store table failed: %s", exc)
+
+    # auth tokens table (handled by _gate_pg_init_once, call it here too)
+    _gate_pg_init_once()
+
+
 def main():
     """Run the gate server (HTTP + WebSocket on same port)."""
     host = os.getenv('GATE_HOST', '127.0.0.1')
@@ -1282,6 +1334,7 @@ def main():
     logger.info(f"Starting AxonOS AXGT Gate Server on {host}:{port}")
     logger.info(f"AXGT Contract: {(os.getenv('AXGT_CONTRACT_ADDRESS') or '<unset>').strip()}")
     logger.info(f"RPC URL: {(os.getenv('AXGT_RPC_URL') or '<unset>').strip()}")
+    _init_all_tables()
 
     use_gevent = (os.getenv('GATE_USE_GEVENT', '1').strip().lower() in ('1', 'true', 'yes'))
     if use_gevent:
