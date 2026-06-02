@@ -419,6 +419,7 @@ Copyright (C) 2019 The noVNC Authors
     <!-- AXGT Wallet Verification Dialog (replaces password dialog) -->
     <div class="noVNC_center noVNC_connect_layer">
         <div id="noVNC_credentials_dlg" class="noVNC_panel axonos-wallet-card">
+            <button type="button" id="axonos_wallet_close_btn" class="axonos-wallet-close-btn" title="Close" aria-label="Close">&times;</button>
             <form id="axonos_wallet_form">
                 <div class="axonos-wallet-card__title">
                     <h2>Connect your wallet to continue</h2>
@@ -559,19 +560,18 @@ Copyright (C) 2019 The noVNC Authors
                         <p id="axonos_pay_eth_hint" class="axonos-pay-eth-hint" role="status" aria-live="polite"></p>
                         <p class="axonos-wallet-state__help" style="margin:0.35rem 0;font-size:0.82em;opacity:0.75;">
                             Manual: paste tx hash after sending from another wallet or DEX.</p>
-                        <p
-                            style="margin:0.5rem 0;display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;justify-content:center;">
+                        <p style="margin:0.5rem 0;display:flex;gap:0.5rem;align-items:center;justify-content:center;flex-wrap:nowrap;">
                             <input type="text" id="axonos_tx_hash_input" placeholder="0x… transaction hash"
                                 autocomplete="off" spellcheck="false"
-                                style="flex:1;min-width:12rem;max-width:22rem;padding:0.45rem 0.6rem;border-radius:6px;border:1px solid rgba(255,255,255,0.25);background:rgba(0,0,0,0.3);color:inherit;font-family:monospace;font-size:0.85rem;" />
+                                style="flex:1;min-width:6rem;padding:0.45rem 0.6rem;border-radius:6px;border:1px solid rgba(255,255,255,0.25);background:rgba(0,0,0,0.3);color:inherit;font-family:monospace;font-size:0.85rem;" />
                             <button type="button" id="axonos_verify_deposit_btn" class="axonos-connect-wallet-btn"
-                                style="margin:0;">Credit deposit</button>
+                                style="margin:0;white-space:nowrap;">Credit deposit</button>
+                            <a id="axonos_get_axgt_btn"
+                                href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=0x6112c3509a8a787df576028450febb3786a2274d"
+                                target="_blank" rel="noopener noreferrer" class="axonos-get-axgt-btn" style="margin:0;white-space:nowrap;">Get AXGT / Uniswap</a>
                         </p>
                         <p id="axonos_verify_deposit_msg" class="axonos-wallet-state__msg"
-                            style="font-size:0.85rem;min-height:1.2rem;"></p>
-                        <a id="axonos_get_axgt_btn"
-                            href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=0x6112c3509a8a787df576028450febb3786a2274d"
-                            target="_blank" rel="noopener noreferrer" class="axonos-get-axgt-btn">Get AXGT / Uniswap</a>
+                            style="font-size:0.85rem;min-height:0;margin:0;"></p>
                     </div>
                     <div id="axonos_wallet_state_connect_error" class="axonos-wallet-state axonos-wallet-state--hidden">
                         <div class="axonos-wallet-state__icon axonos-wallet-state__icon--warning" aria-hidden="true">
@@ -3019,6 +3019,11 @@ Copyright (C) 2019 The noVNC Authors
         if (retryConnectErrBtn) retryConnectErrBtn.addEventListener('click', function () { onConnectWalletClick(); });
         var pickerBackBtn = document.getElementById('axonos_wallet_picker_back_btn');
         if (pickerBackBtn) pickerBackBtn.addEventListener('click', function () { setWalletUIState('axonos_wallet_state_disconnected'); });
+        var walletCloseBtn = document.getElementById('axonos_wallet_close_btn');
+        if (walletCloseBtn) walletCloseBtn.addEventListener('click', function () {
+            var dlg = document.getElementById('noVNC_credentials_dlg');
+            if (dlg) dlg.classList.remove('noVNC_open');
+        });
         if (switchNetworkBtn) {
             switchNetworkBtn.addEventListener('click', function () {
                 var eth = resolveEthereumProvider();
