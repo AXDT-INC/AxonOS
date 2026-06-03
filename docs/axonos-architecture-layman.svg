@@ -1,0 +1,531 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 1180" width="1800" height="1180"
+     font-family="'SF Pro Display',-apple-system,system-ui,'Helvetica Neue',Arial,sans-serif">
+<defs>
+  <radialGradient id="gC" cx="82%" cy="8%" r="55%">
+    <stop offset="0%" stop-color="#4ec3d4" stop-opacity="0.11"/>
+    <stop offset="100%" stop-color="#07101a" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="gV" cx="14%" cy="90%" r="50%">
+    <stop offset="0%" stop-color="#9d6fd9" stop-opacity="0.11"/>
+    <stop offset="100%" stop-color="#07101a" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="gW" cx="96%" cy="55%" r="32%">
+    <stop offset="0%" stop-color="#e8a85a" stop-opacity="0.07"/>
+    <stop offset="100%" stop-color="#07101a" stop-opacity="0"/>
+  </radialGradient>
+  <linearGradient id="lgCard" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#fff" stop-opacity="0.05"/>
+    <stop offset="100%" stop-color="#fff" stop-opacity="0.01"/>
+  </linearGradient>
+  <linearGradient id="lgGate" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#4ec3d4" stop-opacity="0.07"/>
+    <stop offset="100%" stop-color="#9d6fd9" stop-opacity="0.03"/>
+  </linearGradient>
+  <linearGradient id="lgSess" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#f2607a" stop-opacity="0.08"/>
+    <stop offset="100%" stop-color="#e8a85a" stop-opacity="0.03"/>
+  </linearGradient>
+  <linearGradient id="lgPg" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#9d6fd9" stop-opacity="0.11"/>
+    <stop offset="100%" stop-color="#9d6fd9" stop-opacity="0.02"/>
+  </linearGradient>
+  <linearGradient id="lgTitle" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0%" stop-color="#4ec3d4"/>
+    <stop offset="50%" stop-color="#9d6fd9"/>
+    <stop offset="100%" stop-color="#e8a85a"/>
+  </linearGradient>
+  <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse">
+    <path d="M64 0L0 0 0 64" fill="none" stroke="rgba(140,200,220,0.028)" stroke-width="1"/>
+  </pattern>
+  <marker id="mC" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#4ec3d4"/></marker>
+  <marker id="mCr" markerWidth="9" markerHeight="7" refX="1" refY="3.5" orient="auto"><polygon points="9 0,0 3.5,9 7" fill="#4ec3d4"/></marker>
+  <marker id="mV" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#9d6fd9"/></marker>
+  <marker id="mVr" markerWidth="9" markerHeight="7" refX="1" refY="3.5" orient="auto"><polygon points="9 0,0 3.5,9 7" fill="#9d6fd9"/></marker>
+  <marker id="mW" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#e8a85a"/></marker>
+  <marker id="mWr" markerWidth="9" markerHeight="7" refX="1" refY="3.5" orient="auto"><polygon points="9 0,0 3.5,9 7" fill="#e8a85a"/></marker>
+  <marker id="mK" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#f2607a"/></marker>
+  <marker id="mG" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#7be0c8"/></marker>
+  <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+    <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="b"/>
+    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+</defs>
+
+<!-- BACKGROUND -->
+<rect width="1800" height="1180" fill="#07101a"/>
+<rect width="1800" height="1180" fill="url(#gC)"/>
+<rect width="1800" height="1180" fill="url(#gV)"/>
+<rect width="1800" height="1180" fill="url(#gW)"/>
+<rect width="1800" height="1180" fill="url(#grid)"/>
+
+<!-- TITLE BAR -->
+<rect x="0" y="0" width="1800" height="70" fill="#0a1424"/>
+<line x1="0" y1="69" x2="1800" y2="69" stroke="rgba(78,195,212,0.28)" stroke-width="1"/>
+<rect x="0" y="67" width="1800" height="2.5" fill="url(#lgTitle)" opacity="0.6"/>
+<circle cx="44" cy="35" r="14" fill="none" stroke="#4ec3d4" stroke-width="1.5" opacity="0.68"/>
+<circle cx="44" cy="35" r="5" fill="#4ec3d4" opacity="0.88" filter="url(#glow)"/>
+<text x="68" y="31" font-size="22" font-weight="800" fill="#e8edf4">Axon</text>
+<text x="120" y="31" font-size="22" font-weight="300" fill="#4ec3d4">OS</text>
+<text x="68" y="53" font-family="'SF Mono',Menlo,Consolas,monospace" font-size="9" letter-spacing="2.5" fill="rgba(170,210,225,0.48)">GPU-NATIVE SCIENTIFIC COMPUTING</text>
+<text x="900" y="28" text-anchor="middle" font-size="13" font-weight="700" letter-spacing="4" fill="rgba(170,210,225,0.70)" font-family="'SF Mono',Menlo,Consolas,monospace">HOW IT WORKS  /  FOR EVERYONE</text>
+<text x="900" y="52" text-anchor="middle" font-size="10" fill="rgba(170,210,225,0.33)" font-family="'SF Mono',Menlo,Consolas,monospace" letter-spacing="0.8">Sign in with your wallet  /  Pay with ETH  /  Get a powerful GPU desktop in your browser  /  desktop.axonos.io</text>
+
+<!-- LAYER LABELS -->
+<text x="22" y="162" text-anchor="middle" font-size="8" font-weight="700" letter-spacing="3" fill="rgba(78,195,212,0.40)" font-family="'SF Mono',Menlo,Consolas,monospace" transform="rotate(-90,22,162)">YOU</text>
+<text x="22" y="462" text-anchor="middle" font-size="8" font-weight="700" letter-spacing="3" fill="rgba(78,195,212,0.40)" font-family="'SF Mono',Menlo,Consolas,monospace" transform="rotate(-90,22,462)">AXONOS</text>
+<text x="22" y="836" text-anchor="middle" font-size="8" font-weight="700" letter-spacing="3" fill="rgba(78,195,212,0.40)" font-family="'SF Mono',Menlo,Consolas,monospace" transform="rotate(-90,22,836)">YOUR DESKTOP</text>
+
+<!-- ═══ ROW 1: YOUR BROWSER + ETHEREUM ═══ -->
+
+<!-- Browser box -->
+<rect x="50" y="88" width="680" height="132" rx="13" fill="url(#lgCard)" stroke="rgba(78,195,212,0.30)" stroke-width="1.2"/>
+<rect x="50" y="88" width="680" height="3" rx="1.5" fill="#4ec3d4" opacity="0.46"/>
+<text x="70" y="109" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(78,195,212,0.65)" font-family="'SF Mono',Menlo,Consolas,monospace">YOUR WEB BROWSER  /  No software to install. Open desktop.axonos.io and go.</text>
+<!-- Browser icon hint -->
+<rect x="70" y="118" width="204" height="90" rx="9" fill="rgba(78,195,212,0.09)" stroke="rgba(78,195,212,0.28)" stroke-width="1"/>
+<!-- monitor icon -->
+<rect x="102" y="126" width="28" height="20" rx="3" fill="none" stroke="#4ec3d4" stroke-width="1.5" opacity="0.6"/>
+<line x1="116" y1="146" x2="116" y2="152" stroke="#4ec3d4" stroke-width="1.5" opacity="0.5"/>
+<line x1="110" y1="152" x2="122" y2="152" stroke="#4ec3d4" stroke-width="1.5" opacity="0.5"/>
+<text x="172" y="148" text-anchor="middle" font-size="12.5" font-weight="700" fill="#e8edf4">Desktop Window</text>
+<text x="172" y="163" text-anchor="middle" font-size="9" fill="rgba(78,195,212,0.70)">Your desktop lives here</text>
+<text x="172" y="177" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)">See and control it live</text>
+<text x="172" y="191" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.40)">Like screen-sharing, but faster</text>
+
+<rect x="288" y="118" width="204" height="90" rx="9" fill="rgba(232,168,90,0.09)" stroke="rgba(232,168,90,0.26)" stroke-width="1"/>
+<!-- wallet icon -->
+<rect x="318" y="126" width="24" height="18" rx="3" fill="none" stroke="#e8a85a" stroke-width="1.5" opacity="0.6"/>
+<line x1="318" y1="133" x2="342" y2="133" stroke="#e8a85a" stroke-width="1.5" opacity="0.5"/>
+<circle cx="338" cy="138" r="2" fill="#e8a85a" opacity="0.6"/>
+<text x="390" y="148" text-anchor="middle" font-size="12.5" font-weight="700" fill="#e8edf4">Crypto Wallet</text>
+<text x="390" y="163" text-anchor="middle" font-size="9" fill="rgba(232,168,90,0.70)">MetaMask or similar</text>
+<text x="390" y="177" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)">Proves who you are</text>
+<text x="390" y="191" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.40)">No username or password</text>
+
+<rect x="506" y="118" width="204" height="90" rx="9" fill="rgba(157,111,217,0.09)" stroke="rgba(157,111,217,0.26)" stroke-width="1"/>
+<!-- video icon -->
+<polygon points="536,129 536,143 546,136" fill="none" stroke="#9d6fd9" stroke-width="1.5" opacity="0.6"/>
+<rect x="547" y="127" width="18" height="16" rx="2" fill="none" stroke="#9d6fd9" stroke-width="1.5" opacity="0.5"/>
+<text x="608" y="148" text-anchor="middle" font-size="12.5" font-weight="700" fill="#e8edf4">Live Video Feed</text>
+<text x="608" y="163" text-anchor="middle" font-size="9" fill="rgba(157,111,217,0.72)">60fps HD stream</text>
+<text x="608" y="177" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)">Like a video call to your PC</text>
+<text x="608" y="191" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.40)">Direct peer-to-peer, very fast</text>
+
+<!-- Ethereum box -->
+<rect x="748" y="88" width="1002" height="132" rx="13" fill="url(#lgCard)" stroke="rgba(232,168,90,0.33)" stroke-width="1.2"/>
+<rect x="748" y="88" width="1002" height="3" rx="1.5" fill="#e8a85a" opacity="0.50"/>
+<text x="768" y="109" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(232,168,90,0.65)" font-family="'SF Mono',Menlo,Consolas,monospace">ETHEREUM BLOCKCHAIN  /  A public, tamper-proof ledger that records your payment. Nobody can fake it.</text>
+
+<rect x="768" y="118" width="310" height="90" rx="9" fill="rgba(232,168,90,0.09)" stroke="rgba(232,168,90,0.26)" stroke-width="1"/>
+<!-- coin icon -->
+<circle cx="800" cy="136" r="9" fill="none" stroke="#e8a85a" stroke-width="1.5" opacity="0.6"/>
+<text x="800" y="140" text-anchor="middle" font-size="8" font-weight="700" fill="#e8a85a" opacity="0.7">A</text>
+<text x="923" y="139" text-anchor="middle" font-size="12.5" font-weight="700" fill="#e8edf4">AXGT Token</text>
+<text x="923" y="155" text-anchor="middle" font-size="9" fill="rgba(232,168,90,0.70)">AxonDAO's own currency</text>
+<text x="923" y="169" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)">Hold AXGT for discounts</text>
+<text x="923" y="184" text-anchor="middle" font-size="8.5" fill="rgba(170,210,225,0.34)">ETH payments active in production</text>
+
+<rect x="1094" y="118" width="310" height="90" rx="9" fill="rgba(232,168,90,0.09)" stroke="rgba(232,168,90,0.26)" stroke-width="1"/>
+<!-- check icon -->
+<path d="M 1116,136 L 1120,141 L 1130,131" fill="none" stroke="#e8a85a" stroke-width="1.8" opacity="0.6" stroke-linecap="round"/>
+<text x="1249" y="139" text-anchor="middle" font-size="12.5" font-weight="700" fill="#e8edf4">Payment Confirmed</text>
+<text x="1249" y="155" text-anchor="middle" font-size="9" fill="rgba(232,168,90,0.70)">Checks Ethereum to verify</text>
+<text x="1249" y="169" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)">your ETH actually arrived</text>
+<text x="1249" y="183" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.40)">Can't be paid twice for same tx</text>
+
+<rect x="1420" y="118" width="310" height="90" rx="9" fill="rgba(232,168,90,0.09)" stroke="rgba(232,168,90,0.26)" stroke-width="1"/>
+<!-- piggy bank / wallet icon -->
+<path d="M 1444,140 C 1444,133 1460,130 1460,136 C 1465,130 1474,132 1474,138 C 1474,146 1444,146 1444,140 Z" fill="none" stroke="#e8a85a" stroke-width="1.5" opacity="0.55"/>
+<text x="1575" y="139" text-anchor="middle" font-size="12.5" font-weight="700" fill="#e8edf4">AxonDAO Treasury</text>
+<text x="1575" y="155" text-anchor="middle" font-size="9" fill="rgba(232,168,90,0.70)">Receives your ETH payment</text>
+<text x="1575" y="169" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)">Converts to desktop minutes</text>
+<text x="1575" y="183" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.40)">~$0.99 / GPU hour</text>
+
+<!-- ═══ ROW 2: AXONOS PLATFORM ═══ -->
+
+<!-- GATE CONTAINER -->
+<rect x="50" y="240" width="1100" height="446" rx="16" fill="url(#lgGate)" stroke="rgba(140,200,220,0.16)" stroke-width="1.5"/>
+<rect x="50" y="240" width="1100" height="3" rx="1.5" fill="url(#lgTitle)" opacity="0.52"/>
+<rect x="51" y="241" width="1098" height="1" fill="rgba(255,255,255,0.04)" rx="1"/>
+<text x="72" y="263" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(78,195,212,0.60)" font-family="'SF Mono',Menlo,Consolas,monospace">AXONOS PLATFORM  /  Always-on servers that manage access, billing and video. You never see this layer directly.</text>
+<rect x="972" y="250" width="90" height="20" rx="10" fill="rgba(78,195,212,0.12)" stroke="rgba(78,195,212,0.30)" stroke-width="1"/>
+<text x="1017" y="264" text-anchor="middle" font-size="9" font-weight="700" fill="#4ec3d4" font-family="'SF Mono',Menlo,Consolas,monospace">web :6080</text>
+<rect x="1073" y="250" width="64" height="20" rx="10" fill="rgba(78,195,212,0.12)" stroke="rgba(78,195,212,0.30)" stroke-width="1"/>
+<text x="1105" y="264" text-anchor="middle" font-size="9" font-weight="700" fill="#4ec3d4" font-family="'SF Mono',Menlo,Consolas,monospace">API</text>
+
+<!-- Chip 1: Connection Gateway -->
+<rect x="80" y="278" width="247" height="112" rx="11" fill="rgba(78,195,212,0.10)" stroke="rgba(78,195,212,0.34)" stroke-width="1"/>
+<rect x="80" y="278" width="247" height="2.5" rx="1.2" fill="#4ec3d4" opacity="0.52"/>
+<!-- door icon -->
+<rect x="91" y="285" width="14" height="18" rx="2" fill="none" stroke="#4ec3d4" stroke-width="1.5" opacity="0.55"/>
+<circle cx="103" cy="294" r="1.5" fill="#4ec3d4" opacity="0.55"/>
+<text x="204" y="302" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">Connection Gateway</text>
+<text x="204" y="318" text-anchor="middle" font-size="9" fill="rgba(78,195,212,0.68)">The front door to your desktop</text>
+<text x="204" y="333" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)">Checks your login is valid</text>
+<text x="204" y="348" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)">Routes your keyboard &amp; mouse</text>
+<text x="204" y="363" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)">Sends desktop video back</text>
+<text x="204" y="381" text-anchor="middle" font-size="8" fill="rgba(78,195,212,0.36)" font-family="'SF Mono',Menlo,Consolas,monospace">WebRTC is the primary path in prod</text>
+
+<!-- Chip 2: Access Control -->
+<rect x="347" y="278" width="247" height="112" rx="11" fill="rgba(78,195,212,0.10)" stroke="rgba(78,195,212,0.34)" stroke-width="1"/>
+<rect x="347" y="278" width="247" height="2.5" rx="1.2" fill="#4ec3d4" opacity="0.52"/>
+<!-- shield icon -->
+<path d="M 358,286 L 369,286 L 369,296 C 369,301 363.5,303 363.5,303 C 363.5,303 358,301 358,296 Z" fill="none" stroke="#4ec3d4" stroke-width="1.5" opacity="0.55"/>
+<text x="471" y="302" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">Access Control</text>
+<text x="471" y="318" text-anchor="middle" font-size="9" fill="rgba(78,195,212,0.68)">The security brain</text>
+<text x="471" y="333" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)">Issues 30-min login passes</text>
+<text x="471" y="348" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)">Tracks sessions &amp; billing</text>
+<text x="471" y="363" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)">Handles deposits &amp; refunds</text>
+<text x="471" y="381" text-anchor="middle" font-size="8" fill="rgba(78,195,212,0.36)" font-family="'SF Mono',Menlo,Consolas,monospace">30 requests/min rate limit</text>
+
+<!-- Chip 3: Video Encoder -->
+<rect x="614" y="278" width="247" height="112" rx="11" fill="rgba(157,111,217,0.10)" stroke="rgba(157,111,217,0.34)" stroke-width="1"/>
+<rect x="614" y="278" width="247" height="2.5" rx="1.2" fill="#9d6fd9" opacity="0.52"/>
+<!-- film icon -->
+<rect x="625" y="285" width="18" height="14" rx="1" fill="none" stroke="#9d6fd9" stroke-width="1.5" opacity="0.55"/>
+<line x1="625" y1="288" x2="643" y2="288" stroke="#9d6fd9" stroke-width="1" opacity="0.4"/>
+<line x1="625" y1="293" x2="643" y2="293" stroke="#9d6fd9" stroke-width="1" opacity="0.4"/>
+<line x1="628" y1="285" x2="628" y2="299" stroke="#9d6fd9" stroke-width="1" opacity="0.4"/>
+<line x1="640" y1="285" x2="640" y2="299" stroke="#9d6fd9" stroke-width="1" opacity="0.4"/>
+<text x="738" y="302" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">Video Encoder</text>
+<text x="738" y="318" text-anchor="middle" font-size="9" fill="rgba(157,111,217,0.76)">Captures your GPU desktop</text>
+<text x="738" y="333" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)">Encodes to 60fps HD video</text>
+<text x="738" y="348" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)">Streams to your browser</text>
+<text x="738" y="363" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)">Like Netflix, but interactive</text>
+<text x="738" y="381" text-anchor="middle" font-size="8" fill="rgba(157,111,217,0.42)" font-family="'SF Mono',Menlo,Consolas,monospace">Via oci.axondao.io relay if needed</text>
+
+<!-- Chip 4: Session Controller -->
+<rect x="881" y="278" width="247" height="112" rx="11" fill="rgba(123,224,200,0.08)" stroke="rgba(123,224,200,0.28)" stroke-width="1"/>
+<rect x="881" y="278" width="247" height="2.5" rx="1.2" fill="#7be0c8" opacity="0.42"/>
+<!-- sliders icon -->
+<line x1="893" y1="290" x2="906" y2="290" stroke="#7be0c8" stroke-width="1.5" opacity="0.55"/>
+<circle cx="909" cy="290" r="3" fill="none" stroke="#7be0c8" stroke-width="1.5" opacity="0.55"/>
+<line x1="893" y1="299" x2="899" y2="299" stroke="#7be0c8" stroke-width="1.5" opacity="0.55"/>
+<circle cx="902" cy="299" r="3" fill="none" stroke="#7be0c8" stroke-width="1.5" opacity="0.55"/>
+<text x="1005" y="302" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">Session Controller</text>
+<text x="1005" y="318" text-anchor="middle" font-size="9" fill="rgba(123,224,200,0.66)">Manages your GPU reservation</text>
+<text x="1005" y="333" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)">Assigns GPUs exclusively to you</text>
+<text x="1005" y="348" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)">Stops idle sessions after 2 min</text>
+<text x="1005" y="363" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)">Max session: 60 minutes</text>
+<text x="1005" y="381" text-anchor="middle" font-size="8" fill="rgba(123,224,200,0.38)" font-family="'SF Mono',Menlo,Consolas,monospace">Pauses desktop if credits run out</text>
+
+<!-- Internal connectors -->
+<path d="M 327,334 L 347,334" fill="none" stroke="rgba(78,195,212,0.32)" stroke-width="1.2" stroke-dasharray="3,2" marker-end="url(#mC)"/>
+<path d="M 594,334 L 614,334" fill="none" stroke="rgba(157,111,217,0.32)" stroke-width="1.2" stroke-dasharray="3,2" marker-end="url(#mV)"/>
+<path d="M 861,334 L 881,334" fill="none" stroke="rgba(123,224,200,0.32)" stroke-width="1.2" stroke-dasharray="3,2" marker-end="url(#mG)"/>
+
+<!-- Always-on services strip -->
+<rect x="80" y="404" width="1048" height="28" rx="7" fill="rgba(140,200,220,0.04)" stroke="rgba(140,200,220,0.10)" stroke-width="1" stroke-dasharray="5,3"/>
+<text x="604" y="422" text-anchor="middle" font-size="8.5" font-weight="600" letter-spacing="1.5" fill="rgba(170,210,225,0.38)" font-family="'SF Mono',Menlo,Consolas,monospace">Always running inside this server:  display driver  /  desktop  /  backup connection  /  gateway  /  API  /  video encoder  /  AI assistant  /  notebooks  /  file sharing</text>
+
+<!-- Billing & Access strip -->
+<rect x="80" y="444" width="1048" height="72" rx="9" fill="rgba(78,195,212,0.04)" stroke="rgba(78,195,212,0.12)" stroke-width="1"/>
+<text x="100" y="461" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(78,195,212,0.52)" font-family="'SF Mono',Menlo,Consolas,monospace">ACCESS &amp; BILLING RULES</text>
+<rect x="100" y="468" width="145" height="22" rx="7" fill="rgba(78,195,212,0.10)" stroke="rgba(78,195,212,0.20)" stroke-width="1"/>
+<text x="172" y="483" text-anchor="middle" font-size="8.5" fill="#4ec3d4" font-family="'SF Mono',Menlo,Consolas,monospace">login lasts 30 min</text>
+<rect x="255" y="468" width="185" height="22" rx="7" fill="rgba(78,195,212,0.10)" stroke="rgba(78,195,212,0.20)" stroke-width="1"/>
+<text x="347" y="483" text-anchor="middle" font-size="8.5" fill="#4ec3d4" font-family="'SF Mono',Menlo,Consolas,monospace">auto-refreshes while active</text>
+<rect x="450" y="468" width="110" height="22" rx="7" fill="rgba(78,195,212,0.10)" stroke="rgba(78,195,212,0.20)" stroke-width="1"/>
+<text x="505" y="483" text-anchor="middle" font-size="8.5" fill="#4ec3d4" font-family="'SF Mono',Menlo,Consolas,monospace">15s reconnect gap</text>
+<rect x="570" y="468" width="155" height="22" rx="7" fill="rgba(123,224,200,0.10)" stroke="rgba(123,224,200,0.20)" stroke-width="1"/>
+<text x="647" y="483" text-anchor="middle" font-size="8.5" fill="#7be0c8" font-family="'SF Mono',Menlo,Consolas,monospace">warned at 10 min left</text>
+<rect x="735" y="468" width="175" height="22" rx="7" fill="rgba(232,168,90,0.10)" stroke="rgba(232,168,90,0.20)" stroke-width="1"/>
+<text x="822" y="483" text-anchor="middle" font-size="8.5" fill="#e8a85a" font-family="'SF Mono',Menlo,Consolas,monospace">1 ETH = 2,000 GPU hours</text>
+<rect x="920" y="468" width="178" height="22" rx="7" fill="rgba(232,168,90,0.10)" stroke="rgba(232,168,90,0.20)" stroke-width="1"/>
+<text x="1009" y="483" text-anchor="middle" font-size="8.5" fill="#e8a85a" font-family="'SF Mono',Menlo,Consolas,monospace">min payment ~$0.99/hr</text>
+<text x="100" y="508" font-size="9" fill="rgba(170,210,225,0.36)" font-family="'SF Mono',Menlo,Consolas,monospace">BILLING -&gt;</text>
+<text x="178" y="508" font-size="9" fill="rgba(123,224,200,0.60)">minutes used = time connected x number of GPUs reserved</text>
+<text x="620" y="508" font-size="9" fill="rgba(170,210,225,0.28)" font-family="'SF Mono',Menlo,Consolas,monospace">|</text>
+<text x="634" y="508" font-size="9" fill="rgba(232,168,90,0.58)">desktop pauses (not deleted) when credits run out</text>
+
+<!-- Records Database strip -->
+<rect x="80" y="528" width="1048" height="148" rx="9" fill="rgba(157,111,217,0.05)" stroke="rgba(157,111,217,0.18)" stroke-width="1"/>
+<text x="100" y="547" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(157,111,217,0.58)" font-family="'SF Mono',Menlo,Consolas,monospace">WHAT GETS RECORDED IN THE DATABASE</text>
+<!-- Row 1 -->
+<rect x="80" y="556" width="336" height="48" rx="8" fill="rgba(157,111,217,0.11)" stroke="rgba(157,111,217,0.24)" stroke-width="1"/>
+<text x="248" y="575" text-anchor="middle" font-size="10.5" font-weight="600" fill="#b3a3eb">Active Sessions</text>
+<text x="248" y="594" text-anchor="middle" font-size="8.5" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">who is connected and which GPUs they have</text>
+<rect x="436" y="556" width="336" height="48" rx="8" fill="rgba(157,111,217,0.11)" stroke="rgba(157,111,217,0.24)" stroke-width="1"/>
+<text x="604" y="575" text-anchor="middle" font-size="10.5" font-weight="600" fill="#b3a3eb">Your Credits</text>
+<text x="604" y="594" text-anchor="middle" font-size="8.5" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">ETH paid in and minutes remaining</text>
+<rect x="792" y="556" width="336" height="48" rx="8" fill="rgba(157,111,217,0.11)" stroke="rgba(157,111,217,0.24)" stroke-width="1"/>
+<text x="960" y="575" text-anchor="middle" font-size="10.5" font-weight="600" fill="#b3a3eb">Payment History</text>
+<text x="960" y="594" text-anchor="middle" font-size="8.5" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">every charge and top-up, full audit trail</text>
+<!-- Row 2 -->
+<rect x="80" y="614" width="336" height="48" rx="8" fill="rgba(157,111,217,0.11)" stroke="rgba(157,111,217,0.24)" stroke-width="1"/>
+<text x="248" y="633" text-anchor="middle" font-size="10.5" font-weight="600" fill="#b3a3eb">Login Passes</text>
+<text x="248" y="652" text-anchor="middle" font-size="8.5" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">temporary 30-min access tokens per wallet</text>
+<rect x="436" y="614" width="336" height="48" rx="8" fill="rgba(157,111,217,0.11)" stroke="rgba(157,111,217,0.24)" stroke-width="1"/>
+<text x="604" y="633" text-anchor="middle" font-size="10.5" font-weight="600" fill="#b3a3eb">Security Challenges</text>
+<text x="604" y="652" text-anchor="middle" font-size="8.5" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">one-time codes for wallet verification</text>
+<rect x="792" y="614" width="336" height="48" rx="8" fill="rgba(157,111,217,0.11)" stroke="rgba(157,111,217,0.24)" stroke-width="1"/>
+<text x="960" y="633" text-anchor="middle" font-size="10.5" font-weight="600" fill="#b3a3eb">Video Stream Setup</text>
+<text x="960" y="652" text-anchor="middle" font-size="8.5" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">negotiation info to connect video</text>
+<!-- Verified payments -->
+<rect x="80" y="670" width="550" height="28" rx="7" fill="rgba(157,111,217,0.06)" stroke="rgba(157,111,217,0.15)" stroke-width="1" stroke-dasharray="3,2"/>
+<text x="355" y="688" text-anchor="middle" font-size="8.5" fill="rgba(157,111,217,0.48)" font-family="'SF Mono',Menlo,Consolas,monospace">Verified Payments  /  each on-chain transaction stored once  -  prevents paying the same tx twice</text>
+
+<!-- LAUNCHER SERVICE -->
+<rect x="1166" y="240" width="584" height="280" rx="14" fill="url(#lgCard)" stroke="rgba(232,168,90,0.32)" stroke-width="1.5"/>
+<rect x="1166" y="240" width="584" height="3" rx="1.5" fill="#e8a85a" opacity="0.46"/>
+<text x="1186" y="262" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(232,168,90,0.65)" font-family="'SF Mono',Menlo,Consolas,monospace">GPU LAUNCHER  /  Spins up your private desktop on demand.</text>
+<rect x="1666" y="250" width="60" height="20" rx="10" fill="rgba(232,168,90,0.12)" stroke="rgba(232,168,90,0.28)" stroke-width="1"/>
+<text x="1696" y="264" text-anchor="middle" font-size="9" font-weight="700" fill="#e8a85a" font-family="'SF Mono',Menlo,Consolas,monospace">:8090</text>
+
+<!-- Request Handler chip -->
+<rect x="1186" y="278" width="262" height="88" rx="10" fill="rgba(232,168,90,0.09)" stroke="rgba(232,168,90,0.22)" stroke-width="1"/>
+<!-- inbox icon -->
+<rect x="1198" y="287" width="20" height="14" rx="2" fill="none" stroke="#e8a85a" stroke-width="1.5" opacity="0.55"/>
+<path d="M 1198,294 L 1203,294 L 1205,291 L 1213,291 L 1215,294 L 1218,294" fill="none" stroke="#e8a85a" stroke-width="1" opacity="0.45"/>
+<text x="1317" y="298" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">Request Handler</text>
+<text x="1317" y="314" text-anchor="middle" font-size="9" fill="rgba(232,168,90,0.68)">Receives "start my desktop" signal</text>
+<text x="1317" y="329" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)">Starts / stops desktop computers</text>
+<text x="1317" y="344" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)">Counts how many GPUs are free</text>
+<text x="1317" y="359" text-anchor="middle" font-size="8.5" fill="rgba(232,168,90,0.36)">Secured with a private token</text>
+
+<!-- Container Spawner chip -->
+<rect x="1466" y="278" width="262" height="88" rx="10" fill="rgba(242,96,122,0.08)" stroke="rgba(242,96,122,0.22)" stroke-width="1"/>
+<!-- box + arrow icon -->
+<rect x="1479" y="287" width="16" height="14" rx="2" fill="none" stroke="#f2607a" stroke-width="1.5" opacity="0.55"/>
+<path d="M 1499,294 L 1507,294" fill="none" stroke="#f2607a" stroke-width="1.5" marker-end="url(#mK)" opacity="0.55"/>
+<text x="1597" y="298" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">Computer Spawner</text>
+<text x="1597" y="314" text-anchor="middle" font-size="9" fill="rgba(242,96,122,0.68)">Creates isolated environments</text>
+<text x="1597" y="329" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)">Assigns specific GPUs to you</text>
+<text x="1597" y="344" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)">Each user gets their own bubble</text>
+<text x="1597" y="359" text-anchor="middle" font-size="8.5" fill="rgba(242,96,122,0.36)">Uses host's Docker engine</text>
+
+<!-- What gets launched strip -->
+<rect x="1186" y="378" width="542" height="118" rx="8" fill="rgba(0,0,0,0.30)" stroke="rgba(242,96,122,0.16)" stroke-width="1"/>
+<text x="1202" y="397" font-size="9" fill="rgba(242,96,122,0.60)" font-family="'SF Mono',Menlo,Consolas,monospace">What gets created for you:</text>
+<text x="1202" y="413" font-size="9" fill="rgba(170,210,225,0.42)">  - A brand-new isolated Linux computer (container)</text>
+<text x="1202" y="429" font-size="9" fill="rgba(170,210,225,0.42)">  - Dedicated GPU(s) locked to your session</text>
+<text x="1202" y="445" font-size="9" fill="rgba(170,210,225,0.42)">  - 32 GB shared GPU memory allocated</text>
+<text x="1202" y="461" font-size="9" fill="rgba(170,210,225,0.42)">  - Connected to the same private network as the gateway</text>
+<text x="1202" y="481" font-size="8" fill="rgba(170,210,225,0.26)" font-family="'SF Mono',Menlo,Consolas,monospace">Profiles: small (1 GPU)  medium (2)  large (4)  max (8) -- you choose</text>
+
+<!-- LEGEND -->
+<rect x="1166" y="534" width="290" height="192" rx="11" fill="rgba(10,20,36,0.88)" stroke="rgba(140,200,220,0.12)" stroke-width="1"/>
+<text x="1186" y="554" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">WHAT THE LINES MEAN</text>
+<line x1="1186" y1="566" x2="1220" y2="566" stroke="#4ec3d4" stroke-width="2" marker-end="url(#mC)"/>
+<text x="1232" y="570" font-size="8.5" fill="rgba(170,210,225,0.62)">You connect to the platform</text>
+<line x1="1186" y1="583" x2="1220" y2="583" stroke="#4ec3d4" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#mC)"/>
+<text x="1232" y="587" font-size="8.5" fill="rgba(170,210,225,0.62)">You log in securely</text>
+<line x1="1186" y1="600" x2="1220" y2="600" stroke="#9d6fd9" stroke-width="2" marker-end="url(#mV)"/>
+<text x="1232" y="604" font-size="8.5" fill="rgba(170,210,225,0.62)">Video stream setup signal</text>
+<line x1="1186" y1="617" x2="1220" y2="617" stroke="#9d6fd9" stroke-width="2" stroke-dasharray="6,4" marker-end="url(#mV)"/>
+<text x="1232" y="621" font-size="8.5" fill="rgba(170,210,225,0.62)">Live HD video to your browser</text>
+<line x1="1186" y1="634" x2="1220" y2="634" stroke="#e8a85a" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#mW)"/>
+<text x="1232" y="638" font-size="8.5" fill="rgba(170,210,225,0.62)">Checks Ethereum blockchain</text>
+<line x1="1186" y1="651" x2="1220" y2="651" stroke="#e8a85a" stroke-width="2" marker-end="url(#mW)"/>
+<text x="1232" y="655" font-size="8.5" fill="rgba(170,210,225,0.62)">Platform asks launcher to start</text>
+<line x1="1186" y1="668" x2="1220" y2="668" stroke="#f2607a" stroke-width="2" marker-end="url(#mK)"/>
+<text x="1232" y="672" font-size="8.5" fill="rgba(170,210,225,0.62)">Your GPU desktop is created</text>
+<line x1="1186" y1="685" x2="1220" y2="685" stroke="#7be0c8" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#mG)"/>
+<text x="1232" y="689" font-size="8.5" fill="rgba(170,210,225,0.62)">Backup video path (disabled)</text>
+<line x1="1186" y1="702" x2="1220" y2="702" stroke="#b3a3eb" stroke-width="1.5" marker-end="url(#mV)"/>
+<text x="1232" y="706" font-size="8.5" fill="rgba(170,210,225,0.62)">Saves to / reads from database</text>
+<text x="1311" y="720" text-anchor="middle" font-size="7.5" fill="rgba(170,210,225,0.22)" font-family="'SF Mono',Menlo,Consolas,monospace">(c) 2026 AxonDAO</text>
+
+<!-- ═══ ROW 3: DATABASE + YOUR GPU DESKTOP ═══ -->
+
+<!-- POSTGRESQL -->
+<rect x="50" y="726" width="488" height="268" rx="14" fill="url(#lgPg)" stroke="rgba(157,111,217,0.34)" stroke-width="1.5"/>
+<rect x="50" y="726" width="488" height="3" rx="1.5" fill="#9d6fd9" opacity="0.50"/>
+<text x="70" y="747" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(157,111,217,0.65)" font-family="'SF Mono',Menlo,Consolas,monospace">DATABASE  /  Stores everything reliably. Never loses a record. Shared by all services.</text>
+
+<rect x="70" y="756" width="218" height="44" rx="8" fill="rgba(157,111,217,0.12)" stroke="rgba(157,111,217,0.26)" stroke-width="1"/>
+<text x="179" y="774" text-anchor="middle" font-size="10.5" font-weight="600" fill="#b3a3eb">Active Sessions</text>
+<text x="179" y="791" text-anchor="middle" font-size="8" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">who has a desktop open right now</text>
+<rect x="302" y="756" width="218" height="44" rx="8" fill="rgba(157,111,217,0.12)" stroke="rgba(157,111,217,0.26)" stroke-width="1"/>
+<text x="411" y="774" text-anchor="middle" font-size="10.5" font-weight="600" fill="#b3a3eb">Your Credits</text>
+<text x="411" y="791" text-anchor="middle" font-size="8" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">ETH paid + minutes remaining</text>
+<rect x="70" y="808" width="218" height="44" rx="8" fill="rgba(157,111,217,0.12)" stroke="rgba(157,111,217,0.26)" stroke-width="1"/>
+<text x="179" y="826" text-anchor="middle" font-size="10.5" font-weight="600" fill="#b3a3eb">Payment History</text>
+<text x="179" y="843" text-anchor="middle" font-size="8" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">every charge, full audit</text>
+<rect x="302" y="808" width="218" height="44" rx="8" fill="rgba(157,111,217,0.12)" stroke="rgba(157,111,217,0.26)" stroke-width="1"/>
+<text x="411" y="826" text-anchor="middle" font-size="10.5" font-weight="600" fill="#b3a3eb">Login Passes</text>
+<text x="411" y="843" text-anchor="middle" font-size="8" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">30-min access tokens</text>
+<rect x="70" y="860" width="218" height="44" rx="8" fill="rgba(157,111,217,0.12)" stroke="rgba(157,111,217,0.26)" stroke-width="1"/>
+<text x="179" y="878" text-anchor="middle" font-size="10.5" font-weight="600" fill="#b3a3eb">Security Challenges</text>
+<text x="179" y="895" text-anchor="middle" font-size="8" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">wallet sign-in codes</text>
+<rect x="302" y="860" width="218" height="44" rx="8" fill="rgba(157,111,217,0.12)" stroke="rgba(157,111,217,0.26)" stroke-width="1"/>
+<text x="411" y="878" text-anchor="middle" font-size="10.5" font-weight="600" fill="#b3a3eb">Video Setup Info</text>
+<text x="411" y="895" text-anchor="middle" font-size="8" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">stream negotiation state</text>
+<rect x="70" y="912" width="450" height="64" rx="8" fill="rgba(157,111,217,0.06)" stroke="rgba(157,111,217,0.14)" stroke-width="1" stroke-dasharray="3,2"/>
+<text x="295" y="932" text-anchor="middle" font-size="9.5" font-weight="600" fill="rgba(157,111,217,0.48)" font-family="'SF Mono',Menlo,Consolas,monospace">Verified Payments</text>
+<text x="295" y="950" text-anchor="middle" font-size="8.5" fill="rgba(170,210,225,0.34)" font-family="'SF Mono',Menlo,Consolas,monospace">each payment transaction stored once</text>
+<text x="295" y="966" text-anchor="middle" font-size="8" fill="rgba(170,210,225,0.26)">prevents the same payment being counted twice</text>
+
+<!-- GPU SESSION CONTAINER -->
+<rect x="556" y="726" width="1194" height="268" rx="16" fill="url(#lgSess)" stroke="rgba(242,96,122,0.28)" stroke-width="1.5"/>
+<rect x="556" y="726" width="1194" height="3" rx="1.5" fill="#f2607a" opacity="0.50"/>
+<text x="576" y="747" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(242,96,122,0.65)" font-family="'SF Mono',Menlo,Consolas,monospace">YOUR PRIVATE GPU DESKTOP  /  Created fresh for you. Shut down when your session ends.</text>
+
+<!-- GPU Display chip -->
+<rect x="576" y="758" width="220" height="106" rx="10" fill="rgba(242,96,122,0.09)" stroke="rgba(242,96,122,0.25)" stroke-width="1"/>
+<!-- GPU chip icon -->
+<rect x="596" y="769" width="22" height="16" rx="2" fill="none" stroke="#f2607a" stroke-width="1.5" opacity="0.55"/>
+<line x1="598" y1="773" x2="616" y2="773" stroke="#f2607a" stroke-width="1" opacity="0.35"/>
+<line x1="598" y1="777" x2="616" y2="777" stroke="#f2607a" stroke-width="1" opacity="0.35"/>
+<line x1="604" y1="769" x2="604" y2="785" stroke="#f2607a" stroke-width="1" opacity="0.35"/>
+<line x1="609" y1="769" x2="609" y2="785" stroke="#f2607a" stroke-width="1" opacity="0.35"/>
+<text x="686" y="795" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">GPU Power</text>
+<text x="686" y="811" text-anchor="middle" font-size="9" fill="rgba(242,96,122,0.68)">NVIDIA GPU drives the screen</text>
+<text x="686" y="826" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)">Direct hardware access</text>
+<text x="686" y="841" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)">No sharing, no slowdown</text>
+<text x="686" y="856" text-anchor="middle" font-size="8" fill="rgba(242,96,122,0.36)">CUDA + OpenGL + AI ready</text>
+
+<!-- Desktop chip -->
+<rect x="810" y="758" width="220" height="106" rx="10" fill="rgba(242,96,122,0.09)" stroke="rgba(242,96,122,0.25)" stroke-width="1"/>
+<!-- desktop icon -->
+<rect x="828" y="769" width="22" height="15" rx="2" fill="none" stroke="#f2607a" stroke-width="1.5" opacity="0.55"/>
+<line x1="839" y1="784" x2="839" y2="789" stroke="#f2607a" stroke-width="1.5" opacity="0.45"/>
+<line x1="834" y1="789" x2="844" y2="789" stroke="#f2607a" stroke-width="1.5" opacity="0.45"/>
+<text x="920" y="795" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">Full Linux Desktop</text>
+<text x="920" y="811" text-anchor="middle" font-size="9" fill="rgba(242,96,122,0.68)">XFCE desktop environment</text>
+<text x="920" y="826" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)">Your own private workspace</text>
+<text x="920" y="841" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)">Taskbar, file manager, apps</text>
+<text x="920" y="856" text-anchor="middle" font-size="8" fill="rgba(242,96,122,0.36)">Non-root user, isolated</text>
+
+<!-- Video Encoder chip -->
+<rect x="1044" y="758" width="220" height="106" rx="10" fill="rgba(157,111,217,0.10)" stroke="rgba(157,111,217,0.27)" stroke-width="1"/>
+<!-- camera icon -->
+<rect x="1058" y="769" width="18" height="13" rx="2" fill="none" stroke="#9d6fd9" stroke-width="1.5" opacity="0.55"/>
+<path d="M 1076,773 L 1082,770 L 1082,779 L 1076,776 Z" fill="none" stroke="#9d6fd9" stroke-width="1.2" opacity="0.50"/>
+<text x="1154" y="795" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">Screen Recorder</text>
+<text x="1154" y="811" text-anchor="middle" font-size="9" fill="rgba(157,111,217,0.72)">Captures your desktop live</text>
+<text x="1154" y="826" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)">Encodes to 60fps HD video</text>
+<text x="1154" y="841" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)">Sends direct to your browser</text>
+<text x="1154" y="856" text-anchor="middle" font-size="8" fill="rgba(157,111,217,0.44)">18 Mbps quality stream</text>
+
+<!-- Backup chip -->
+<rect x="1278" y="758" width="220" height="106" rx="10" fill="rgba(242,96,122,0.07)" stroke="rgba(242,96,122,0.20)" stroke-width="1"/>
+<!-- padlock icon -->
+<rect x="1295" y="775" width="16" height="12" rx="2" fill="none" stroke="#f2607a" stroke-width="1.5" opacity="0.45"/>
+<path d="M 1298,775 C 1298,770 1307,770 1307,775" fill="none" stroke="#f2607a" stroke-width="1.5" opacity="0.45"/>
+<text x="1388" y="795" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">Backup Connection</text>
+<text x="1388" y="811" text-anchor="middle" font-size="9" fill="rgba(242,96,122,0.62)">Old-style screen sharing</text>
+<text x="1388" y="826" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)">Lower quality, higher latency</text>
+<rect x="1296" y="838" width="184" height="18" rx="9" fill="rgba(242,96,122,0.12)" stroke="rgba(242,96,122,0.28)" stroke-width="1"/>
+<text x="1388" y="851" text-anchor="middle" font-size="8" font-weight="700" fill="rgba(242,96,122,0.72)" font-family="'SF Mono',Menlo,Consolas,monospace">TURNED OFF IN PRODUCTION</text>
+<text x="1388" y="858" text-anchor="middle" font-size="8" fill="rgba(242,96,122,0.30)">WebRTC is primary</text>
+
+<!-- Apps chip -->
+<rect x="1512" y="758" width="220" height="106" rx="10" fill="rgba(123,224,200,0.08)" stroke="rgba(123,224,200,0.22)" stroke-width="1"/>
+<!-- apps grid icon -->
+<rect x="1524" y="769" width="7" height="7" rx="1" fill="#7be0c8" opacity="0.40"/>
+<rect x="1533" y="769" width="7" height="7" rx="1" fill="#7be0c8" opacity="0.40"/>
+<rect x="1524" y="778" width="7" height="7" rx="1" fill="#7be0c8" opacity="0.40"/>
+<rect x="1533" y="778" width="7" height="7" rx="1" fill="#7be0c8" opacity="0.40"/>
+<text x="1622" y="795" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">Pre-installed Apps</text>
+<text x="1622" y="811" text-anchor="middle" font-size="9" fill="rgba(123,224,200,0.62)">JupyterLab (Python notebooks)</text>
+<text x="1622" y="826" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)">Ollama (local AI models)</text>
+<text x="1622" y="841" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)">PyMOL / GROMACS / QGIS</text>
+<text x="1622" y="856" text-anchor="middle" font-size="8" fill="rgba(123,224,200,0.36)">RStudio / IPFS / Nextflow</text>
+
+<!-- GPU badges -->
+<rect x="576" y="874" width="1154" height="34" rx="7" fill="rgba(242,96,122,0.05)" stroke="rgba(242,96,122,0.13)" stroke-width="1" stroke-dasharray="4,2"/>
+<text x="596" y="890" font-size="8.5" fill="rgba(242,96,122,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Your reserved GPUs (nobody else can use them during your session) -&gt;</text>
+<rect x="856" y="880" width="52" height="22" rx="11" fill="rgba(242,96,122,0.16)" stroke="rgba(242,96,122,0.36)" stroke-width="1"/>
+<text x="882" y="895" text-anchor="middle" font-size="9" font-weight="700" fill="#f2607a" font-family="'SF Mono',Menlo,Consolas,monospace">GPU 0</text>
+<rect x="918" y="880" width="52" height="22" rx="11" fill="rgba(242,96,122,0.16)" stroke="rgba(242,96,122,0.36)" stroke-width="1"/>
+<text x="944" y="895" text-anchor="middle" font-size="9" font-weight="700" fill="#f2607a" font-family="'SF Mono',Menlo,Consolas,monospace">GPU 1</text>
+<rect x="980" y="880" width="52" height="22" rx="11" fill="rgba(242,96,122,0.07)" stroke="rgba(242,96,122,0.18)" stroke-width="1"/>
+<text x="1006" y="895" text-anchor="middle" font-size="9" fill="rgba(242,96,122,0.42)" font-family="'SF Mono',Menlo,Consolas,monospace">GPU 2</text>
+<rect x="1042" y="880" width="52" height="22" rx="11" fill="rgba(242,96,122,0.07)" stroke="rgba(242,96,122,0.18)" stroke-width="1"/>
+<text x="1068" y="895" text-anchor="middle" font-size="9" fill="rgba(242,96,122,0.42)" font-family="'SF Mono',Menlo,Consolas,monospace">GPU 3</text>
+<text x="1106" y="895" font-size="9" fill="rgba(242,96,122,0.26)" font-family="'SF Mono',Menlo,Consolas,monospace">...</text>
+<text x="1125" y="895" font-size="8.5" fill="rgba(170,210,225,0.36)">Choose 1, 2, 4 or 8 GPUs when you launch  /  32 GB shared memory each  /  AI + CUDA + OpenGL fully available</text>
+
+<!-- Important notes strip -->
+<rect x="576" y="916" width="1154" height="66" rx="7" fill="rgba(0,0,0,0.24)" stroke="rgba(140,200,220,0.07)" stroke-width="1"/>
+<text x="596" y="933" font-size="9" fill="rgba(78,195,212,0.42)">IMPORTANT:  Your desktop is temporary. Files are NOT saved when your session ends. Think of it like a hotel room PC.</text>
+<text x="596" y="950" font-size="9" fill="rgba(170,210,225,0.32)">Credits that are unused carry over to your next session.  Your desktop is paused (not deleted) if you run out of credits mid-session.</text>
+<text x="596" y="967" font-size="9" fill="rgba(170,210,225,0.28)">Top up within 2 hours to resume exactly where you left off.  After 2 hours the paused desktop is removed.</text>
+<text x="596" y="980" font-size="8" fill="rgba(170,210,225,0.20)" font-family="'SF Mono',Menlo,Consolas,monospace">Persistent storage is coming soon. For now: download your work before ending a session.</text>
+
+<!-- ═══ PHYSICAL SERVER FOOTER ═══ -->
+<rect x="50" y="1014" width="1700" height="68" rx="11" fill="rgba(7,16,26,0.80)" stroke="rgba(140,200,220,0.09)" stroke-width="1" stroke-dasharray="5,3"/>
+<text x="70" y="1034" font-size="8.5" font-weight="700" letter-spacing="2.5" fill="rgba(140,200,220,0.30)" font-family="'SF Mono',Menlo,Consolas,monospace">PHYSICAL SERVER  /  A real Linux computer with NVIDIA GPUs inside, running in a data center</text>
+<text x="70" y="1052" font-size="8.5" fill="rgba(170,210,225,0.24)">All the containers above (gateway, database, launcher, your desktop) run on this machine.  The NVIDIA GPUs are shared fairly between users via isolated containers.</text>
+<text x="70" y="1068" font-size="8.5" fill="rgba(170,210,225,0.20)">Each user gets their own sealed-off environment. You cannot see another user's files, processes, or screen.  When your session ends, your environment is completely destroyed.</text>
+
+<!-- ═══ HOW IT WORKS IN 5 STEPS ═══ -->
+<rect x="50" y="1096" width="1700" height="68" rx="9" fill="rgba(10,20,36,0.60)" stroke="rgba(140,200,220,0.08)" stroke-width="1"/>
+<text x="900" y="1112" text-anchor="middle" font-size="8.5" font-weight="700" letter-spacing="3" fill="rgba(170,210,225,0.45)" font-family="'SF Mono',Menlo,Consolas,monospace">HOW IT WORKS IN 5 STEPS</text>
+<text x="70" y="1130" font-size="9" fill="rgba(78,195,212,0.65)">1  Open the website and click "Connect" -&gt; sign a message with your wallet (no password needed, just proves you own the address)</text>
+<text x="70" y="1148" font-size="9" fill="rgba(232,168,90,0.60)">2  Send a small amount of ETH to buy desktop time (~$0.99/hr)  -&gt;  3  Choose how many GPUs (1-8) and launch  -&gt;  4  Your private Linux desktop starts in seconds  -&gt;  5  Use it live in your browser</text>
+
+<!-- ═══ ARROWS ═══ -->
+<!-- 1a. Browser -> Platform (connect, solid cyan) -->
+<path d="M 290,220 C 290,230 200,234 200,240" fill="none" stroke="#4ec3d4" stroke-width="2" marker-end="url(#mC)" opacity="0.80"/>
+<rect x="154" y="202" width="92" height="16" rx="8" fill="rgba(78,195,212,0.12)"/>
+<text x="200" y="213" text-anchor="middle" font-size="7.5" font-weight="700" fill="#4ec3d4" font-family="'SF Mono',Menlo,Consolas,monospace">Connect</text>
+
+<!-- 1b. Browser -> Platform (sign in, dashed cyan) -->
+<path d="M 450,220 C 450,230 430,234 430,240" fill="none" stroke="#4ec3d4" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#mC)" opacity="0.68"/>
+<rect x="394" y="202" width="76" height="16" rx="8" fill="rgba(78,195,212,0.10)"/>
+<text x="432" y="213" text-anchor="middle" font-size="7.5" font-weight="700" fill="#4ec3d4" font-family="'SF Mono',Menlo,Consolas,monospace">Sign in</text>
+
+<!-- 2a. Browser wallet <-> Ethereum (proves ownership, warm dashed) -->
+<path d="M 730,154 L 748,154" fill="none" stroke="#e8a85a" stroke-width="1.6" stroke-dasharray="5,3" marker-end="url(#mW)" marker-start="url(#mWr)" opacity="0.70"/>
+<rect x="728" y="136" width="48" height="16" rx="8" fill="rgba(232,168,90,0.12)"/>
+<text x="752" y="147" text-anchor="middle" font-size="7.5" font-weight="700" fill="#e8a85a" font-family="'SF Mono',Menlo,Consolas,monospace">Sign</text>
+
+<!-- 2b. Platform -> Ethereum RPC (verify payment, warm dashed) -->
+<path d="M 1150,350 C 1200,350 1220,240 1249,220" fill="none" stroke="#e8a85a" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#mW)" opacity="0.60"/>
+<!-- label placed left of launcher box (before x=1166) to avoid chip overlap -->
+<rect x="1060" y="338" width="88" height="16" rx="8" fill="rgba(232,168,90,0.10)"/>
+<text x="1104" y="349" text-anchor="middle" font-size="7.5" font-weight="700" fill="#e8a85a" font-family="'SF Mono',Menlo,Consolas,monospace">Verify ETH</text>
+
+<!-- 3. Platform -> Launcher (start desktop, warm solid) -->
+<path d="M 1150,380 L 1166,380" fill="none" stroke="#e8a85a" stroke-width="2" marker-end="url(#mW)" opacity="0.78"/>
+<!-- label below the arrow to clear the ③ callout -->
+<rect x="1145" y="384" width="70" height="16" rx="8" fill="rgba(232,168,90,0.12)"/>
+<text x="1180" y="395" text-anchor="middle" font-size="7.5" font-weight="700" fill="#e8a85a" font-family="'SF Mono',Menlo,Consolas,monospace">Start PC</text>
+
+<!-- 4. Launcher -> GPU Desktop (created, coral) -->
+<path d="M 1458,520 C 1458,580 1300,640 1200,726" fill="none" stroke="#f2607a" stroke-width="2" marker-end="url(#mK)" opacity="0.70"/>
+<rect x="1302" y="616" width="100" height="16" rx="8" fill="rgba(242,96,122,0.12)"/>
+<text x="1352" y="627" text-anchor="middle" font-size="7.5" font-weight="700" fill="#f2607a" font-family="'SF Mono',Menlo,Consolas,monospace">PC created</text>
+
+<!-- Platform -> Database (saves data, violet) -->
+<path d="M 280,686 L 280,726" fill="none" stroke="#b3a3eb" stroke-width="1.6" marker-end="url(#mV)" opacity="0.70"/>
+<rect x="240" y="700" width="50" height="14" rx="7" fill="rgba(157,111,217,0.14)"/>
+<text x="265" y="711" text-anchor="middle" font-size="7.5" font-weight="700" fill="#b3a3eb" font-family="'SF Mono',Menlo,Consolas,monospace">Saves</text>
+
+<!-- Gateway -> Desktop backup (green dashed, disabled) -->
+<path d="M 580,686 C 580,708 716,716 716,726" fill="none" stroke="#7be0c8" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#mG)" opacity="0.50"/>
+<rect x="522" y="703" width="84" height="14" rx="7" fill="rgba(123,224,200,0.08)"/>
+<text x="564" y="714" text-anchor="middle" font-size="7.5" fill="rgba(123,224,200,0.55)" font-family="'SF Mono',Menlo,Consolas,monospace">Backup off</text>
+
+<!-- Desktop video agent <-> Platform (signaling, violet dashed) -->
+<path d="M 1154,726 C 1154,704 940,698 860,686" fill="none" stroke="#9d6fd9" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#mVr)" opacity="0.60"/>
+<rect x="940" y="699" width="106" height="14" rx="7" fill="rgba(157,111,217,0.12)"/>
+<text x="993" y="710" text-anchor="middle" font-size="7.5" font-weight="700" fill="#9d6fd9" font-family="'SF Mono',Menlo,Consolas,monospace">Video setup</text>
+
+<!-- 5. Browser <-> Desktop (live video P2P, violet dashed arc, right edge) -->
+<path d="M 680,88 C 680,50 1762,50 1762,860 C 1762,872 1750,868 1740,862" fill="none" stroke="#9d6fd9" stroke-width="2" stroke-dasharray="7,4" marker-end="url(#mV)" opacity="0.55"/>
+<rect x="1560" y="42" width="178" height="20" rx="10" fill="rgba(157,111,217,0.14)" stroke="rgba(157,111,217,0.26)" stroke-width="1"/>
+<text x="1649" y="56" text-anchor="middle" font-size="9" font-weight="700" fill="#9d6fd9" font-family="'SF Mono',Menlo,Consolas,monospace">Live desktop video</text>
+
+<!-- ═══ STEP CALLOUT CIRCLES ═══ -->
+<!-- ① between the two arrow tips, clear of both labels -->
+<circle cx="372" cy="208" r="10" fill="#0a1424" stroke="#4ec3d4" stroke-width="1.8"/>
+<text x="372" y="212" text-anchor="middle" font-size="9.5" font-weight="800" fill="#4ec3d4">1</text>
+<!-- ② below the horizontal ECDSA arrow line -->
+<circle cx="736" cy="166" r="10" fill="#0a1424" stroke="#e8a85a" stroke-width="1.8"/>
+<text x="736" y="170" text-anchor="middle" font-size="9.5" font-weight="800" fill="#e8a85a">2</text>
+<!-- ③ above the Start PC label (label moved below arrow at y=384) -->
+<circle cx="1157" cy="368" r="10" fill="#0a1424" stroke="#e8a85a" stroke-width="1.8"/>
+<text x="1157" y="372" text-anchor="middle" font-size="9.5" font-weight="800" fill="#e8a85a">3</text>
+<!-- ④ outside legend box (legend right edge x=1456); on open arrow path -->
+<circle cx="1462" cy="502" r="10" fill="#0a1424" stroke="#f2607a" stroke-width="1.8"/>
+<text x="1462" y="506" text-anchor="middle" font-size="9.5" font-weight="800" fill="#f2607a">4</text>
+<circle cx="1560" cy="44" r="10" fill="#0a1424" stroke="#9d6fd9" stroke-width="1.8"/>
+<text x="1560" y="48" text-anchor="middle" font-size="9.5" font-weight="800" fill="#9d6fd9">5</text>
+
+<!-- WATERMARK -->
+<text x="1778" y="1172" text-anchor="end" font-size="8" fill="rgba(78,195,212,0.16)" font-family="'SF Mono',Menlo,Consolas,monospace">axondao.io  2026</text>
+</svg>

@@ -1,0 +1,478 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 1180" width="1800" height="1180"
+     font-family="'SF Pro Display',-apple-system,system-ui,'Helvetica Neue',Arial,sans-serif">
+<defs>
+  <radialGradient id="gC" cx="82%" cy="8%" r="55%">
+    <stop offset="0%" stop-color="#4ec3d4" stop-opacity="0.11"/>
+    <stop offset="100%" stop-color="#07101a" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="gV" cx="14%" cy="90%" r="50%">
+    <stop offset="0%" stop-color="#9d6fd9" stop-opacity="0.11"/>
+    <stop offset="100%" stop-color="#07101a" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="gW" cx="96%" cy="55%" r="32%">
+    <stop offset="0%" stop-color="#e8a85a" stop-opacity="0.07"/>
+    <stop offset="100%" stop-color="#07101a" stop-opacity="0"/>
+  </radialGradient>
+  <linearGradient id="lgCard" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#fff" stop-opacity="0.05"/>
+    <stop offset="100%" stop-color="#fff" stop-opacity="0.01"/>
+  </linearGradient>
+  <linearGradient id="lgGate" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#4ec3d4" stop-opacity="0.07"/>
+    <stop offset="100%" stop-color="#9d6fd9" stop-opacity="0.03"/>
+  </linearGradient>
+  <linearGradient id="lgSess" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#f2607a" stop-opacity="0.08"/>
+    <stop offset="100%" stop-color="#e8a85a" stop-opacity="0.03"/>
+  </linearGradient>
+  <linearGradient id="lgPg" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#9d6fd9" stop-opacity="0.11"/>
+    <stop offset="100%" stop-color="#9d6fd9" stop-opacity="0.02"/>
+  </linearGradient>
+  <linearGradient id="lgTitle" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0%" stop-color="#4ec3d4"/>
+    <stop offset="50%" stop-color="#9d6fd9"/>
+    <stop offset="100%" stop-color="#e8a85a"/>
+  </linearGradient>
+  <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse">
+    <path d="M64 0L0 0 0 64" fill="none" stroke="rgba(140,200,220,0.028)" stroke-width="1"/>
+  </pattern>
+  <marker id="mC" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#4ec3d4"/></marker>
+  <marker id="mCr" markerWidth="9" markerHeight="7" refX="1" refY="3.5" orient="auto"><polygon points="9 0,0 3.5,9 7" fill="#4ec3d4"/></marker>
+  <marker id="mV" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#9d6fd9"/></marker>
+  <marker id="mVr" markerWidth="9" markerHeight="7" refX="1" refY="3.5" orient="auto"><polygon points="9 0,0 3.5,9 7" fill="#9d6fd9"/></marker>
+  <marker id="mW" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#e8a85a"/></marker>
+  <marker id="mWr" markerWidth="9" markerHeight="7" refX="1" refY="3.5" orient="auto"><polygon points="9 0,0 3.5,9 7" fill="#e8a85a"/></marker>
+  <marker id="mK" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#f2607a"/></marker>
+  <marker id="mG" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0,9 3.5,0 7" fill="#7be0c8"/></marker>
+  <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+    <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="b"/>
+    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+</defs>
+
+<!-- BACKGROUND -->
+<rect width="1800" height="1180" fill="#07101a"/>
+<rect width="1800" height="1180" fill="url(#gC)"/>
+<rect width="1800" height="1180" fill="url(#gV)"/>
+<rect width="1800" height="1180" fill="url(#gW)"/>
+<rect width="1800" height="1180" fill="url(#grid)"/>
+
+<!-- TITLE BAR -->
+<rect x="0" y="0" width="1800" height="70" fill="#0a1424"/>
+<line x1="0" y1="69" x2="1800" y2="69" stroke="rgba(78,195,212,0.28)" stroke-width="1"/>
+<rect x="0" y="67" width="1800" height="2.5" fill="url(#lgTitle)" opacity="0.6"/>
+<circle cx="44" cy="35" r="14" fill="none" stroke="#4ec3d4" stroke-width="1.5" opacity="0.68"/>
+<circle cx="44" cy="35" r="5" fill="#4ec3d4" opacity="0.88" filter="url(#glow)"/>
+<text x="68" y="31" font-size="22" font-weight="800" fill="#e8edf4">Axon</text>
+<text x="120" y="31" font-size="22" font-weight="300" fill="#4ec3d4">OS</text>
+<text x="68" y="53" font-family="'SF Mono',Menlo,Consolas,monospace" font-size="9" letter-spacing="2.5" fill="rgba(170,210,225,0.48)">GPU-NATIVE SCIENTIFIC COMPUTING</text>
+<text x="900" y="28" text-anchor="middle" font-size="13" font-weight="700" letter-spacing="4" fill="rgba(170,210,225,0.70)" font-family="'SF Mono',Menlo,Consolas,monospace">SYSTEM ARCHITECTURE</text>
+<text x="900" y="52" text-anchor="middle" font-size="10" fill="rgba(170,210,225,0.33)" font-family="'SF Mono',Menlo,Consolas,monospace" letter-spacing="0.8">Wallet-gated  /  GPU-exclusive sessions  /  WebRTC 60fps NVFBC  /  Heartbeat billing  /  desktop.axonos.io</text>
+
+<!-- LAYER LABELS -->
+<text x="22" y="162" text-anchor="middle" font-size="8" font-weight="700" letter-spacing="3" fill="rgba(78,195,212,0.40)" font-family="'SF Mono',Menlo,Consolas,monospace" transform="rotate(-90,22,162)">CLIENT</text>
+<text x="22" y="462" text-anchor="middle" font-size="8" font-weight="700" letter-spacing="3" fill="rgba(78,195,212,0.40)" font-family="'SF Mono',Menlo,Consolas,monospace" transform="rotate(-90,22,462)">PLATFORM</text>
+<text x="22" y="836" text-anchor="middle" font-size="8" font-weight="700" letter-spacing="3" fill="rgba(78,195,212,0.40)" font-family="'SF Mono',Menlo,Consolas,monospace" transform="rotate(-90,22,836)">EXECUTION</text>
+
+<!-- ═══ ROW 1: BROWSER + ETHEREUM ═══ -->
+
+<!-- Browser box: x=50 y=88 w=680 h=132 -->
+<rect x="50" y="88" width="680" height="132" rx="13" fill="url(#lgCard)" stroke="rgba(78,195,212,0.30)" stroke-width="1.2"/>
+<rect x="50" y="88" width="680" height="3" rx="1.5" fill="#4ec3d4" opacity="0.46"/>
+<text x="70" y="109" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(78,195,212,0.65)" font-family="'SF Mono',Menlo,Consolas,monospace">USER BROWSER  /  desktop.axonos.io</text>
+<!-- noVNC chip: x=70 y=118 w=204 h=90 -->
+<rect x="70" y="118" width="204" height="90" rx="9" fill="rgba(78,195,212,0.09)" stroke="rgba(78,195,212,0.28)" stroke-width="1"/>
+<text x="172" y="139" text-anchor="middle" font-size="12.5" font-weight="700" fill="#e8edf4">noVNC Client</text>
+<text x="172" y="155" text-anchor="middle" font-size="9" fill="rgba(78,195,212,0.70)" font-family="'SF Mono',Menlo,Consolas,monospace">vnc.html / ui.js</text>
+<text x="172" y="169" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">axonos-theme.css</text>
+<text x="172" y="183" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.40)" font-family="'SF Mono',Menlo,Consolas,monospace">BrutalType font</text>
+<!-- Wallet chip: x=288 y=118 w=204 h=90 -->
+<rect x="288" y="118" width="204" height="90" rx="9" fill="rgba(232,168,90,0.09)" stroke="rgba(232,168,90,0.26)" stroke-width="1"/>
+<text x="390" y="139" text-anchor="middle" font-size="12.5" font-weight="700" fill="#e8edf4">Wallet</text>
+<text x="390" y="155" text-anchor="middle" font-size="9" fill="rgba(232,168,90,0.70)" font-family="'SF Mono',Menlo,Consolas,monospace">MetaMask / EIP-6963</text>
+<text x="390" y="169" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Signs challenges</text>
+<text x="390" y="183" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.40)" font-family="'SF Mono',Menlo,Consolas,monospace">ECDSA recovery</text>
+<!-- WebRTC chip: x=506 y=118 w=204 h=90 -->
+<rect x="506" y="118" width="204" height="90" rx="9" fill="rgba(157,111,217,0.09)" stroke="rgba(157,111,217,0.26)" stroke-width="1"/>
+<text x="608" y="139" text-anchor="middle" font-size="12.5" font-weight="700" fill="#e8edf4">WebRTC Peer</text>
+<text x="608" y="155" text-anchor="middle" font-size="9" fill="rgba(157,111,217,0.72)" font-family="'SF Mono',Menlo,Consolas,monospace">RTCPeerConnection</text>
+<text x="608" y="169" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Receives H.264 video</text>
+<text x="608" y="183" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.40)" font-family="'SF Mono',Menlo,Consolas,monospace">Sends keyboard + mouse</text>
+
+<!-- Ethereum box: x=748 y=88 w=1002 h=132 -->
+<rect x="748" y="88" width="1002" height="132" rx="13" fill="url(#lgCard)" stroke="rgba(232,168,90,0.33)" stroke-width="1.2"/>
+<rect x="748" y="88" width="1002" height="3" rx="1.5" fill="#e8a85a" opacity="0.50"/>
+<text x="768" y="109" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(232,168,90,0.65)" font-family="'SF Mono',Menlo,Consolas,monospace">ETHEREUM MAINNET  /  Chain ID 1  /  RPC: 0xrpc.io/eth</text>
+<!-- AXGT chip: x=768 y=118 w=310 h=90 -->
+<rect x="768" y="118" width="310" height="90" rx="9" fill="rgba(232,168,90,0.09)" stroke="rgba(232,168,90,0.26)" stroke-width="1"/>
+<text x="923" y="139" text-anchor="middle" font-size="12.5" font-weight="700" fill="#e8edf4">AXGT Token</text>
+<text x="923" y="155" text-anchor="middle" font-size="9" fill="rgba(232,168,90,0.70)" font-family="'SF Mono',Menlo,Consolas,monospace">ERC-20  /  0x6112...274d</text>
+<text x="923" y="169" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">balanceOf (discount tiers)</text>
+<text x="923" y="183" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.34)" font-family="'SF Mono',Menlo,Consolas,monospace">legacy - ETH deposits active in prod</text>
+<!-- Verification chip: x=1094 y=118 w=310 h=90 -->
+<rect x="1094" y="118" width="310" height="90" rx="9" fill="rgba(232,168,90,0.09)" stroke="rgba(232,168,90,0.26)" stroke-width="1"/>
+<text x="1249" y="139" text-anchor="middle" font-size="12.5" font-weight="700" fill="#e8edf4">Deposit Verification</text>
+<text x="1249" y="155" text-anchor="middle" font-size="9" fill="rgba(232,168,90,0.70)" font-family="'SF Mono',Menlo,Consolas,monospace">eth_getTransactionReceipt</text>
+<text x="1249" y="169" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">min 1 confirmation</text>
+<text x="1249" y="183" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.40)" font-family="'SF Mono',Menlo,Consolas,monospace">tx_hash replay protection</text>
+<!-- Revenue chip: x=1420 y=118 w=310 h=90 -->
+<rect x="1420" y="118" width="310" height="90" rx="9" fill="rgba(232,168,90,0.09)" stroke="rgba(232,168,90,0.26)" stroke-width="1"/>
+<text x="1575" y="139" text-anchor="middle" font-size="12.5" font-weight="700" fill="#e8edf4">Revenue Wallet</text>
+<text x="1575" y="155" text-anchor="middle" font-size="9" fill="rgba(232,168,90,0.70)" font-family="'SF Mono',Menlo,Consolas,monospace">0x0f1D...4CA7</text>
+<text x="1575" y="169" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">ETH min 0.0005</text>
+<text x="1575" y="183" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.40)" font-family="'SF Mono',Menlo,Consolas,monospace">1 ETH = 2,000 hrs ~ $0.99/hr</text>
+
+<!-- ═══ ROW 2: GATE + LAUNCHER + LEGEND ═══ -->
+
+<!-- GATE CONTAINER: x=50 y=240 w=1100 h=446 -->
+<rect x="50" y="240" width="1100" height="446" rx="16" fill="url(#lgGate)" stroke="rgba(140,200,220,0.16)" stroke-width="1.5"/>
+<rect x="50" y="240" width="1100" height="3" rx="1.5" fill="url(#lgTitle)" opacity="0.52"/>
+<rect x="51" y="241" width="1098" height="1" fill="rgba(255,255,255,0.04)" rx="1"/>
+<text x="72" y="263" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(78,195,212,0.60)" font-family="'SF Mono',Menlo,Consolas,monospace">GATE CONTAINER  /  container: axonos  /  image: axonos:public-beta</text>
+<rect x="972" y="250" width="72" height="20" rx="10" fill="rgba(78,195,212,0.12)" stroke="rgba(78,195,212,0.30)" stroke-width="1"/>
+<text x="1008" y="264" text-anchor="middle" font-size="9" font-weight="700" fill="#4ec3d4" font-family="'SF Mono',Menlo,Consolas,monospace">:6080</text>
+<rect x="1055" y="250" width="72" height="20" rx="10" fill="rgba(78,195,212,0.12)" stroke="rgba(78,195,212,0.30)" stroke-width="1"/>
+<text x="1091" y="264" text-anchor="middle" font-size="9" font-weight="700" fill="#4ec3d4" font-family="'SF Mono',Menlo,Consolas,monospace">:8889</text>
+
+<!-- Gate chip 1: noVNC+WS — x=80 y=278 w=247 h=112 -->
+<rect x="80" y="278" width="247" height="112" rx="11" fill="rgba(78,195,212,0.10)" stroke="rgba(78,195,212,0.34)" stroke-width="1"/>
+<rect x="80" y="278" width="247" height="2.5" rx="1.2" fill="#4ec3d4" opacity="0.52"/>
+<rect x="88" y="284" width="42" height="15" rx="7.5" fill="rgba(78,195,212,0.22)"/>
+<text x="109" y="295" text-anchor="middle" font-size="8" font-weight="700" fill="#4ec3d4" font-family="'SF Mono',Menlo,Consolas,monospace">:6080</text>
+<text x="204" y="302" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">noVNC + Websockify</text>
+<text x="204" y="317" text-anchor="middle" font-size="9" fill="rgba(78,195,212,0.68)" font-family="'SF Mono',Menlo,Consolas,monospace">websockify_gate.py</text>
+<text x="204" y="331" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Validates auth token</text>
+<text x="204" y="345" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Proxies WS -&gt; VNC :5901</text>
+<text x="204" y="360" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Serves HTML / JS / CSS</text>
+<text x="204" y="381" text-anchor="middle" font-size="8" fill="rgba(78,195,212,0.36)" font-family="'SF Mono',Menlo,Consolas,monospace">WEBRTC_FALLBACK_ENABLED=false</text>
+
+<!-- Gate chip 2: Gate API — x=347 y=278 w=247 h=112 -->
+<rect x="347" y="278" width="247" height="112" rx="11" fill="rgba(78,195,212,0.10)" stroke="rgba(78,195,212,0.34)" stroke-width="1"/>
+<rect x="347" y="278" width="247" height="2.5" rx="1.2" fill="#4ec3d4" opacity="0.52"/>
+<rect x="355" y="284" width="42" height="15" rx="7.5" fill="rgba(78,195,212,0.22)"/>
+<text x="376" y="295" text-anchor="middle" font-size="8" font-weight="700" fill="#4ec3d4" font-family="'SF Mono',Menlo,Consolas,monospace">:8889</text>
+<text x="471" y="302" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">Gate API</text>
+<text x="471" y="317" text-anchor="middle" font-size="9" fill="rgba(78,195,212,0.68)" font-family="'SF Mono',Menlo,Consolas,monospace">gate_server.py / Flask+gevent</text>
+<text x="471" y="331" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Auth / Sessions / Deposits</text>
+<text x="471" y="345" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">WebRTC signaling / Admin</text>
+<text x="471" y="360" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">30 rpm rate limit</text>
+<text x="471" y="381" text-anchor="middle" font-size="8" fill="rgba(78,195,212,0.36)" font-family="'SF Mono',Menlo,Consolas,monospace">CORS: desktop.axonos.io</text>
+
+<!-- Gate chip 3: WebRTC Agent — x=614 y=278 w=247 h=112 -->
+<rect x="614" y="278" width="247" height="112" rx="11" fill="rgba(157,111,217,0.10)" stroke="rgba(157,111,217,0.34)" stroke-width="1"/>
+<rect x="614" y="278" width="247" height="2.5" rx="1.2" fill="#9d6fd9" opacity="0.52"/>
+<rect x="622" y="284" width="52" height="15" rx="7.5" fill="rgba(157,111,217,0.22)"/>
+<text x="648" y="295" text-anchor="middle" font-size="8" font-weight="700" fill="#9d6fd9" font-family="'SF Mono',Menlo,Consolas,monospace">NVFBC</text>
+<text x="738" y="302" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">WebRTC Agent</text>
+<text x="738" y="317" text-anchor="middle" font-size="9" fill="rgba(157,111,217,0.76)" font-family="'SF Mono',Menlo,Consolas,monospace">webrtc_agent_main.py</text>
+<text x="738" y="331" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">60fps / 18 Mbps / preset p4</text>
+<text x="738" y="345" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">H.264 via aiortc</text>
+<text x="738" y="360" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Polls agent/next SDP</text>
+<text x="738" y="381" text-anchor="middle" font-size="8" fill="rgba(157,111,217,0.42)" font-family="'SF Mono',Menlo,Consolas,monospace">OCI TURN: turn.axondao.io:3478</text>
+
+<!-- Gate chip 4: Session Manager — x=881 y=278 w=247 h=112 -->
+<rect x="881" y="278" width="247" height="112" rx="11" fill="rgba(123,224,200,0.08)" stroke="rgba(123,224,200,0.28)" stroke-width="1"/>
+<rect x="881" y="278" width="247" height="2.5" rx="1.2" fill="#7be0c8" opacity="0.42"/>
+<text x="1005" y="302" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">Session Manager</text>
+<text x="1005" y="317" text-anchor="middle" font-size="9" fill="rgba(123,224,200,0.66)" font-family="'SF Mono',Menlo,Consolas,monospace">session_manager.py</text>
+<text x="1005" y="331" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Exclusive GPU allocation</text>
+<text x="1005" y="345" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Heartbeat timeout: 120s</text>
+<text x="1005" y="360" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Session max: 60 min</text>
+<text x="1005" y="381" text-anchor="middle" font-size="8" fill="rgba(123,224,200,0.38)" font-family="'SF Mono',Menlo,Consolas,monospace">Pause on credit exhaust</text>
+
+<!-- Internal chip connectors -->
+<path d="M 327,334 L 347,334" fill="none" stroke="rgba(78,195,212,0.32)" stroke-width="1.2" stroke-dasharray="3,2" marker-end="url(#mC)"/>
+<path d="M 594,334 L 614,334" fill="none" stroke="rgba(157,111,217,0.32)" stroke-width="1.2" stroke-dasharray="3,2" marker-end="url(#mV)"/>
+<path d="M 861,334 L 881,334" fill="none" stroke="rgba(123,224,200,0.32)" stroke-width="1.2" stroke-dasharray="3,2" marker-end="url(#mG)"/>
+
+<!-- Supervisord strip: y=404 h=28 -->
+<rect x="80" y="404" width="1048" height="28" rx="7" fill="rgba(140,200,220,0.04)" stroke="rgba(140,200,220,0.10)" stroke-width="1" stroke-dasharray="5,3"/>
+<text x="604" y="422" text-anchor="middle" font-size="8.5" font-weight="600" letter-spacing="1.5" fill="rgba(170,210,225,0.38)" font-family="'SF Mono',Menlo,Consolas,monospace">supervisord  manages:  xorg-nvidia  xfce4  x11vnc  novnc  axgt-api  webrtc-agent  ollama  jupyterlab  ipfs</text>
+
+<!-- Auth & Billing strip: y=444 h=72 -->
+<rect x="80" y="444" width="1048" height="72" rx="9" fill="rgba(78,195,212,0.04)" stroke="rgba(78,195,212,0.12)" stroke-width="1"/>
+<text x="100" y="461" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(78,195,212,0.52)" font-family="'SF Mono',Menlo,Consolas,monospace">AUTH &amp; BILLING CONFIG</text>
+<!-- 6 pills on one row, calculated widths -->
+<!-- p1 x=100 w=145 -->
+<rect x="100" y="468" width="145" height="22" rx="7" fill="rgba(78,195,212,0.10)" stroke="rgba(78,195,212,0.20)" stroke-width="1"/>
+<text x="172" y="483" text-anchor="middle" font-size="8.5" fill="#4ec3d4" font-family="'SF Mono',Menlo,Consolas,monospace">token TTL: 30 min</text>
+<!-- p2 x=255 w=185 -->
+<rect x="255" y="468" width="185" height="22" rx="7" fill="rgba(78,195,212,0.10)" stroke="rgba(78,195,212,0.20)" stroke-width="1"/>
+<text x="347" y="483" text-anchor="middle" font-size="8.5" fill="#4ec3d4" font-family="'SF Mono',Menlo,Consolas,monospace">rotate: 60s before expiry</text>
+<!-- p3 x=450 w=100 -->
+<rect x="450" y="468" width="100" height="22" rx="7" fill="rgba(78,195,212,0.10)" stroke="rgba(78,195,212,0.20)" stroke-width="1"/>
+<text x="500" y="483" text-anchor="middle" font-size="8.5" fill="#4ec3d4" font-family="'SF Mono',Menlo,Consolas,monospace">grace: 15s</text>
+<!-- p4 x=560 w=155 -->
+<rect x="560" y="468" width="155" height="22" rx="7" fill="rgba(123,224,200,0.10)" stroke="rgba(123,224,200,0.20)" stroke-width="1"/>
+<text x="637" y="483" text-anchor="middle" font-size="8.5" fill="#7be0c8" font-family="'SF Mono',Menlo,Consolas,monospace">warn at 10 min left</text>
+<!-- p5 x=725 w=165 -->
+<rect x="725" y="468" width="165" height="22" rx="7" fill="rgba(232,168,90,0.10)" stroke="rgba(232,168,90,0.20)" stroke-width="1"/>
+<text x="807" y="483" text-anchor="middle" font-size="8.5" fill="#e8a85a" font-family="'SF Mono',Menlo,Consolas,monospace">1 ETH = 120,000 min</text>
+<!-- p6 x=900 w=168 -->
+<rect x="900" y="468" width="168" height="22" rx="7" fill="rgba(232,168,90,0.10)" stroke="rgba(232,168,90,0.20)" stroke-width="1"/>
+<text x="984" y="483" text-anchor="middle" font-size="8.5" fill="#e8a85a" font-family="'SF Mono',Menlo,Consolas,monospace">min deposit: 0.0005 ETH</text>
+<!-- billing formula -->
+<text x="100" y="508" font-size="9" fill="rgba(170,210,225,0.36)" font-family="'SF Mono',Menlo,Consolas,monospace">BILLING -&gt;</text>
+<text x="178" y="508" font-size="9" fill="rgba(123,224,200,0.60)" font-family="'SF Mono',Menlo,Consolas,monospace">deduct = elapsed_min x gpu_count</text>
+<text x="460" y="508" font-size="9" fill="rgba(170,210,225,0.28)" font-family="'SF Mono',Menlo,Consolas,monospace">|</text>
+<text x="474" y="508" font-size="9" fill="rgba(123,224,200,0.60)" font-family="'SF Mono',Menlo,Consolas,monospace">small(1)  medium(2)  large(4)  max(8 GPUs)</text>
+<text x="760" y="508" font-size="9" fill="rgba(170,210,225,0.28)" font-family="'SF Mono',Menlo,Consolas,monospace">|</text>
+<text x="774" y="508" font-size="9" fill="rgba(232,168,90,0.58)" font-family="'SF Mono',Menlo,Consolas,monospace">pause container on credit exhaust</text>
+
+<!-- DB Tables compact strip: y=528 h=148 -->
+<rect x="80" y="528" width="1048" height="148" rx="9" fill="rgba(157,111,217,0.05)" stroke="rgba(157,111,217,0.18)" stroke-width="1"/>
+<text x="100" y="547" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(157,111,217,0.58)" font-family="'SF Mono',Menlo,Consolas,monospace">POSTGRESQL TABLES  (deposit_ledger.py)</text>
+<!-- Row 1 of DB chips: y=556 h=48 — 3 chips w=336 gap=20 starting x=80 -->
+<rect x="80" y="556" width="336" height="48" rx="8" fill="rgba(157,111,217,0.11)" stroke="rgba(157,111,217,0.24)" stroke-width="1"/>
+<text x="248" y="575" text-anchor="middle" font-size="10.5" font-weight="600" fill="#b3a3eb">axgt_sessions</text>
+<text x="248" y="594" text-anchor="middle" font-size="8.5" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">session_id  /  gpu_ids  /  status  /  last_heartbeat</text>
+<rect x="436" y="556" width="336" height="48" rx="8" fill="rgba(157,111,217,0.11)" stroke="rgba(157,111,217,0.24)" stroke-width="1"/>
+<text x="604" y="575" text-anchor="middle" font-size="10.5" font-weight="600" fill="#b3a3eb">axgt_deposits</text>
+<text x="604" y="594" text-anchor="middle" font-size="8.5" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">wallet  /  remaining_min  /  consumed_min</text>
+<rect x="792" y="556" width="336" height="48" rx="8" fill="rgba(157,111,217,0.11)" stroke="rgba(157,111,217,0.24)" stroke-width="1"/>
+<text x="960" y="575" text-anchor="middle" font-size="10.5" font-weight="600" fill="#b3a3eb">axgt_ledger</text>
+<text x="960" y="594" text-anchor="middle" font-size="8.5" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">event_type  /  delta_min  /  audit trail</text>
+<!-- Row 2 of DB chips: y=614 h=48 -->
+<rect x="80" y="614" width="336" height="48" rx="8" fill="rgba(157,111,217,0.11)" stroke="rgba(157,111,217,0.24)" stroke-width="1"/>
+<text x="248" y="633" text-anchor="middle" font-size="10.5" font-weight="600" fill="#b3a3eb">axgt_auth_tokens</text>
+<text x="248" y="652" text-anchor="middle" font-size="8.5" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">token  /  wallet  /  TTL 30 min  /  grace</text>
+<rect x="436" y="614" width="336" height="48" rx="8" fill="rgba(157,111,217,0.11)" stroke="rgba(157,111,217,0.24)" stroke-width="1"/>
+<text x="604" y="633" text-anchor="middle" font-size="10.5" font-weight="600" fill="#b3a3eb">axgt_challenges</text>
+<text x="604" y="652" text-anchor="middle" font-size="8.5" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">nonce  /  wallet  /  TTL 180s  /  used</text>
+<rect x="792" y="614" width="336" height="48" rx="8" fill="rgba(157,111,217,0.11)" stroke="rgba(157,111,217,0.24)" stroke-width="1"/>
+<text x="960" y="633" text-anchor="middle" font-size="10.5" font-weight="600" fill="#b3a3eb">axgt_webrtc_signaling</text>
+<text x="960" y="652" text-anchor="middle" font-size="8.5" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">SDP offer/answer  /  ICE  /  state</text>
+<!-- verified_deposits row -->
+<rect x="80" y="670" width="550" height="28" rx="7" fill="rgba(157,111,217,0.06)" stroke="rgba(157,111,217,0.15)" stroke-width="1" stroke-dasharray="3,2"/>
+<text x="355" y="688" text-anchor="middle" font-size="8.5" fill="rgba(157,111,217,0.48)" font-family="'SF Mono',Menlo,Consolas,monospace">axgt_verified_deposits  /  tx_hash PK  /  replay protection</text>
+
+<!-- LAUNCHER SERVICE: x=1166 y=240 w=584 h=280 -->
+<rect x="1166" y="240" width="584" height="280" rx="14" fill="url(#lgCard)" stroke="rgba(232,168,90,0.32)" stroke-width="1.5"/>
+<rect x="1166" y="240" width="584" height="3" rx="1.5" fill="#e8a85a" opacity="0.46"/>
+<text x="1186" y="262" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(232,168,90,0.65)" font-family="'SF Mono',Menlo,Consolas,monospace">LAUNCHER SERVICE  /  axonos_session_launcher</text>
+<rect x="1666" y="250" width="60" height="20" rx="10" fill="rgba(232,168,90,0.12)" stroke="rgba(232,168,90,0.28)" stroke-width="1"/>
+<text x="1696" y="264" text-anchor="middle" font-size="9" font-weight="700" fill="#e8a85a" font-family="'SF Mono',Menlo,Consolas,monospace">:8090</text>
+<!-- Flask chip: x=1186 y=278 w=262 h=88 -->
+<rect x="1186" y="278" width="262" height="88" rx="10" fill="rgba(232,168,90,0.09)" stroke="rgba(232,168,90,0.22)" stroke-width="1"/>
+<text x="1317" y="298" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">Flask REST API</text>
+<text x="1317" y="314" text-anchor="middle" font-size="9" fill="rgba(232,168,90,0.68)" font-family="'SF Mono',Menlo,Consolas,monospace">session_launcher_service.py</text>
+<text x="1317" y="329" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">POST /launch  POST /stop</text>
+<text x="1317" y="344" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">GET /enumerate-gpus</text>
+<text x="1317" y="358" text-anchor="middle" font-size="8.5" fill="rgba(232,168,90,0.36)" font-family="'SF Mono',Menlo,Consolas,monospace">Bearer token auth</text>
+<!-- Docker CLI chip: x=1466 y=278 w=262 h=88 -->
+<rect x="1466" y="278" width="262" height="88" rx="10" fill="rgba(242,96,122,0.08)" stroke="rgba(242,96,122,0.22)" stroke-width="1"/>
+<text x="1597" y="298" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">Docker CLI</text>
+<text x="1597" y="314" text-anchor="middle" font-size="9" fill="rgba(242,96,122,0.68)" font-family="'SF Mono',Menlo,Consolas,monospace">docker_gpu_cli.py</text>
+<text x="1597" y="329" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">docker run --gpus device=N</text>
+<text x="1597" y="344" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">/var/run/docker.sock</text>
+<text x="1597" y="358" text-anchor="middle" font-size="8.5" fill="rgba(242,96,122,0.36)" font-family="'SF Mono',Menlo,Consolas,monospace">Host socket mount</text>
+<!-- docker run command strip: y=378 h=96 -->
+<rect x="1186" y="378" width="542" height="96" rx="8" fill="rgba(0,0,0,0.30)" stroke="rgba(242,96,122,0.16)" stroke-width="1"/>
+<text x="1202" y="397" font-size="9" fill="rgba(242,96,122,0.58)" font-family="'SF Mono',Menlo,Consolas,monospace">$ docker run -d --rm --gpus device=0,1 \</text>
+<text x="1202" y="413" font-size="9" fill="rgba(170,210,225,0.40)" font-family="'SF Mono',Menlo,Consolas,monospace">    --name axgt-session-{id}  --net axonos_stack \</text>
+<text x="1202" y="429" font-size="9" fill="rgba(170,210,225,0.40)" font-family="'SF Mono',Menlo,Consolas,monospace">    -e AXGT_SESSION_ID=N  -e AXGT_WALLET_ADDRESS=0x... \</text>
+<text x="1202" y="445" font-size="9" fill="rgba(170,210,225,0.40)" font-family="'SF Mono',Menlo,Consolas,monospace">    --shm-size 32g  axonos:public-beta  /startup.sh</text>
+<text x="1202" y="465" font-size="8" fill="rgba(170,210,225,0.26)" font-family="'SF Mono',Menlo,Consolas,monospace">mode: http  /  axonos-launcher:8090  /  multi-session enabled  /  default profile: small</text>
+
+<!-- LEGEND: x=1166 y=534 w=290 h=192 -->
+<rect x="1166" y="534" width="290" height="192" rx="11" fill="rgba(10,20,36,0.88)" stroke="rgba(140,200,220,0.12)" stroke-width="1"/>
+<text x="1186" y="554" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">LEGEND</text>
+<line x1="1186" y1="566" x2="1220" y2="566" stroke="#4ec3d4" stroke-width="2" marker-end="url(#mC)"/>
+<text x="1232" y="570" font-size="8.5" fill="rgba(170,210,225,0.60)" font-family="'SF Mono',Menlo,Consolas,monospace">WebSocket / HTTP</text>
+<line x1="1186" y1="583" x2="1220" y2="583" stroke="#4ec3d4" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#mC)"/>
+<text x="1232" y="587" font-size="8.5" fill="rgba(170,210,225,0.60)" font-family="'SF Mono',Menlo,Consolas,monospace">REST API (auth)</text>
+<line x1="1186" y1="600" x2="1220" y2="600" stroke="#9d6fd9" stroke-width="2" marker-end="url(#mV)"/>
+<text x="1232" y="604" font-size="8.5" fill="rgba(170,210,225,0.60)" font-family="'SF Mono',Menlo,Consolas,monospace">WebRTC signaling</text>
+<line x1="1186" y1="617" x2="1220" y2="617" stroke="#9d6fd9" stroke-width="2" stroke-dasharray="6,4" marker-end="url(#mV)"/>
+<text x="1232" y="621" font-size="8.5" fill="rgba(170,210,225,0.60)" font-family="'SF Mono',Menlo,Consolas,monospace">WebRTC P2P stream</text>
+<line x1="1186" y1="634" x2="1220" y2="634" stroke="#e8a85a" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#mW)"/>
+<text x="1232" y="638" font-size="8.5" fill="rgba(170,210,225,0.60)" font-family="'SF Mono',Menlo,Consolas,monospace">Blockchain RPC</text>
+<line x1="1186" y1="651" x2="1220" y2="651" stroke="#e8a85a" stroke-width="2" marker-end="url(#mW)"/>
+<text x="1232" y="655" font-size="8.5" fill="rgba(170,210,225,0.60)" font-family="'SF Mono',Menlo,Consolas,monospace">Launcher calls</text>
+<line x1="1186" y1="668" x2="1220" y2="668" stroke="#f2607a" stroke-width="2" marker-end="url(#mK)"/>
+<text x="1232" y="672" font-size="8.5" fill="rgba(170,210,225,0.60)" font-family="'SF Mono',Menlo,Consolas,monospace">docker run (GPU)</text>
+<line x1="1186" y1="685" x2="1220" y2="685" stroke="#7be0c8" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#mG)"/>
+<text x="1232" y="689" font-size="8.5" fill="rgba(170,210,225,0.60)" font-family="'SF Mono',Menlo,Consolas,monospace">VNC proxy :5901</text>
+<line x1="1186" y1="702" x2="1220" y2="702" stroke="#b3a3eb" stroke-width="1.5" marker-end="url(#mV)"/>
+<text x="1232" y="706" font-size="8.5" fill="rgba(170,210,225,0.60)" font-family="'SF Mono',Menlo,Consolas,monospace">PostgreSQL SQL</text>
+<text x="1311" y="720" text-anchor="middle" font-size="7.5" fill="rgba(170,210,225,0.22)" font-family="'SF Mono',Menlo,Consolas,monospace">(c) 2026 AxonDAO</text>
+
+<!-- ═══ ROW 3: POSTGRESQL + GPU SESSION ═══ -->
+
+<!-- POSTGRESQL: x=50 y=726 w=488 h=268 -->
+<rect x="50" y="726" width="488" height="268" rx="14" fill="url(#lgPg)" stroke="rgba(157,111,217,0.34)" stroke-width="1.5"/>
+<rect x="50" y="726" width="488" height="3" rx="1.5" fill="#9d6fd9" opacity="0.50"/>
+<text x="70" y="747" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(157,111,217,0.65)" font-family="'SF Mono',Menlo,Consolas,monospace">POSTGRESQL  /  postgres:15-alpine  /  :5432 internal</text>
+<!-- 2-col 3-row chips: w=218 gap=14 x=70,302 y=756,808,860 h=44 -->
+<rect x="70" y="756" width="218" height="44" rx="8" fill="rgba(157,111,217,0.12)" stroke="rgba(157,111,217,0.26)" stroke-width="1"/>
+<text x="179" y="774" text-anchor="middle" font-size="10.5" font-weight="600" fill="#b3a3eb">axgt_sessions</text>
+<text x="179" y="791" text-anchor="middle" font-size="8" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">session / gpu_ids / status</text>
+<rect x="302" y="756" width="218" height="44" rx="8" fill="rgba(157,111,217,0.12)" stroke="rgba(157,111,217,0.26)" stroke-width="1"/>
+<text x="411" y="774" text-anchor="middle" font-size="10.5" font-weight="600" fill="#b3a3eb">axgt_deposits</text>
+<text x="411" y="791" text-anchor="middle" font-size="8" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">wallet / remaining_min</text>
+<rect x="70" y="808" width="218" height="44" rx="8" fill="rgba(157,111,217,0.12)" stroke="rgba(157,111,217,0.26)" stroke-width="1"/>
+<text x="179" y="826" text-anchor="middle" font-size="10.5" font-weight="600" fill="#b3a3eb">axgt_ledger</text>
+<text x="179" y="843" text-anchor="middle" font-size="8" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">event / delta / audit</text>
+<rect x="302" y="808" width="218" height="44" rx="8" fill="rgba(157,111,217,0.12)" stroke="rgba(157,111,217,0.26)" stroke-width="1"/>
+<text x="411" y="826" text-anchor="middle" font-size="10.5" font-weight="600" fill="#b3a3eb">axgt_auth_tokens</text>
+<text x="411" y="843" text-anchor="middle" font-size="8" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">token / TTL 30 min</text>
+<rect x="70" y="860" width="218" height="44" rx="8" fill="rgba(157,111,217,0.12)" stroke="rgba(157,111,217,0.26)" stroke-width="1"/>
+<text x="179" y="878" text-anchor="middle" font-size="10.5" font-weight="600" fill="#b3a3eb">axgt_challenges</text>
+<text x="179" y="895" text-anchor="middle" font-size="8" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">nonce / wallet / TTL</text>
+<rect x="302" y="860" width="218" height="44" rx="8" fill="rgba(157,111,217,0.12)" stroke="rgba(157,111,217,0.26)" stroke-width="1"/>
+<text x="411" y="878" text-anchor="middle" font-size="10.5" font-weight="600" fill="#b3a3eb">axgt_webrtc_signaling</text>
+<text x="411" y="895" text-anchor="middle" font-size="8" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">SDP / ICE / state</text>
+<!-- verified_deposits: y=912 h=66 -->
+<rect x="70" y="912" width="450" height="64" rx="8" fill="rgba(157,111,217,0.06)" stroke="rgba(157,111,217,0.14)" stroke-width="1" stroke-dasharray="3,2"/>
+<text x="295" y="932" text-anchor="middle" font-size="9.5" font-weight="600" fill="rgba(157,111,217,0.48)" font-family="'SF Mono',Menlo,Consolas,monospace">axgt_verified_deposits</text>
+<text x="295" y="948" text-anchor="middle" font-size="8.5" fill="rgba(170,210,225,0.34)" font-family="'SF Mono',Menlo,Consolas,monospace">tx_hash PRIMARY KEY  /  replay protection</text>
+<text x="295" y="964" text-anchor="middle" font-size="8" fill="rgba(170,210,225,0.26)" font-family="'SF Mono',Menlo,Consolas,monospace">block_number / sender / credited_minutes</text>
+
+<!-- GPU SESSION: x=556 y=726 w=1194 h=268 -->
+<rect x="556" y="726" width="1194" height="268" rx="16" fill="url(#lgSess)" stroke="rgba(242,96,122,0.28)" stroke-width="1.5"/>
+<rect x="556" y="726" width="1194" height="3" rx="1.5" fill="#f2607a" opacity="0.50"/>
+<text x="576" y="747" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(242,96,122,0.65)" font-family="'SF Mono',Menlo,Consolas,monospace">GPU SESSION CONTAINER  /  axgt-session-{id}  /  image: axonos:public-beta</text>
+<!-- 5 chips: w=220 gap=14 starting x=576 y=758 h=106 -->
+<!-- chip positions: 576,810,1044,1278,1512 (576+220+14=810, etc.) -->
+<!-- Xorg chip -->
+<rect x="576" y="758" width="220" height="106" rx="10" fill="rgba(242,96,122,0.09)" stroke="rgba(242,96,122,0.25)" stroke-width="1"/>
+<text x="686" y="778" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">Xorg :0</text>
+<text x="686" y="794" text-anchor="middle" font-size="9" fill="rgba(242,96,122,0.68)" font-family="'SF Mono',Menlo,Consolas,monospace">xorg-nvidia</text>
+<text x="686" y="809" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">VirtualGL 3.0.2</text>
+<text x="686" y="824" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">CUDA 12.2</text>
+<text x="686" y="856" text-anchor="middle" font-size="8" fill="rgba(242,96,122,0.36)" font-family="'SF Mono',Menlo,Consolas,monospace">GPU-accelerated X</text>
+<!-- XFCE chip -->
+<rect x="810" y="758" width="220" height="106" rx="10" fill="rgba(242,96,122,0.09)" stroke="rgba(242,96,122,0.25)" stroke-width="1"/>
+<text x="920" y="778" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">XFCE4 Desktop</text>
+<text x="920" y="794" text-anchor="middle" font-size="9" fill="rgba(242,96,122,0.68)" font-family="'SF Mono',Menlo,Consolas,monospace">WhiteSur-Dark theme</text>
+<text x="920" y="809" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">AxonOS wallpaper</text>
+<text x="920" y="824" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">XFCE panel</text>
+<text x="920" y="856" text-anchor="middle" font-size="8" fill="rgba(242,96,122,0.36)" font-family="'SF Mono',Menlo,Consolas,monospace">aXonian user (non-root)</text>
+<!-- WebRTC Agent chip -->
+<rect x="1044" y="758" width="220" height="106" rx="10" fill="rgba(157,111,217,0.10)" stroke="rgba(157,111,217,0.27)" stroke-width="1"/>
+<text x="1154" y="778" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">WebRTC Agent</text>
+<text x="1154" y="794" text-anchor="middle" font-size="9" fill="rgba(157,111,217,0.72)" font-family="'SF Mono',Menlo,Consolas,monospace">webrtc_agent_main.py</text>
+<text x="1154" y="809" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">NVFBC -&gt; H.264</text>
+<text x="1154" y="824" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">60fps / 18Mbps / p4</text>
+<text x="1154" y="856" text-anchor="middle" font-size="8" fill="rgba(157,111,217,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">X11 input data channel</text>
+<!-- x11vnc chip -->
+<rect x="1278" y="758" width="220" height="106" rx="10" fill="rgba(242,96,122,0.07)" stroke="rgba(242,96,122,0.20)" stroke-width="1"/>
+<text x="1388" y="778" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">x11vnc</text>
+<text x="1388" y="794" text-anchor="middle" font-size="9" fill="rgba(242,96,122,0.62)" font-family="'SF Mono',Menlo,Consolas,monospace">VNC server :5901</text>
+<text x="1388" y="809" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">RFB protocol</text>
+<rect x="1296" y="818" width="184" height="18" rx="9" fill="rgba(242,96,122,0.12)" stroke="rgba(242,96,122,0.28)" stroke-width="1"/>
+<text x="1388" y="831" text-anchor="middle" font-size="8" font-weight="700" fill="rgba(242,96,122,0.72)" font-family="'SF Mono',Menlo,Consolas,monospace">FALLBACK DISABLED in prod</text>
+<text x="1388" y="856" text-anchor="middle" font-size="8" fill="rgba(242,96,122,0.34)" font-family="'SF Mono',Menlo,Consolas,monospace">WEBRTC_FALLBACK_ENABLED=false</text>
+<!-- Scientific Apps chip -->
+<rect x="1512" y="758" width="220" height="106" rx="10" fill="rgba(123,224,200,0.08)" stroke="rgba(123,224,200,0.22)" stroke-width="1"/>
+<text x="1622" y="778" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">Scientific Apps</text>
+<text x="1622" y="794" text-anchor="middle" font-size="9" fill="rgba(123,224,200,0.62)" font-family="'SF Mono',Menlo,Consolas,monospace">JupyterLab :8888</text>
+<text x="1622" y="809" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">Ollama gemma4 / granite3</text>
+<text x="1622" y="824" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">IPFS / PyMOL / GROMACS</text>
+<text x="1622" y="856" text-anchor="middle" font-size="8" fill="rgba(123,224,200,0.36)" font-family="'SF Mono',Menlo,Consolas,monospace">RStudio / QGIS / Nextflow</text>
+
+<!-- GPU badges row: y=874 h=34 -->
+<rect x="576" y="874" width="1154" height="34" rx="7" fill="rgba(242,96,122,0.05)" stroke="rgba(242,96,122,0.13)" stroke-width="1" stroke-dasharray="4,2"/>
+<text x="596" y="890" font-size="8.5" fill="rgba(242,96,122,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">NVIDIA GPUs (exclusive per session) -&gt;</text>
+<rect x="816" y="880" width="52" height="22" rx="11" fill="rgba(242,96,122,0.16)" stroke="rgba(242,96,122,0.36)" stroke-width="1"/>
+<text x="842" y="895" text-anchor="middle" font-size="9" font-weight="700" fill="#f2607a" font-family="'SF Mono',Menlo,Consolas,monospace">GPU 0</text>
+<rect x="878" y="880" width="52" height="22" rx="11" fill="rgba(242,96,122,0.16)" stroke="rgba(242,96,122,0.36)" stroke-width="1"/>
+<text x="904" y="895" text-anchor="middle" font-size="9" font-weight="700" fill="#f2607a" font-family="'SF Mono',Menlo,Consolas,monospace">GPU 1</text>
+<rect x="940" y="880" width="52" height="22" rx="11" fill="rgba(242,96,122,0.07)" stroke="rgba(242,96,122,0.18)" stroke-width="1"/>
+<text x="966" y="895" text-anchor="middle" font-size="9" fill="rgba(242,96,122,0.42)" font-family="'SF Mono',Menlo,Consolas,monospace">GPU 2</text>
+<rect x="1002" y="880" width="52" height="22" rx="11" fill="rgba(242,96,122,0.07)" stroke="rgba(242,96,122,0.18)" stroke-width="1"/>
+<text x="1028" y="895" text-anchor="middle" font-size="9" fill="rgba(242,96,122,0.42)" font-family="'SF Mono',Menlo,Consolas,monospace">GPU 3</text>
+<text x="1066" y="895" font-size="9" fill="rgba(242,96,122,0.26)" font-family="'SF Mono',Menlo,Consolas,monospace">...</text>
+<text x="1086" y="895" font-size="8.5" fill="rgba(170,210,225,0.36)" font-family="'SF Mono',Menlo,Consolas,monospace">up to 8 GPUs (max profile)  /  --gpus device=N,M,...  /  shm-size 32g  /  CUDA 12.2</text>
+
+<!-- ENV vars strip: y=916 h=66 -->
+<rect x="576" y="916" width="1154" height="66" rx="7" fill="rgba(0,0,0,0.24)" stroke="rgba(140,200,220,0.07)" stroke-width="1"/>
+<text x="596" y="932" font-size="8.5" fill="rgba(78,195,212,0.38)" font-family="'SF Mono',Menlo,Consolas,monospace">ENV -&gt;  AXGT_SESSION_ID  AXGT_WALLET_ADDRESS  AXGT_REQUESTED_PROFILE  AXGT_ASSIGNED_GPU_IDS  AXGT_DESKTOP_ENABLED=true</text>
+<text x="596" y="948" font-size="8.5" fill="rgba(170,210,225,0.30)" font-family="'SF Mono',Menlo,Consolas,monospace">WEBRTC_AGENT_ENABLED=true  WEBRTC_CAPTURE_BACKEND=nvfbc  WEBRTC_CAPTURE_FPS=60  WEBRTC_CAPTURE_BITRATE=18000000</text>
+<text x="596" y="964" font-size="8.5" fill="rgba(170,210,225,0.26)" font-family="'SF Mono',Menlo,Consolas,monospace">WEBRTC_STUN/TURN=turn.axondao.io:3478  /  WEBRTC_FALLBACK_ENABLED=false  /  WEBRTC_GATE_INTERNAL_URL=http://axonos:8889</text>
+<text x="596" y="980" font-size="8" fill="rgba(170,210,225,0.20)" font-family="'SF Mono',Menlo,Consolas,monospace">AXGT_CHALLENGE_DB_URL=postgresql://axonos_gate:...@postgres:5432/axonos_gate</text>
+
+<!-- ═══ DOCKER HOST FOOTER ═══ -->
+<rect x="50" y="1014" width="1700" height="68" rx="11" fill="rgba(7,16,26,0.80)" stroke="rgba(140,200,220,0.09)" stroke-width="1" stroke-dasharray="5,3"/>
+<text x="70" y="1034" font-size="8.5" font-weight="700" letter-spacing="2.5" fill="rgba(140,200,220,0.30)" font-family="'SF Mono',Menlo,Consolas,monospace">DOCKER HOST  /  Linux  /  NVIDIA driver  /  /var/run/docker.sock  /  NVIDIA Container Toolkit</text>
+<text x="70" y="1052" font-size="8.5" fill="rgba(170,210,225,0.24)" font-family="'SF Mono',Menlo,Consolas,monospace">Network: axonos_stack (bridge)  /  Volume: axonos_postgres_data (persistent)  /  GPU passthrough via NVIDIA CTK</text>
+<text x="70" y="1068" font-size="8.5" fill="rgba(170,210,225,0.20)" font-family="'SF Mono',Menlo,Consolas,monospace">Containers: axonos (:6080 :8889)  /  axonos_session_launcher (:8090)  /  axonos_postgres (:5432 internal)  /  axgt-session-N (spawned per wallet claim)</text>
+
+<!-- ═══ STEP SUMMARY ═══ -->
+<rect x="50" y="1096" width="1700" height="62" rx="9" fill="rgba(10,20,36,0.60)" stroke="rgba(140,200,220,0.08)" stroke-width="1"/>
+<text x="70" y="1116" font-size="9" fill="rgba(78,195,212,0.58)" font-family="'SF Mono',Menlo,Consolas,monospace">1  Wallet ECDSA challenge -&gt; auth_token (30 min TTL)</text>
+<text x="390" y="1116" font-size="9" fill="rgba(232,168,90,0.56)" font-family="'SF Mono',Menlo,Consolas,monospace">2  Deposit ETH -&gt; on-chain verify -&gt; prepaid min (~$0.99/hr)</text>
+<text x="770" y="1116" font-size="9" fill="rgba(232,168,90,0.56)" font-family="'SF Mono',Menlo,Consolas,monospace">3  POST /session/claim -&gt; exclusive GPU allocation</text>
+<text x="1100" y="1116" font-size="9" fill="rgba(242,96,122,0.56)" font-family="'SF Mono',Menlo,Consolas,monospace">4  docker run --gpus -&gt; Xorg + WebRTC agent</text>
+<text x="1440" y="1116" font-size="9" fill="rgba(157,111,217,0.56)" font-family="'SF Mono',Menlo,Consolas,monospace">5  P2P H.264 60fps</text>
+<text x="70" y="1148" font-size="8.5" fill="rgba(170,210,225,0.26)" font-family="'SF Mono',Menlo,Consolas,monospace">Heartbeat every 30-60s deducts elapsed_min x gpu_count  /  session paused on credit exhaust  /  TURN servers: turn.axondao.io:3478</text>
+
+<!-- ═══ CONNECTION ARROWS ═══ -->
+
+<!-- 1a. Browser -> Gate :6080 (solid cyan) — from browser bottom-left area -->
+<path d="M 290,220 C 290,230 200,234 200,240" fill="none" stroke="#4ec3d4" stroke-width="2" marker-end="url(#mC)" opacity="0.80"/>
+<rect x="168" y="223" width="86" height="16" rx="8" fill="rgba(78,195,212,0.12)"/>
+<text x="211" y="234" text-anchor="middle" font-size="7.5" font-weight="700" fill="#4ec3d4" font-family="'SF Mono',Menlo,Consolas,monospace">WS :6080</text>
+
+<!-- 1b. Browser -> Gate :8889 (REST dashed cyan) -->
+<path d="M 450,220 C 450,230 430,234 430,240" fill="none" stroke="#4ec3d4" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#mC)" opacity="0.68"/>
+<rect x="400" y="223" width="92" height="16" rx="8" fill="rgba(78,195,212,0.10)"/>
+<text x="446" y="234" text-anchor="middle" font-size="7.5" font-weight="700" fill="#4ec3d4" font-family="'SF Mono',Menlo,Consolas,monospace">REST :8889</text>
+
+<!-- 2a. Browser <-> Ethereum (ECDSA sign, warm dashed) -->
+<path d="M 730,154 L 748,154" fill="none" stroke="#e8a85a" stroke-width="1.6" stroke-dasharray="5,3" marker-end="url(#mW)" marker-start="url(#mWr)" opacity="0.70"/>
+<rect x="732" y="142" width="60" height="16" rx="8" fill="rgba(232,168,90,0.12)"/>
+<text x="762" y="153" text-anchor="middle" font-size="7.5" font-weight="700" fill="#e8a85a" font-family="'SF Mono',Menlo,Consolas,monospace">ECDSA</text>
+
+<!-- 2b. Gate -> Ethereum RPC (warm dashed, curves from gate right up to eth) -->
+<path d="M 1150,350 C 1200,350 1220,240 1249,220" fill="none" stroke="#e8a85a" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#mW)" opacity="0.60"/>
+<rect x="1160" y="278" width="86" height="16" rx="8" fill="rgba(232,168,90,0.10)"/>
+<text x="1203" y="289" text-anchor="middle" font-size="7.5" font-weight="700" fill="#e8a85a" font-family="'SF Mono',Menlo,Consolas,monospace">eth_call</text>
+
+<!-- 3. Gate -> Launcher (warm solid, POST /launch) -->
+<path d="M 1150,380 L 1166,380" fill="none" stroke="#e8a85a" stroke-width="2" marker-end="url(#mW)" opacity="0.78"/>
+<rect x="1150" y="368" width="54" height="16" rx="8" fill="rgba(232,168,90,0.12)"/>
+<text x="1177" y="379" text-anchor="middle" font-size="7.5" font-weight="700" fill="#e8a85a" font-family="'SF Mono',Menlo,Consolas,monospace">/launch</text>
+
+<!-- 4. Launcher -> GPU Session (coral, docker run) -->
+<path d="M 1458,520 C 1458,580 1300,640 1200,726" fill="none" stroke="#f2607a" stroke-width="2" marker-end="url(#mK)" opacity="0.70"/>
+<rect x="1310" y="618" width="96" height="16" rx="8" fill="rgba(242,96,122,0.12)"/>
+<text x="1358" y="629" text-anchor="middle" font-size="7.5" font-weight="700" fill="#f2607a" font-family="'SF Mono',Menlo,Consolas,monospace">docker run</text>
+
+<!-- Gate -> PostgreSQL (violet, SQL) -->
+<path d="M 280,686 L 280,726" fill="none" stroke="#b3a3eb" stroke-width="1.6" marker-end="url(#mV)" opacity="0.70"/>
+<rect x="242" y="700" width="40" height="14" rx="7" fill="rgba(157,111,217,0.14)"/>
+<text x="262" y="711" text-anchor="middle" font-size="7.5" font-weight="700" fill="#b3a3eb" font-family="'SF Mono',Menlo,Consolas,monospace">SQL</text>
+
+<!-- Gate Websockify -> Session VNC (green dashed) -->
+<path d="M 580,686 C 580,708 716,716 716,726" fill="none" stroke="#7be0c8" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#mG)" opacity="0.66"/>
+<rect x="530" y="704" width="76" height="14" rx="7" fill="rgba(123,224,200,0.10)"/>
+<text x="568" y="715" text-anchor="middle" font-size="7.5" font-weight="700" fill="#7be0c8" font-family="'SF Mono',Menlo,Consolas,monospace">VNC :5901</text>
+
+<!-- Session WebRTC Agent <-> Gate API (violet dashed) -->
+<path d="M 1154,726 C 1154,704 940,698 860,686" fill="none" stroke="#9d6fd9" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#mVr)" opacity="0.60"/>
+<rect x="960" y="700" width="118" height="14" rx="7" fill="rgba(157,111,217,0.12)"/>
+<text x="1019" y="711" text-anchor="middle" font-size="7.5" font-weight="700" fill="#9d6fd9" font-family="'SF Mono',Menlo,Consolas,monospace">agent/next + answer</text>
+
+<!-- 5. Browser <-> GPU Session WebRTC P2P (large violet dashed arc, right edge) -->
+<path d="M 680,88 C 680,50 1762,50 1762,860 C 1762,872 1750,868 1740,862" fill="none" stroke="#9d6fd9" stroke-width="2" stroke-dasharray="7,4" marker-end="url(#mV)" opacity="0.55"/>
+<rect x="1570" y="42" width="164" height="20" rx="10" fill="rgba(157,111,217,0.14)" stroke="rgba(157,111,217,0.26)" stroke-width="1"/>
+<text x="1652" y="56" text-anchor="middle" font-size="9" font-weight="700" fill="#9d6fd9" font-family="'SF Mono',Menlo,Consolas,monospace">WebRTC P2P / H.264</text>
+
+<!-- ═══ STEP CALLOUT CIRCLES ═══ -->
+<circle cx="226" cy="232" r="10" fill="#0a1424" stroke="#4ec3d4" stroke-width="1.8"/>
+<text x="226" y="236" text-anchor="middle" font-size="9.5" font-weight="800" fill="#4ec3d4">1</text>
+<circle cx="762" cy="142" r="10" fill="#0a1424" stroke="#e8a85a" stroke-width="1.8"/>
+<text x="762" y="146" text-anchor="middle" font-size="9.5" font-weight="800" fill="#e8a85a">2</text>
+<circle cx="1177" cy="368" r="10" fill="#0a1424" stroke="#e8a85a" stroke-width="1.8"/>
+<text x="1177" y="372" text-anchor="middle" font-size="9.5" font-weight="800" fill="#e8a85a">3</text>
+<circle cx="1380" cy="614" r="10" fill="#0a1424" stroke="#f2607a" stroke-width="1.8"/>
+<text x="1380" y="618" text-anchor="middle" font-size="9.5" font-weight="800" fill="#f2607a">4</text>
+<circle cx="1570" cy="44" r="10" fill="#0a1424" stroke="#9d6fd9" stroke-width="1.8"/>
+<text x="1570" y="48" text-anchor="middle" font-size="9.5" font-weight="800" fill="#9d6fd9">5</text>
+
+<!-- WATERMARK -->
+<text x="1778" y="1172" text-anchor="end" font-size="8" fill="rgba(78,195,212,0.16)" font-family="'SF Mono',Menlo,Consolas,monospace">axondao.io  2026</text>
+</svg>
