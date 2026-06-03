@@ -385,6 +385,13 @@ def api_verify_deposit():
         return auth_err
     result = verify_deposit(authenticated_wallet=wallet_address, tx_hash=tx_hash)
     if result.get("verified") or verify_deposit_is_pending(result):
+        try:
+            token, ttl = _issue_gate_auth_token(wallet_address)
+            result = dict(result)
+            result["auth_token"] = token
+            result["auth_token_expires_in_seconds"] = ttl
+        except Exception as ex:
+            logger.warning("Auth token refresh failed for %s: %s", mask_wallet_address(wallet_address), ex)
         return jsonify(result)
     return jsonify(result), 400
 

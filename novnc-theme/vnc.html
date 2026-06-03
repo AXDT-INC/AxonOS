@@ -2766,6 +2766,9 @@ Copyright (C) 2019 The noVNC Authors
                 attempts += 1;
                 axonosVerifyDepositFetch(txHash).then(function (res) {
                     var d = res.data || {};
+                    if (d.auth_token) {
+                        window.verifiedWalletAuthToken = d.auth_token;
+                    }
                     if (d.verified) {
                         setPayDepositButtonsBusy(false);
                         axonosDepositVerifiedSuccess(d, wallet);
