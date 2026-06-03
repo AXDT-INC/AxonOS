@@ -22,19 +22,59 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-/* AxonOS Theme for noVNC */
-/* Transforms the default noVNC UI into a scientific computing environment theme */
+/* AxonOS Theme for noVNC — AxonDAO Official Branding */
+/* Deep navy background, BrutalType typeface, AxonDAO cyan/violet/warm accent system */
 
-/* 
- * AxonOS Color Palette:
- * Primary: #2E8B57 (Sea Green) - Scientific/research green
- * Secondary: #4682B4 (Steel Blue) - Data visualization blue  
- * Accent: #FFD700 (Gold) - Highlight color for important elements
- * Dark: #1C1C1C (Dark Gray) - Background
- * Light: #F5F5F5 (Off White) - Text on dark backgrounds
+/*
+ * AxonDAO Design Tokens (applied via CSS custom properties in :root):
+ * --cyan:    #4ec3d4  — primary accent (teal/cyan)
+ * --violet:  #9d6fd9  — secondary accent (purple)
+ * --warm:    #e8a85a  — tertiary accent (orange/warm)
+ * --green:   #7be0c8  — success / mint
+ * --coral:   #f2607a  — error / danger
+ * --bg-0:    #07101a  — primary background (darkest)
+ * --ink:     #e8edf4  — primary text
+ * Font: BrutalType (woff2, 200–900) · Orbitron kept for monospace data labels
  */
 
-/* Orbitron — subset woff2 (Google Fonts v35 latin); aligns with preload in vnc.html */
+/* BrutalType — AxonDAO official typeface (ExtraLight/Light/Bold/ExtraBold/Black) */
+@font-face {
+  font-family: "Brutal";
+  font-style: normal;
+  font-weight: 200;
+  font-display: swap;
+  src: url("../fonts/BrutalType-ExtraLight.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Brutal";
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url("../fonts/BrutalType-Light.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Brutal";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../fonts/BrutalType-Bold.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Brutal";
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url("../fonts/BrutalType-ExtraBold.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Brutal";
+  font-style: normal;
+  font-weight: 900;
+  font-display: swap;
+  src: url("../fonts/BrutalType-Black.woff2") format("woff2");
+}
+
+/* Orbitron — subset woff2 (Google Fonts v35 latin); kept as monospace data/label font */
 @font-face {
   font-family: "Orbitron";
   font-style: normal;
@@ -46,17 +86,50 @@ SOFTWARE.
 }
 
 :root {
-  --axonos-primary: #2E8B57;
-  --axonos-secondary: #4682B4;
-  --axonos-accent: #FFD700;
-  --axonos-dark: #1C1C1C;
-  --axonos-light: #F5F5F5;
-  --axonos-hover: #32CD32;
-  --axonos-shadow: rgba(46, 139, 87, 0.3);
+  /* ── AxonDAO official design tokens ── */
+  --bg-0: #07101a;
+  --bg-1: #0a1424;
+  --bg-2: #0c1a2e;
+  --panel-2: #0f2238;
+  --ink: #e8edf4;
+  --ink-dim: rgba(200,220,235,.92);
+  --ink-mute: rgba(170,210,225,.62);
+  --ink-faint: rgba(170,210,225,.40);
+  --cyan: #4ec3d4;
+  --violet: #9d6fd9;
+  --warm: #e8a85a;
+  --pink: #e87fa4;
+  --coral: #f2607a;
+  --green: #7be0c8;
+  --mint: #4ec3d4;
+  --mint-soft: #6fd4e2;
+  --orange: #e8a85a;
+  --violet-fg: #b3a3eb;
+  --violet-bg: rgba(120,100,200,0.16);
+  --rule: rgba(140,200,220,.07);
+  --rule-strong: rgba(140,200,220,.16);
+  --hair: rgba(140,200,220,.07);
+  --hair-2: rgba(140,200,220,.16);
+  --hair-mint: rgba(78,195,212,0.35);
+  --font-body: 'Brutal', -apple-system, system-ui, sans-serif;
+  --font-display: 'Brutal', -apple-system, system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* ── AxonOS operational aliases (map to AxonDAO tokens) ── */
+  --axonos-primary: #4ec3d4;
+  --axonos-secondary: #9d6fd9;
+  --axonos-accent: #4ec3d4;
+  --axonos-warm: #e8a85a;
+  --axonos-dark: #07101a;
+  --axonos-dark-2: #0a1424;
+  --axonos-dark-3: #0c1a2e;
+  --axonos-light: #e8edf4;
+  --axonos-hover: #7be0c8;
+  --axonos-shadow: rgba(78,195,212,0.25);
+
+  /* ── Layout ── */
   --axonos-prereq-ticker-strip-h: 44px;
-  /* Gutter below the prerequisites strip — keeps hero/dialog clear of floating control rail */
   --axonos-prereq-ticker-sidebar-clear: calc(env(safe-area-inset-left, 0px) + 50px);
-  /* Prerequisites strip spans the full viewport header; tighter pad than sidebar-clear */
   --axonos-prereq-ticker-strip-pad-start: calc(env(safe-area-inset-left, 0px) + max(11px, 0.62rem));
   --axonos-prereq-ticker-body-pad-top: calc(
     env(safe-area-inset-top, 0px) + var(--axonos-prereq-ticker-strip-h)
@@ -80,11 +153,11 @@ SOFTWARE.
   justify-content: flex-start;
   padding-left: var(--axonos-prereq-ticker-strip-pad-start);
   padding-right: 10px;
-  background: rgba(24, 32, 48, 0.96);
-  border-bottom: 1px solid rgba(70, 130, 180, 0.48);
+  background: rgba(7,16,26,0.97);
+  border-bottom: 1px solid var(--hair-mint);
   box-shadow:
     0 4px 22px rgba(0, 0, 0, 0.4),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 html:not(.noVNC_connected) .axonos-prerequisites-ticker {
@@ -101,8 +174,8 @@ html.noVNC_connected .axonos-prerequisites-ticker {
   flex: 0 0 clamp(10.5rem, 19.25vw, 13.5rem);
   width: clamp(10.5rem, 19.25vw, 13.5rem);
   padding: 0 0.42rem 0 0;
-  border-right: 1px solid rgba(104, 120, 196, 0.35);
-  font-family: "Orbitron", system-ui, sans-serif;
+  border-right: 1px solid rgba(78,195,212,0.28);
+  font-family: 'Brutal', "Orbitron", system-ui, sans-serif;
   font-size: clamp(0.738rem, 0.63vw + 0.486rem, 0.954rem);
   font-weight: 600;
   letter-spacing: 0.03em;
@@ -181,10 +254,10 @@ html.noVNC_connected .axonos-prerequisites-ticker {
   align-items: center;
   gap: 0.35rem 0.5rem;
   padding-right: 2.75rem;
-  font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-body);
   font-size: 0.78rem;
   line-height: 1.35;
-  color: rgba(245, 245, 245, 0.95);
+  color: var(--ink-dim);
   letter-spacing: 0.015em;
   white-space: nowrap;
 }
@@ -263,7 +336,7 @@ html:not(.noVNC_connected) {
 }
 
 html:not(.noVNC_connected):hover {
-  scrollbar-color: rgba(96, 128, 192, 0.5) rgba(10, 16, 28, 0.28);
+  scrollbar-color: rgba(78,195,212,0.45) rgba(7,16,26,0.3);
 }
 
 html:not(.noVNC_connected)::-webkit-scrollbar {
@@ -287,21 +360,21 @@ html:not(.noVNC_connected)::-webkit-scrollbar-thumb {
 html:not(.noVNC_connected)::-webkit-scrollbar:hover::-webkit-scrollbar-thumb {
   background: linear-gradient(
     180deg,
-    rgba(110, 128, 200, 0.88) 0%,
-    rgba(52, 150, 100, 0.58) 100%
+    rgba(78,195,212,0.82) 0%,
+    rgba(157,111,217,0.52) 100%
   );
 }
 
 html:not(.noVNC_connected)::-webkit-scrollbar-thumb:active {
   background: linear-gradient(
     180deg,
-    rgba(130, 150, 220, 0.95) 0%,
-    rgba(62, 170, 115, 0.72) 100%
+    rgba(78,195,212,0.95) 0%,
+    rgba(157,111,217,0.72) 100%
   );
 }
 
 html:not(.noVNC_connected)::-webkit-scrollbar:hover {
-  background: rgba(6, 10, 20, 0.42);
+  background: rgba(7,16,26,0.5);
 }
 
 html:not(.noVNC_connected) #noVNC_connect_dlg {
@@ -310,7 +383,7 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
 }
 
 html:not(.noVNC_connected) #noVNC_connect_dlg:hover {
-  scrollbar-color: rgba(96, 128, 192, 0.52) rgba(10, 16, 28, 0.32);
+  scrollbar-color: rgba(78,195,212,0.45) rgba(7,16,26,0.3);
 }
 
 html:not(.noVNC_connected) #noVNC_connect_dlg::-webkit-scrollbar {
@@ -340,7 +413,7 @@ html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg) {
 }
 
 html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg):hover {
-  scrollbar-color: rgba(96, 128, 192, 0.52) rgba(10, 16, 28, 0.32);
+  scrollbar-color: rgba(78,195,212,0.45) rgba(7,16,26,0.3);
 }
 
 html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg)::-webkit-scrollbar {
@@ -366,27 +439,27 @@ html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg)::-webkit-scroll
 
 @media (hover: none) {
   html:not(.noVNC_connected) {
-    scrollbar-color: rgba(96, 128, 192, 0.32) rgba(10, 16, 28, 0.18);
+    scrollbar-color: rgba(78,195,212,0.3) rgba(7,16,26,0.2);
   }
 
   html:not(.noVNC_connected)::-webkit-scrollbar-thumb {
-    background-color: rgba(88, 118, 170, 0.32);
+    background-color: rgba(78,195,212,0.3);
   }
 
   html:not(.noVNC_connected) #noVNC_connect_dlg {
-    scrollbar-color: rgba(96, 128, 192, 0.36) rgba(10, 16, 28, 0.22);
+    scrollbar-color: rgba(78,195,212,0.32) rgba(7,16,26,0.22);
   }
 
   html:not(.noVNC_connected) #noVNC_connect_dlg::-webkit-scrollbar-thumb {
-    background-color: rgba(88, 118, 170, 0.38);
+    background-color: rgba(78,195,212,0.34);
   }
 
   html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg) {
-    scrollbar-color: rgba(96, 128, 192, 0.36) rgba(10, 16, 28, 0.22);
+    scrollbar-color: rgba(78,195,212,0.32) rgba(7,16,26,0.22);
   }
 
   html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg)::-webkit-scrollbar-thumb {
-    background-color: rgba(88, 118, 170, 0.38);
+    background-color: rgba(78,195,212,0.34);
   }
 }
 
@@ -402,11 +475,13 @@ html:not(.noVNC_connected) body {
   box-sizing: border-box;
   margin: 0;
   padding-top: var(--axonos-prereq-ticker-body-pad-top);
-  background: 
-    radial-gradient(ellipse at bottom, #1B2735 0%, #090A0F 100%),
-    radial-gradient(circle at 20% 20%, rgba(120, 119, 198, 0.3) 0%, transparent 50%),
-    radial-gradient(circle at 80% 80%, rgba(255, 119, 198, 0.2) 0%, transparent 50%),
-    radial-gradient(circle at 40% 40%, rgba(120, 219, 255, 0.15) 0%, transparent 50%) !important;
+  font-family: var(--font-body);
+  color: var(--ink);
+  /* AxonDAO ambient background — deep navy + subtle cyan/violet radial glows */
+  background:
+    radial-gradient(ellipse 900px 700px at 85% 18%, rgba(78,195,212,.10), transparent 60%),
+    radial-gradient(ellipse 1000px 800px at 12% 82%, rgba(157,111,217,.10), transparent 65%),
+    linear-gradient(180deg, #060e1a 0%, #050a14 55%, #03070d 100%) !important;
   overflow-x: hidden;
   position: relative;
   min-height: 100vh;
@@ -420,7 +495,7 @@ html.noVNC_connected {
 }
 
 html.noVNC_connected body {
-  background: var(--axonos-dark) !important;
+  background: var(--bg-0) !important;
   margin: 0;
   padding-top: 0 !important;
   height: 100%;
@@ -434,7 +509,7 @@ html:not(.noVNC_connected) #noVNC_container {
 }
 
 html.noVNC_connected #noVNC_container {
-  background-color: var(--axonos-dark) !important;
+  background-color: var(--bg-0) !important;
   border-bottom-right-radius: 20px !important;
   overflow: hidden !important;
   box-sizing: border-box;
@@ -442,32 +517,36 @@ html.noVNC_connected #noVNC_container {
 
 /* Control bar styling */
 #noVNC_control_bar {
-  background: linear-gradient(180deg, #0f4f63 0%, #2d2f6f 100%) !important;
-  border: 2px solid rgba(104, 120, 196, 0.68);
-  box-shadow: 0 6px 22px rgba(42, 58, 122, 0.42) !important;
+  background: linear-gradient(180deg, rgba(10,20,36,.98) 0%, rgba(7,16,26,.98) 100%) !important;
+  border: 1px solid var(--hair-mint);
+  box-shadow: 0 6px 22px rgba(0,0,0,0.5), 0 0 0 1px rgba(78,195,212,.08) !important;
 }
 
 #noVNC_control_bar.noVNC_open {
-  box-shadow: 0 10px 28px rgba(54, 74, 148, 0.5) !important;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.55), 0 0 0 1px rgba(78,195,212,.12) !important;
 }
 
 /* Control bar handle */
 #noVNC_control_bar_handle {
-  background: linear-gradient(180deg, #166a82 0%, #3f428f 100%) !important;
-  border: 1px solid rgba(128, 141, 212, 0.72);
-  box-shadow: 0 4px 14px rgba(52, 73, 152, 0.45) !important;
+  background: linear-gradient(180deg, rgba(12,26,46,.98) 0%, rgba(9,18,32,.98) 100%) !important;
+  border: 1px solid var(--rule-strong);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.4) !important;
 }
 
 #noVNC_control_bar_handle:hover {
-  background: linear-gradient(180deg, #1f7d98 0%, #5359ad 100%) !important;
+  background: linear-gradient(180deg, rgba(20,38,64,.98) 0%, rgba(14,26,48,.98) 100%) !important;
+  border-color: var(--hair-mint) !important;
 }
 
 /* Panel headings */
 .noVNC_panel .noVNC_heading {
-  background: linear-gradient(135deg, var(--axonos-primary), var(--axonos-secondary)) !important;
-  color: var(--axonos-light) !important;
-  border: 1px solid var(--axonos-accent);
-  text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+  background: linear-gradient(135deg, rgba(78,195,212,.14), rgba(157,111,217,.10)) !important;
+  color: var(--ink) !important;
+  border: 1px solid var(--hair-mint) !important;
+  border-radius: 8px;
+  font-family: var(--font-body);
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
 /* Connect button */
@@ -491,10 +570,10 @@ html.noVNC_connected #noVNC_container {
 
 /* Panels */
 .noVNC_panel {
-  background-color: rgba(28, 28, 28, 0.95) !important;
-  border: 2px solid var(--axonos-primary);
-  border-radius: 10px;
-  box-shadow: 0 8px 25px var(--axonos-shadow);
+  background-color: rgba(10,20,36,0.96) !important;
+  border: 1px solid var(--rule-strong) !important;
+  border-radius: 14px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.45), 0 0 0 1px rgba(78,195,212,.06);
 }
 
 /* Logo customization */
@@ -533,10 +612,11 @@ html.noVNC_connected .axonos-version {
   position: fixed;
   bottom: calc(10px + env(safe-area-inset-bottom, 0px));
   right: calc(14px + env(safe-area-inset-right, 0px));
-  color: var(--axonos-accent);
-  font-size: 12px;
-  opacity: 0.92;
-  font-family: "Orbitron", monospace;
+  color: var(--cyan);
+  font-size: 11px;
+  opacity: 0.85;
+  font-family: var(--font-mono);
+  letter-spacing: 0.08em;
   z-index: 55;
   pointer-events: none;
 }
@@ -549,17 +629,18 @@ html:not(.noVNC_connected) .axonos-version {
   bottom: auto;
   z-index: 55;
   pointer-events: none;
-  color: var(--axonos-light);
+  color: var(--ink-mute);
   font-size: 10px;
   opacity: 0.72;
-  font-family: "Orbitron", monospace;
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
 }
 
-/* Animation for scientific feel */
+/* Pulse animation for connect button */
 @keyframes pulse {
-  0% { box-shadow: 0 0 0 0 var(--axonos-shadow); }
-  70% { box-shadow: 0 0 0 10px rgba(46, 139, 87, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(46, 139, 87, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(78,195,212,.25); }
+  70% { box-shadow: 0 0 0 10px rgba(78,195,212,0); }
+  100% { box-shadow: 0 0 0 0 rgba(78,195,212,0); }
 }
 
 #noVNC_connect_button {
@@ -611,7 +692,7 @@ input[type="password"] {
 input[type="password"]:focus {
   border-color: var(--axonos-accent) !important;
   box-shadow: 0 0 10px var(--axonos-shadow);
-  background-color: #2C2C2C !important;
+  background-color: rgba(12,24,44,0.96) !important;
 }
 
 /* Ensure password dots are visible */
@@ -631,10 +712,11 @@ input[type="password"]::placeholder {
 }
 
 .axonos-wallet-dialog-header h2 {
-    color: var(--axonos-accent);
+    color: var(--cyan);
     font-size: 1.5em;
     margin-bottom: 10px;
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--font-body);
+    font-weight: 800;
 }
 
 .axonos-wallet-dialog-header .axonos-wallet-description {
@@ -654,11 +736,11 @@ input[type="password"]::placeholder {
 }
 
 .axonos-wallet-dialog-header .axonos-wallet-contract code {
-    background: rgba(46, 139, 87, 0.2);
+    background: rgba(78,195,212,.12);
     padding: 4px 8px;
     border-radius: 4px;
-    font-family: 'Courier New', monospace;
-    color: var(--axonos-accent);
+    font-family: var(--font-mono);
+    color: var(--cyan);
 }
 
 #noVNC_wallet_block {
@@ -679,7 +761,7 @@ input[type="password"]::placeholder {
     color: var(--axonos-light);
     border: 2px solid var(--axonos-secondary);
     border-radius: 5px;
-    font-family: 'Courier New', monospace;
+    font-family: var(--font-mono);
     font-size: 0.9em;
     box-sizing: border-box;
 }
@@ -691,12 +773,12 @@ input[type="password"]::placeholder {
 }
 
 .axonos-wallet-gate {
-    background: rgba(28, 28, 28, 0.95);
-    border: 2px solid var(--axonos-primary);
-    border-radius: 10px;
+    background: rgba(10,20,36,0.96);
+    border: 1px solid var(--rule-strong);
+    border-radius: 14px;
     padding: 20px;
     margin: 20px 0;
-    box-shadow: 0 8px 25px var(--axonos-shadow);
+    box-shadow: 0 8px 32px rgba(0,0,0,.4), 0 0 0 1px rgba(78,195,212,.06);
 }
 
 .axonos-wallet-header h2 {
@@ -755,21 +837,24 @@ input[type="password"]::placeholder {
 }
 
 .axonos-verify-btn {
-    background: linear-gradient(135deg, var(--axonos-primary), var(--axonos-secondary));
-    border: 2px solid var(--axonos-accent);
-    color: var(--axonos-light);
+    background: rgba(78,195,212,.10);
+    border: 1px solid var(--hair-mint);
+    color: var(--cyan);
+    -webkit-text-fill-color: var(--cyan);
     padding: 10px 20px;
-    border-radius: 5px;
+    border-radius: 999px;
     cursor: pointer;
     font-size: 14px;
-    font-weight: bold;
-    transition: all 0.3s;
+    font-weight: 600;
+    font-family: var(--font-body);
+    transition: all 0.2s;
 }
 
 .axonos-verify-btn:hover:not(:disabled) {
-    background: linear-gradient(135deg, var(--axonos-hover), var(--axonos-primary));
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px var(--axonos-shadow);
+    background: rgba(78,195,212,.18);
+    border-color: var(--cyan);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(78,195,212,.2);
 }
 
 .axonos-verify-btn:disabled {
@@ -785,22 +870,25 @@ input[type="password"]::placeholder {
 }
 
 .axonos-wallet-status.verified {
-    background: rgba(46, 139, 87, 0.2);
-    border: 2px solid #2e8b57;
-    color: #90ee90;
+    background: rgba(123,224,200,.15);
+    border: 1px solid rgba(123,224,200,.4);
+    color: var(--green);
+    border-radius: 8px;
 }
 
 .axonos-wallet-status.not-verified,
 .axonos-wallet-status.error {
-    background: rgba(220, 20, 60, 0.2);
-    border: 2px solid #dc143c;
-    color: #ff6b6b;
+    background: rgba(242,96,122,.12);
+    border: 1px solid rgba(242,96,122,.4);
+    color: var(--coral);
+    border-radius: 8px;
 }
 
 .axonos-wallet-status.verifying {
-    background: rgba(255, 215, 0, 0.2);
-    border: 2px solid #ffd700;
-    color: #ffd700;
+    background: rgba(232,168,90,.12);
+    border: 1px solid rgba(232,168,90,.4);
+    color: var(--warm);
+    border-radius: 8px;
 }
 
 /* AXGT usage overlay (during VNC session: warning or locked) */
@@ -825,14 +913,16 @@ input[type="password"]::placeholder {
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
 }
 .axonos-usage-overlay--warning .axonos-usage-overlay__panel {
-    background: rgba(30, 30, 30, 0.98);
-    border: 2px solid var(--axonos-accent);
-    color: var(--axonos-light);
+    background: rgba(10,20,36,0.98);
+    border: 1px solid var(--hair-mint);
+    color: var(--ink);
+    box-shadow: 0 0 30px rgba(78,195,212,.15), 0 20px 60px rgba(0,0,0,.6);
 }
 .axonos-usage-overlay--locked .axonos-usage-overlay__panel {
-    background: rgba(30, 30, 30, 0.98);
-    border: 2px solid #dc143c;
-    color: var(--axonos-light);
+    background: rgba(10,20,36,0.98);
+    border: 1px solid rgba(242,96,122,.45);
+    color: var(--ink);
+    box-shadow: 0 0 30px rgba(242,96,122,.12), 0 20px 60px rgba(0,0,0,.6);
 }
 .axonos-usage-overlay__message {
     margin: 0 0 20px 0;
@@ -851,14 +941,16 @@ input[type="password"]::placeholder {
     min-width: 9rem;
 }
 .axonos-usage-overlay__btn--exit {
-    color: var(--axonos-light) !important;
-    background: transparent !important;
-    border: 2px solid rgba(220, 20, 60, 0.85) !important;
+    color: var(--coral) !important;
+    -webkit-text-fill-color: var(--coral) !important;
+    background: rgba(242,96,122,.08) !important;
+    border: 1px solid rgba(242,96,122,.45) !important;
     box-shadow: none;
+    border-radius: 999px !important;
 }
 .axonos-usage-overlay__btn--exit:hover:not(:disabled) {
-    border-color: #ff6b6b !important;
-    background: rgba(220, 20, 60, 0.12) !important;
+    border-color: var(--coral) !important;
+    background: rgba(242,96,122,.15) !important;
 }
 
 /* Prerequisites on connect panel (what you need to sign in) */
@@ -866,13 +958,13 @@ input[type="password"]::placeholder {
     max-width: 480px;
     margin: 0 auto 20px auto;
     padding: 14px 18px;
-    background: rgba(28, 28, 28, 0.6);
-    border: 1px solid rgba(70, 130, 180, 0.4);
-    border-radius: 8px;
+    background: rgba(78,195,212,.04);
+    border: 1px solid var(--rule-strong);
+    border-radius: 12px;
     text-align: left;
     font-size: 0.9rem;
     line-height: 1.5;
-    color: var(--axonos-light);
+    color: var(--ink-dim);
 }
 .axonos-prerequisites__title {
     margin: 0 0 8px 0;
@@ -903,28 +995,28 @@ input[type="password"]::placeholder {
 .axonos-wallet-prereqs {
     margin: 14px 0;
     padding: 12px 14px;
-    background: rgba(0, 0, 0, 0.25);
-    border-radius: 6px;
-    color: #F5F5F5;
-    border-left: 3px solid var(--axonos-accent);
+    background: rgba(78,195,212,.05);
+    border-radius: 8px;
+    color: var(--ink-dim);
+    border-left: 3px solid var(--cyan);
 }
 .axonos-wallet-prereqs__title {
     margin: 0 0 8px 0;
-    font-weight: 600;
+    font-weight: 700;
     font-size: 0.9rem;
-    color: #F5F5F5;
+    color: var(--ink);
 }
 .axonos-wallet-prereqs__list {
     margin: 0;
     padding-left: 1.2em;
     font-size: 0.9rem;
     line-height: 1.5;
-    color: #F5F5F5;
+    color: var(--ink-dim);
 }
 .axonos-wallet-prereqs__list li {
     margin: 4px 0;
     word-spacing: 0.25em;
-    color: #F5F5F5;
+    color: var(--ink-dim);
 }
 .axonos-wallet-prereqs__list strong {
     margin: 0 0.15em;
@@ -954,12 +1046,12 @@ input[type="password"]::placeholder {
 .axonos-queue-overlay__panel {
     max-width: 420px;
     padding: 24px;
-    border-radius: 8px;
+    border-radius: 20px;
     text-align: center;
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
-    background: rgba(30, 30, 30, 0.98);
-    border: 2px solid var(--axonos-accent);
-    color: var(--axonos-light);
+    background: rgba(10,20,36,0.98);
+    border: 1px solid var(--hair-mint);
+    color: var(--ink);
+    box-shadow: 0 0 30px rgba(78,195,212,.12), 0 20px 60px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.04);
 }
 .axonos-queue-overlay__title {
     margin: 0 0 12px 0;
@@ -978,7 +1070,7 @@ input[type="password"]::placeholder {
     font-size: 0.95rem;
 }
 .axonos-queue-overlay__row strong {
-    color: var(--axonos-accent);
+    color: var(--cyan);
 }
 .axonos-queue-overlay__actions {
     margin-top: 20px;
@@ -999,13 +1091,16 @@ input[type="password"]::placeholder {
     text-transform: none;
     border-radius: 8px !important;
     cursor: pointer;
-    color: var(--axonos-light) !important;
-    background: linear-gradient(145deg, rgba(46, 139, 87, 0.35) 0%, rgba(28, 28, 28, 0.95) 45%, #141414 100%) !important;
-    border: 2px solid var(--axonos-accent) !important;
+    color: var(--ink) !important;
+    -webkit-text-fill-color: var(--ink) !important;
+    background: rgba(78,195,212,.08) !important;
+    border: 1px solid var(--hair-mint) !important;
+    border-radius: 999px !important;
+    font-family: var(--font-body) !important;
     box-shadow:
-        0 0 0 1px rgba(255, 215, 0, 0.15),
-        0 4px 14px rgba(0, 0, 0, 0.45),
-        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+        0 0 0 1px rgba(78,195,212,.08),
+        0 4px 14px rgba(0,0,0,.4),
+        inset 0 1px 0 rgba(255,255,255,.04);
     transition:
         transform 0.15s ease,
         box-shadow 0.15s ease,
@@ -1014,12 +1109,12 @@ input[type="password"]::placeholder {
 }
 
 .axonos-queue-overlay__btn:hover:not(:disabled) {
-    border-color: #ffe066 !important;
+    border-color: var(--cyan) !important;
     box-shadow:
-        0 0 0 1px rgba(255, 215, 0, 0.35),
-        0 6px 20px rgba(255, 215, 0, 0.12),
-        0 8px 24px rgba(0, 0, 0, 0.5),
-        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        0 0 0 1px rgba(78,195,212,.25),
+        0 6px 20px rgba(78,195,212,.12),
+        0 8px 24px rgba(0,0,0,.45),
+        inset 0 1px 0 rgba(255,255,255,.06);
     transform: translateY(-1px);
     filter: brightness(1.05);
 }
@@ -1032,7 +1127,7 @@ input[type="password"]::placeholder {
 }
 
 .axonos-queue-overlay__btn:focus-visible {
-    outline: 2px solid var(--axonos-accent);
+    outline: 2px solid var(--cyan);
     outline-offset: 3px;
 }
 
@@ -1059,7 +1154,7 @@ input[type="password"]::placeholder {
 #noVNC_credentials_dlg input:focus {
   border-color: var(--axonos-accent) !important;
   box-shadow: 0 0 10px var(--axonos-shadow) !important;
-  background-color: #2C2C2C !important;
+  background-color: rgba(12,24,44,0.96) !important;
   outline: none !important;
 }
 
@@ -1089,12 +1184,11 @@ input[type="password"]::placeholder {
   flex-wrap: wrap;
 }
 
-/* Lock label color: generic `button` rules elsewhere in the page (e.g. noVNC/base CSS) can
-   override our gradient buttons; !important keeps copy readable on the purple background. */
+/* Lock label color — override noVNC base.css button text color */
 .axonos-connect-wallet-btn,
 .axonos-connect-wallet-btn:visited {
-  color: #f8fafc !important;
-  -webkit-text-fill-color: #f8fafc !important;
+  color: var(--cyan) !important;
+  -webkit-text-fill-color: var(--cyan) !important;
 }
 
 .axonos-connect-wallet-btn {
@@ -1103,36 +1197,40 @@ input[type="password"]::placeholder {
   justify-content: center;
   gap: 8px;
   padding: 12px 24px !important;
-  font-size: 1rem !important;
+  font-size: 0.9rem !important;
   font-weight: 600 !important;
   white-space: nowrap;
-  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 50%, #4338ca 100%) !important;
-  border: 2px solid rgba(255, 255, 255, 0.2) !important;
-  border-radius: 10px !important;
+  font-family: var(--font-body) !important;
+  letter-spacing: 0.04em;
+  background: rgba(78,195,212,.10) !important;
+  border: 1px solid var(--hair-mint) !important;
+  border-radius: 999px !important;
   cursor: pointer !important;
-  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4) !important;
-  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease !important;
+  color: var(--cyan) !important;
+  -webkit-text-fill-color: var(--cyan) !important;
+  box-shadow: none !important;
+  transition: background .2s, border-color .2s, transform .2s, box-shadow .2s !important;
 }
 
 .axonos-connect-wallet-btn::before {
   content: "";
   display: inline-block;
-  width: 20px;
-  height: 20px;
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23F5F5F5' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='5' width='20' height='14' rx='2'/%3E%3Cpath d='M2 10h20'/%3E%3Cpath d='M16 14h.01'/%3E%3C/svg%3E") center/contain no-repeat;
+  width: 18px;
+  height: 18px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234ec3d4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='5' width='20' height='14' rx='2'/%3E%3Cpath d='M2 10h20'/%3E%3Cpath d='M16 14h.01'/%3E%3C/svg%3E") center/contain no-repeat;
   flex-shrink: 0;
 }
 
 .axonos-connect-wallet-btn:hover {
   transform: translateY(-2px) !important;
-  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5) !important;
-  border-color: rgba(255, 255, 255, 0.35) !important;
-  background: linear-gradient(135deg, #818cf8 0%, #6366f1 50%, #4f46e5 100%) !important;
+  background: rgba(78,195,212,.18) !important;
+  border-color: var(--cyan) !important;
+  box-shadow: 0 6px 22px rgba(78,195,212,.22) !important;
 }
 
 .axonos-connect-wallet-btn:active {
   transform: translateY(0) !important;
-  box-shadow: 0 2px 10px rgba(99, 102, 241, 0.4) !important;
+  box-shadow: none !important;
 }
 
 .axonos-connected-wallet-hint {
@@ -1157,8 +1255,8 @@ input[type="password"]::placeholder {
 }
 
 #noVNC_password_input:focus {
-  background-color: #2C2C2C !important;
-  background: #2C2C2C !important;
+  background-color: rgba(12,24,44,0.96) !important;
+  background: rgba(12,24,44,0.96) !important;
   border-color: var(--axonos-accent) !important;
   box-shadow: 0 0 10px var(--axonos-shadow), inset 0 1px 3px rgba(0,0,0,0.3) !important;
   outline: none !important;
@@ -1182,9 +1280,9 @@ input[type="password"]#noVNC_password_input {
 
 /* Ensure all credentials dialog inputs are dark */
 #noVNC_credentials_dlg {
-  background-color: rgba(28, 28, 28, 0.95) !important;
-  border: 2px solid var(--axonos-primary) !important;
-  border-radius: 10px !important;
+  background-color: rgba(10,20,36,0.97) !important;
+  border: 1px solid var(--rule-strong) !important;
+  border-radius: 20px !important;
   position: fixed;
   top: 50%;
   left: 50%;
@@ -1232,10 +1330,12 @@ input[type="password"]#noVNC_password_input {
   margin-bottom: 12px;
 }
 .axonos-wallet-card__title h2 {
-  color: var(--axonos-accent);
+  color: var(--ink);
   font-size: 1.35rem;
   margin: 0 0 6px 0;
-  font-family: 'Orbitron', sans-serif;
+  font-family: var(--font-body);
+  font-weight: 800;
+  letter-spacing: -0.01em;
 }
 .axonos-wallet-card__hints {
   color: rgba(255, 255, 255, 0.75);
@@ -1263,8 +1363,12 @@ input[type="password"]#noVNC_password_input {
   font-size: 0.85rem;
 }
 .axonos-wallet-card__contract-label {
-  color: var(--axonos-accent);
+  color: var(--cyan);
   font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 .axonos-wallet-card__contract code {
   font-family: ui-monospace, monospace;
@@ -1274,23 +1378,31 @@ input[type="password"]#noVNC_password_input {
 }
 .axonos-contract-copy-btn {
   padding: 4px 10px !important;
-  font-size: 0.8rem !important;
-  background: var(--axonos-secondary) !important;
-  color: var(--axonos-light) !important;
-  border: 1px solid var(--axonos-accent) !important;
-  border-radius: 6px !important;
+  font-size: 0.78rem !important;
+  background: rgba(78,195,212,.10) !important;
+  color: var(--cyan) !important;
+  border: 1px solid var(--hair-mint) !important;
+  border-radius: 999px !important;
   cursor: pointer !important;
+  font-family: var(--font-mono) !important;
+  letter-spacing: 0.06em !important;
+  transition: background .15s, border-color .15s !important;
 }
 .axonos-contract-copy-btn:hover {
-  background: var(--axonos-primary) !important;
+  background: rgba(78,195,212,.18) !important;
+  border-color: var(--cyan) !important;
 }
 .axonos-contract-etherscan {
-  color: var(--axonos-accent);
+  color: var(--cyan);
   text-decoration: none;
   margin-left: auto;
+  font-size: 0.82rem;
+  opacity: 0.85;
+  transition: opacity .15s;
 }
 .axonos-contract-etherscan:hover {
   text-decoration: underline;
+  opacity: 1;
 }
 .axonos-wallet-card__status {
   min-height: 140px;
@@ -1312,8 +1424,8 @@ input[type="password"]#noVNC_password_input {
   width: 32px;
   height: 32px;
   margin: 0 auto 12px;
-  border: 3px solid rgba(255, 255, 255, 0.2);
-  border-top-color: var(--axonos-accent);
+  border: 3px solid rgba(78,195,212,.18);
+  border-top-color: var(--cyan);
   border-radius: 50%;
   animation: axonos-spin 0.8s linear infinite;
 }
@@ -1499,59 +1611,68 @@ input[type="password"]#noVNC_password_input {
 .axonos-continue-btn {
   display: inline-block;
   padding: 12px 28px !important;
-  font-size: 1rem !important;
+  font-size: 0.9rem !important;
   font-weight: 600 !important;
-  color: #fff !important;
-  background: linear-gradient(135deg, #16a34a 0%, #15803d 100%) !important;
-  border: 2px solid rgba(255, 255, 255, 0.2) !important;
-  border-radius: 10px !important;
+  color: var(--green) !important;
+  -webkit-text-fill-color: var(--green) !important;
+  background: rgba(123,224,200,.12) !important;
+  border: 1px solid rgba(123,224,200,.35) !important;
+  border-radius: 999px !important;
   cursor: pointer !important;
-  transition: transform 0.15s ease, box-shadow 0.15s ease !important;
+  font-family: var(--font-body) !important;
+  transition: transform 0.15s ease, background .15s, border-color .15s !important;
 }
 .axonos-continue-btn:hover {
   transform: translateY(-1px) !important;
-  box-shadow: 0 4px 14px rgba(34, 197, 94, 0.4) !important;
+  background: rgba(123,224,200,.20) !important;
+  border-color: var(--green) !important;
 }
 .axonos-get-axgt-btn,
 .axonos-install-metamask-btn {
   display: inline-block;
   padding: 10px 20px !important;
-  font-size: 0.95rem !important;
+  font-size: 0.88rem !important;
   font-weight: 600 !important;
-  color: var(--axonos-light) !important;
-  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%) !important;
-  border: 2px solid rgba(255, 255, 255, 0.2) !important;
-  border-radius: 8px !important;
+  color: var(--violet-fg) !important;
+  -webkit-text-fill-color: var(--violet-fg) !important;
+  background: var(--violet-bg) !important;
+  border: 1px solid rgba(169,139,255,.30) !important;
+  border-radius: 999px !important;
   text-decoration: none !important;
   cursor: pointer !important;
-  transition: transform 0.15s ease !important;
+  font-family: var(--font-body) !important;
+  transition: transform 0.15s ease, background .15s !important;
 }
 .axonos-get-axgt-btn:hover,
 .axonos-install-metamask-btn:hover {
   transform: translateY(-1px) !important;
+  background: rgba(120,100,200,.25) !important;
 }
 .axonos-switch-network-btn {
   display: inline-block;
   padding: 10px 20px !important;
-  font-size: 0.95rem !important;
+  font-size: 0.88rem !important;
   font-weight: 600 !important;
-  color: var(--axonos-light) !important;
-  background: linear-gradient(135deg, #ea580c 0%, #c2410c 100%) !important;
-  border: 2px solid rgba(255, 255, 255, 0.2) !important;
-  border-radius: 8px !important;
+  color: var(--warm) !important;
+  -webkit-text-fill-color: var(--warm) !important;
+  background: rgba(232,168,90,.12) !important;
+  border: 1px solid rgba(232,168,90,.35) !important;
+  border-radius: 999px !important;
   cursor: pointer !important;
-  transition: transform 0.15s ease !important;
+  font-family: var(--font-body) !important;
+  transition: transform 0.15s ease, background .15s !important;
 }
 .axonos-switch-network-btn:hover {
   transform: translateY(-1px) !important;
+  background: rgba(232,168,90,.20) !important;
 }
 
 /* Settings panel dark theme styling */
 #noVNC_settings {
-  background-color: rgba(28, 28, 28, 0.95) !important;
-  border: 2px solid var(--axonos-primary) !important;
-  border-radius: 10px !important;
-  box-shadow: 0 8px 25px var(--axonos-shadow) !important;
+  background-color: rgba(10,20,36,0.97) !important;
+  border: 1px solid var(--rule-strong) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.45), 0 0 0 1px rgba(78,195,212,.06) !important;
 }
 
 /* Settings panel inputs */
@@ -1559,35 +1680,35 @@ input[type="password"]#noVNC_password_input {
 #noVNC_settings input[type="number"],
 #noVNC_settings input[type="range"],
 #noVNC_settings select {
-  background-color: var(--axonos-dark) !important;
-  border: 2px solid var(--axonos-secondary) !important;
-  color: var(--axonos-light) !important;
-  border-radius: 5px !important;
+  background-color: rgba(7,16,26,0.92) !important;
+  border: 1px solid var(--rule-strong) !important;
+  color: var(--ink) !important;
+  border-radius: 8px !important;
   padding: 6px 8px !important;
   margin: 2px 0 !important;
-  font-family: monospace !important;
+  font-family: var(--font-mono) !important;
 }
 
 #noVNC_settings input[type="text"]:focus,
 #noVNC_settings input[type="number"]:focus,
 #noVNC_settings select:focus {
-  border-color: var(--axonos-accent) !important;
-  box-shadow: 0 0 8px var(--axonos-shadow) !important;
-  background-color: #2C2C2C !important;
+  border-color: var(--cyan) !important;
+  box-shadow: 0 0 0 2px rgba(78,195,212,.15) !important;
+  background-color: rgba(10,20,36,0.96) !important;
   outline: none !important;
 }
 
 /* Range sliders */
 #noVNC_settings input[type="range"] {
-  background: var(--axonos-dark) !important;
-  border: 1px solid var(--axonos-secondary) !important;
-  border-radius: 5px !important;
+  background: rgba(7,16,26,0.92) !important;
+  border: 1px solid var(--rule) !important;
+  border-radius: 999px !important;
   height: 8px !important;
 }
 
 #noVNC_settings input[type="range"]::-webkit-slider-thumb {
-  background: var(--axonos-accent) !important;
-  border: 2px solid var(--axonos-primary) !important;
+  background: var(--cyan) !important;
+  border: 2px solid rgba(78,195,212,.5) !important;
   border-radius: 50% !important;
   cursor: pointer !important;
   height: 18px !important;
@@ -1595,8 +1716,8 @@ input[type="password"]#noVNC_password_input {
 }
 
 #noVNC_settings input[type="range"]::-moz-range-thumb {
-  background: var(--axonos-accent) !important;
-  border: 2px solid var(--axonos-primary) !important;
+  background: var(--cyan) !important;
+  border: 2px solid rgba(78,195,212,.5) !important;
   border-radius: 50% !important;
   cursor: pointer !important;
   height: 18px !important;
@@ -1605,7 +1726,7 @@ input[type="password"]#noVNC_password_input {
 
 /* Checkboxes */
 #noVNC_settings input[type="checkbox"] {
-  accent-color: var(--axonos-accent) !important;
+  accent-color: var(--cyan) !important;
   transform: scale(1.2) !important;
   margin-right: 8px !important;
 }
@@ -1619,34 +1740,40 @@ input[type="password"]#noVNC_password_input {
 
 /* Settings headings */
 #noVNC_settings .noVNC_heading {
-  background: linear-gradient(135deg, var(--axonos-primary), var(--axonos-secondary)) !important;
-  color: var(--axonos-light) !important;
-  border: 1px solid var(--axonos-accent) !important;
-  text-shadow: 1px 1px 2px rgba(0,0,0,0.5) !important;
-  border-radius: 5px !important;
+  background: linear-gradient(135deg, rgba(78,195,212,.12), rgba(157,111,217,.08)) !important;
+  color: var(--ink) !important;
+  border: 1px solid var(--hair-mint) !important;
+  border-radius: 8px !important;
   padding: 8px !important;
   margin-bottom: 10px !important;
+  font-family: var(--font-body) !important;
+  font-weight: 700 !important;
 }
 
 /* Expander sections */
 #noVNC_settings .noVNC_expander {
-  background-color: var(--axonos-secondary) !important;
-  color: var(--axonos-light) !important;
-  border: 1px solid var(--axonos-primary) !important;
-  border-radius: 5px !important;
+  background-color: rgba(78,195,212,.08) !important;
+  color: var(--cyan) !important;
+  border: 1px solid var(--hair-mint) !important;
+  border-radius: 8px !important;
   padding: 6px 10px !important;
   cursor: pointer !important;
-  font-weight: bold !important;
+  font-weight: 600 !important;
+  font-family: var(--font-mono) !important;
+  letter-spacing: 0.06em !important;
 }
 
 #noVNC_settings .noVNC_expander:hover {
-  background-color: var(--axonos-hover) !important;
+  background-color: rgba(78,195,212,.14) !important;
+  border-color: var(--cyan) !important;
 }
 
 /* Version info */
 #noVNC_settings .noVNC_version {
-  color: var(--axonos-accent) !important;
-  font-weight: bold !important;
+  color: var(--ink-mute) !important;
+  font-weight: 400 !important;
+  font-family: var(--font-mono) !important;
+  font-size: 0.82rem !important;
 }
 
 /* Specific input field targeting */
@@ -1697,7 +1824,7 @@ select#noVNC_setting_reconnect_delay:focus,
 select#noVNC_setting_logging:focus {
   border-color: var(--axonos-accent) !important;
   box-shadow: 0 0 8px var(--axonos-shadow) !important;
-  background-color: #2C2C2C !important;
+  background-color: rgba(12,24,44,0.96) !important;
   outline: none !important;
 }
 
@@ -1725,7 +1852,7 @@ select#noVNC_setting_logging option {
 
 /* Add custom dropdown arrow */
 #noVNC_settings select {
-  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23FFD700' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6,9 12,15 18,9'%3e%3c/polyline%3e%3c/svg%3e") !important;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234ec3d4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6,9 12,15 18,9'%3e%3c/polyline%3e%3c/svg%3e") !important;
   background-repeat: no-repeat !important;
   background-position: right 8px center !important;
   background-size: 16px !important;
@@ -1763,8 +1890,8 @@ input#noVNC_setting_repeaterID:focus,
 input#noVNC_setting_host:focus,
 input#noVNC_setting_port:focus,
 input#noVNC_setting_path:focus {
-  background-color: #2C2C2C !important;
-  background: #2C2C2C !important;
+  background-color: rgba(12,24,44,0.96) !important;
+  background: rgba(12,24,44,0.96) !important;
   border-color: var(--axonos-accent) !important;
   box-shadow: 0 0 8px var(--axonos-shadow), inset 0 1px 3px rgba(0,0,0,0.3) !important;
   outline: none !important;
@@ -1888,20 +2015,24 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   width: calc(100% - 8px) !important;
   margin: 4px 0 !important;
   padding: 8px 10px !important;
-  border: 1px solid var(--axonos-secondary) !important;
-  border-radius: 8px !important;
-  background: linear-gradient(135deg, rgba(46, 139, 87, 0.25), rgba(70, 130, 180, 0.25)) !important;
-  color: var(--axonos-light) !important;
-  font-size: 13px !important;
+  border: 1px solid var(--rule-strong) !important;
+  border-radius: 999px !important;
+  background: rgba(78,195,212,.08) !important;
+  color: var(--cyan) !important;
+  -webkit-text-fill-color: var(--cyan) !important;
+  font-size: 12px !important;
   font-weight: 600 !important;
   text-align: center !important;
   cursor: pointer !important;
-  transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.2s ease !important;
+  font-family: var(--font-mono) !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease !important;
 }
 
 #noVNC_restart_session_button:hover {
-  border-color: var(--axonos-accent) !important;
-  background: linear-gradient(135deg, rgba(50, 205, 50, 0.28), rgba(70, 130, 180, 0.35)) !important;
+  border-color: var(--cyan) !important;
+  background: rgba(78,195,212,.15) !important;
   transform: translateY(-1px);
 }
 
@@ -1918,24 +2049,24 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   text-align: center;
   margin-bottom: 30px;
   padding: 30px 20px;
-  background: linear-gradient(135deg, rgba(46, 139, 87, 0.15), rgba(70, 130, 180, 0.15));
+  background: linear-gradient(135deg, rgba(78,195,212,.09) 0%, rgba(157,111,217,.07) 100%);
   border-radius: 20px;
   overflow: hidden;
   backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--rule-strong);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.35), 0 0 0 1px rgba(78,195,212,.06);
 }
 
 .axonos-main-title {
   font-size: 4rem !important;
   font-weight: 900 !important;
-  color: var(--axonos-light) !important;
-  text-shadow: 
-    0 0 30px var(--axonos-primary), 
-    0 0 60px var(--axonos-primary),
+  color: var(--ink) !important;
+  text-shadow:
+    0 0 30px rgba(78,195,212,.45),
+    0 0 60px rgba(78,195,212,.20),
     2px 2px 8px rgba(0,0,0,0.8) !important;
   margin: 0 0 15px 0 !important;
-  font-family: "Orbitron", "Arial", sans-serif !important;
+  font-family: 'Brutal', "Orbitron", "Arial", sans-serif !important;
   letter-spacing: 4px;
   animation: title-glow 3s ease-in-out infinite alternate;
 }
@@ -1949,13 +2080,13 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 .axonos-tagline {
-  font-size: 1.2rem;
-  color: var(--axonos-secondary);
+  font-size: 1.1rem;
+  color: var(--ink-mute);
   font-weight: 300;
   margin: 0 0 15px 0;
   text-transform: uppercase;
-  letter-spacing: 2px;
-  font-family: "Orbitron", monospace;
+  letter-spacing: 0.18em;
+  font-family: var(--font-mono);
   min-height: 1.6em;
 }
 
@@ -1963,13 +2094,14 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 .axonos-network-banner {
   font-size: 0.82rem;
   font-weight: 500;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.08em;
   margin: 0 auto 12px;
   max-width: 36rem;
   padding: 0.45rem 0.75rem;
   border-radius: 999px;
   line-height: 1.35;
-  font-family: "Orbitron", system-ui, sans-serif;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
 }
 
 .axonos-network-banner--hidden {
@@ -1978,22 +2110,22 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 .axonos-network-banner--mainnet {
-  color: rgba(180, 255, 210, 0.92);
-  background: rgba(46, 139, 87, 0.2);
-  border: 1px solid rgba(100, 200, 140, 0.35);
+  color: var(--green);
+  background: rgba(123,224,200,.12);
+  border: 1px solid rgba(123,224,200,.35);
 }
 
 .axonos-network-banner--testnet {
-  color: rgba(255, 220, 160, 0.98);
-  background: rgba(180, 100, 20, 0.25);
-  border: 1px solid rgba(255, 180, 80, 0.45);
-  box-shadow: 0 0 20px rgba(255, 160, 60, 0.12);
+  color: var(--warm);
+  background: rgba(232,168,90,.12);
+  border: 1px solid rgba(232,168,90,.40);
+  box-shadow: 0 0 18px rgba(232,168,90,.10);
 }
 
 .axonos-network-banner--other {
-  color: rgba(255, 200, 160, 0.95);
-  background: rgba(120, 60, 30, 0.3);
-  border: 1px solid rgba(255, 140, 80, 0.4);
+  color: var(--pink);
+  background: rgba(232,127,164,.12);
+  border: 1px solid rgba(232,127,164,.35);
 }
 
 .axonos-wallet-network-line {
@@ -2008,15 +2140,15 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 .axonos-wallet-network-line--mainnet {
-  color: rgba(160, 220, 180, 0.95);
+  color: var(--green);
 }
 
 .axonos-wallet-network-line--testnet {
-  color: rgba(255, 200, 120, 0.98);
+  color: var(--warm);
 }
 
 .axonos-wallet-network-line--other {
-  color: rgba(255, 180, 130, 0.95);
+  color: var(--pink);
 }
 
 /* Particle Animation Background */
@@ -2026,15 +2158,15 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   left: 0;
   right: 0;
   bottom: 0;
-  background-image: 
-    radial-gradient(2px 2px at 20px 30px, var(--axonos-accent), transparent),
-    radial-gradient(2px 2px at 40px 70px, var(--axonos-primary), transparent),
-    radial-gradient(1px 1px at 90px 40px, var(--axonos-secondary), transparent),
-    radial-gradient(1px 1px at 130px 80px, var(--axonos-accent), transparent),
-    radial-gradient(2px 2px at 160px 30px, var(--axonos-primary), transparent);
+  background-image:
+    radial-gradient(2px 2px at 20px 30px, var(--cyan), transparent),
+    radial-gradient(2px 2px at 40px 70px, var(--violet), transparent),
+    radial-gradient(1px 1px at 90px 40px, var(--warm), transparent),
+    radial-gradient(1px 1px at 130px 80px, var(--green), transparent),
+    radial-gradient(2px 2px at 160px 30px, var(--coral), transparent);
   background-size: 200px 100px;
   animation: particles-float 20s infinite linear;
-  opacity: 0.3;
+  opacity: 0.28;
   pointer-events: none;
 }
 
@@ -2061,7 +2193,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   position: absolute;
   width: 2px;
   height: 100%;
-  background: linear-gradient(to bottom, var(--axonos-accent) 0%, transparent 50%, var(--axonos-accent) 100%);
+  background: linear-gradient(to bottom, var(--cyan) 0%, transparent 50%, var(--cyan) 100%);
   animation: dna-twist 3s infinite ease-in-out;
 }
 
@@ -2085,9 +2217,9 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   text-align: center;
   margin: 25px 0;
   padding: 20px;
-  background: rgba(94, 129, 172, 0.08);
-  border: 1px solid rgba(136, 169, 212, 0.25);
-  border-radius: 10px;
+  background: rgba(78,195,212,.05);
+  border: 1px solid var(--rule-strong);
+  border-radius: 14px;
 }
 
 .axonos-mission-text {
@@ -2103,9 +2235,10 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 
 .axonos-subtitle {
   font-size: 0.95rem;
-  color: var(--axonos-secondary);
+  color: var(--ink-mute);
   margin: 0;
   font-style: italic;
+  font-weight: 300;
   opacity: 0.9;
 }
 
@@ -2126,8 +2259,8 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   padding: 0.85rem 1.15rem;
   box-sizing: border-box;
   text-align: center;
-  background: linear-gradient(135deg, rgba(72, 187, 120, 0.14) 0%, rgba(24, 38, 62, 0.5) 100%);
-  border: 1px solid rgba(104, 211, 145, 0.45);
+  background: linear-gradient(135deg, rgba(78,195,212,.10) 0%, rgba(12,26,46,0.55) 100%);
+  border: 1px solid var(--hair-mint);
   border-radius: 14px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 8px 28px rgba(0, 0, 0, 0.28);
 }
@@ -2138,12 +2271,12 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 
 .axonos-resume-panel__title {
   margin: 0 0 0.45rem;
-  font-family: "Orbitron", system-ui, sans-serif;
+  font-family: var(--font-mono);
   font-size: 0.78rem;
   font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: #9ae6b4;
+  color: var(--green);
 }
 
 .axonos-resume-panel__detail,
@@ -2174,10 +2307,10 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   box-sizing: border-box;
   background: linear-gradient(
     135deg,
-    rgba(94, 129, 172, 0.12) 0%,
-    rgba(24, 38, 62, 0.45) 100%
+    rgba(78,195,212,.08) 0%,
+    rgba(10,20,36,0.55) 100%
   );
-  border: 1px solid rgba(136, 169, 212, 0.38);
+  border: 1px solid var(--rule-strong);
   border-radius: 14px;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.07),
@@ -2187,15 +2320,13 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 
 .axonos-profile-picker__label {
   margin: 0;
-  font-family: "Orbitron", system-ui, sans-serif;
+  font-family: var(--font-mono);
   font-size: 0.68rem;
   font-weight: 600;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--axonos-light);
-  text-shadow:
-    0 0 18px rgba(120, 210, 255, 0.35),
-    0 1px 2px rgba(0, 0, 0, 0.85);
+  color: var(--ink-mute);
+  text-shadow: 0 0 14px rgba(78,195,212,.3), 0 1px 2px rgba(0,0,0,0.85);
   opacity: 0.98;
   flex: 0 0 auto;
 }
@@ -2215,10 +2346,10 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   cursor: pointer;
   color: var(--axonos-light) !important;
   background-color: rgba(12, 18, 28, 0.92) !important;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2378b4e8' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%234ec3d4' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") !important;
   background-repeat: no-repeat !important;
   background-position: right 0.65rem center !important;
-  border: 1px solid rgba(120, 176, 228, 0.45) !important;
+  border: 1px solid var(--hair-mint) !important;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.06),
     0 4px 14px rgba(0, 0, 0, 0.35) !important;
@@ -2229,7 +2360,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 .axonos-profile-picker__select:hover {
-  border-color: rgba(255, 215, 0, 0.45) !important;
+  border-color: var(--cyan) !important;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
     0 4px 18px rgba(42, 68, 120, 0.4) !important;
@@ -2237,11 +2368,11 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 
 .axonos-profile-picker__select:focus {
   outline: none !important;
-  border-color: var(--axonos-accent) !important;
+  border-color: var(--cyan) !important;
   box-shadow:
-    0 0 0 2px rgba(46, 139, 87, 0.35),
-    0 0 20px rgba(255, 215, 0, 0.22),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+    0 0 0 2px rgba(78,195,212,.25),
+    0 0 18px rgba(78,195,212,.18),
+    inset 0 1px 0 rgba(255,255,255,0.06) !important;
 }
 
 .axonos-profile-picker__select:focus-visible {
@@ -2305,19 +2436,19 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 
 /* Enhanced Connect Button */
 .axonos-enhanced-connect {
-  background: linear-gradient(135deg, #1c5a6d 0%, #34397f 100%) !important;
-  border: none !important;
+  background: linear-gradient(135deg, rgba(10,24,44,0.96) 0%, rgba(7,16,26,0.96) 100%) !important;
+  border: 1px solid var(--hair-mint) !important;
   border-radius: 20px !important;
   padding: 18px !important;
   margin: 24px 0 !important;
   cursor: pointer !important;
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  transition: all 0.35s cubic-bezier(.2,.7,.2,1) !important;
   position: relative;
   overflow: hidden;
-  box-shadow: 
-    0 12px 40px rgba(42, 68, 120, 0.42),
-    0 4px 16px rgba(0, 0, 0, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+  box-shadow:
+    0 12px 40px rgba(0,0,0,0.45),
+    0 0 0 1px rgba(78,195,212,.08),
+    inset 0 1px 0 rgba(255,255,255,0.06) !important;
   backdrop-filter: blur(10px);
 }
 
@@ -2328,8 +2459,8 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   left: -100%;
   width: 100%;
   height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-  transition: left 0.5s;
+  background: linear-gradient(120deg, transparent 0%, rgba(78,195,212,0.12) 50%, transparent 100%);
+  transition: left 0.55s cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
 .axonos-enhanced-connect:hover::before {
@@ -2337,13 +2468,14 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 .axonos-enhanced-connect:hover {
-  background: linear-gradient(135deg, #0f2a4d 0%, #1a3b6b 100%) !important;
-  transform: translateY(-5px) scale(1.03) !important;
-  box-shadow: 
-    0 20px 60px rgba(20, 44, 84, 0.58),
-    0 0 80px rgba(54, 96, 168, 0.2),
-    0 8px 32px rgba(0, 0, 0, 0.4),
-    inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
+  background: linear-gradient(135deg, rgba(14,30,54,0.98) 0%, rgba(10,22,40,0.98) 100%) !important;
+  border-color: var(--cyan) !important;
+  transform: translateY(-4px) scale(1.015) !important;
+  box-shadow:
+    0 20px 60px rgba(0,0,0,0.55),
+    0 0 30px rgba(78,195,212,.15),
+    0 8px 32px rgba(0,0,0,0.4),
+    inset 0 1px 0 rgba(255,255,255,0.10) !important;
 }
 
 .axonos-connect-content {
@@ -2379,17 +2511,18 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 
 .axonos-connect-text {
   font-size: 1.2rem !important;
-  font-weight: 700 !important;
-  color: var(--axonos-light) !important;
-  text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
-  font-family: "Orbitron", sans-serif;
-  letter-spacing: 1px;
+  font-weight: 800 !important;
+  color: var(--ink) !important;
+  text-shadow: 0 0 20px rgba(78,195,212,.3), 2px 2px 4px rgba(0,0,0,0.8);
+  font-family: var(--font-body);
+  letter-spacing: 0.02em;
 }
 
 .axonos-connect-subtext {
-  font-size: 0.8rem;
-  color: rgba(245, 245, 245, 0.8);
+  font-size: 0.82rem;
+  color: var(--ink-mute);
   font-weight: 300;
+  letter-spacing: 0.01em;
 }
 
 /* Feature Highlights */
@@ -2398,8 +2531,8 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   justify-content: space-around;
   margin: 25px 0;
   padding: 20px 0;
-  border-top: 1px solid rgba(70, 130, 180, 0.3);
-  border-bottom: 1px solid rgba(70, 130, 180, 0.3);
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
 }
 
 .axonos-feature {
@@ -2422,11 +2555,12 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 .axonos-feature-text {
-  font-size: 0.85rem;
-  color: var(--axonos-light);
-  font-weight: 500;
+  font-size: 0.8rem;
+  color: var(--ink-mute);
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 1px;
+  letter-spacing: 0.12em;
+  font-family: var(--font-mono);
 }
 
 /* Scientific Quote */
@@ -2434,24 +2568,26 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   text-align: center;
   margin: 25px 0;
   padding: 20px;
-  background: linear-gradient(135deg, rgba(255, 215, 0, 0.05), rgba(70, 130, 180, 0.05));
-  border-left: 4px solid var(--axonos-accent);
+  background: rgba(78,195,212,.04);
+  border-left: 3px solid var(--cyan);
   border-radius: 8px;
   font-style: italic;
 }
 
 .axonos-quote p {
-  color: var(--axonos-light);
+  color: var(--ink-dim);
   font-size: 1.05rem;
   margin: 0 0 10px 0;
   font-weight: 300;
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
 .axonos-quote cite {
-  color: var(--axonos-accent);
-  font-size: 0.9rem;
-  font-weight: 500;
+  color: var(--cyan);
+  font-size: 0.88rem;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
 }
 
 /* Override upstream .noVNC_center flex centering: use align-items:stretch +
@@ -2465,15 +2601,15 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 
 /* Connect Dialog Container Enhancement */
 #noVNC_connect_dlg {
-  background: linear-gradient(145deg, rgba(18, 24, 34, 0.92), rgba(12, 18, 28, 0.9)) !important;
-  border: none !important;
+  background: linear-gradient(145deg, rgba(10,20,36,0.97), rgba(7,16,26,0.96)) !important;
+  border: 1px solid var(--rule-strong) !important;
   border-radius: 24px !important;
   padding: 40px !important;
-  box-shadow: 
-    0 22px 70px rgba(0, 0, 0, 0.55),
-    0 0 0 1px rgba(160, 185, 220, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
-  backdrop-filter: blur(10px);
+  box-shadow:
+    0 22px 70px rgba(0,0,0,0.6),
+    0 0 0 1px rgba(78,195,212,.08),
+    inset 0 1px 0 rgba(255,255,255,0.05) !important;
+  backdrop-filter: blur(14px);
   max-width: 600px;
   max-height: calc(100vh - 40px);
   overflow-y: auto;
@@ -2557,8 +2693,8 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
     flex-wrap: wrap;
     justify-content: center;
     gap: 10px 22px;
-    border-top: 1px solid rgba(70, 130, 180, 0.32);
-    border-bottom: 1px solid rgba(70, 130, 180, 0.22);
+    border-top: 1px solid var(--rule);
+    border-bottom: 1px solid var(--rule);
   }
 
   #noVNC_connect_dlg > .axonos-quote {
@@ -2568,7 +2704,7 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
     padding: 16px 20px;
     text-align: center;
     border-left: none;
-    border-top: 1px solid rgba(255, 215, 0, 0.12);
+    border-top: 1px solid var(--rule);
     border-radius: 0 0 10px 10px;
   }
 
@@ -2586,9 +2722,9 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
     overflow-x: hidden;
     padding: 1.25rem 1.1rem;
     margin-left: 0;
-    border: 1px solid rgba(136, 169, 212, 0.28);
+    border: 1px solid var(--rule-strong);
     border-radius: 16px;
-    background: rgba(8, 14, 24, 0.5);
+    background: rgba(8,16,28,0.55);
   }
 
 
@@ -2621,8 +2757,8 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
 .axonos-mobile-notice__title {
   margin: 0 0 0.5em;
   font-size: 1rem;
-  font-weight: 600;
-  color: var(--axonos-accent);
+  font-weight: 700;
+  color: var(--cyan);
 }
 
 .axonos-mobile-notice__text {
@@ -2646,8 +2782,8 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
     display: block;
     margin-bottom: 1.25rem;
     padding: 1rem 1.25rem;
-    background: rgba(46, 139, 87, 0.15);
-    border: 1px solid var(--axonos-secondary);
+    background: rgba(78,195,212,.07);
+    border: 1px solid var(--hair-mint);
     border-radius: 8px;
     text-align: center;
   }
@@ -2688,8 +2824,8 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
 }
 
 @keyframes loading-glow {
-  0%, 100% { box-shadow: 0 22px 70px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(160, 185, 220, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.08); }
-  50% { box-shadow: 0 26px 82px rgba(0, 0, 0, 0.62), 0 0 0 1px rgba(190, 215, 255, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
+  0%, 100% { box-shadow: 0 22px 70px rgba(0,0,0,0.55), 0 0 0 1px rgba(78,195,212,.08), inset 0 1px 0 rgba(255,255,255,0.05); }
+  50% { box-shadow: 0 26px 82px rgba(0,0,0,0.6), 0 0 0 1px rgba(78,195,212,.16), inset 0 1px 0 rgba(255,255,255,0.08); }
 }
 
 /* AxonOS Connection Loading Animation */
@@ -2703,14 +2839,15 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.9);
+  background: rgba(10,20,36,0.97);
   border-radius: 20px;
   padding: 40px;
-  border: 2px solid var(--axonos-primary);
-  box-shadow: 
-    0 0 50px rgba(46, 139, 87, 0.4),
-    inset 0 0 30px rgba(46, 139, 87, 0.1);
-  backdrop-filter: blur(10px);
+  border: 1px solid var(--hair-mint);
+  box-shadow:
+    0 0 40px rgba(78,195,212,.18),
+    0 20px 60px rgba(0,0,0,.6),
+    inset 0 1px 0 rgba(255,255,255,.04);
+  backdrop-filter: blur(14px);
 }
 
 .axonos-connection-loader.active {
@@ -2765,8 +2902,8 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
 .axonos-spinner {
   width: 80px;
   height: 80px;
-  border: 4px solid rgba(46, 139, 87, 0.2);
-  border-top: 4px solid var(--axonos-primary);
+  border: 4px solid rgba(78,195,212,.15);
+  border-top: 4px solid var(--cyan);
   border-radius: 50%;
   animation: axonos-spin 1s linear infinite;
   position: relative;
@@ -2781,7 +2918,7 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
   right: -4px;
   bottom: -4px;
   border: 2px solid transparent;
-  border-top: 2px solid var(--axonos-accent);
+  border-top: 2px solid var(--violet);
   border-radius: 50%;
   animation: axonos-spin-reverse 0.8s linear infinite;
 }
@@ -2793,23 +2930,24 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
 
 /* Loading Text */
 .axonos-loading-text {
-  color: var(--axonos-light);
-  font-family: "Orbitron", monospace;
+  color: var(--ink);
+  font-family: var(--font-body);
   font-size: 18px;
-  font-weight: 600;
+  font-weight: 800;
   text-align: center;
   margin-bottom: 10px;
-  text-shadow: 0 0 10px var(--axonos-primary);
+  text-shadow: 0 0 14px rgba(78,195,212,.45);
   animation: text-pulse 2s ease-in-out infinite;
+  letter-spacing: -0.01em;
 }
 
 .axonos-loading-subtext {
-  color: var(--axonos-accent);
-  font-family: "Orbitron", monospace;
-  font-size: 12px;
+  color: var(--ink-mute);
+  font-family: var(--font-mono);
+  font-size: 11px;
   text-align: center;
   opacity: 0.8;
-  animation: dots-animation 1.5s ease-in-out infinite;
+  letter-spacing: 0.06em;
 }
 
 @keyframes text-pulse {
@@ -2833,32 +2971,32 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
   bottom: -10px;
   border: 3px solid transparent;
   border-radius: 50%;
-  border-top: 3px solid var(--axonos-secondary);
+  border-top: 3px solid var(--violet);
   animation: progress-ring 3s ease-in-out infinite;
 }
 
 @keyframes progress-ring {
-  0% { 
+  0% {
     transform: rotate(0deg);
-    border-top-color: var(--axonos-secondary);
+    border-top-color: var(--violet);
   }
-  25% { 
-    border-top-color: var(--axonos-primary);
+  25% {
+    border-top-color: var(--cyan);
   }
-  50% { 
+  50% {
     transform: rotate(180deg);
-    border-top-color: var(--axonos-accent);
+    border-top-color: var(--warm);
   }
-  75% { 
-    border-top-color: var(--axonos-primary);
+  75% {
+    border-top-color: var(--cyan);
   }
-  100% { 
+  100% {
     transform: rotate(360deg);
-    border-top-color: var(--axonos-secondary);
+    border-top-color: var(--violet);
   }
 }
 
-/* Animated Stars Background - Only when not connected */
+/* AxonDAO subtle grid overlay — Only when not connected */
 html:not(.noVNC_connected) body::before {
   content: '';
   position: fixed;
@@ -2866,56 +3004,21 @@ html:not(.noVNC_connected) body::before {
   left: 0;
   right: 0;
   bottom: 0;
-  background-image: 
-    radial-gradient(3px 3px at 20px 30px, #fff, transparent),
-    radial-gradient(2px 2px at 40px 70px, #fff, transparent),
-    radial-gradient(2px 2px at 90px 40px, #fff, transparent),
-    radial-gradient(3px 3px at 130px 80px, #fff, transparent),
-    radial-gradient(2px 2px at 160px 30px, #fff, transparent),
-    radial-gradient(1px 1px at 200px 120px, #fff, transparent),
-    radial-gradient(3px 3px at 240px 60px, #fff, transparent),
-    radial-gradient(2px 2px at 280px 100px, #fff, transparent),
-    radial-gradient(2px 2px at 320px 40px, #fff, transparent),
-    radial-gradient(1px 1px at 360px 140px, #fff, transparent),
-    radial-gradient(2px 2px at 50px 150px, #fff, transparent),
-    radial-gradient(3px 3px at 300px 180px, #fff, transparent),
-    radial-gradient(1px 1px at 180px 200px, #fff, transparent),
-    radial-gradient(2px 2px at 380px 90px, #fff, transparent);
-  background-size: 400px 250px;
-  animation: stars-move 25s linear infinite;
+  background-image:
+    linear-gradient(rgba(140,200,220,.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(140,200,220,.025) 1px, transparent 1px);
+  background-size: 78px 78px;
+  -webkit-mask-image: radial-gradient(ellipse 95% 75% at 50% 25%, #000, transparent 95%);
+  mask-image: radial-gradient(ellipse 95% 75% at 50% 25%, #000, transparent 95%);
+  animation: grid-drift 28s ease-in-out infinite;
   pointer-events: none;
   z-index: 1;
-  opacity: 0.8;
+  opacity: 1;
 }
 
-@keyframes stars-move {
-  from { transform: translateX(0); }
-  to { transform: translateX(-400px); }
-}
-
-/* Twinkling Stars Layer - Only when not connected */
-html:not(.noVNC_connected) #noVNC_container::before {
-  content: '';
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-image: 
-    radial-gradient(1px 1px at 50px 50px, #fff, transparent),
-    radial-gradient(1px 1px at 150px 150px, #fff, transparent),
-    radial-gradient(1px 1px at 250px 100px, #fff, transparent),
-    radial-gradient(1px 1px at 350px 200px, #fff, transparent),
-    radial-gradient(1px 1px at 450px 50px, #fff, transparent);
-  background-size: 500px 300px;
-  animation: twinkle 3s ease-in-out infinite alternate;
-  pointer-events: none;
-  z-index: -2;
-}
-
-@keyframes twinkle {
-  0% { opacity: 0.3; }
-  100% { opacity: 1; }
+@keyframes grid-drift {
+  0%, 100% { transform: translate(0, 0); opacity: 0.9; }
+  50% { transform: translate(6px, 4px); opacity: 0.75; }
 }
 
 /* Fade in up animation */
@@ -2935,7 +3038,7 @@ html:not(.noVNC_connected) #noVNC_container::before {
   opacity: 0;
 }
 
-/* Animated Planets and Space Objects - Only when not connected */
+/* AxonDAO ambient dot-scatter overlay — Only when not connected */
 html:not(.noVNC_connected) body::after {
   content: '';
   position: fixed;
@@ -2943,77 +3046,56 @@ html:not(.noVNC_connected) body::after {
   left: 0;
   right: 0;
   bottom: 0;
-  background-image: 
-    radial-gradient(circle at 15% 20%, rgba(255, 100, 100, 0.3) 0%, transparent 8%),
-    radial-gradient(circle at 85% 80%, rgba(100, 150, 255, 0.3) 0%, transparent 12%),
-    radial-gradient(circle at 70% 30%, rgba(255, 200, 100, 0.2) 0%, transparent 6%),
-    radial-gradient(circle at 30% 70%, rgba(150, 255, 150, 0.2) 0%, transparent 10%),
-    radial-gradient(circle at 90% 10%, rgba(255, 150, 255, 0.2) 0%, transparent 4%);
-  background-size: 800px 600px;
-  animation: planets-orbit 60s infinite linear;
+  background-image:
+    radial-gradient(circle at 50% 50%, rgba(180,200,240,0.30) 0.6px, transparent 1.2px);
+  background-size: 220px 220px;
+  animation: dot-float 28s ease-in-out infinite;
   pointer-events: none;
   z-index: -4;
+  opacity: 0.5;
 }
 
-@keyframes planets-orbit {
-  0% { transform: translate(0, 0) rotate(0deg); }
-  25% { transform: translate(-20px, -10px) rotate(90deg); }
-  50% { transform: translate(-10px, 20px) rotate(180deg); }
-  75% { transform: translate(20px, 10px) rotate(270deg); }
-  100% { transform: translate(0, 0) rotate(360deg); }
+@keyframes dot-float {
+  0%, 100% { transform: translate(0, 0); opacity: 0.5; }
+  50% { transform: translate(5px, -4px); opacity: 0.4; }
 }
 
-/* New title glow animation */
+/* Title glow animation — AxonDAO cyan */
 @keyframes title-glow {
-  0% { 
-    text-shadow: 
-      0 0 30px var(--axonos-primary), 
-      0 0 60px var(--axonos-primary),
+  0% {
+    text-shadow:
+      0 0 30px rgba(78,195,212,.4),
+      0 0 60px rgba(78,195,212,.15),
       2px 2px 8px rgba(0,0,0,0.8);
   }
-  100% { 
-    text-shadow: 
-      0 0 50px var(--axonos-primary), 
-      0 0 100px var(--axonos-primary),
+  100% {
+    text-shadow:
+      0 0 50px rgba(78,195,212,.6),
+      0 0 100px rgba(78,195,212,.25),
       2px 2px 8px rgba(0,0,0,0.8);
   }
 }
 
-/* Accent pulse animation */
+/* Accent pulse animation — AxonDAO cyan */
 @keyframes accent-pulse {
-  0% { 
-    text-shadow: 
-      0 0 40px var(--axonos-accent),
-      0 0 80px var(--axonos-accent);
+  0% {
+    text-shadow:
+      0 0 40px rgba(78,195,212,.6),
+      0 0 80px rgba(78,195,212,.3);
   }
-  100% { 
-    text-shadow: 
-      0 0 60px var(--axonos-accent),
-      0 0 120px var(--axonos-accent);
+  100% {
+    text-shadow:
+      0 0 60px rgba(78,195,212,.8),
+      0 0 120px rgba(78,195,212,.4);
   }
 }
 
 /* Enhanced feature hover effects */
 .axonos-feature:hover .axonos-feature-icon {
   transform: scale(1.2) rotate(5deg);
-  filter: drop-shadow(0 0 15px var(--axonos-primary)) brightness(1.2);
+  filter: drop-shadow(0 0 12px rgba(78,195,212,.55)) brightness(1.2);
 }
 
-/* Improved connect button shimmer */
-.axonos-enhanced-connect::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
-  transition: left 0.6s ease;
-}
-
-.axonos-enhanced-connect:hover::before {
-  left: 100%;
-}
 
 /* Enhanced connect button active state */
 .axonos-enhanced-connect:active {
@@ -3021,27 +3103,14 @@ html:not(.noVNC_connected) body::after {
   transition: all 0.1s ease !important;
 }
 
-/* Space Elements - Only when not connected */
-html:not(.noVNC_connected) .space-elements {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  pointer-events: none;
-  z-index: 2;
-}
-
-/* Hide space elements when connected */
-html.noVNC_connected .space-elements {
-  display: none;
-}
-
-.rocket, .spaceship, .planet, .comet, .satellite {
-  position: absolute;
-  font-size: 2.5rem;
-  filter: drop-shadow(0 0 15px rgba(255, 255, 255, 0.8));
-  z-index: 3;
+/* Space elements — not part of AxonDAO branding; suppress entirely */
+.space-elements,
+.rocket,
+.spaceship,
+.planet,
+.comet,
+.satellite {
+  display: none !important;
 }
 
 /* Rocket Animations */
