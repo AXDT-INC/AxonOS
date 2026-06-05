@@ -68,6 +68,37 @@ Copyright (C) 2019 The noVNC Authors
     <link rel="preload" as="image" href="app/images/error.svg">
     <link rel="preload" as="image" href="app/images/warning.svg">
 
+    <script>
+    // Suppress browser-extension errors (e.g. TronLink tronlinkParams proxy conflict)
+    // before noVNC's error-handler.js can display them as fatal UI errors.
+    (function () {
+        function isExtensionSrc(src) {
+            return typeof src === 'string' &&
+                   (src.indexOf('chrome-extension://') === 0 ||
+                    src.indexOf('moz-extension://') === 0);
+        }
+        // Capture phase fires before noVNC's bubble-phase error listener.
+        window.addEventListener('error', function (e) {
+            if (e && isExtensionSrc(e.filename)) {
+                e.stopImmediatePropagation();
+                e.preventDefault();
+            }
+        }, true);
+        // Wrap window.onerror so any assignment by error-handler.js is also guarded.
+        var _saved = null;
+        Object.defineProperty(window, 'onerror', {
+            configurable: true,
+            enumerable: true,
+            get: function () { return _saved; },
+            set: function (fn) {
+                _saved = typeof fn === 'function' ? function (msg, src, line, col, err) {
+                    if (isExtensionSrc(src)) return true;
+                    return fn(msg, src, line, col, err);
+                } : fn;
+            }
+        });
+    }());
+    </script>
     <script src="app/error-handler.js"></script>
     <script type="module" crossorigin="anonymous" src="app/ui.js"></script>
 </head>
