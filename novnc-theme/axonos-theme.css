@@ -322,7 +322,10 @@ html.noVNC_connected .axonos-prerequisites-ticker {
   .axonos-dna-animation::before,
   .axonos-dna-animation::after,
   .axonos-main-title,
-  .axonos-highlight {
+  .axonos-highlight,
+  #noVNC_connect_button,
+  html:not(.noVNC_connected) body::before,
+  html:not(.noVNC_connected) body::after {
     animation: none;
   }
 }
@@ -644,15 +647,14 @@ html:not(.noVNC_connected) .axonos-version {
   letter-spacing: 0.06em;
 }
 
-/* Pulse animation for connect button */
+/* Pulse animation for connect button — opacity-only, GPU-composited (box-shadow forces CPU repaint) */
 @keyframes pulse {
-  0% { box-shadow: 0 0 0 0 rgba(78,195,212,.25); }
-  70% { box-shadow: 0 0 0 10px rgba(78,195,212,0); }
-  100% { box-shadow: 0 0 0 0 rgba(78,195,212,0); }
+  0%, 100% { opacity: 0.88; }
+  50%       { opacity: 1; }
 }
 
 #noVNC_connect_button {
-  animation: pulse 2s infinite;
+  animation: pulse 2s ease-in-out infinite;
 }
 
 /* Force AxonOS logo styling */
@@ -2057,10 +2059,9 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   text-align: center;
   margin-bottom: 30px;
   padding: 30px 20px;
-  background: linear-gradient(135deg, rgba(78,195,212,.09) 0%, rgba(157,111,217,.07) 100%);
+  background: linear-gradient(135deg, rgba(78,195,212,.11) 0%, rgba(157,111,217,.09) 100%);
   border-radius: 20px;
   overflow: hidden;
-  backdrop-filter: blur(10px);
   border: 1px solid var(--rule-strong);
   box-shadow: 0 8px 32px rgba(0,0,0,0.35), 0 0 0 1px rgba(78,195,212,.06);
 }
@@ -2833,9 +2834,10 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
   animation: loading-glow 2s infinite ease-in-out;
 }
 
+/* opacity-only: GPU-composited (box-shadow animation forces CPU repaint) */
 @keyframes loading-glow {
-  0%, 100% { box-shadow: 0 22px 70px rgba(0,0,0,0.55), 0 0 0 1px rgba(78,195,212,.08), inset 0 1px 0 rgba(255,255,255,0.05); }
-  50% { box-shadow: 0 26px 82px rgba(0,0,0,0.6), 0 0 0 1px rgba(78,195,212,.16), inset 0 1px 0 rgba(255,255,255,0.08); }
+  0%, 100% { opacity: 0.88; }
+  50%       { opacity: 1; }
 }
 
 /* AxonOS Connection Loading Animation */
@@ -2985,25 +2987,10 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
   animation: progress-ring 3s ease-in-out infinite;
 }
 
+/* transform-only: removed border-top-color changes which force CPU repaints */
 @keyframes progress-ring {
-  0% {
-    transform: rotate(0deg);
-    border-top-color: var(--violet);
-  }
-  25% {
-    border-top-color: var(--cyan);
-  }
-  50% {
-    transform: rotate(180deg);
-    border-top-color: var(--warm);
-  }
-  75% {
-    border-top-color: var(--cyan);
-  }
-  100% {
-    transform: rotate(360deg);
-    border-top-color: var(--violet);
-  }
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
 }
 
 /* AxonDAO subtle grid overlay — Only when not connected */
@@ -3023,12 +3010,14 @@ html:not(.noVNC_connected) body::before {
   animation: grid-drift 28s ease-in-out infinite;
   pointer-events: none;
   z-index: 1;
-  opacity: 1;
+  opacity: 0.85;
+  will-change: transform;
 }
 
+/* Pure-transform keyframes — opacity removed so only compositor properties animate */
 @keyframes grid-drift {
-  0%, 100% { transform: translate(0, 0); opacity: 0.9; }
-  50% { transform: translate(6px, 4px); opacity: 0.75; }
+  0%, 100% { transform: translate(0, 0); }
+  50%       { transform: translate(6px, 4px); }
 }
 
 /* Fade in up animation */
@@ -3062,12 +3051,14 @@ html:not(.noVNC_connected) body::after {
   animation: dot-float 28s ease-in-out infinite;
   pointer-events: none;
   z-index: -4;
-  opacity: 0.5;
+  opacity: 0.45;
+  will-change: transform;
 }
 
+/* Pure-transform keyframes — opacity removed so only compositor properties animate */
 @keyframes dot-float {
-  0%, 100% { transform: translate(0, 0); opacity: 0.5; }
-  50% { transform: translate(5px, -4px); opacity: 0.4; }
+  0%, 100% { transform: translate(0, 0); }
+  50%       { transform: translate(5px, -4px); }
 }
 
 /* Title glow animation — AxonDAO cyan (opacity-only: GPU-composited, avoids text-shadow repaint) */
