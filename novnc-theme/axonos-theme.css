@@ -317,6 +317,14 @@ html.noVNC_connected .axonos-prerequisites-ticker {
   .axonos-prerequisites-ticker__seg[data-ticker-mirror="1"] {
     display: none;
   }
+
+  .axonos-particles,
+  .axonos-dna-animation::before,
+  .axonos-dna-animation::after,
+  .axonos-main-title,
+  .axonos-highlight {
+    animation: none;
+  }
 }
 
 @media (max-width: 520px) {
@@ -2168,6 +2176,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   animation: particles-float 20s infinite linear;
   opacity: 0.28;
   pointer-events: none;
+  will-change: transform;
 }
 
 @keyframes particles-float {
@@ -2195,6 +2204,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   height: 100%;
   background: linear-gradient(to bottom, var(--cyan) 0%, transparent 50%, var(--cyan) 100%);
   animation: dna-twist 3s infinite ease-in-out;
+  will-change: transform;
 }
 
 .axonos-dna-animation::before {
@@ -3060,34 +3070,16 @@ html:not(.noVNC_connected) body::after {
   50% { transform: translate(5px, -4px); opacity: 0.4; }
 }
 
-/* Title glow animation — AxonDAO cyan */
+/* Title glow animation — AxonDAO cyan (opacity-only: GPU-composited, avoids text-shadow repaint) */
 @keyframes title-glow {
-  0% {
-    text-shadow:
-      0 0 30px rgba(78,195,212,.4),
-      0 0 60px rgba(78,195,212,.15),
-      2px 2px 8px rgba(0,0,0,0.8);
-  }
-  100% {
-    text-shadow:
-      0 0 50px rgba(78,195,212,.6),
-      0 0 100px rgba(78,195,212,.25),
-      2px 2px 8px rgba(0,0,0,0.8);
-  }
+  0%   { opacity: 0.82; }
+  100% { opacity: 1; }
 }
 
-/* Accent pulse animation — AxonDAO cyan */
+/* Accent pulse animation — AxonDAO cyan (opacity-only: GPU-composited) */
 @keyframes accent-pulse {
-  0% {
-    text-shadow:
-      0 0 40px rgba(78,195,212,.6),
-      0 0 80px rgba(78,195,212,.3);
-  }
-  100% {
-    text-shadow:
-      0 0 60px rgba(78,195,212,.8),
-      0 0 120px rgba(78,195,212,.4);
-  }
+  0%   { opacity: 0.65; }
+  100% { opacity: 1; }
 }
 
 /* Enhanced feature hover effects */
