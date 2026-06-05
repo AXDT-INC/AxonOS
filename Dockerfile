@@ -488,17 +488,30 @@ RUN mkdir -p /home/$USER/.vnc && \
 USER root
 
 # Install WhiteSur GTK Theme (macOS-like theme)
+# NOTE: WhiteSur's install.sh runs under `set -Eeo pipefail` with an ERR trap, so a
+# single benign non-zero command aborts the whole script even though the theme builds
+# fine. Two things matter here:
+#   1. We pre-install libglib2.0-dev-bin (provides glib-compile-resources). Otherwise
+#      install.sh tries to auto-install it at runtime via prepare_install_apt_packages,
+#      which has an upstream bug: it returns 1 *after a successful* apt install (its last
+#      statement is `[[ "$status" == "100" ]]`), tripping the ERR trap and killing the
+#      build before any theme is produced.
+#   2. USER/HOME are set because the build has no login session; install.sh's `logname`
+#      fallback resolves to an empty $USER otherwise, failing under pipefail.
+# Even with deps satisfied, install.sh can still exit non-zero on a harmless late step,
+# so we don't gate on its exit code — we gate on the theme files actually existing.
 RUN apt update && apt install -y \
     sassc optipng inkscape libcanberra-gtk-module libcanberra-gtk3-module \
-    gtk2-engines-murrine gtk2-engines-pixbuf libxml2-utils git && \
+    gtk2-engines-murrine gtk2-engines-pixbuf libxml2-utils libglib2.0-dev-bin git && \
     git clone https://github.com/vinceliuice/WhiteSur-gtk-theme.git --depth=1 /tmp/WhiteSur-gtk-theme && \
     cd /tmp/WhiteSur-gtk-theme && \
     chmod +x install.sh && \
-    DEBIAN_FRONTEND=noninteractive ./install.sh --silent-mode -d /usr/share/themes -n WhiteSur -c Dark -o normal -a normal && \
+    { USER=root HOME=/root DEBIAN_FRONTEND=noninteractive ./install.sh --silent-mode -d /usr/share/themes -n WhiteSur -c Dark -o normal -a normal || true; } && \
+    test -f /usr/share/themes/WhiteSur-Dark/gtk-3.0/gtk.css && \
     ls -la /usr/share/themes/ | grep -i white && \
     cd / && \
     rm -rf /tmp/WhiteSur-gtk-theme && \
-    apt remove -y sassc optipng inkscape libxml2-utils && \
+    apt remove -y sassc optipng inkscape libxml2-utils libglib2.0-dev-bin && \
     apt autoremove -y && \
     apt clean
 
