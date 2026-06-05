@@ -2148,6 +2148,52 @@ const UI = {
         UI._axgtSetupUsageOverlayButton();
     },
 
+    /** Anchor the footer countdown to an authoritative server value; ticks locally each second. */
+    _axgtSetSessionTimeRemaining(wallMinutes, thresholdMinutes) {
+        UI._axgtTimerAnchorSeconds = Math.max(0, wallMinutes * 60);
+        UI._axgtTimerAnchorAt = Date.now();
+        UI._axgtTimerThresholdSeconds = Math.max(
+            0, (typeof thresholdMinutes === 'number' ? thresholdMinutes : 10) * 60
+        );
+        UI._axgtRenderSessionTimer();
+        if (!UI._axgtTimerTickId) {
+            UI._axgtTimerTickId = setInterval(() => UI._axgtRenderSessionTimer(), 1000);
+        }
+    },
+
+    _axgtStopSessionTimer() {
+        if (UI._axgtTimerTickId) {
+            clearInterval(UI._axgtTimerTickId);
+            UI._axgtTimerTickId = null;
+        }
+        const el = document.getElementById('axonos_session_timer');
+        const sep = document.getElementById('axonos_session_timer_sep');
+        if (el) el.classList.add('axonos-session-timer--hidden');
+        if (sep) sep.classList.add('axonos-session-timer--hidden');
+    },
+
+    /** Render the interpolated countdown; self-stops once the session is no longer billing. */
+    _axgtRenderSessionTimer() {
+        const el = document.getElementById('axonos_session_timer');
+        const sep = document.getElementById('axonos_session_timer_sep');
+        const valEl = document.getElementById('axonos_session_timer_value');
+        if (!el || !valEl) return;
+        if (typeof UI._axgtSessionBillingActive === 'function' && !UI._axgtSessionBillingActive()) {
+            UI._axgtStopSessionTimer();
+            return;
+        }
+        const elapsed = (Date.now() - (UI._axgtTimerAnchorAt || Date.now())) / 1000;
+        const remaining = Math.max(0, (UI._axgtTimerAnchorSeconds || 0) - elapsed);
+        const mins = Math.floor(remaining / 60);
+        const secs = Math.floor(remaining % 60);
+        valEl.textContent = mins + ':' + (secs < 10 ? '0' : '') + secs;
+        const threshold = UI._axgtTimerThresholdSeconds || 600;
+        el.classList.remove('axonos-session-timer--hidden');
+        if (sep) sep.classList.remove('axonos-session-timer--hidden');
+        el.classList.toggle('axonos-session-timer--warning', remaining > 60 && remaining <= threshold);
+        el.classList.toggle('axonos-session-timer--critical', remaining <= 60);
+    },
+
     _axgtUpdateUsageOverlay(state, message) {
         const overlay = document.getElementById('axonos_usage_overlay');
         const msgEl = document.getElementById('axonos_usage_overlay_message');
@@ -2289,6 +2335,12 @@ const UI = {
                     ? data.estimated_wall_minutes_remaining
                     : (gpuBilling && billingGpus > 1 ? remaining / billingGpus : remaining);
                 const reason = (data.reason && String(data.reason)) || '';
+                // Footer countdown — re-anchored on each poll, interpolated locally between.
+                if (!creditExhausted && wallRemaining > 0) {
+                    UI._axgtSetSessionTimeRemaining(wallRemaining, threshold);
+                } else {
+                    UI._axgtStopSessionTimer();
+                }
                 if (creditExhausted) {
                     UI._axgtDisconnectForCreditExhaustion(
                         'Usage credit exhausted. Add more ETH to unlock access.'

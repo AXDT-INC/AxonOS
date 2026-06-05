@@ -902,6 +902,48 @@ input[type="password"]::placeholder {
 }
 
 /* AXGT usage overlay (during VNC session: warning or locked) */
+/* Session countdown — inline in the footer, left of "Built with ♥ by AxonDAO" */
+.axonos-session-timer {
+    display: inline;
+}
+
+.axonos-session-timer--hidden {
+    display: none;
+}
+
+.axonos-session-timer__label {
+    text-transform: uppercase;
+    opacity: 0.7;
+}
+
+.axonos-session-timer__value {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: rgba(120, 230, 180, 0.95);
+}
+
+/* Amber under the warning threshold */
+.axonos-session-timer--warning .axonos-session-timer__value {
+    color: rgba(232, 168, 90, 0.98);
+}
+
+/* Red + pulse in the final minute */
+.axonos-session-timer--critical .axonos-session-timer__value {
+    color: rgba(242, 96, 122, 0.98);
+    animation: axonos-session-timer-pulse 1s ease-in-out infinite;
+}
+
+@keyframes axonos-session-timer-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .axonos-session-timer--critical .axonos-session-timer__value {
+        animation: none;
+    }
+}
+
 .axonos-usage-overlay {
     position: fixed;
     inset: 0;
