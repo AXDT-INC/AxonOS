@@ -631,6 +631,22 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
     - Gate WebSocket upgrades using wallet + short-lived auth token
     """
 
+    # Track whether the current response is HTML so end_headers() can inject
+    # Cache-Control: no-cache, preventing browsers from serving stale vnc.html.
+    _response_is_html: bool = False
+
+    def send_header(self, keyword, value):
+        if keyword.lower() == 'content-type' and 'text/html' in str(value).lower():
+            self._response_is_html = True
+        super().send_header(keyword, value)
+
+    def end_headers(self):
+        if getattr(self, '_response_is_html', False):
+            super().send_header('Cache-Control', 'no-cache, must-revalidate')
+            super().send_header('Pragma', 'no-cache')
+            self._response_is_html = False
+        super().end_headers()
+
     def _send_json(
         self,
         status_code: int,
