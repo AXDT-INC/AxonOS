@@ -1191,6 +1191,10 @@ async def _run_session(job: dict[str, Any]) -> None:
                             cand = c.get("candidate")
                             if not cand:
                                 continue
+                            # Skip mDNS-obfuscated candidates (Chrome .local hostnames):
+                            # the server cannot resolve them, they only waste ICE slots.
+                            if ".local " in cand:
+                                continue
                             sig = f"{c.get('sdpMid')}|{c.get('sdpMLineIndex')}|{cand}"
                             if sig in applied_ice:
                                 continue
@@ -1226,7 +1230,7 @@ async def _run_session(job: dict[str, Any]) -> None:
             done.set()
 
     try:
-        await asyncio.wait_for(done.wait(), timeout=25.0)
+        await asyncio.wait_for(done.wait(), timeout=8.0)
     except asyncio.TimeoutError:
         logger.warning("ICE gathering timeout; continuing with partial SDP")
 

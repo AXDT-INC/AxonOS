@@ -314,7 +314,7 @@ export async function connectAxonOSWebRTC(opts) {
         ordered: false,
         maxRetransmits: 0,
     });
-    const dcInput = pc.createDataChannel('axonos-input', { ordered: true });
+    const dcInput = pc.createDataChannel('axonos-input', { ordered: false, maxRetransmits: 2 });
     const dcClip = pc.createDataChannel('axonos-clipboard', { ordered: true });
     function sendClipboard(obj) {
         if (dcClip.readyState !== 'open') {

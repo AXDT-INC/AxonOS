@@ -2787,6 +2787,73 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
   opacity: 0.9;
 }
 
+.axonos-fallback-card {
+  position: relative;
+}
+
+.axonos-fallback-dismiss {
+  position: absolute;
+  top: -0.5rem;
+  right: -0.5rem;
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.2);
+  color: var(--axonos-light);
+  border-radius: 50%;
+  width: 2rem;
+  height: 2rem;
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.axonos-fallback-dismiss:hover {
+  background: rgba(255,255,255,0.2);
+}
+
+/* Cancel (×) button in top-right corner of the connection loader */
+.axonos-loader-cancel {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  background: transparent;
+  border: 1px solid rgba(140,200,220,0.2);
+  color: rgba(140,200,220,0.5);
+  border-radius: 50%;
+  width: 1.75rem;
+  height: 1.75rem;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.axonos-loader-cancel:hover {
+  color: rgba(140,200,220,0.9);
+  border-color: rgba(140,200,220,0.5);
+  background: rgba(140,200,220,0.08);
+}
+
+/* Timeout message shown after 90 s of waiting */
+.axonos-loader-timeout-msg {
+  margin-top: 1rem;
+  font-size: 0.78rem;
+  color: rgba(232,168,90,0.85);
+  text-align: center;
+}
+
+.axonos-loader-timeout-msg a {
+  color: var(--cyan);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 /* Responsive: show mobile notice (992px = tablets + phones) */
 @media (max-width: 992px) {
   .axonos-mobile-notice {
