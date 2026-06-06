@@ -125,31 +125,6 @@ def _network_name() -> str:
     return (os.getenv("AXGT_HOST_SESSION_CONTAINER_NETWORK") or "").strip()
 
 
-def _ice_udp_port_base() -> Optional[int]:
-    """Base host UDP port for pinned WebRTC ICE (direct/srflx instead of TURN relay).
-
-    Each session gets ``base + min(assigned_gpu_ids)``, which is collision-free
-    across concurrent sessions because GPUs are exclusively assigned. The port is
-    pinned in the session container (WEBRTC_ICE_UDP_PORT) and published 1:1
-    (-p PORT:PORT/udp) so the srflx candidate is reachable.
-
-    Default base 61000 sits ABOVE the Linux ephemeral range (32768-60999), so the
-    container's own outbound connections can never grab a pinned port, and it
-    reuses the already-open 61000-62000 firewall range (no new rule needed). Set
-    AXGT_HOST_SESSION_ICE_UDP_PORT_BASE='' to disable pinning (fall back to relay).
-    """
-    key = "AXGT_HOST_SESSION_ICE_UDP_PORT_BASE"
-    if key not in os.environ:
-        return 61000
-    raw = (os.getenv(key) or "").strip()
-    if not raw:
-        return None
-    try:
-        return int(raw)
-    except ValueError:
-        return 61000
-
-
 def _env_passthrough_names() -> List[str]:
     raw = (os.getenv("AXGT_HOST_SESSION_ENV_PASSTHROUGH") or "").strip()
     if not raw:
@@ -210,15 +185,6 @@ def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], 
     shm = _shm_size_for_run()
     if shm:
         cmd.extend(["--shm-size", shm])
-    # Pin + publish one UDP port per session so WebRTC can use a direct (srflx)
-    # path instead of TURN relay. Port = base + min(gpu_ids): unique per concurrent
-    # session since GPUs are exclusively assigned. Open these ports in the host
-    # firewall (e.g. OCI). Disable by clearing AXGT_HOST_SESSION_ICE_UDP_PORT_BASE.
-    ice_port_base = _ice_udp_port_base()
-    ice_udp_port: Optional[int] = None
-    if ice_port_base is not None:
-        ice_udp_port = ice_port_base + min(gpu_ids)
-        cmd.extend(["-p", f"{ice_udp_port}:{ice_udp_port}/udp"])
     cmd.extend(
         [
             "--gpus",
@@ -238,11 +204,8 @@ def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], 
         ]
     )
 
-    if ice_udp_port is not None:
-        cmd.extend(["-e", f"WEBRTC_ICE_UDP_PORT={ice_udp_port}"])
-
     for env_name in _env_passthrough_names():
-        if env_name in ("AXGT_DESKTOP_ENABLED", "WEBRTC_AGENT_ENABLED", "WEBRTC_ICE_UDP_PORT"):
+        if env_name in ("AXGT_DESKTOP_ENABLED", "WEBRTC_AGENT_ENABLED"):
             continue
         env_value = os.getenv(env_name)
         if env_value is not None:

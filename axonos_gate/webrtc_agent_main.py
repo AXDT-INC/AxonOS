@@ -48,46 +48,6 @@ def _truthy(name: str) -> bool:
     return (os.getenv(name) or "").strip().lower() in ("1", "true", "yes", "on")
 
 
-def _install_ice_udp_port_pin() -> None:
-    """Pin aioice's host-candidate UDP socket to WEBRTC_ICE_UDP_PORT.
-
-    aioice (0.10.x) has no API to fix the ICE port — it binds ephemeral
-    (local_addr=(addr, 0)). With BUNDLE + rtcp-mux the whole connection rides one
-    UDP port, so pinning that single port lets the launcher publish it 1:1
-    (-p PORT:PORT/udp), giving a stable mapping so the srflx candidate is reachable
-    and ICE picks a direct pair instead of relay.
-
-    We wrap the event loop's create_datagram_endpoint and rewrite ONLY the host
-    bind (real address + port 0). TURN/STUN/mDNS use different bind shapes and are
-    left untouched.
-    """
-    raw = (os.getenv("WEBRTC_ICE_UDP_PORT") or "").strip()
-    if not raw:
-        return
-    try:
-        pinned = int(raw)
-    except ValueError:
-        logger.warning("WEBRTC_ICE_UDP_PORT=%r is not an int; not pinning", raw)
-        return
-    if not (1 <= pinned <= 65535):
-        logger.warning("WEBRTC_ICE_UDP_PORT=%d out of range; not pinning", pinned)
-        return
-
-    import asyncio.base_events as _be
-
-    _orig = _be.BaseEventLoop.create_datagram_endpoint
-
-    async def _patched(self, protocol_factory, **kwargs):  # type: ignore[no-untyped-def]
-        la = kwargs.get("local_addr")
-        # aioice host candidate: local_addr=(real_addr, 0). Leave everything else.
-        if isinstance(la, tuple) and len(la) == 2 and la[1] == 0 and la[0]:
-            kwargs["local_addr"] = (la[0], pinned)
-        return await _orig(self, protocol_factory, **kwargs)
-
-    _be.BaseEventLoop.create_datagram_endpoint = _patched  # type: ignore[assignment]
-    logger.info("WebRTC ICE host candidate pinned to UDP port %d", pinned)
-
-
 def _gate_url() -> str:
     return (os.getenv("WEBRTC_GATE_INTERNAL_URL") or "http://127.0.0.1:8889").rstrip("/")
 
@@ -1350,7 +1310,6 @@ def _http_get_job(url: str, headers: dict[str, str]) -> tuple[int, dict[str, Any
 
 
 async def main_loop() -> None:
-    _install_ice_udp_port_pin()
     if not _agent_key():
         logger.error("WEBRTC_AGENT_INTERNAL_KEY unset")
         while True:

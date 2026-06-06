@@ -1267,6 +1267,9 @@ export async function connectAxonOSWebRTC(opts) {
                     clearInterval(metricsTimer);
                     metricsTimer = null;
                 }
+            }).catch(() => {
+                // Optional telemetry: a transient network/gate blip must never
+                // surface as a fatal noVNC popup (unhandled rejection). Swallow it.
             });
         }).catch(() => {});
     };
