@@ -750,7 +750,8 @@ Copyright (C) 2019 The noVNC Authors
 
 <script>
     // Must be declared before DOMContentLoaded handlers (axonosUpdateProfileBurnHint reads it).
-    let axonosConfig = { axgt_contract_address: '', axgt_revenue_wallet: '', axgt_chain_id: null, axgt_min_deposit: '100', eth_deposits_enabled: true, eth_min_deposit: '0.0005', axgt_token_decimals: 18, credit_per_100_axgt: 60, eth_credit_per_eth: 120000, min_axgt_minutes: 60, min_eth_minutes: 60, axgt_direct_deposits_enabled: false, axgt_discount_tiers: [], gpu_profiles: { small: 1, medium: 2, large: 4, max: 8 }, gpu_weighted_billing_enabled: false, persistent_storage_enabled: true };
+    window.axonosConfig = { axgt_contract_address: '', axgt_revenue_wallet: '', axgt_chain_id: null, axgt_min_deposit: '100', eth_deposits_enabled: true, eth_min_deposit: '0.0005', axgt_token_decimals: 18, credit_per_100_axgt: 60, eth_credit_per_eth: 120000, min_axgt_minutes: 60, min_eth_minutes: 60, axgt_direct_deposits_enabled: false, axgt_discount_tiers: [], gpu_profiles: { small: 1, medium: 2, large: 4, max: 8 }, gpu_weighted_billing_enabled: false, persistent_storage_enabled: true, persistent_storage_gb_hour_cost_minutes: 0.05, persistent_storage_min_balance_limit_minutes: -1440.0 };
+    var axonosConfig = window.axonosConfig;
     let axonosLastDiscountQuote = null;
     let axonosLastDiscountMinQuote = null;
     let axonosLastEthPayQuote = null;
@@ -2037,16 +2038,25 @@ Copyright (C) 2019 The noVNC Authors
                     axonosConfig.gpu_weighted_billing_enabled = !!(
                         cfg && (cfg.gpu_weighted_billing_enabled || cfg.gpu_profiles_enabled)
                     );
-                    axonosConfig.persistent_storage_enabled = !cfg || cfg.persistent_storage_enabled !== false;
-                    var hintEl = document.getElementById('axonos_session_storage_hint');
-                    if (hintEl) {
-                        if (axonosConfig.persistent_storage_enabled) {
-                            hintEl.innerHTML = 'Sessions feature <strong style="color:#e8a85a;margin-left:0.3em;">persistent storage</strong> — files in your home folder are automatically saved for your wallet address between sessions. Credits are consumed per GPU per wall-clock minute while active. Top up before expiry (or within 2 hours after) to keep your running session alive. Unused credits remain unspent for subsequent sessions.';
-                        } else {
-                            hintEl.innerHTML = 'Sessions are <strong style="color:#e8a85a;margin-left:0.3em;">ephemeral</strong> — files and changes are NOT saved between sessions. Credits are consumed per GPU per wall-clock minute while active. Top up before expiry (or within 2 hours after) to keep your running session alive. Unused credits remain unspent for subsequent sessions. Persistent storage coming soon.';
-                        }
-                    }
-                    axonosUpdateProfileBurnHint();
+                     axonosConfig.persistent_storage_enabled = !cfg || cfg.persistent_storage_enabled !== false;
+                     axonosConfig.persistent_storage_gb_hour_cost_minutes = (cfg && (cfg.persistent_storage_gb_hour_cost_minutes != null)) ? parseFloat(cfg.persistent_storage_gb_hour_cost_minutes) : 0.05;
+                     if (isNaN(axonosConfig.persistent_storage_gb_hour_cost_minutes) || axonosConfig.persistent_storage_gb_hour_cost_minutes < 0) {
+                         axonosConfig.persistent_storage_gb_hour_cost_minutes = 0.05;
+                     }
+                     axonosConfig.persistent_storage_min_balance_limit_minutes = (cfg && (cfg.persistent_storage_min_balance_limit_minutes != null)) ? parseFloat(cfg.persistent_storage_min_balance_limit_minutes) : -1440.0;
+                     if (isNaN(axonosConfig.persistent_storage_min_balance_limit_minutes) || axonosConfig.persistent_storage_min_balance_limit_minutes > 0) {
+                         axonosConfig.persistent_storage_min_balance_limit_minutes = -1440.0;
+                     }
+                     var hintEl = document.getElementById('axonos_session_storage_hint');
+                     if (hintEl) {
+                         if (axonosConfig.persistent_storage_enabled) {
+                             var limitAbs = Math.abs(axonosConfig.persistent_storage_min_balance_limit_minutes);
+                             hintEl.innerHTML = 'Sessions feature <strong style="color:#e8a85a;margin-left:0.3em;">persistent storage</strong> (charged at ' + axonosConfig.persistent_storage_gb_hour_cost_minutes + ' minutes of compute credit per GB/hour when offline) — files in your home folder are automatically saved for your wallet address. If your credit balance runs out, storage costs will accrue as debt. Your volume is deleted if your account debt exceeds ' + limitAbs + ' minutes. Credits are consumed per GPU per wall-clock minute while active. Top up before expiry (or within 2 hours after) to keep your running session alive.';
+                         } else {
+                             hintEl.innerHTML = 'Sessions are <strong style="color:#e8a85a;margin-left:0.3em;">ephemeral</strong> — files and changes are NOT saved between sessions. Credits are consumed per GPU per wall-clock minute while active. Top up before expiry (or within 2 hours after) to keep your running session alive. Unused credits remain unspent for subsequent sessions. Persistent storage coming soon.';
+                         }
+                     }
+                     axonosUpdateProfileBurnHint();
                     var axgtRow = document.getElementById('axonos_pay_axgt_row');
                     if (axgtRow) axgtRow.style.display = axonosConfig.axgt_direct_deposits_enabled ? '' : 'none';
                     var revShort = rev && /^0x[a-fA-F0-9]{40}$/.test(rev) ? (rev.slice(0, 6) + '\u2026' + rev.slice(-4)) : '(set AXGT_REVENUE_WALLET)';

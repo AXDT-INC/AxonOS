@@ -15,6 +15,7 @@ import logging
 import os
 import shlex
 import subprocess
+import time
 from typing import Dict, List, Optional, Tuple
 
 from flask import Flask, jsonify, request
@@ -384,6 +385,165 @@ def list_containers():
     return jsonify({"ok": True, "containers": containers})
 
 
+def _get_volume_size_kb(volume_name: str) -> float:
+    cmd = [
+        "docker", "run", "--rm",
+        "-v", f"{volume_name}:/volume-data",
+        "alpine", "du", "-s", "/volume-data"
+    ]
+    try:
+        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, text=True, timeout=15).strip()
+        parts = out.split()
+        if parts:
+            return float(parts[0])
+    except Exception as exc:
+        logger.warning("Failed to get volume size for %s: %s", volume_name, exc)
+    return 0.0
+
+
+def _run_volume_cleanup() -> None:
+    db_url = os.getenv("AXGT_CHALLENGE_DB_URL")
+    if not db_url:
+        logger.warning("Auto volume prune: AXGT_CHALLENGE_DB_URL is not set. Skipping.")
+        return
+
+    try:
+        import psycopg2
+    except ImportError:
+        logger.warning("Auto volume prune: psycopg2 is not installed. Skipping.")
+        return
+
+    prefix = _persistent_storage_volume_prefix()
+    try:
+        out = subprocess.check_output(
+            ["docker", "volume", "ls", "--filter", f"name={prefix}", "--format", "{{.Name}}"],
+            stderr=subprocess.STDOUT,
+            text=True
+        ).strip()
+        volume_names = [line.strip() for line in out.splitlines() if line.strip()]
+    except Exception as exc:
+        logger.warning("Auto volume prune: Failed to list local docker volumes: %s", exc)
+        return
+
+    if not volume_names:
+        return
+
+    conn = None
+    try:
+        conn = psycopg2.connect(db_url)
+        conn.autocommit = False
+        with conn.cursor() as cur:
+            cur.execute("SELECT wallet_address, remaining_minutes, updated_at FROM axgt_deposits")
+            rows = cur.fetchall()
+            db_wallets = {
+                "".join(c for c in r[0] if c.isalnum() or c in ("-", "_")).lower(): {
+                    "original": r[0],
+                    "remaining": float(r[1]),
+                    "updated_at": float(r[2])
+                } for r in rows
+            }
+    except Exception as exc:
+        logger.warning("Auto volume prune: Database query failed: %s", exc)
+        return
+    finally:
+        if conn and conn.closed == 0:
+            conn.close()
+
+    cost_per_gb_hour_raw = os.getenv("AXGT_PERSISTENT_STORAGE_GB_HOUR_COST_MINUTES")
+    try:
+        cost_per_gb_hour = float(cost_per_gb_hour_raw) if cost_per_gb_hour_raw else 0.05
+    except ValueError:
+        cost_per_gb_hour = 0.05
+
+    interval_raw = os.getenv("AXGT_PERSISTENT_STORAGE_CLEANUP_INTERVAL_SECONDS")
+    try:
+        interval = float(interval_raw) if interval_raw else 3600.0
+    except ValueError:
+        interval = 3600.0
+
+    min_balance_limit_raw = os.getenv("AXGT_PERSISTENT_STORAGE_MIN_BALANCE_LIMIT_MINUTES")
+    try:
+        min_balance_limit = float(min_balance_limit_raw) if min_balance_limit_raw else -1440.0
+    except ValueError:
+        min_balance_limit = -1440.0
+
+    now = time.time()
+
+    conn = None
+    try:
+        conn = psycopg2.connect(db_url)
+        conn.autocommit = False
+        with conn.cursor() as cur:
+            for volume_name in volume_names:
+                safe_wallet = volume_name[len(prefix):]
+                if safe_wallet not in db_wallets:
+                    continue
+
+                wallet_info = db_wallets[safe_wallet]
+                original_wallet = wallet_info["original"]
+                remaining = wallet_info["remaining"]
+
+                if remaining < min_balance_limit:
+                    logger.info("Auto volume prune: Pruning volume %s due to balance (%s) exceeding debt limit (%s)", volume_name, remaining, min_balance_limit)
+                    rm_res = subprocess.run(["docker", "volume", "rm", volume_name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    if rm_res.returncode != 0:
+                        logger.warning("Auto volume prune: Failed to remove volume %s: %s", volume_name, rm_res.stderr.strip())
+                    continue
+
+                size_kb = _get_volume_size_kb(volume_name)
+                size_gb = size_kb / (1024.0 * 1024.0)
+                charge = size_gb * cost_per_gb_hour * (interval / 3600.0)
+
+                if charge > 0:
+                    new_remaining = remaining - charge
+                    cur.execute(
+                        "UPDATE axgt_deposits SET remaining_minutes = %s, updated_at = %s WHERE wallet_address = %s",
+                        (new_remaining, now, original_wallet)
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO axgt_ledger (wallet_address, event_type, minutes_delta, axgt_delta, balance_after_minutes, notes, created_at, created_by)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (original_wallet, "usage_deduction", -charge, 0, new_remaining, f"Offline storage charge for volume size: {size_gb:.4f} GB", now, "volume_billing_daemon")
+                    )
+                    logger.info("Auto volume prune: Charged %s for %s offline storage: %s remaining minutes", original_wallet, f"{size_gb:.4f} GB", new_remaining)
+
+                    if new_remaining < min_balance_limit:
+                        logger.info("Auto volume prune: Pruning volume %s after charge pushed balance (%s) below debt limit (%s)", volume_name, new_remaining, min_balance_limit)
+                        rm_res = subprocess.run(["docker", "volume", "rm", volume_name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                        if rm_res.returncode != 0:
+                            logger.warning("Auto volume prune: Failed to remove volume %s: %s", volume_name, rm_res.stderr.strip())
+
+        conn.commit()
+    except Exception as exc:
+        if conn:
+            conn.rollback()
+        logger.warning("Auto volume prune/billing sweep failed: %s", exc)
+    finally:
+        if conn:
+            conn.close()
+
+
+def _prune_inactive_volumes_loop() -> None:
+    # Wait for the service to warm up
+    time.sleep(30)
+    import time as time_mod
+    while True:
+        try:
+            if _persistent_storage_enabled():
+                _run_volume_cleanup()
+        except Exception as exc:
+            logger.warning("Auto volume prune loop encountered error: %s", exc)
+        
+        interval_raw = os.getenv("AXGT_PERSISTENT_STORAGE_CLEANUP_INTERVAL_SECONDS")
+        try:
+            interval = int(interval_raw) if interval_raw else 3600
+        except ValueError:
+            interval = 3600
+        time_mod.sleep(max(60, interval))
+
+
 def main():
     host = (os.getenv("AXGT_SESSION_LAUNCHER_BIND_HOST") or "127.0.0.1").strip()
     port_raw = (os.getenv("AXGT_SESSION_LAUNCHER_BIND_PORT") or "8090").strip()
@@ -391,6 +551,13 @@ def main():
         port = int(port_raw)
     except ValueError:
         port = 8090
+
+    if _persistent_storage_enabled():
+        import threading
+        t = threading.Thread(target=_prune_inactive_volumes_loop, daemon=True)
+        t.start()
+        logger.info("Started automatic volume pruning background thread")
+
     logger.info("starting host launcher on %s:%s", host, port)
     app.run(host=host, port=port, debug=False, use_reloader=False)
 

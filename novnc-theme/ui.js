@@ -1172,8 +1172,14 @@ const UI = {
             return;
         }
         const storageEnabled = window.axonosConfig && window.axonosConfig.persistent_storage_enabled;
+        const storageCost = window.axonosConfig && window.axonosConfig.persistent_storage_gb_hour_cost_minutes != null
+            ? window.axonosConfig.persistent_storage_gb_hour_cost_minutes
+            : 0.05;
+        const limitAbs = window.axonosConfig && window.axonosConfig.persistent_storage_min_balance_limit_minutes != null
+            ? Math.abs(window.axonosConfig.persistent_storage_min_balance_limit_minutes)
+            : 1440.0;
         const msg = storageEnabled
-            ? _("End session now?\n\nThis stops billing, ends your session, and tears down the desktop container. Your files in the home folder are safely saved, but unsaved work in running applications will be lost.")
+            ? _("End session now?\n\nThis stops billing for compute, ends your session, and tears down the desktop container. Your files in the home folder are safely saved (offline storage is charged at " + storageCost + " minutes per GB/hour, accruing as debt when your balance is empty). To avoid volume deletion, clear your debt before it exceeds " + limitAbs + " minutes.")
             : _("End session now?\n\nThis stops billing, ends your session, and removes your remote desktop. Unsaved work may be lost.");
         const confirmed = window.confirm(msg);
         if (!confirmed) {

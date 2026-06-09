@@ -405,6 +405,19 @@ def api_config():
         axgt_token_decimals = max(0, min(255, _td))
     except ValueError:
         axgt_token_decimals = 18
+
+    _cost_raw = (os.getenv("AXGT_PERSISTENT_STORAGE_GB_HOUR_COST_MINUTES") or "").strip()
+    try:
+        storage_cost = float(_cost_raw) if _cost_raw else 0.05
+    except ValueError:
+        storage_cost = 0.05
+
+    _limit_raw = (os.getenv("AXGT_PERSISTENT_STORAGE_MIN_BALANCE_LIMIT_MINUTES") or "").strip()
+    try:
+        min_balance_limit = float(_limit_raw) if _limit_raw else -1440.0
+    except ValueError:
+        min_balance_limit = -1440.0
+
     return jsonify({
         'axgt_contract_address': (os.getenv("AXGT_CONTRACT_ADDRESS") or "").strip() or None,
         'axgt_chain_id': (os.getenv("AXGT_CHAIN_ID") or "").strip() or None,
@@ -425,6 +438,8 @@ def api_config():
         'gpu_profiles': {'small': 1, 'medium': 2, 'large': 4, 'max': 8},
         'gpu_weighted_billing_enabled': policy.get("gpu_weighted_billing_enabled", False),
         'persistent_storage_enabled': (os.getenv("AXGT_PERSISTENT_STORAGE_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")),
+        'persistent_storage_gb_hour_cost_minutes': storage_cost,
+        'persistent_storage_min_balance_limit_minutes': min_balance_limit,
         **(
             webrtc_config.public_config()
             if webrtc_config is not None
