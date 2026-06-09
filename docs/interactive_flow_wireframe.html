@@ -1,0 +1,2044 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AxonOS - Interactive User Journey & Wireframe</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Orbitron:wght@500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #020617;
+            --bg-secondary: #0b1329;
+            --bg-card: rgba(15, 23, 42, 0.45);
+            --bg-card-hover: rgba(30, 41, 59, 0.6);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --border-glow: rgba(16, 185, 129, 0.2);
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --color-emerald: #10b981;
+            --color-emerald-glow: rgba(16, 185, 129, 0.25);
+            --color-blue: #3b82f6;
+            --color-blue-glow: rgba(59, 130, 246, 0.25);
+            --color-amber: #f59e0b;
+            --color-amber-glow: rgba(245, 158, 11, 0.25);
+            --color-rose: #f43f5e;
+            --font-sans: 'Outfit', system-ui, sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+            --font-orbitron: 'Orbitron', sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            font-family: var(--font-sans);
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(circle at 10% 20%, rgba(16, 185, 129, 0.05) 0%, transparent 40%),
+                radial-gradient(circle at 90% 80%, rgba(59, 130, 246, 0.05) 0%, transparent 40%),
+                linear-gradient(rgba(15, 23, 42, 0.1) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(15, 23, 42, 0.1) 1px, transparent 1px);
+            background-size: 100% 100%, 100% 100%, 40px 40px, 40px 40px;
+            min-height: 100vh;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.5rem 2.5rem;
+            border-bottom: 1px solid var(--border-color);
+            background: rgba(2, 6, 23, 0.85);
+            backdrop-filter: blur(12px);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo-area {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .logo-icon {
+            font-size: 2rem;
+            animation: dna-rotate 6s linear infinite;
+            display: inline-block;
+        }
+
+        .logo-text {
+            font-family: var(--font-orbitron);
+            font-size: 1.5rem;
+            font-weight: 700;
+            letter-spacing: 2px;
+            background: linear-gradient(135deg, var(--color-emerald), var(--color-blue));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header-meta {
+            display: flex;
+            gap: 1.5rem;
+            align-items: center;
+        }
+
+        .status-badge {
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            color: var(--color-emerald);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .status-badge::before {
+            content: '';
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--color-emerald);
+            animation: pulse-glow 1.5s infinite;
+        }
+
+        /* Container & Layout */
+        .app-container {
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            min-height: calc(100vh - 75px);
+        }
+
+        /* Sidebar Navigation */
+        .sidebar {
+            background: rgba(11, 19, 41, 0.6);
+            border-right: 1px solid var(--border-color);
+            padding: 2rem 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .sidebar-title {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+            font-weight: 600;
+        }
+
+        .step-link {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 1rem;
+            border-radius: 12px;
+            background: transparent;
+            border: 1px solid transparent;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            text-align: left;
+            color: var(--text-secondary);
+        }
+
+        .step-link:disabled {
+            cursor: not-allowed;
+            opacity: 0.4;
+        }
+
+        .step-link.active {
+            background: rgba(16, 185, 129, 0.08);
+            border-color: rgba(16, 185, 129, 0.3);
+            color: var(--text-primary);
+            box-shadow: 0 4px 20px -2px rgba(16, 185, 129, 0.1);
+        }
+
+        .step-link.completed {
+            border-color: rgba(59, 130, 246, 0.2);
+            color: var(--color-emerald);
+        }
+
+        .step-num {
+            font-family: var(--font-orbitron);
+            font-weight: 700;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            font-size: 0.9rem;
+            flex-shrink: 0;
+            transition: all 0.3s ease;
+        }
+
+        .step-link.active .step-num {
+            background: var(--color-emerald);
+            color: var(--bg-primary);
+            border-color: var(--color-emerald);
+            box-shadow: 0 0 10px var(--color-emerald-glow);
+        }
+
+        .step-link.completed .step-num {
+            background: var(--color-blue);
+            color: white;
+            border-color: var(--color-blue);
+        }
+
+        .step-label {
+            font-weight: 500;
+            font-size: 0.95rem;
+        }
+
+        .step-desc {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            display: block;
+            margin-top: 0.2rem;
+            font-weight: 400;
+        }
+
+        /* Content Area */
+        main {
+            padding: 2.5rem;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            overflow-y: auto;
+        }
+
+        .content-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            padding: 2.5rem;
+            width: 100%;
+            max-width: 900px;
+            backdrop-filter: blur(16px);
+            box-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.5);
+            animation: fade-in 0.5s ease-out;
+            position: relative;
+        }
+
+        .content-card::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: linear-gradient(90deg, var(--color-emerald), var(--color-blue));
+            border-radius: 20px 20px 0 0;
+        }
+
+        .step-title-group {
+            margin-bottom: 2rem;
+        }
+
+        .step-tag {
+            font-family: var(--font-mono);
+            color: var(--color-emerald);
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            margin-bottom: 0.5rem;
+            display: block;
+        }
+
+        .step-main-title {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.5px;
+        }
+
+        .step-subtitle {
+            color: var(--text-secondary);
+            margin-top: 0.5rem;
+            font-size: 1rem;
+            line-height: 1.5;
+        }
+
+        /* Buttons & Inputs */
+        .btn {
+            font-family: var(--font-sans);
+            font-weight: 600;
+            padding: 0.75rem 1.75rem;
+            border-radius: 12px;
+            border: none;
+            cursor: pointer;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            display: inline-flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 0.95rem;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--color-emerald), #059669);
+            color: white;
+            box-shadow: 0 4px 15px var(--color-emerald-glow);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .input-label {
+            font-weight: 500;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        .input-control {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 0.75rem 1rem;
+            color: var(--text-primary);
+            font-family: var(--font-sans);
+            font-size: 1rem;
+            outline: none;
+            transition: all 0.3s ease;
+        }
+
+        .input-control:focus {
+            border-color: var(--color-emerald);
+            box-shadow: 0 0 10px var(--color-emerald-glow);
+        }
+
+        .input-control[type="number"] {
+            font-family: var(--font-mono);
+        }
+
+        /* ---------------- STEP 1: WALLET CONNECT ---------------- */
+        .connect-box {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 3rem 1.5rem;
+            border: 1px dashed var(--border-color);
+            border-radius: 16px;
+            background: rgba(255, 255, 255, 0.01);
+            margin: 2rem 0;
+            text-align: center;
+        }
+
+        .wallet-icons {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .wallet-icon {
+            width: 50px;
+            height: 50px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.75rem;
+        }
+
+        .challenge-container {
+            width: 100%;
+            background: rgba(2, 6, 23, 0.8);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.25rem;
+            margin: 1.5rem 0;
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            text-align: left;
+            color: var(--text-secondary);
+            overflow-x: auto;
+            position: relative;
+        }
+
+        .challenge-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.75rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            padding-bottom: 0.5rem;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--color-emerald);
+        }
+
+        /* ---------------- STEP 2: DEPOSIT & DISCOUNT ---------------- */
+        .billing-grid {
+            display: grid;
+            grid-template-columns: 1.2fr 1fr;
+            gap: 2rem;
+            margin-top: 1.5rem;
+        }
+
+        .deposit-panel {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .discount-table-card {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .discount-title {
+            font-family: var(--font-orbitron);
+            font-size: 0.9rem;
+            letter-spacing: 1px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 0.75rem;
+        }
+
+        .discount-badge-mini {
+            background: var(--color-emerald);
+            color: var(--bg-primary);
+            font-size: 0.75rem;
+            font-weight: 700;
+            padding: 0.15rem 0.5rem;
+            border-radius: 4px;
+        }
+
+        .tier-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .tier-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem 0.75rem;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            border: 1px solid transparent;
+            color: var(--text-secondary);
+        }
+
+        .tier-row.active-tier {
+            background: rgba(16, 185, 129, 0.08);
+            border-color: rgba(16, 185, 129, 0.3);
+            color: var(--text-primary);
+        }
+
+        .tier-row.active-tier .tier-num {
+            color: var(--color-emerald);
+            font-weight: 600;
+        }
+
+        .tier-val {
+            font-family: var(--font-mono);
+        }
+
+        .quote-preview {
+            background: rgba(59, 130, 246, 0.05);
+            border: 1px solid rgba(59, 130, 246, 0.15);
+            border-radius: 12px;
+            padding: 1.25rem;
+            margin-top: 1.5rem;
+            font-size: 0.9rem;
+        }
+
+        .quote-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.5rem;
+        }
+
+        .quote-row:last-child {
+            margin-bottom: 0;
+            border-top: 1px dashed rgba(255, 255, 255, 0.1);
+            padding-top: 0.5rem;
+            font-weight: 600;
+        }
+
+        .quote-val {
+            font-family: var(--font-mono);
+            color: var(--text-primary);
+        }
+
+        .quote-val-highlight {
+            color: var(--color-emerald);
+        }
+
+        .verification-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(2, 6, 23, 0.9);
+            border-radius: 20px;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 1.5rem;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+
+        .verification-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-top-color: var(--color-emerald);
+            border-radius: 50%;
+            animation: spin 1s infinite linear;
+        }
+
+        .progress-bar-container {
+            width: 280px;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 9999px;
+            overflow: hidden;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            width: 0%;
+            background: var(--color-emerald);
+            transition: width 0.3s ease;
+        }
+
+        /* ---------------- STEP 3: GPU PROFILES ---------------- */
+        .profiles-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1.25rem;
+            margin-top: 1.5rem;
+        }
+
+        .profile-card {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 1.5rem;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .profile-card:hover {
+            background: var(--bg-card-hover);
+            transform: translateY(-4px);
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        .profile-card.selected {
+            background: rgba(59, 130, 246, 0.07);
+            border-color: var(--color-blue);
+            box-shadow: 0 0 15px rgba(59, 130, 246, 0.2);
+        }
+
+        .profile-badge {
+            align-self: flex-start;
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            padding: 0.2rem 0.6rem;
+            border-radius: 4px;
+            font-weight: 600;
+        }
+
+        .profile-card.selected::before {
+            content: '✓ Selected';
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--color-blue);
+        }
+
+        .profile-name {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .profile-desc {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            line-height: 1.4;
+        }
+
+        .profile-meta-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            margin-top: 0.5rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            padding-top: 0.75rem;
+        }
+
+        .profile-meta-val {
+            font-family: var(--font-mono);
+            color: var(--text-primary);
+        }
+
+        /* ---------------- STEP 4: QUEUE SCHEDULER ---------------- */
+        .queue-container {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            margin-top: 1.5rem;
+        }
+
+        .resource-status {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.25rem;
+            display: flex;
+            justify-content: space-around;
+            text-align: center;
+        }
+
+        .res-box-title {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 0.25rem;
+        }
+
+        .res-box-val {
+            font-family: var(--font-orbitron);
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: var(--color-blue);
+        }
+
+        .res-box-val.free {
+            color: var(--color-emerald);
+        }
+
+        .queue-viz {
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            background: rgba(2, 6, 23, 0.5);
+            overflow: hidden;
+        }
+
+        .queue-viz-header {
+            padding: 1rem 1.25rem;
+            background: rgba(255, 255, 255, 0.02);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+
+        .queue-list {
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            min-height: 150px;
+        }
+
+        .queue-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem 1rem;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            font-size: 0.85rem;
+            transition: all 0.3s ease;
+        }
+
+        .queue-item.active-run {
+            border-left: 3px solid var(--color-emerald);
+            background: rgba(16, 185, 129, 0.04);
+        }
+
+        .queue-item.waiting {
+            border-left: 3px solid var(--color-amber);
+            background: rgba(245, 158, 11, 0.04);
+        }
+
+        .queue-item.queued-user {
+            border: 1px solid rgba(59, 130, 246, 0.5);
+            background: rgba(59, 130, 246, 0.05);
+        }
+
+        .q-name-group {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .q-wallet {
+            font-family: var(--font-mono);
+            font-weight: 500;
+        }
+
+        .q-badge {
+            font-size: 0.7rem;
+            padding: 0.15rem 0.45rem;
+            border-radius: 4px;
+            font-family: var(--font-mono);
+        }
+
+        .q-badge.status-running {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--color-emerald);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+
+        .q-badge.status-waiting {
+            background: rgba(245, 158, 11, 0.1);
+            color: var(--color-amber);
+            border: 1px solid rgba(245, 158, 11, 0.2);
+        }
+
+        .q-meta {
+            font-family: var(--font-mono);
+            color: var(--text-secondary);
+        }
+
+        .queue-explain {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            line-height: 1.5;
+            background: rgba(255, 255, 255, 0.01);
+            padding: 1rem;
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+        }
+
+        /* ---------------- STEP 5: SIMULATED DESKTOP ---------------- */
+        .desktop-stage {
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 12px;
+            height: 520px;
+            background: radial-gradient(circle at 50% 50%, #1e293b, #0f172a);
+            position: relative;
+            overflow: hidden;
+            box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.8);
+        }
+
+        /* XFCE Panel */
+        .desktop-panel {
+            height: 32px;
+            background: rgba(15, 23, 42, 0.9);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 1rem;
+            font-size: 0.8rem;
+            z-index: 5;
+            position: relative;
+        }
+
+        .panel-left, .panel-right {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .panel-item {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            color: var(--text-primary);
+            cursor: pointer;
+        }
+
+        .panel-item.brand {
+            font-weight: 700;
+            color: var(--color-emerald);
+        }
+
+        .desktop-content {
+            height: calc(100% - 32px);
+            padding: 1.5rem;
+            position: relative;
+        }
+
+        /* Desktop Shortcuts */
+        .shortcuts-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+            width: 90px;
+        }
+
+        .shortcut {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.4rem;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.2s ease;
+        }
+
+        .shortcut:hover {
+            transform: scale(1.05);
+        }
+
+        .shortcut-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 10px;
+            background: rgba(15, 23, 42, 0.75);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+        }
+
+        .shortcut-label {
+            font-size: 0.72rem;
+            color: white;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+            font-weight: 500;
+        }
+
+        /* GTK AI Assistant Overlay */
+        .assistant-window {
+            position: absolute;
+            top: 2rem;
+            right: 2rem;
+            width: 340px;
+            height: 420px;
+            background: rgba(15, 23, 42, 0.92);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.5);
+            z-index: 10;
+            overflow: hidden;
+            animation: slide-up 0.4s ease-out;
+        }
+
+        .gtk-titlebar {
+            height: 36px;
+            background: #1e293b;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 0.8rem;
+            cursor: move;
+        }
+
+        .gtk-title {
+            font-family: var(--font-orbitron);
+            font-size: 0.78rem;
+            font-weight: 600;
+            color: var(--color-emerald);
+            letter-spacing: 0.5px;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .gtk-controls {
+            display: flex;
+            gap: 0.4rem;
+        }
+
+        .gtk-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .gtk-dot.close { background: var(--color-rose); }
+        .gtk-dot.min { background: var(--color-amber); }
+        .gtk-dot.max { background: var(--color-emerald); }
+
+        .chat-body {
+            flex-grow: 1;
+            padding: 1rem;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            background: rgba(2, 6, 23, 0.4);
+        }
+
+        .chat-msg {
+            max-width: 85%;
+            padding: 0.65rem 0.85rem;
+            border-radius: 10px;
+            font-size: 0.8rem;
+            line-height: 1.4;
+        }
+
+        .chat-msg.assistant {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            align-self: flex-start;
+            border-bottom-left-radius: 2px;
+        }
+
+        .chat-msg.user {
+            background: rgba(16, 185, 129, 0.15);
+            border: 1px solid rgba(16, 185, 129, 0.25);
+            color: #e2e8f0;
+            align-self: flex-end;
+            border-bottom-right-radius: 2px;
+        }
+
+        .chat-input-area {
+            padding: 0.75rem;
+            background: rgba(15, 23, 42, 0.8);
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .chat-input {
+            flex-grow: 1;
+            background: rgba(2, 6, 23, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 0.45rem 0.75rem;
+            color: white;
+            font-family: var(--font-sans);
+            font-size: 0.8rem;
+            outline: none;
+        }
+
+        .chat-input:focus {
+            border-color: var(--color-emerald);
+        }
+
+        .chat-send-btn {
+            background: var(--color-emerald);
+            color: var(--bg-primary);
+            border: none;
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            transition: all 0.2s ease;
+        }
+
+        .chat-send-btn:hover {
+            transform: scale(1.05);
+            background: #34d399;
+        }
+
+        /* Billing Stats Card inside VNC Desktop */
+        .desktop-billing-widget {
+            position: absolute;
+            bottom: 2rem;
+            left: 2rem;
+            background: rgba(15, 23, 42, 0.85);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 0.75rem 1rem;
+            width: 220px;
+            font-size: 0.75rem;
+        }
+
+        .widget-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.35rem;
+            color: var(--text-secondary);
+        }
+
+        .widget-row:last-child {
+            margin-bottom: 0;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            padding-top: 0.35rem;
+        }
+
+        .widget-val {
+            font-family: var(--font-mono);
+            color: white;
+        }
+
+        .widget-val.highlight {
+            color: var(--color-amber);
+            font-weight: 600;
+        }
+
+        /* ---------------- APP OVERALL NOTIFICATIONS ---------------- */
+        .notify-toast {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            background: rgba(15, 23, 42, 0.95);
+            border: 1px solid var(--color-emerald);
+            box-shadow: 0 10px 25px rgba(16, 185, 129, 0.15);
+            padding: 1rem 1.5rem;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            z-index: 1000;
+            transform: translateY(150%);
+            transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            font-size: 0.9rem;
+        }
+
+        .notify-toast.active {
+            transform: translateY(0);
+        }
+
+        .notify-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: var(--color-emerald);
+            animation: pulse-glow 1s infinite;
+        }
+
+        /* ---------------- ANIMATIONS ---------------- */
+        @keyframes dna-rotate {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        @keyframes pulse-glow {
+            0% { box-shadow: 0 0 0 0 var(--color-emerald-glow); }
+            70% { box-shadow: 0 0 0 8px transparent; }
+            100% { box-shadow: 0 0 0 0 transparent; }
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        @keyframes fade-in {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes slide-up {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Hide logic */
+        .step-content {
+            display: none;
+        }
+
+        .step-content.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="logo-area">
+            <span class="logo-icon">🧬</span>
+            <span class="logo-text">AxonOS</span>
+        </div>
+        <div class="header-meta">
+            <div class="status-badge" id="system-status-indicator">Gatekeeper: Verified</div>
+            <div class="status-badge" id="wallet-status-indicator" style="background: rgba(245,158,11,0.1); border-color: rgba(245,158,11,0.2); color: var(--color-amber);">Disconnected</div>
+        </div>
+    </header>
+
+    <div class="app-container">
+        <!-- Sidebar Wizards -->
+        <aside class="sidebar">
+            <h2 class="sidebar-title">User Flow Phases</h2>
+            
+            <button class="step-link active" onclick="goToStep(1)" id="step-btn-1">
+                <span class="step-num">1</span>
+                <div>
+                    <span class="step-label">Wallet Connect</span>
+                    <span class="step-desc">EIP-191 Auth Challenge</span>
+                </div>
+            </button>
+
+            <button class="step-link" onclick="goToStep(2)" id="step-btn-2" disabled>
+                <span class="step-num">2</span>
+                <div>
+                    <span class="step-label">Prepaid Billing</span>
+                    <span class="step-desc">Tiers & ETH Deposits</span>
+                </div>
+            </button>
+
+            <button class="step-link" onclick="goToStep(3)" id="step-btn-3" disabled>
+                <span class="step-num">3</span>
+                <div>
+                    <span class="step-label">GPU Provisioning</span>
+                    <span class="step-desc">Select Resource Profile</span>
+                </div>
+            </button>
+
+            <button class="step-link" onclick="goToStep(4)" id="step-btn-4" disabled>
+                <span class="step-num">4</span>
+                <div>
+                    <span class="step-label">Resource Queue</span>
+                    <span class="step-desc">Schedulability FIFO</span>
+                </div>
+            </button>
+
+            <button class="step-link" onclick="goToStep(5)" id="step-btn-5" disabled>
+                <span class="step-num">5</span>
+                <div>
+                    <span class="step-label">Scientific Desktop</span>
+                    <span class="step-desc">noVNC & AI Assistant</span>
+                </div>
+            </button>
+        </aside>
+
+        <!-- Main Workspace -->
+        <main>
+            <!-- STEP 1: WALLET CONNECT -->
+            <div class="content-card step-content active" id="step-pane-1">
+                <div class="step-title-group">
+                    <span class="step-tag">Phase 1 / Wallet Authentication</span>
+                    <h1 class="step-main-title">EIP-191 Personal Sign Auth</h1>
+                    <p class="step-subtitle">To prevent bots and enforce secure local-first sessions, prove ownership of your Ethereum address by signing a cryptographic challenge message.</p>
+                </div>
+
+                <div class="connect-box" id="wallet-connect-box">
+                    <div class="wallet-icons">
+                        <div class="wallet-icon">🦊</div>
+                        <div class="wallet-icon" style="font-size: 1.2rem; font-weight: bold; color: var(--color-blue)">EIP</div>
+                    </div>
+                    <h3 style="margin-bottom: 0.5rem; font-size: 1.2rem;">Connect your Ethereum Wallet</h3>
+                    <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1.5rem; max-width: 320px;">Compatible with MetaMask, Coinbase, and any EIP-6963 multi-injected provider.</p>
+                    <button class="btn btn-primary" onclick="simulateConnectWallet()">
+                        Connect Web3 Wallet
+                    </button>
+                </div>
+
+                <div id="challenge-sign-box" style="display: none;">
+                    <div class="challenge-container">
+                        <div class="challenge-header">
+                            <span>Challenge Generated (180s TTL)</span>
+                            <span style="font-family: var(--font-mono)">Nonce: 7a8c9b2f</span>
+                        </div>
+                        Welcome to AxonOS!
+Sign this message to prove you own this wallet.
+Address: <span id="mock-address-text">0x...</span>
+Timestamp: 1717922880
+                    </div>
+
+                    <div style="display: flex; gap: 1rem; justify-content: flex-end;">
+                        <button class="btn btn-secondary" onclick="resetStep1()">Cancel</button>
+                        <button class="btn btn-primary" onclick="simulateSignChallenge()">Sign Challenge Message</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- STEP 2: PREPAID BILLING -->
+            <div class="content-card step-content" id="step-pane-2">
+                <div class="verification-overlay" id="verify-overlay">
+                    <div class="spinner"></div>
+                    <div style="text-align: center;">
+                        <h3 id="verify-status-text" style="font-size: 1.2rem; margin-bottom: 0.5rem;">Verifying Deposit On-chain</h3>
+                        <p style="color: var(--text-secondary); font-size: 0.85rem; max-width: 300px; margin: 0 auto 1rem;">Polling blockchain RPC node. Requires 6 confirmations. Replay protection active.</p>
+                        <div class="progress-bar-container" style="margin: 0 auto;">
+                            <div class="progress-bar-fill" id="verify-progress"></div>
+                        </div>
+                        <p style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--color-emerald); margin-top: 0.5rem;" id="confirmations-text">Confirmations: 0 / 6</p>
+                    </div>
+                </div>
+
+                <div class="step-title-group">
+                    <span class="step-tag">Phase 2 / Prepaid Deposit Billing</span>
+                    <h1 class="step-main-title">Top Up Session Credits</h1>
+                    <p class="step-subtitle">AxonOS operates on a prepaid usage credit model. Holding <strong>AXGT</strong> tokens on-chain grants you custom discount tiers on the native ETH usage rate.</p>
+                </div>
+
+                <div class="billing-grid">
+                    <div class="deposit-panel">
+                        <div class="input-group">
+                            <label class="input-label" for="axgt-balance-input">Your AXGT Token Balance (Simulated)</label>
+                            <input class="input-control" type="number" id="axgt-balance-input" value="12000" min="0" oninput="calculateDiscount()">
+                        </div>
+
+                        <div class="input-group">
+                            <label class="input-label" for="eth-deposit-input">ETH Deposit Amount</label>
+                            <input class="input-control" type="number" id="eth-deposit-input" value="0.0005" step="0.0001" min="0.000375" oninput="calculateDiscount()">
+                        </div>
+
+                        <div class="quote-preview">
+                            <div class="quote-row">
+                                <span>Base Minimum Required:</span>
+                                <span class="quote-val">0.0005 ETH</span>
+                            </div>
+                            <div class="quote-row">
+                                <span>Applied Discount:</span>
+                                <span class="quote-val" id="quote-discount-percent">15%</span>
+                            </div>
+                            <div class="quote-row">
+                                <span>Your Minimum Cap:</span>
+                                <span class="quote-val" id="quote-min-payable">0.000425 ETH</span>
+                            </div>
+                            <div class="quote-row">
+                                <span>Usage Credits Granted:</span>
+                                <span class="quote-val quote-val-highlight" id="quote-credited-minutes">70.6 min</span>
+                            </div>
+                        </div>
+
+                        <button class="btn btn-primary" style="margin-top: 1.5rem;" onclick="simulateDepositPayment()">
+                            Deposit ETH via Wallet
+                        </button>
+                    </div>
+
+                    <div class="discount-table-card">
+                        <div class="discount-title">
+                            <span>AXGT Discount Tiers</span>
+                            <span class="discount-badge-mini" id="current-tier-badge">Tier 3</span>
+                        </div>
+                        <div class="tier-list">
+                            <div class="tier-row" id="tier-row-0">
+                                <span>Tier 0 (0-99 AXGT)</span>
+                                <span class="tier-val">0% Disc</span>
+                            </div>
+                            <div class="tier-row" id="tier-row-1">
+                                <span>Tier 1 (100-999 AXGT)</span>
+                                <span class="tier-val">5% Disc</span>
+                            </div>
+                            <div class="tier-row" id="tier-row-2">
+                                <span>Tier 2 (1k-9.9k AXGT)</span>
+                                <span class="tier-val">10% Disc</span>
+                            </div>
+                            <div class="tier-row" id="tier-row-3">
+                                <span>Tier 3 (10k-99.9k AXGT)</span>
+                                <span class="tier-val">15% Disc</span>
+                            </div>
+                            <div class="tier-row" id="tier-row-4">
+                                <span>Tier 4 (100k+ AXGT)</span>
+                                <span class="tier-val">25% Disc</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- STEP 3: GPU PROVISIONING -->
+            <div class="content-card step-content" id="step-pane-3">
+                <div class="step-title-group">
+                    <span class="step-tag">Phase 3 / Session Scheduler Configuration</span>
+                    <h1 class="step-main-title">Select Compute Profile</h1>
+                    <p class="step-subtitle">Billing is proportional to the number of physical GPUs allocated to your container. Choose a profile suited to your bioinformatics, GIS, or rendering workflow.</p>
+                </div>
+
+                <div class="profiles-grid">
+                    <div class="profile-card selected" onclick="selectProfile('small', 1, 1)" id="profile-card-small">
+                        <span class="profile-badge" style="background: rgba(16, 185, 129, 0.1); color: var(--color-emerald)">1x GPU</span>
+                        <h3 class="profile-name">Small</h3>
+                        <p class="profile-desc">Ideal for general bioinformatics pipelines, Python scripting, Octave notebooks, and lightweight image processing.</p>
+                        <div class="profile-meta-row">
+                            <span>Billing Factor:</span>
+                            <span class="profile-meta-val">1x Burn Rate</span>
+                        </div>
+                    </div>
+
+                    <div class="profile-card" onclick="selectProfile('medium', 2, 2)" id="profile-card-medium">
+                        <span class="profile-badge" style="background: rgba(59, 130, 246, 0.1); color: var(--color-blue)">2x GPU</span>
+                        <h3 class="profile-name">Medium</h3>
+                        <p class="profile-desc">Optimized for dual-model AI reasoning tasks, large geospatial datasets (QGIS), and mid-sized multicellular simulations.</p>
+                        <div class="profile-meta-row">
+                            <span>Billing Factor:</span>
+                            <span class="profile-meta-val">2x Burn Rate</span>
+                        </div>
+                    </div>
+
+                    <div class="profile-card" onclick="selectProfile('large', 4, 4)" id="profile-card-large">
+                        <span class="profile-badge" style="background: rgba(245, 158, 11, 0.1); color: var(--color-amber)">4x GPU</span>
+                        <h3 class="profile-name">Large</h3>
+                        <p class="profile-desc">Designed for complex molecular dynamics, CUDA-accelerated bioinformatics suites, and heavy geospatial model rendering.</p>
+                        <div class="profile-meta-row">
+                            <span>Billing Factor:</span>
+                            <span class="profile-meta-val">4x Burn Rate</span>
+                        </div>
+                    </div>
+
+                    <div class="profile-card" onclick="selectProfile('max', 8, 8)" id="profile-card-max">
+                        <span class="profile-badge" style="background: rgba(244, 63, 94, 0.1); color: var(--color-rose)">8x GPU</span>
+                        <h3 class="profile-name">Max Compute</h3>
+                        <p class="profile-desc">Maximum accelerated tier. Full cluster level compute for intense scientific operations, deep neural training, or large workloads.</p>
+                        <div class="profile-meta-row">
+                            <span>Billing Factor:</span>
+                            <span class="profile-meta-val">8x Burn Rate</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="quote-preview" style="margin-top: 1.5rem; display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <span style="font-weight: 500; font-size: 0.95rem;">Active Balance:</span>
+                        <span class="quote-val quote-val-highlight" style="font-size: 1.1rem; margin-left: 0.5rem;" id="profile-credited-minutes">70.6 minutes</span>
+                    </div>
+                    <div>
+                        <span style="font-weight: 500; font-size: 0.95rem;">Estimated Session Duration:</span>
+                        <span class="quote-val" style="font-size: 1.1rem; margin-left: 0.5rem; font-weight: bold; color: white;" id="profile-duration-estimate">70.6 mins</span>
+                    </div>
+                </div>
+
+                <div style="display: flex; justify-content: flex-end; margin-top: 1.5rem;">
+                    <button class="btn btn-primary" onclick="simulateClaimSession()">
+                        Request GPU Allocation
+                    </button>
+                </div>
+            </div>
+
+            <!-- STEP 4: QUEUE SCHEDULER -->
+            <div class="content-card step-content" id="step-pane-4">
+                <div class="step-title-group">
+                    <span class="step-tag">Phase 4 / Schedulability-Aware Queue</span>
+                    <h1 class="step-main-title">Session Scheduling & Queue</h1>
+                    <p class="step-subtitle">AxonOS ensures fair distribution of hardware. If another request is blocked because it demands more GPUs than are free, smaller requests can run ahead of it.</p>
+                </div>
+
+                <div class="queue-container">
+                    <div class="resource-status">
+                        <div>
+                            <div class="res-box-title">Total GPUs</div>
+                            <div class="res-box-val" style="color: white;">8</div>
+                        </div>
+                        <div>
+                            <div class="res-box-title">Allocated</div>
+                            <div class="res-box-val" id="allocated-gpu-indicator">6</div>
+                        </div>
+                        <div>
+                            <div class="res-box-title">Free GPUs</div>
+                            <div class="res-box-val free" id="free-gpu-indicator">2</div>
+                        </div>
+                    </div>
+
+                    <div class="queue-viz">
+                        <div class="queue-viz-header">
+                            <span>Pending & Running Session Queue</span>
+                            <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-secondary)">Strict FIFO Policy</span>
+                        </div>
+                        <div class="queue-list" id="queue-list-container">
+                            <!-- Populated dynamically -->
+                        </div>
+                    </div>
+
+                    <div class="queue-explain" id="queue-explanation-box">
+                        <strong>💡 Schedulability Rule Demo:</strong> Since you requested a <strong>Small (1 GPU)</strong> profile and there are <strong>2 Free GPUs</strong>, your session can launch immediately, even though the <strong>Large (4 GPU)</strong> request is ahead of you in line!
+                    </div>
+
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 1rem;">
+                        <button class="btn btn-secondary" onclick="simulateResetQueue()" id="queue-demo-btn">
+                            Reset Queue Demo
+                        </button>
+                        <button class="btn btn-primary" onclick="launchSimulatedDesktop()" id="queue-launch-btn">
+                            Deploy & Launch Desktop
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- STEP 5: SIMULATED DESKTOP -->
+            <div class="content-card step-content" id="step-pane-5" style="max-width: 1000px; padding: 1.5rem;">
+                <div class="step-title-group" style="margin-bottom: 1rem;">
+                    <span class="step-tag">Phase 5 / Browser-Native Workspace</span>
+                    <h1 class="step-main-title" style="font-size: 1.5rem;">AxonOS XFCE Desktop Session</h1>
+                </div>
+
+                <div class="desktop-stage">
+                    <!-- Top Panel -->
+                    <div class="desktop-panel">
+                        <div class="panel-left">
+                            <span class="panel-item brand">🧬 AxonOS</span>
+                            <span class="panel-item">Applications</span>
+                            <span class="panel-item">Terminal</span>
+                        </div>
+                        <div class="panel-right">
+                            <span class="panel-item" style="color: var(--color-emerald)" id="desktop-profile-display">Small Profile (1x GPU)</span>
+                            <span class="panel-item" id="desktop-clock">12:00 PM</span>
+                        </div>
+                    </div>
+
+                    <div class="desktop-content">
+                        <!-- Desktop Shortcuts -->
+                        <div class="shortcuts-grid">
+                            <div class="shortcut" onclick="openDesktopTool('JupyterLab')">
+                                <div class="shortcut-icon" style="color: var(--color-amber)">📓</div>
+                                <span class="shortcut-label">JupyterLab</span>
+                            </div>
+                            <div class="shortcut" onclick="openDesktopTool('RStudio')">
+                                <div class="shortcut-icon" style="color: var(--color-blue)">📊</div>
+                                <span class="shortcut-label">RStudio</span>
+                            </div>
+                            <div class="shortcut" onclick="openDesktopTool('QGIS')">
+                                <div class="shortcut-icon" style="color: #4ade80">🗺️</div>
+                                <span class="shortcut-label">QGIS</span>
+                            </div>
+                            <div class="shortcut" onclick="openDesktopTool('IPFS Desktop')">
+                                <div class="shortcut-icon" style="color: #0ea5e9">📡</div>
+                                <span class="shortcut-label">IPFS Node</span>
+                            </div>
+                        </div>
+
+                        <!-- GTK AI Assistant (Floating panel) -->
+                        <div class="assistant-window">
+                            <div class="gtk-titlebar">
+                                <span class="gtk-title">🤖 AxonOS Assistant</span>
+                                <div class="gtk-controls">
+                                    <div class="gtk-dot min"></div>
+                                    <div class="gtk-dot max"></div>
+                                    <div class="gtk-dot close"></div>
+                                </div>
+                            </div>
+                            <div class="chat-body" id="chat-conversation">
+                                <div class="chat-msg assistant">
+                                    Hello! I am your AI assistant, powered by the local <strong>gemma4:31b</strong> model. I can access installed scientific software, check system files, perform web search queries, and analyze screenshots of your active work. How can I help you today?
+                                </div>
+                            </div>
+                            <div class="chat-input-area">
+                                <input type="text" class="chat-input" id="chat-input-box" placeholder="Ask assistant or request search..." onkeydown="handleChatKey(event)">
+                                <button class="chat-send-btn" onclick="sendChatMessage()">→</button>
+                            </div>
+                        </div>
+
+                        <!-- Billing Dashboard Widget in desktop -->
+                        <div class="desktop-billing-widget">
+                            <div class="widget-row">
+                                <span>Connected Wallet:</span>
+                                <span class="widget-val" id="desk-wallet-val">0x7a...d2f</span>
+                            </div>
+                            <div class="widget-row">
+                                <span>Active Billing Rate:</span>
+                                <span class="widget-val" id="desk-rate-val">1x rate / min</span>
+                            </div>
+                            <div class="widget-row">
+                                <span>Remaining Credits:</span>
+                                <span class="widget-val highlight" id="desk-credit-val">70.6 min</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="display: flex; justify-content: flex-end; margin-top: 1rem;">
+                    <button class="btn btn-secondary" onclick="simulateTerminateSession()">
+                        Terminate Session
+                    </button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Notification Toast -->
+    <div class="notify-toast" id="notify-toast">
+        <div class="notify-dot"></div>
+        <span id="notify-msg">Toast Notification Message</span>
+    </div>
+
+    <script>
+        // GLOBAL STATE
+        const state = {
+            walletConnected: false,
+            walletAddress: '',
+            signedChallenge: false,
+            axgtBalance: 12000,
+            ethDeposit: 0.0005,
+            discountPercent: 15,
+            creditedMinutes: 70.6,
+            remainingMinutes: 70.6,
+            selectedProfile: 'small', // small, medium, large, max
+            profileGpus: 1,
+            profileBurnRate: 1,
+            gpuTotal: 8,
+            gpuAllocated: 6,
+            gpuFree: 2,
+            queue: [],
+            sessionActive: false,
+            billingInterval: null
+        };
+
+        // Navigation Lock guards
+        const stepProgress = {
+            1: true,  // Wallet EIP-191 Auth
+            2: false, // Prepaid Deposits
+            3: false, // GPU Profiles
+            4: false, // Resource Queue
+            5: false  // Desktop
+        };
+
+        // UI Toast notifier
+        function showNotification(msg) {
+            const toast = document.getElementById('notify-toast');
+            document.getElementById('notify-msg').innerText = msg;
+            toast.classList.add('active');
+            setTimeout(() => {
+                toast.classList.remove('active');
+            }, 3000);
+        }
+
+        // Handle sidebar active tab changes
+        function goToStep(stepNum) {
+            if (!stepProgress[stepNum]) {
+                showNotification(`Complete prior phases to unlock step ${stepNum}`);
+                return;
+            }
+
+            // Update sidebar buttons styling
+            for (let i = 1; i <= 5; i++) {
+                const btn = document.getElementById(`step-btn-${i}`);
+                const pane = document.getElementById(`step-pane-${i}`);
+                if (i === stepNum) {
+                    btn.classList.add('active');
+                    pane.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                    pane.classList.remove('active');
+                }
+            }
+
+            // Action mappings when stepping into views
+            if (stepNum === 4) {
+                initializeQueueDemo();
+            }
+        }
+
+        function unlockStep(stepNum) {
+            stepProgress[stepNum] = true;
+            const btn = document.getElementById(`step-btn-${stepNum}`);
+            btn.removeAttribute('disabled');
+            btn.classList.add('completed');
+        }
+
+        // ================== PHASE 1: WALLET CONNECT ==================
+        function simulateConnectWallet() {
+            state.walletAddress = '0x7a8c51ef2b' + Math.random().toString(16).substr(2, 6) + 'd2f';
+            document.getElementById('mock-address-text').innerText = state.walletAddress;
+            document.getElementById('wallet-connect-box').style.display = 'none';
+            document.getElementById('challenge-sign-box').style.display = 'block';
+            document.getElementById('wallet-status-indicator').innerText = 'Wallet Connected';
+            document.getElementById('wallet-status-indicator').style.backgroundColor = 'rgba(16, 185, 129, 0.1)';
+            document.getElementById('wallet-status-indicator').style.borderColor = 'rgba(16, 185, 129, 0.2)';
+            document.getElementById('wallet-status-indicator').style.color = 'var(--color-emerald)';
+            showNotification("Wallet Connected. Sign EIP-191 challenge to authorize session.");
+        }
+
+        function simulateSignChallenge() {
+            state.walletConnected = true;
+            state.signedChallenge = true;
+            showNotification("EIP-191 Personal Sign signature validated.");
+            unlockStep(2);
+            setTimeout(() => goToStep(2), 800);
+        }
+
+        function resetStep1() {
+            state.walletConnected = false;
+            state.signedChallenge = false;
+            document.getElementById('wallet-connect-box').style.display = 'flex';
+            document.getElementById('challenge-sign-box').style.display = 'none';
+            document.getElementById('wallet-status-indicator').innerText = 'Disconnected';
+            document.getElementById('wallet-status-indicator').style.backgroundColor = 'rgba(245,158,11,0.1)';
+            document.getElementById('wallet-status-indicator').style.borderColor = 'rgba(245,158,11,0.2)';
+            document.getElementById('wallet-status-indicator').style.color = 'var(--color-amber)';
+        }
+
+        // ================== PHASE 2: BILLING & TIER CALCULATOR ==================
+        function calculateDiscount() {
+            const axgtInput = document.getElementById('axgt-balance-input');
+            const ethInput = document.getElementById('eth-deposit-input');
+            
+            let axgt = parseFloat(axgtInput.value) || 0;
+            let ethVal = parseFloat(ethInput.value) || 0;
+            state.axgtBalance = axgt;
+            state.ethDeposit = ethVal;
+
+            // Determine discount tier
+            let discount = 0;
+            let tierIndex = 0;
+            let tierLabel = 'Tier 0';
+
+            if (axgt >= 100000) {
+                discount = 25;
+                tierIndex = 4;
+                tierLabel = 'Tier 4';
+            } else if (axgt >= 10000) {
+                discount = 15;
+                tierIndex = 3;
+                tierLabel = 'Tier 3';
+            } else if (axgt >= 1000) {
+                discount = 10;
+                tierIndex = 2;
+                tierLabel = 'Tier 2';
+            } else if (axgt >= 100) {
+                discount = 5;
+                tierIndex = 1;
+                tierLabel = 'Tier 1';
+            } else {
+                discount = 0;
+                tierIndex = 0;
+                tierLabel = 'Tier 0';
+            }
+
+            state.discountPercent = discount;
+
+            // Highlight tier list
+            for (let i = 0; i <= 4; i++) {
+                const row = document.getElementById(`tier-row-${i}`);
+                if (i === tierIndex) {
+                    row.classList.add('active-tier');
+                } else {
+                    row.classList.remove('active-tier');
+                }
+            }
+
+            document.getElementById('current-tier-badge').innerText = tierLabel;
+
+            // Pricing formula:
+            // Base ETH min required: 0.0005 ETH
+            // Discounted min payable = 0.0005 * (1 - (discount / 100))
+            const minPayable = 0.0005 * (1 - (discount / 100));
+            document.getElementById('quote-min-payable').innerText = minPayable.toFixed(6) + ' ETH';
+            document.getElementById('quote-discount-percent').innerText = discount + '%';
+
+            // Effective credit rate: 120,000 minutes per ETH base
+            // Minutes credited = eth_deposited * 120,000 / (1 - (discount / 100))
+            const creditRate = 120000 / (1 - (discount / 100));
+            const creditedMin = ethVal * creditRate;
+            state.creditedMinutes = parseFloat(creditedMin.toFixed(1));
+            state.remainingMinutes = state.creditedMinutes;
+
+            document.getElementById('quote-credited-minutes').innerText = state.creditedMinutes + ' min';
+            document.getElementById('profile-credited-minutes').innerText = state.creditedMinutes + ' minutes';
+            document.getElementById('desk-credit-val').innerText = state.creditedMinutes + ' min';
+
+            // Update duration estimation on Step 3
+            updateDurationEstimate();
+        }
+
+        function simulateDepositPayment() {
+            // Validate minimum cap
+            const minPayable = 0.0005 * (1 - (state.discountPercent / 100));
+            if (state.ethDeposit < minPayable) {
+                showNotification(`Insufficient deposit. Minimum needed for your tier is ${minPayable.toFixed(6)} ETH`);
+                return;
+            }
+
+            const overlay = document.getElementById('verify-overlay');
+            overlay.classList.add('active');
+
+            let confirmations = 0;
+            const progressFill = document.getElementById('verify-progress');
+            const confsText = document.getElementById('confirmations-text');
+            const statusText = document.getElementById('verify-status-text');
+
+            progressFill.style.width = '0%';
+            confsText.innerText = 'Confirmations: 0 / 6';
+            statusText.innerText = 'Verifying Transaction Hash on Chain';
+
+            const interval = setInterval(() => {
+                confirmations++;
+                const percentage = (confirmations / 6) * 100;
+                progressFill.style.width = percentage + '%';
+                confsText.innerText = `Confirmations: ${confirmations} / 6`;
+
+                if (confirmations === 1) {
+                    statusText.innerText = 'Index matches sender & recipient...';
+                } else if (confirmations === 3) {
+                    statusText.innerText = 'Replay protection validated. Checking contracts...';
+                } else if (confirmations === 5) {
+                    statusText.innerText = 'RPC block confirmed. Writing audit ledgers...';
+                }
+
+                if (confirmations >= 6) {
+                    clearInterval(interval);
+                    overlay.classList.remove('active');
+                    showNotification(`Success! Credited ${state.creditedMinutes} minutes to deposit ledger.`);
+                    unlockStep(3);
+                    setTimeout(() => goToStep(3), 800);
+                }
+            }, 600);
+        }
+
+        // ================== PHASE 3: COMPUTE PROFILES ==================
+        function selectProfile(profileId, gpus, burnRate) {
+            state.selectedProfile = profileId;
+            state.profileGpus = gpus;
+            state.profileBurnRate = burnRate;
+
+            document.querySelectorAll('.profile-card').forEach(card => {
+                card.classList.remove('selected');
+            });
+            document.getElementById(`profile-card-${profileId}`).classList.add('selected');
+
+            updateDurationEstimate();
+        }
+
+        function updateDurationEstimate() {
+            // Duration estimate = credited_minutes / burn_rate
+            const estDuration = state.creditedMinutes / state.profileBurnRate;
+            document.getElementById('profile-duration-estimate').innerText = estDuration.toFixed(1) + ' mins';
+            document.getElementById('desktop-profile-display').innerText = `${state.selectedProfile.toUpperCase()} Profile (${state.profileGpus}x GPU)`;
+            document.getElementById('desk-rate-val').innerText = `${state.profileBurnRate}x rate / min`;
+        }
+
+        function simulateClaimSession() {
+            showNotification(`Compute requested: Profile ${state.selectedProfile.toUpperCase()} (${state.profileGpus} GPUs)`);
+            unlockStep(4);
+            setTimeout(() => goToStep(4), 800);
+        }
+
+        // ================== PHASE 4: RESOURCE QUEUE DEMO ==================
+        function initializeQueueDemo() {
+            // Schedulability FIFO logic demonstration
+            // Total GPUs = 8.
+            // Setup default active containers:
+            // 1. User: 0x9f...a81 (Medium - 2 GPUs) -> Active (running)
+            // 2. User: 0x3d...7bc (Large - 4 GPUs) -> Active (running)
+            // Total active = 6 GPUs. Free = 2 GPUs.
+            // Setup Queue:
+            // 3. User: 0x82...19a (Large - 4 GPUs) -> Waiting (needs 4, but only 2 free)
+            // 4. Current User (You): (Depends on selected profile)
+            
+            state.gpuTotal = 8;
+            state.gpuAllocated = 6;
+            state.gpuFree = 2;
+
+            document.getElementById('allocated-gpu-indicator').innerText = state.gpuAllocated;
+            document.getElementById('free-gpu-indicator').innerText = state.gpuFree;
+
+            state.queue = [
+                { id: 1, wallet: '0x9f6a...9a81', profile: 'Medium', gpus: 2, status: 'Running', statusClass: 'status-running' },
+                { id: 2, wallet: '0x3dc1...c7bc', profile: 'Large', gpus: 4, status: 'Running', statusClass: 'status-running' },
+                { id: 3, wallet: '0x82ab...119a', profile: 'Large', gpus: 4, status: 'Waiting (Blocked)', statusClass: 'status-waiting' }
+            ];
+
+            // Add the active user request
+            let userProfileLabel = state.selectedProfile.charAt(0).toUpperCase() + state.selectedProfile.slice(1);
+            let userStatus = '';
+            let userClass = '';
+
+            // Schedulability check: Can the current user run immediately?
+            // If user profile gpus <= free GPUs (2), user runs immediately, skipping blocked large request!
+            if (state.profileGpus <= state.gpuFree) {
+                userStatus = 'Ready to Run';
+                userClass = 'status-running';
+                
+                document.getElementById('queue-explanation-box').innerHTML = `
+                    <strong>⚡ Schedulability-Aware FIFO Active:</strong> You requested a <strong>${userProfileLabel} (${state.profileGpus} GPU)</strong> profile. 
+                    Since there are <strong>${state.gpuFree} free GPUs</strong>, your request has skipped ahead of the blocked <strong>Large (4 GPU)</strong> request and is <strong>ready to compile and deploy!</strong>
+                `;
+                document.getElementById('queue-launch-btn').removeAttribute('disabled');
+            } else {
+                userStatus = 'Waiting (Insufficient GPUs)';
+                userClass = 'status-waiting';
+                
+                document.getElementById('queue-explanation-box').innerHTML = `
+                    <strong>⏳ Queue Blocked:</strong> You requested a <strong>${userProfileLabel} (${state.profileGpus} GPU)</strong> profile. 
+                    Since only <strong>${state.gpuFree} GPUs are free</strong>, you must wait in queue until active sessions complete and release resources.
+                `;
+                document.getElementById('queue-launch-btn').setAttribute('disabled', 'true');
+            }
+
+            state.queue.push({
+                id: 4,
+                wallet: state.walletAddress.substring(0, 6) + '...' + state.walletAddress.substring(state.walletAddress.length - 4),
+                profile: userProfileLabel,
+                gpus: state.profileGpus,
+                status: userStatus,
+                statusClass: userClass,
+                isCurrentUser: true
+            });
+
+            renderQueue();
+        }
+
+        function renderQueue() {
+            const container = document.getElementById('queue-list-container');
+            container.innerHTML = '';
+
+            state.queue.forEach((item, index) => {
+                const el = document.createElement('div');
+                el.className = `queue-item ${item.isCurrentUser ? 'queued-user' : ''} ${item.status.includes('Running') || item.status === 'Ready to Run' ? 'active-run' : 'waiting'}`;
+                
+                el.innerHTML = `
+                    <div class="q-name-group">
+                        <span style="color: var(--text-secondary)">#${index+1}</span>
+                        <span class="q-wallet">${item.wallet} ${item.isCurrentUser ? '<strong style="color: var(--color-blue)">(You)</strong>' : ''}</span>
+                        <span class="q-badge ${item.statusClass}">${item.status}</span>
+                    </div>
+                    <div class="q-meta">
+                        Profile: ${item.profile} (${item.gpus}x GPU)
+                    </div>
+                `;
+                container.appendChild(el);
+            });
+        }
+
+        function simulateResetQueue() {
+            // Trigger release simulation of session #1 to show reactive scheduler
+            showNotification("Simulating completion of Session #1...");
+            
+            // Session #1 releases 2 GPUs
+            state.gpuAllocated -= 2;
+            state.gpuFree += 2;
+
+            document.getElementById('allocated-gpu-indicator').innerText = state.gpuAllocated;
+            document.getElementById('free-gpu-indicator').innerText = state.gpuFree;
+
+            // Queue item #1 removed
+            state.queue.shift();
+
+            // Schedulability-aware updates:
+            // Blocked Large request (needs 4, now 4 free) launches!
+            const blockedLarge = state.queue[1]; // since index shifted, it is 1
+            if (blockedLarge && blockedLarge.profile === 'Large') {
+                blockedLarge.status = 'Running';
+                blockedLarge.statusClass = 'status-running';
+                
+                // large consumes 4 GPUs
+                state.gpuAllocated += 4;
+                state.gpuFree -= 4;
+                document.getElementById('allocated-gpu-indicator').innerText = state.gpuAllocated;
+                document.getElementById('free-gpu-indicator').innerText = state.gpuFree;
+            }
+
+            // Recheck user status
+            const userItem = state.queue.find(item => item.isCurrentUser);
+            if (userItem) {
+                if (state.profileGpus <= state.gpuFree) {
+                    userItem.status = 'Ready to Run';
+                    userItem.statusClass = 'status-running';
+                    document.getElementById('queue-launch-btn').removeAttribute('disabled');
+                } else {
+                    userItem.status = 'Waiting (Insufficient GPUs)';
+                    userItem.statusClass = 'status-waiting';
+                    document.getElementById('queue-launch-btn').setAttribute('disabled', 'true');
+                }
+            }
+
+            renderQueue();
+            showNotification("FIFO Schedulability constraints evaluated successfully.");
+        }
+
+        // ================== PHASE 5: DESKTOP SIMULATOR ==================
+        function launchSimulatedDesktop() {
+            showNotification("Deploying Docker Container... Launching XFCE via websockify...");
+            unlockStep(5);
+            
+            // Pre-fill values
+            document.getElementById('desk-wallet-val').innerText = state.walletAddress.substring(0, 6) + '...' + state.walletAddress.substring(state.walletAddress.length - 4);
+            document.getElementById('desk-credit-val').innerText = state.remainingMinutes.toFixed(1) + ' min';
+
+            setTimeout(() => {
+                goToStep(5);
+                startBillingHeartbeat();
+            }, 800);
+        }
+
+        function startBillingHeartbeat() {
+            if (state.billingInterval) clearInterval(state.billingInterval);
+            
+            state.sessionActive = true;
+            state.billingInterval = setInterval(() => {
+                // Deduct balance based on profile weight
+                // Let's deduct 0.1 minutes per real second for demonstration visibility (fast burn)
+                const billingTick = 0.5 * state.profileBurnRate;
+                state.remainingMinutes -= billingTick;
+
+                if (state.remainingMinutes <= 0) {
+                    state.remainingMinutes = 0;
+                    clearInterval(state.billingInterval);
+                    simulateTerminateSession(true);
+                }
+
+                document.getElementById('desk-credit-val').innerText = state.remainingMinutes.toFixed(1) + ' min';
+            }, 2000); // ticks every 2s for visual feedback
+
+            // Clock update loop
+            setInterval(() => {
+                const now = new Date();
+                let hours = now.getHours();
+                let minutes = now.getMinutes();
+                const ampm = hours >= 12 ? 'PM' : 'AM';
+                hours = hours % 12;
+                hours = hours ? hours : 12;
+                minutes = minutes < 10 ? '0' + minutes : minutes;
+                document.getElementById('desktop-clock').innerText = hours + ':' + minutes + ' ' + ampm;
+            }, 1000);
+        }
+
+        function simulateTerminateSession(creditsExhausted = false) {
+            clearInterval(state.billingInterval);
+            state.sessionActive = false;
+
+            if (creditsExhausted) {
+                showNotification("Heartbeat failed: Credit exhausted. Session Terminated!");
+            } else {
+                showNotification("Session released. Container stopped and removed.");
+            }
+
+            // Lock step 5 and step 4, navigate back to step 2 (deposit screen)
+            stepProgress[5] = false;
+            stepProgress[4] = false;
+            document.getElementById('step-btn-5').setAttribute('disabled', 'true');
+            document.getElementById('step-btn-4').setAttribute('disabled', 'true');
+            document.getElementById('step-btn-5').classList.remove('completed');
+            document.getElementById('step-btn-4').classList.remove('completed');
+
+            // Force dynamic balance to 0 on credit exhaust
+            if (creditsExhausted) {
+                state.creditedMinutes = 0;
+                state.remainingMinutes = 0;
+                document.getElementById('quote-credited-minutes').innerText = '0.0 min';
+                document.getElementById('profile-credited-minutes').innerText = '0.0 minutes';
+            }
+
+            goToStep(2);
+        }
+
+        function openDesktopTool(name) {
+            showNotification(`Launching ${name} shortcut on isolated sandbox desktop...`);
+            
+            // Add a mock application launch in VNC terminal / display
+            const chatBox = document.getElementById('chat-conversation');
+            const userMsg = document.createElement('div');
+            userMsg.className = 'chat-msg user';
+            userMsg.innerText = `Open application: ${name}`;
+            chatBox.appendChild(userMsg);
+
+            setTimeout(() => {
+                const assistantMsg = document.createElement('div');
+                assistantMsg.className = 'chat-msg assistant';
+                assistantMsg.innerHTML = `🛡️ <strong>Sandbox Security Guard:</strong> Initializing launch of ${name}. Checking secure permissions... Launch complete. Application is visible on the VNC workspace.`;
+                chatBox.appendChild(assistantMsg);
+                chatBox.scrollTop = chatBox.scrollHeight;
+            }, 600);
+        }
+
+        // --- Assistant Chat Logic ---
+        function handleChatKey(e) {
+            if (e.key === 'Enter') {
+                sendChatMessage();
+            }
+        }
+
+        function sendChatMessage() {
+            const inputBox = document.getElementById('chat-input-box');
+            const msgText = inputBox.value.trim();
+            if (!msgText) return;
+
+            inputBox.value = '';
+            const chatBox = document.getElementById('chat-conversation');
+
+            // Add user message
+            const userMsg = document.createElement('div');
+            userMsg.className = 'chat-msg user';
+            userMsg.innerText = msgText;
+            chatBox.appendChild(userMsg);
+            chatBox.scrollTop = chatBox.scrollHeight;
+
+            // Generate responses
+            setTimeout(() => {
+                const assistantMsg = document.createElement('div');
+                assistantMsg.className = 'chat-msg assistant';
+                
+                let query = msgText.toLowerCase();
+                if (query.includes('screenshot') || query.includes('vision') || query.includes('analyze')) {
+                    assistantMsg.innerHTML = `📸 <strong>Granite-Vision Model:</strong> Analyzing active frame buffer (resizing 1920x1080 to 1344x1344 for network optimization)... I detect you are currently exploring the AxonOS interactive wireframe with a VNC desktop panel at the top and a floating assistant terminal.`;
+                } else if (query.includes('search') || query.includes('brave') || query.includes('google')) {
+                    assistantMsg.innerHTML = `🌐 <strong>Brave Search API:</strong> Querying the web for research... <em>"AxonOS decentralized open science"</em>. Found 3 sources. Highlighting core: AxonOS is developed by AxonDAO as a local-first computing desktop utilizing ERC-20 staking incentives.`;
+                } else if (query.includes('tool') || query.includes('discover') || query.includes('software')) {
+                    assistantMsg.innerHTML = `📂 <strong>Tool Discovery System:</strong> Scanning system folder <code>/usr/share/applications/</code>. Found:
+                    <ul>
+                      <li>JupyterLab (Python & BeakerX kernels)</li>
+                      <li>RStudio (R environment)</li>
+                      <li>UGENE (Bioinformatics)</li>
+                      <li>QGIS & GRASS (Geospatial Analysis)</li>
+                    </ul>`;
+                } else {
+                    assistantMsg.innerHTML = `🧬 <strong>Gemma-31B Local Model:</strong> Understood. For scientific computing in AxonOS, you can run workflows via <strong>Nextflow</strong> or process visual bioinformatics data with <strong>Fiji/ImageJ</strong>. Let me know if you would like me to draft a launcher script for your tools.`;
+                }
+
+                chatBox.appendChild(assistantMsg);
+                chatBox.scrollTop = chatBox.scrollHeight;
+            }, 800);
+        }
+
+        // Initialize state calculations
+        calculateDiscount();
+    </script>
+</body>
+</html>
