@@ -1171,9 +1171,11 @@ const UI = {
         if (!UI.connected && !window.axonosSessionDetached) {
             return;
         }
-        const confirmed = window.confirm(
-            _("End session now?\n\nThis stops billing, ends your session, and removes your remote desktop. Unsaved work may be lost.")
-        );
+        const storageEnabled = window.axonosConfig && window.axonosConfig.persistent_storage_enabled;
+        const msg = storageEnabled
+            ? _("End session now?\n\nThis stops billing, ends your session, and tears down the desktop container. Your files in the home folder are safely saved, but unsaved work in running applications will be lost.")
+            : _("End session now?\n\nThis stops billing, ends your session, and removes your remote desktop. Unsaved work may be lost.");
+        const confirmed = window.confirm(msg);
         if (!confirmed) {
             return;
         }

@@ -754,6 +754,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 "gpu_profiles_enabled": (os.getenv("AXGT_GPU_PROFILES_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")),
                 "gpu_profiles": {"small": 1, "medium": 2, "large": 4, "max": 8},
                 "gpu_weighted_billing_enabled": policy.get("gpu_weighted_billing_enabled", False),
+                "persistent_storage_enabled": (os.getenv("AXGT_PERSISTENT_STORAGE_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")),
             }
             if webrtc_config is not None:
                 payload.update(webrtc_config.public_config())

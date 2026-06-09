@@ -73,6 +73,25 @@ def _image_name() -> str:
     return (os.getenv("AXGT_HOST_SESSION_CONTAINER_IMAGE") or "").strip()
 
 
+def _persistent_storage_enabled() -> bool:
+    raw = (os.getenv("AXGT_PERSISTENT_STORAGE_ENABLED") or "").strip().lower()
+    if not raw:
+        return True
+    return raw in ("1", "true", "yes", "on")
+
+
+def _persistent_storage_volume_prefix() -> str:
+    raw = (os.getenv("AXGT_PERSISTENT_STORAGE_VOLUME_PREFIX") or "axgt-user-storage-").strip()
+    return "".join(c for c in raw if c.isalnum() or c in ("-", "_"))
+
+
+def _persistent_storage_mount_path() -> str:
+    raw = (os.getenv("AXGT_PERSISTENT_STORAGE_MOUNT_PATH") or "/home/aXonian").strip()
+    if not raw.startswith("/") or any(c in raw for c in (" ", "\t", ";", "&", "|", "$", "`")):
+        return "/home/aXonian"
+    return raw
+
+
 def _default_command_tokens() -> List[str]:
     raw = (os.getenv("AXGT_HOST_SESSION_CONTAINER_COMMAND") or "").strip()
     if not raw:
@@ -192,6 +211,12 @@ def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], 
         "-p",
         f"{port_range}:{port_range}/udp",
     ]
+    if _persistent_storage_enabled():
+        safe_wallet = "".join(c for c in wallet if c.isalnum() or c in ("-", "_")).lower()
+        volume_name = f"{_persistent_storage_volume_prefix()}{safe_wallet}"
+        mount_path = _persistent_storage_mount_path()
+        cmd.extend(["-v", f"{volume_name}:{mount_path}"])
+
     shm = _shm_size_for_run()
     if shm:
         cmd.extend(["--shm-size", shm])

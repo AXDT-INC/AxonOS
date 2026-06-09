@@ -60,6 +60,22 @@ def _launcher_mode() -> str:
     return (os.getenv("AXGT_SESSION_LAUNCHER_MODE") or "docker_cli").strip().lower()
 
 
+def _persistent_storage_enabled() -> bool:
+    return _truthy("AXGT_PERSISTENT_STORAGE_ENABLED", True)
+
+
+def _persistent_storage_volume_prefix() -> str:
+    raw = (os.getenv("AXGT_PERSISTENT_STORAGE_VOLUME_PREFIX") or "axgt-user-storage-").strip()
+    return "".join(c for c in raw if c.isalnum() or c in ("-", "_"))
+
+
+def _persistent_storage_mount_path() -> str:
+    raw = (os.getenv("AXGT_PERSISTENT_STORAGE_MOUNT_PATH") or "/home/aXonian").strip()
+    if not raw.startswith("/") or any(c in raw for c in (" ", "\t", ";", "&", "|", "$", "`")):
+        return "/home/aXonian"
+    return raw
+
+
 def launch_session(session_id: int, wallet: str, profile: str, gpu_ids: List[int]) -> Tuple[bool, Optional[str], Optional[str]]:
     """Launch user session runtime; returns (ok, container_id, error)."""
     if not _container_mode_enabled():
@@ -104,6 +120,14 @@ def _launch_via_docker_cli(session_id: int, wallet: str, profile: str, gpu_ids: 
         "docker", "run", "-d", "--rm",
         "--name", name,
         "-p", f"{port_range}:{port_range}/udp",
+    ]
+    if _persistent_storage_enabled():
+        safe_wallet = "".join(c for c in wallet if c.isalnum() or c in ("-", "_")).lower()
+        volume_name = f"{_persistent_storage_volume_prefix()}{safe_wallet}"
+        mount_path = _persistent_storage_mount_path()
+        cmd.extend(["-v", f"{volume_name}:{mount_path}"])
+
+    cmd.extend([
         "--gpus", docker_run_gpus_device_value(gpu_ids),
         "-e", f"AXGT_SESSION_ID={session_id}",
         "-e", f"AXGT_WALLET_ADDRESS={wallet}",
@@ -112,7 +136,7 @@ def _launch_via_docker_cli(session_id: int, wallet: str, profile: str, gpu_ids: 
         "-e", "AXGT_DESKTOP_ENABLED=true",
         "-e", "WEBRTC_AGENT_ENABLED=true",
         "-e", f"WEBRTC_PORT_RANGE={port_range}",
-    ]
+    ])
     cmd.extend(session_container_ompi_mca_env_flags())
     extra_raw = (os.getenv("AXGT_SESSION_CONTAINER_EXTRA_ARGS") or "").strip()
     if extra_raw:
