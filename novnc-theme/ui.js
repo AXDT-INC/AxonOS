@@ -669,21 +669,30 @@ const UI = {
         const transitionElem = document.getElementById("noVNC_transition_text");
         switch (state) {
             case 'init':
+                UI._axgtEndingSession = false;
                 break;
             case 'connecting':
+                UI._axgtEndingSession = false;
                 transitionElem.textContent = _("Connecting...");
                 document.documentElement.classList.add("noVNC_connecting");
                 break;
             case 'connected':
+                UI._axgtEndingSession = false;
                 document.documentElement.classList.add("noVNC_connected");
                 break;
             case 'disconnecting':
-                transitionElem.textContent = _("Disconnecting...");
+                if (UI._axgtEndingSession) {
+                    transitionElem.textContent = _("Ending session...");
+                } else {
+                    transitionElem.textContent = _("Disconnecting...");
+                }
                 document.documentElement.classList.add("noVNC_disconnecting");
                 break;
             case 'disconnected':
+                UI._axgtEndingSession = false;
                 break;
             case 'reconnecting':
+                UI._axgtEndingSession = false;
                 transitionElem.textContent = _("Reconnecting...");
                 document.documentElement.classList.add("noVNC_reconnecting");
                 break;
@@ -1846,6 +1855,12 @@ const UI = {
         const opts = options && typeof options === 'object' ? options : {};
         const skipRelease = opts.skipRelease === true;
         const detach = opts.detach === true;
+
+        if (!detach && !skipRelease) {
+            UI._axgtEndingSession = true;
+        } else {
+            UI._axgtEndingSession = false;
+        }
 
         UI._axonosCancelWebRtcClient();
         if (typeof window.axonosHideConnectionLoader === 'function') {
