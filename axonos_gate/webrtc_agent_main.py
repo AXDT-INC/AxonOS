@@ -31,6 +31,50 @@ logging.basicConfig(
 )
 logger = logging.getLogger("axonos.webrtc_agent")
 
+# Monkey-patch asyncio to restrict WebRTC UDP ports if WEBRTC_PORT_RANGE is set.
+# This forces aiortc / aioice to bind to specific published UDP ports.
+try:
+    import asyncio.base_events
+    import random
+    
+    _original_create_datagram_endpoint = asyncio.base_events.BaseEventLoop.create_datagram_endpoint
+
+    async def _patched_create_datagram_endpoint(self, protocol_factory, local_addr=None, remote_addr=None, **kwargs):
+        port_range_env = os.getenv("WEBRTC_PORT_RANGE")
+        if port_range_env and local_addr and isinstance(local_addr, tuple) and len(local_addr) == 2 and local_addr[1] == 0:
+            try:
+                start_port, end_port = map(int, port_range_env.split("-"))
+                ports = list(range(start_port, end_port + 1))
+                random.shuffle(ports)
+            except Exception as e:
+                logger.warning("Failed to parse WEBRTC_PORT_RANGE '%s': %s", port_range_env, e)
+                ports = []
+
+            host = local_addr[0]
+            last_exc = None
+            for port in ports:
+                try:
+                    res = await _original_create_datagram_endpoint(
+                        self, protocol_factory, local_addr=(host, port), remote_addr=remote_addr, **kwargs
+                    )
+                    logger.info("Successfully bound WebRTC UDP socket to %s:%d (from range %s)", host, port, port_range_env)
+                    return res
+                except OSError as exc:
+                    last_exc = exc
+                    logger.debug("Failed to bind WebRTC UDP socket to %s:%d: %s. Trying next port...", host, port, exc)
+            
+            if ports:
+                logger.warning("Could not bind to any port in WEBRTC_PORT_RANGE %s (last error: %s). Falling back to OS ephemeral port.", port_range_env, last_exc)
+        
+        return await _original_create_datagram_endpoint(
+            self, protocol_factory, local_addr=local_addr, remote_addr=remote_addr, **kwargs
+        )
+
+    asyncio.base_events.BaseEventLoop.create_datagram_endpoint = _patched_create_datagram_endpoint
+    logger.info("Injected asyncio.BaseEventLoop.create_datagram_endpoint monkey-patch for WEBRTC_PORT_RANGE support.")
+except Exception as e:
+    logger.error("Failed to inject asyncio create_datagram_endpoint monkey-patch: %s", e)
+
 _AXT = "X-AxonOS-WebRTC-Agent-Key"
 _clipboard_owners: dict[str, subprocess.Popen[bytes]] = {}
 # RFB-style pressed buttons: 1=left, 2=middle, 4=right.
@@ -838,6 +882,73 @@ def _agent_fail(session_id: str, error: str) -> None:
         logger.warning("agent fail report: %s", e)
 
 
+_cached_public_ip: str | None = None
+
+def _get_public_ip() -> str | None:
+    global _cached_public_ip
+    if _cached_public_ip:
+        return _cached_public_ip
+    
+    # Allow local override
+    env_ip = os.getenv("WEBRTC_PUBLIC_IP")
+    if env_ip:
+        _cached_public_ip = env_ip.strip()
+        logger.info("Using WEBRTC_PUBLIC_IP env override: %s", _cached_public_ip)
+        return _cached_public_ip
+
+    import urllib.request
+    urls = [
+        "https://api.ipify.org",
+        "http://ifconfig.me/ip",
+        "http://ipinfo.io/ip",
+        "http://icanhazip.com"
+    ]
+    for url in urls:
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=3.0) as response:
+                ip = response.read().decode('utf-8').strip()
+                if ip:
+                    # Quick IP format validation
+                    parts = ip.split('.')
+                    if len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
+                        _cached_public_ip = ip
+                        logger.info("Dynamically detected public IP: %s (via %s)", _cached_public_ip, url)
+                        return ip
+        except Exception as e:
+            logger.debug("Failed to fetch public IP from %s: %s", url, e)
+            continue
+    return None
+
+
+def _rewrite_sdp_candidates(sdp: str, public_ip: str) -> str:
+    lines = sdp.split("\r\n")
+    new_lines = []
+    for line in lines:
+        new_lines.append(line)
+        if line.startswith("a=candidate:"):
+            # Example: a=candidate:1845187429 1 udp 2130706431 172.18.0.5 40501 typ host
+            parts = line.split(" ")
+            if len(parts) >= 8 and parts[7] == "host":
+                try:
+                    foundation = parts[0].split(":")[1]
+                    component_id = parts[1]
+                    transport = parts[2]
+                    priority = parts[3]
+                    ip = parts[4]
+                    port = parts[5]
+                    
+                    new_foundation = f"srv{foundation}"
+                    new_priority = str(max(1, int(priority) - 1000))
+                    
+                    srflx_candidate = f"a=candidate:{new_foundation} {component_id} {transport} {new_priority} {public_ip} {port} typ srflx raddr {ip} rport {port}"
+                    new_lines.append(srflx_candidate)
+                    logger.info("Injected custom srflx candidate: %s", srflx_candidate)
+                except Exception as e:
+                    logger.warning("Failed to parse candidate line for rewrite '%s': %s", line, e)
+    return "\r\n".join(new_lines)
+
+
 async def _run_session(job: dict[str, Any]) -> None:
     try:
         from aiortc import RTCIceCandidate, RTCPeerConnection, RTCSessionDescription
@@ -1245,7 +1356,17 @@ async def _run_session(job: dict[str, Any]) -> None:
         _agent_fail(session_id, "no_local_description")
         return
 
-    payload = {"session_id": session_id, "sdp": _normalize_sdp(sdp_local.sdp), "type": sdp_local.type}
+    sdp_text = sdp_local.sdp
+    try:
+        public_ip = await asyncio.to_thread(_get_public_ip)
+        if public_ip:
+            sdp_text = _rewrite_sdp_candidates(sdp_text, public_ip)
+        else:
+            logger.warning("Could not resolve public IP; sending unmapped local SDP candidates.")
+    except Exception as exc:
+        logger.warning("Error during SDP public candidate injection: %s", exc)
+
+    payload = {"session_id": session_id, "sdp": _normalize_sdp(sdp_text), "type": sdp_local.type}
     async with aiohttp.ClientSession() as session:
         async with session.post(
             f"{gate}/api/webrtc/agent/answer",

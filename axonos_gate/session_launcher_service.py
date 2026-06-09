@@ -174,6 +174,14 @@ def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], 
     gpu_spec = ",".join(str(i) for i in gpu_ids)
     name = _container_name(session_id)
 
+    # Calculate unique UDP port range for WebRTC ICE direct connection (Path B)
+    base_port = 40000
+    block_size = 10
+    max_sessions = 50
+    start_port = base_port + (session_id % max_sessions) * block_size
+    end_port = start_port + block_size - 1
+    port_range = f"{start_port}-{end_port}"
+
     cmd: List[str] = [
         "docker",
         "run",
@@ -181,6 +189,8 @@ def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], 
         "--rm",
         "--name",
         name,
+        "-p",
+        f"{port_range}:{port_range}/udp",
     ]
     shm = _shm_size_for_run()
     if shm:
@@ -201,6 +211,8 @@ def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], 
             "AXGT_DESKTOP_ENABLED=true",
             "-e",
             "WEBRTC_AGENT_ENABLED=true",
+            "-e",
+            f"WEBRTC_PORT_RANGE={port_range}",
         ]
     )
 

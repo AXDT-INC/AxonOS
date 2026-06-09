@@ -92,9 +92,18 @@ def _launch_via_docker_cli(session_id: int, wallet: str, profile: str, gpu_ids: 
         return False, None, "AXGT_SESSION_CONTAINER_IMAGE is required in docker_cli mode"
     gpu_spec = ",".join(str(i) for i in gpu_ids)
     name = _container_name_for_session(session_id)
+    # Calculate unique UDP port range for WebRTC ICE direct connection (Path B)
+    base_port = 40000
+    block_size = 10
+    max_sessions = 50
+    start_port = base_port + (session_id % max_sessions) * block_size
+    end_port = start_port + block_size - 1
+    port_range = f"{start_port}-{end_port}"
+
     cmd: List[str] = [
         "docker", "run", "-d", "--rm",
         "--name", name,
+        "-p", f"{port_range}:{port_range}/udp",
         "--gpus", docker_run_gpus_device_value(gpu_ids),
         "-e", f"AXGT_SESSION_ID={session_id}",
         "-e", f"AXGT_WALLET_ADDRESS={wallet}",
@@ -102,6 +111,7 @@ def _launch_via_docker_cli(session_id: int, wallet: str, profile: str, gpu_ids: 
         "-e", f"AXGT_ASSIGNED_GPU_IDS={gpu_spec}",
         "-e", "AXGT_DESKTOP_ENABLED=true",
         "-e", "WEBRTC_AGENT_ENABLED=true",
+        "-e", f"WEBRTC_PORT_RANGE={port_range}",
     ]
     cmd.extend(session_container_ompi_mca_env_flags())
     extra_raw = (os.getenv("AXGT_SESSION_CONTAINER_EXTRA_ARGS") or "").strip()

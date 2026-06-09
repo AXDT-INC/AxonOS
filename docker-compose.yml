@@ -44,6 +44,19 @@ services:
       timeout: 5s
       retries: 5
 
+  coturn:
+    image: coturn/coturn:4.6.2-alpine
+    container_name: axonos_coturn
+    restart: unless-stopped
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "40500-41000:40500-41000/udp"
+    volumes:
+      - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+    networks:
+      - axonos_stack
+
   postgres:
     image: postgres:15-alpine
     container_name: axonos_postgres
