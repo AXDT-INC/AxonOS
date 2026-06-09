@@ -2051,7 +2051,11 @@ Copyright (C) 2019 The noVNC Authors
                      if (hintEl) {
                          if (axonosConfig.persistent_storage_enabled) {
                              var limitAbs = Math.abs(axonosConfig.persistent_storage_min_balance_limit_minutes);
-                             hintEl.innerHTML = 'Sessions feature <strong style="color:#e8a85a;margin-left:0.3em;">persistent storage</strong> (charged at ' + axonosConfig.persistent_storage_gb_hour_cost_minutes + ' minutes of compute credit per GB/hour when offline) — files in your home folder are automatically saved for your wallet address. If your credit balance runs out, storage costs will accrue as debt. Your volume is deleted if your account debt exceeds ' + limitAbs + ' minutes. Credits are consumed per GPU per wall-clock minute while active. Top up before expiry (or within 2 hours after) to keep your running session alive.';
+                             var limitHours = limitAbs / 60;
+                             var limitStr = (limitAbs % 60 === 0)
+                                 ? limitHours + ' hour' + (limitHours !== 1 ? 's' : '')
+                                 : limitAbs + ' minute' + (limitAbs !== 1 ? 's' : '');
+                             hintEl.innerHTML = 'Sessions feature <strong style="color:#e8a85a;margin-left:0.3em;">persistent storage</strong> (charged at ' + axonosConfig.persistent_storage_gb_hour_cost_minutes + ' minutes of compute credit per GB/hour when offline) — files in your home folder are automatically saved for your wallet address. If your credit balance runs out, storage costs will accrue as debt. Your volume is deleted if your account debt exceeds ' + limitStr + '. Credits are consumed per GPU per wall-clock minute while active. Top up before expiry (or within 2 hours after) to keep your running session alive.';
                          } else {
                              hintEl.innerHTML = 'Sessions are <strong style="color:#e8a85a;margin-left:0.3em;">ephemeral</strong> — files and changes are NOT saved between sessions. Credits are consumed per GPU per wall-clock minute while active. Top up before expiry (or within 2 hours after) to keep your running session alive. Unused credits remain unspent for subsequent sessions. Persistent storage coming soon.';
                          }

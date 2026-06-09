@@ -12,7 +12,8 @@ This module implements **prepaid deposit-credit billing** for AxonOS remote desk
 
 - **Authentication**: Wallet ownership is proven via signed challenge (`personal_sign`); one-time, wallet-bound nonces.
 - **Deposit-credit**: Users deposit AXGT or native ETH to a configured **revenue wallet**. They submit the **transaction hash**; the backend verifies the tx on-chain (confirmations, contract/value, sender/recipient, amount) and credits prepaid minutes. No escrow, no oracle, no trust in client-reported amounts.
-- **Billing**: Usage is deducted **incrementally** on each session heartbeat. When remaining minutes reach zero, access is denied until the user deposits again. Unused credits persist.
+- **Billing**: Active session usage is deducted **incrementally** on each session heartbeat. When remaining minutes reach zero, access is denied until the user deposits again. Unused credits persist.
+- **Persistent Storage Billing**: When offline, users are billed for persistent storage volume usage (defaults to `0.05` minutes per GB/hour). Charges accrue to the balance, allowing it to go negative (accumulating debt). Once the balance falls below a configurable negative debt threshold (default: `-1440.0` minutes / -24 hours), the persistent volume is pruned/deleted immediately to reclaim disk space.
 - **Accounting**: Postgres-backed deposit ledger and audit ledger; all balance changes are logged.
 
 ## User flow
@@ -22,7 +23,7 @@ This module implements **prepaid deposit-credit billing** for AxonOS remote desk
 3. Submit the transaction hash via `POST /api/auth/verify-deposit` (requires auth token) if not using in-wallet pay.
 4. Backend verifies the tx and credits minutes; response includes `remaining_minutes`.
 5. Claim a session; during the session the client sends heartbeats; each heartbeat bills elapsed time since last billing checkpoint.
-6. When remaining minutes reach zero, the session is terminated and access is denied until the user deposits again.
+6. When remaining minutes reach zero, the session is terminated and access is denied. Offline storage continues to bill against the balance (accruing debt) unless the volume is deleted or balance drops below the negative debt limit threshold.
 
 ## Configuration
 
@@ -43,6 +44,15 @@ This module implements **prepaid deposit-credit billing** for AxonOS remote desk
 - `ETH_MIN_DEPOSIT`: Minimum native ETH per deposit (default `0.0005`, ~parity with min AXGT tier at typical rates).
 - `ETH_CREDIT_PER_ETH_MINUTES`: Minutes per 1 ETH (default `120000` → min ETH deposit ≈ same minutes as min AXGT).
 - `AXGT_WARNING_THRESHOLD_MINUTES`: Warning threshold for UI (e.g. low balance).
+
+### Persistent storage (new)
+
+- `AXGT_PERSISTENT_STORAGE_ENABLED`: Enable user persistent named volumes (default `true`).
+- `AXGT_PERSISTENT_STORAGE_VOLUME_PREFIX`: Docker volume prefix (default `axgt-user-storage-`).
+- `AXGT_PERSISTENT_STORAGE_MOUNT_PATH`: Mount path inside desktop sessions (default `/home/aXonian`).
+- `AXGT_PERSISTENT_STORAGE_CLEANUP_INTERVAL_SECONDS`: Billing sweep interval (default `3600` / 1 hour).
+- `AXGT_PERSISTENT_STORAGE_MIN_BALANCE_LIMIT_MINUTES`: Max negative credit debt allowed before volume pruning (default `-1440.0`).
+- `AXGT_PERSISTENT_STORAGE_GB_HOUR_COST_MINUTES`: Offline storage charge rate per GB/hour (default `0.05` compute minutes).
 
 ### Optional
 
