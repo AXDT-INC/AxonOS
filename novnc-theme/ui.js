@@ -2699,6 +2699,52 @@ const UI = {
         const sep = document.getElementById('axonos_session_timer_sep');
         if (el) el.classList.add('axonos-session-timer--hidden');
         if (sep) sep.classList.add('axonos-session-timer--hidden');
+        const hud = document.getElementById('axonos_session_hud');
+        if (hud) {
+            hud.classList.add('axonos-session-hud--hidden');
+            hud.setAttribute('aria-hidden', 'true');
+        }
+    },
+
+    /** Top-right session HUD: wallet, billing rate and remaining credit time.
+     *  Driven by the same 1 s tick / server anchor as the footer countdown;
+     *  shown only while the remote desktop itself is on screen. */
+    _axgtUpdateSessionHud(remainingSeconds, thresholdSeconds) {
+        const hud = document.getElementById('axonos_session_hud');
+        if (!hud) return;
+        const show = UI._axgtSessionDesktopActive();
+        hud.classList.toggle('axonos-session-hud--hidden', !show);
+        hud.setAttribute('aria-hidden', show ? 'false' : 'true');
+        if (!show) return;
+
+        const walletEl = document.getElementById('axonos_session_hud_wallet');
+        if (walletEl) {
+            const addr = window.verifiedWalletAddress || '';
+            walletEl.textContent = addr.length >= 12
+                ? addr.slice(0, 6) + '…' + addr.slice(-4)
+                : (addr || '—');
+        }
+
+        const rateEl = document.getElementById('axonos_session_hud_rate');
+        if (rateEl) {
+            const gpuBilling = window.axonosGpuBillingEnabled === true;
+            const gpus = gpuBilling
+                ? Math.max(1, Number(window.axonosBillingGpuCount || 1))
+                : 1;
+            const storage = window.axonosConfig &&
+                window.axonosConfig.persistent_storage_enabled;
+            rateEl.textContent = gpus + '× rate / min' +
+                (storage ? ' + storage rate' : '');
+        }
+
+        const remEl = document.getElementById('axonos_session_hud_remaining');
+        if (remEl) {
+            remEl.textContent = (remainingSeconds / 60).toFixed(1) + ' min';
+        }
+        hud.classList.toggle('axonos-session-hud--warning',
+            remainingSeconds > 60 && remainingSeconds <= thresholdSeconds);
+        hud.classList.toggle('axonos-session-hud--critical',
+            remainingSeconds <= 60);
     },
 
     /** Render the interpolated countdown; self-stops once the session is no longer billing. */
@@ -2721,6 +2767,7 @@ const UI = {
         if (sep) sep.classList.remove('axonos-session-timer--hidden');
         el.classList.toggle('axonos-session-timer--warning', remaining > 60 && remaining <= threshold);
         el.classList.toggle('axonos-session-timer--critical', remaining <= 60);
+        UI._axgtUpdateSessionHud(remaining, threshold);
     },
 
     _axgtUpdateUsageOverlay(state, message) {

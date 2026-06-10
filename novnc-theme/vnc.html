@@ -796,6 +796,17 @@ Copyright (C) 2019 The noVNC Authors
     <!-- AxonOS Branding -->
     <div class="axonos-branding">AxonOS v0.1</div>
     <div class="axonos-version">GPU-Native Scientific Computing</div>
+
+    <!-- Session billing HUD — top-right corner, visible while the remote desktop is shown -->
+    <div id="axonos_session_hud" class="axonos-session-hud axonos-session-hud--hidden" aria-hidden="true"
+        title="Live billing status for this desktop session">
+        <div class="axonos-session-hud__row"><span class="axonos-session-hud__label">Connected Wallet:</span>
+            <span id="axonos_session_hud_wallet" class="axonos-session-hud__value">—</span></div>
+        <div class="axonos-session-hud__row"><span class="axonos-session-hud__label">Active Billing Rate:</span>
+            <span id="axonos_session_hud_rate" class="axonos-session-hud__value">—</span></div>
+        <div class="axonos-session-hud__row"><span class="axonos-session-hud__label">Remaining Credit Time:</span>
+            <span id="axonos_session_hud_remaining" class="axonos-session-hud__value">—</span></div>
+    </div>
     <div class="axonos-footer-banner"
         style="position:fixed;bottom:10px;left:0;right:0;text-align:center;font-size:11px;color:rgba(170,210,225,0.38);z-index:54;pointer-events:auto;font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.06em;">
         <span id="axonos_session_timer" class="axonos-session-timer axonos-session-timer--hidden"

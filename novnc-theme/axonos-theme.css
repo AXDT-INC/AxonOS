@@ -993,6 +993,50 @@ input[type="password"]::placeholder {
     }
 }
 
+/* Session billing HUD — fixed to the bottom-right corner of the remote desktop view.
+   pointer-events: none so it never swallows clicks meant for the desktop below. */
+.axonos-session-hud {
+    position: fixed;
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    right: calc(12px + env(safe-area-inset-right, 0px));
+    z-index: 56;
+    padding: 8px 12px;
+    background: rgba(10, 20, 36, 0.82);
+    border: 1px solid var(--hair-mint);
+    border-radius: 8px;
+    font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.7;
+    letter-spacing: 0.04em;
+    color: var(--ink-mute);
+    text-align: left;
+    pointer-events: none;
+    user-select: none;
+}
+
+.axonos-session-hud--hidden {
+    display: none !important;
+}
+
+.axonos-session-hud__label {
+    opacity: 0.72;
+}
+
+.axonos-session-hud__value {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: rgba(120, 230, 180, 0.95);
+}
+
+/* Mirror the footer countdown's warning/critical colors on the remaining-time line */
+.axonos-session-hud--warning #axonos_session_hud_remaining {
+    color: rgba(232, 168, 90, 0.98);
+}
+
+.axonos-session-hud--critical #axonos_session_hud_remaining {
+    color: rgba(242, 96, 122, 0.98);
+}
+
 .axonos-usage-overlay {
     position: fixed;
     inset: 0;
