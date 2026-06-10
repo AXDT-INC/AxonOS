@@ -1274,12 +1274,45 @@ export async function connectAxonOSWebRTC(opts) {
         }).catch(() => {});
     };
 
+    let disconnectGraceTimer = null;
+    let disconnectBannerShown = false;
     pc.onconnectionstatechange = () => {
         if (!UI.connected) {
             return;
         }
-        if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+        const st = pc.connectionState;
+        if (st === 'failed') {
+            if (disconnectGraceTimer) {
+                clearTimeout(disconnectGraceTimer);
+                disconnectGraceTimer = null;
+            }
+            disconnectBannerShown = true;
             _setBanner('WebRTC disconnected.', 'failed');
+        } else if (st === 'disconnected') {
+            // Transient by spec (missed consent checks); usually self-heals in
+            // seconds. Escalate to the red banner only if it persists.
+            disconnectBannerShown = true;
+            _setBanner('WebRTC: reconnecting…', 'reconnecting');
+            if (!disconnectGraceTimer) {
+                disconnectGraceTimer = setTimeout(() => {
+                    disconnectGraceTimer = null;
+                    if (pc.connectionState === 'disconnected') {
+                        _setBanner('WebRTC disconnected.', 'failed');
+                    }
+                }, 5000);
+            }
+        } else if (st === 'connected' && disconnectBannerShown) {
+            if (disconnectGraceTimer) {
+                clearTimeout(disconnectGraceTimer);
+                disconnectGraceTimer = null;
+            }
+            disconnectBannerShown = false;
+            _setBanner('WebRTC: Connected', 'connected');
+            setTimeout(() => {
+                if (!disconnectBannerShown && pc.connectionState === 'connected') {
+                    _hideBanner();
+                }
+            }, 2000);
         }
     };
 
@@ -1348,6 +1381,10 @@ export async function connectAxonOSWebRTC(opts) {
         if (inputHealthTimer) {
             clearInterval(inputHealthTimer);
             inputHealthTimer = null;
+        }
+        if (disconnectGraceTimer) {
+            clearTimeout(disconnectGraceTimer);
+            disconnectGraceTimer = null;
         }
         if (typeof UI.stopClipboardAutoSync === 'function') {
             try { UI.stopClipboardAutoSync(); } catch { /* ignore */ }
