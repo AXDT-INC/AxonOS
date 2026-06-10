@@ -805,13 +805,14 @@ def _cleanup_session_container(session_id: int) -> None:
     launcher.stop_session(session_id=session_id, container_id=None)
 
 
-def _spawn_session_container(session_id: int, wallet: str, profile: str, gpu_ids: List[int]) -> Tuple[bool, Optional[str], Optional[str]]:
+def _spawn_session_container(session_id: int, wallet: str, profile: str, gpu_ids: List[int], template: Optional[str] = None) -> Tuple[bool, Optional[str], Optional[str]]:
     launcher = _import_session_launcher()
     return launcher.launch_session(
         session_id=session_id,
         wallet=wallet,
         profile=profile,
         gpu_ids=gpu_ids,
+        template=template,
     )
 
 
@@ -847,7 +848,11 @@ def get_active_session() -> Optional[Dict[str, Any]]:
         conn.close()
 
 
-def try_claim_session(wallet_address: str, requested_profile: Optional[str] = None) -> Dict[str, Any]:
+def try_claim_session(
+    wallet_address: str,
+    requested_profile: Optional[str] = None,
+    requested_template: Optional[str] = None,
+) -> Dict[str, Any]:
     """Attempt to claim the desktop session for *wallet_address*.
 
     Returns a dict with at least ``granted`` (bool).  On failure, includes
@@ -973,6 +978,7 @@ def try_claim_session(wallet_address: str, requested_profile: Optional[str] = No
                     wallet=wallet,
                     profile=profile_name,
                     gpu_ids=allocated_gpu_ids,
+                    template=requested_template,
                 )
                 conn2 = _get_connection()
                 if conn2:

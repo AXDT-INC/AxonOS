@@ -242,6 +242,10 @@ def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], 
         ]
     )
 
+    requested_template = str(payload.get("requested_template") or "").strip()
+    if requested_template:
+        cmd.extend(["-e", f"AXONOS_SELECTED_TEMPLATE={requested_template}"])
+
     for env_name in _env_passthrough_names():
         if env_name in ("AXGT_DESKTOP_ENABLED", "WEBRTC_AGENT_ENABLED"):
             continue

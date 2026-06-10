@@ -91,6 +91,31 @@ class SessionLauncherTests(unittest.TestCase):
         self.assertEqual(cmd[idx + 1], "axgt-user-storage-0xabc123-xyz_:/home/aXonian")
 
     @patch("subprocess.check_output")
+    def test_launch_via_docker_cli_with_template(self, mock_check_output: MagicMock) -> None:
+        mock_check_output.return_value = "container_id_123"
+        os.environ["AXGT_SESSION_LAUNCHER_MODE"] = "docker_cli"
+        os.environ["AXGT_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"
+        os.environ["AXGT_USER_CONTAINER_ENABLED"] = "true"
+        os.environ["AXGT_PERSISTENT_STORAGE_ENABLED"] = "false"
+        
+        from session_launcher import launch_session
+        ok, cid, err = launch_session(
+            session_id=42,
+            wallet="0xAbC123",
+            profile="small",
+            gpu_ids=[0],
+            template="pytorch"
+        )
+        
+        self.assertTrue(ok)
+        mock_check_output.assert_called_once()
+        cmd = mock_check_output.call_args[0][0]
+        
+        # Verify requested template is passed as environment variable
+        self.assertIn("-e", cmd)
+        self.assertIn("AXONOS_SELECTED_TEMPLATE=pytorch", cmd)
+
+    @patch("subprocess.check_output")
     def test_launch_via_docker_cli_disabled(self, mock_check_output: MagicMock) -> None:
         mock_check_output.return_value = "container_id_123"
         os.environ["AXGT_SESSION_LAUNCHER_MODE"] = "docker_cli"
@@ -131,6 +156,25 @@ class SessionLauncherTests(unittest.TestCase):
         self.assertIn("-v", cmd)
         idx = cmd.index("-v")
         self.assertEqual(cmd[idx + 1], "axgt-user-storage-0xabc123-xyz_:/home/aXonian")
+
+    def test_service_build_launch_cmd_with_template(self) -> None:
+        os.environ["AXGT_HOST_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"
+        os.environ["AXGT_PERSISTENT_STORAGE_ENABLED"] = "false"
+        
+        from session_launcher_service import _build_launch_cmd
+        payload = {
+            "session_id": 42,
+            "wallet_address": "0xAbC123",
+            "requested_profile": "small",
+            "assigned_gpu_ids": [0],
+            "requested_template": "gromacs",
+        }
+        cmd, err = _build_launch_cmd(payload)
+        self.assertIsNone(err)
+        self.assertIsNotNone(cmd)
+        
+        self.assertIn("-e", cmd)
+        self.assertIn("AXONOS_SELECTED_TEMPLATE=gromacs", cmd)
 
     def test_service_build_launch_cmd_disabled(self) -> None:
         os.environ["AXGT_HOST_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"

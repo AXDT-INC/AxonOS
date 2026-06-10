@@ -43,6 +43,75 @@ const setSetting = (name, value) => {
 
 const PAGE_TITLE = "AxonOS Desktop";
 
+const AXONOS_TEMPLATES = [
+    {
+        id: 'pytorch',
+        title: 'PyTorch AI Lab',
+        category: 'ai-ml',
+        tags: ['AI/ML', 'Deep Learning'],
+        desc: 'Interactive PyTorch workspace for deep learning. Includes JupyterLab, torchvision, torchaudio, and common ML development tools pre-configured for GPU acceleration.',
+        image: 'axonos:public-beta',
+        verifyCmd: "python3 -c 'import torch; print(f\"PyTorch {torch.__version__} GPU active:\", torch.cuda.is_available())'",
+        packages: ['PyTorch 2.3+', 'CUDA 12.1', 'JupyterLab', 'TensorBoard', 'NumPy', 'Pandas'],
+        icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.44 2.5 2.5 0 0 1 0-3.12 3 3 0 0 1 0-4.88 2.5 2.5 0 0 1 0-3.12A2.5 2.5 0 0 1 9.5 2Z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.44 2.5 2.5 0 0 0 0-3.12 3 3 0 0 0 0-4.88 2.5 2.5 0 0 0 0-3.12A2.5 2.5 0 0 0 14.5 2Z"/></svg>'
+    },
+    {
+        id: 'gromacs',
+        title: 'GROMACS Molecular Dynamics',
+        category: 'bio-chem',
+        tags: ['Bio/Chem', 'Simulation'],
+        desc: 'Versatile package to perform molecular dynamics, i.e. simulate the Newtonian equations of motion for systems with hundreds to millions of particles. GPU-accelerated.',
+        image: 'axonos:public-beta',
+        verifyCmd: "gmx -version | grep -i 'gromacs version'",
+        packages: ['GROMACS 2024', 'CUDA Accelerated', 'VMD (Visual Molecular Dynamics)', 'OpenMM', 'MPI Support'],
+        icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><line x1="3" y1="20" x2="9" y2="14"/><line x1="21" y1="20" x2="15" y2="14"/><line x1="12" y1="3" x2="12" y2="9"/><circle cx="3" cy="20" r="2"/><circle cx="21" cy="20" r="2"/><circle cx="12" cy="3" r="2"/></svg>'
+    },
+    {
+        id: 'ugene',
+        title: 'UGENE Bioinformatics',
+        category: 'bio-chem',
+        tags: ['Bio/Chem', 'Genomics'],
+        desc: 'Integrated bioinformatics suite. Offers a graphical interface for DNA/protein sequence analysis, alignments, phylogenetics, and secondary structure prediction.',
+        image: 'axonos:public-beta',
+        verifyCmd: "ugenecl --version",
+        packages: ['UGENE 50.0', 'MUSCLE', 'ClustalW', 'BLAST+', 'Bowtie2', 'Samtools'],
+        icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 10.5C4.5 5.5 19.5 5.5 19.5 10.5C19.5 15.5 4.5 15.5 4.5 20.5"/><path d="M19.5 10.5C19.5 5.5 4.5 5.5 4.5 10.5C4.5 15.5 19.5 15.5 19.5 20.5"/><line x1="6" y1="8" x2="18" y2="8"/><line x1="6" y1="18" x2="18" y2="18"/><line x1="12" y1="5.5" x2="12" y2="15.5"/></svg>'
+    },
+    {
+        id: 'quantum-espresso',
+        title: 'Quantum ESPRESSO',
+        category: 'physics-quantum',
+        tags: ['Physics', 'Quantum'],
+        desc: 'An integrated suite of Open-Source computer codes for electronic-structure calculations and materials modeling at the nanoscale, based on DFT, plane waves, and pseudopotentials.',
+        image: 'axonos:public-beta',
+        verifyCmd: "pw.x --version",
+        packages: ['Quantum ESPRESSO 7.3', 'OpenMPI', 'ScaLAPACK', 'XCrySDen', 'Gnuplot'],
+        icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="12" rx="3" ry="9" transform="rotate(45 12 12)"/><ellipse cx="12" cy="12" rx="3" ry="9" transform="rotate(-45 12 12)"/><circle cx="12" cy="12" r="2"/></svg>'
+    },
+    {
+        id: 'rstudio',
+        title: 'RStudio Data Science',
+        category: 'data-science',
+        tags: ['Data Science', 'Statistics'],
+        desc: 'Comprehensive R workspace for statistical computing and visualization. Preloaded with tidyverse, ggplot2, shiny, and devtools for scientific data analyses.',
+        image: 'axonos:public-beta',
+        verifyCmd: "R --version | head -n 1",
+        packages: ['R 4.4.0', 'RStudio Desktop', 'tidyverse', 'ggplot2', 'shiny', 'caret'],
+        icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>'
+    },
+    {
+        id: 'beakerx',
+        title: 'BeakerX Jupyter Lab',
+        category: 'data-science',
+        tags: ['Data Science', 'Polyglot'],
+        desc: 'An extension to Jupyter Notebook and JupyterLab containing JVM kernels (Java, Kotlin, Groovy, Scala, Clojure), interactive widgets, plotting, and table enhancements.',
+        image: 'axonos:public-beta',
+        verifyCmd: "jupyter kernelspec list",
+        packages: ['JupyterLab 4.1', 'JVM Kernels (Scala, Kotlin, Java)', 'BeakerX Widgets', 'Plotly', 'Spark Integration'],
+        icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 3h15"/><path d="M6 3v16a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V3"/><path d="M6 14h12"/></svg>'
+    }
+];
+
 const UI = {
 
     connected: false,
@@ -147,6 +216,7 @@ const UI = {
         UI.addExtraKeysHandlers();
         UI.addMachineHandlers();
         UI.addAxonosSessionLifecycleHandlers();
+        UI.initAxonosTemplates();
         UI.addConnectionControlHandlers();
         UI.addClipboardHandlers();
         UI.addSettingsHandlers();
@@ -400,6 +470,416 @@ const UI = {
             }
             UI._axonosReleaseSessionBeacon();
         });
+    },
+
+    initAxonosTemplates() {
+        // Initialize active template ID state
+        window.axonosSelectedTemplateId = null;
+
+        // Toggle logic for Tab Navigation
+        const templatesTabBtn = document.getElementById('axonos_tab_btn_templates');
+        const aboutTabBtn = document.getElementById('axonos_tab_btn_about');
+        const templatesPane = document.getElementById('tab-templates');
+        const aboutPane = document.getElementById('tab-about');
+
+        if (templatesTabBtn && aboutTabBtn && templatesPane && aboutPane) {
+            templatesTabBtn.addEventListener('click', () => {
+                templatesTabBtn.classList.add('active');
+                aboutTabBtn.classList.remove('active');
+                templatesPane.classList.add('active');
+                aboutPane.classList.remove('active');
+            });
+
+            aboutTabBtn.addEventListener('click', () => {
+                aboutTabBtn.classList.add('active');
+                templatesTabBtn.classList.remove('active');
+                aboutPane.classList.add('active');
+                templatesPane.classList.remove('active');
+            });
+        }
+
+        // Live Search Input logic
+        const searchInput = document.getElementById('axonos_template_search');
+        let currentSearchTerm = '';
+        let currentCategory = 'all';
+
+        if (searchInput) {
+            searchInput.addEventListener('input', (e) => {
+                currentSearchTerm = e.target.value;
+                UI.renderAxonosTemplates(currentSearchTerm, currentCategory);
+            });
+        }
+
+        // Filter Pills Category logic
+        const filterPills = document.querySelectorAll('.axonos-filter-pill');
+        filterPills.forEach(pill => {
+            pill.addEventListener('click', () => {
+                filterPills.forEach(p => p.classList.remove('active'));
+                pill.classList.add('active');
+                currentCategory = pill.getAttribute('data-category') || 'all';
+                UI.renderAxonosTemplates(currentSearchTerm, currentCategory);
+            });
+        });
+
+        // Close Modal Event Listeners
+        const modal = document.getElementById('axonos_template_modal');
+        const modalClose = document.getElementById('axonos_modal_close');
+        const modalOverlay = document.getElementById('axonos_modal_overlay');
+
+        const closeModal = () => {
+            if (modal) {
+                modal.classList.remove('active');
+                modal.setAttribute('aria-hidden', 'true');
+            }
+        };
+
+        if (modalClose) {
+            modalClose.addEventListener('click', closeModal);
+        }
+        if (modalOverlay) {
+            modalOverlay.addEventListener('click', closeModal);
+        }
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && modal && modal.classList.contains('active')) {
+                closeModal();
+            }
+        });
+
+        // Initial Render
+        UI.renderAxonosTemplates('', 'all');
+        UI.updateAxonosSelectedTemplateBanner();
+    },
+
+    renderAxonosTemplates(searchTerm = '', activeCategory = 'all') {
+        const grid = document.getElementById('axonos_templates_grid');
+        if (!grid) return;
+        grid.replaceChildren();
+
+        const filtered = AXONOS_TEMPLATES.filter(t => {
+            const matchesCategory = (activeCategory === 'all' || t.category === activeCategory);
+            const matchesSearch = !searchTerm || 
+                t.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                t.desc.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                t.tags.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase())) ||
+                t.packages.some(pkg => pkg.toLowerCase().includes(searchTerm.toLowerCase()));
+            return matchesCategory && matchesSearch;
+        });
+
+        if (filtered.length === 0) {
+            const noResults = document.createElement('div');
+            noResults.className = 'axonos-no-templates';
+            noResults.style.gridColumn = '1 / -1';
+            noResults.style.textAlign = 'center';
+            noResults.style.padding = '2rem';
+            noResults.style.color = 'var(--ink-mute)';
+            noResults.style.fontFamily = 'var(--font-mono)';
+            noResults.textContent = 'No matching templates found.';
+            grid.appendChild(noResults);
+            return;
+        }
+
+        const parser = new DOMParser();
+
+        filtered.forEach(t => {
+            const card = document.createElement('div');
+            card.className = 'axonos-template-card';
+            if (window.axonosSelectedTemplateId === t.id) {
+                card.classList.add('selected');
+            }
+
+            // Header
+            const header = document.createElement('div');
+            header.className = 'axonos-template-header';
+
+            const iconWrap = document.createElement('div');
+            iconWrap.className = 'axonos-template-icon-wrap';
+            try {
+                const parsedSvg = parser.parseFromString(t.icon, 'image/svg+xml');
+                iconWrap.appendChild(parsedSvg.documentElement);
+            } catch (err) {
+                iconWrap.textContent = '🧬';
+            }
+
+            const meta = document.createElement('div');
+            meta.className = 'axonos-template-meta';
+            t.tags.forEach(tag => {
+                const tagEl = document.createElement('span');
+                tagEl.className = 'axonos-template-tag';
+                tagEl.textContent = tag;
+                meta.appendChild(tagEl);
+            });
+
+            header.appendChild(iconWrap);
+            header.appendChild(meta);
+            card.appendChild(header);
+
+            // Title
+            const title = document.createElement('h4');
+            title.className = 'axonos-template-title';
+            title.textContent = t.title;
+            card.appendChild(title);
+
+            // Description
+            const desc = document.createElement('p');
+            desc.className = 'axonos-template-desc';
+            desc.textContent = t.desc;
+            card.appendChild(desc);
+
+            // Image info
+            const imageInfo = document.createElement('div');
+            imageInfo.className = 'axonos-template-image-info';
+            const code = document.createElement('code');
+            code.textContent = t.image;
+            imageInfo.appendChild(code);
+            card.appendChild(imageInfo);
+
+            // Actions
+            const actions = document.createElement('div');
+            actions.className = 'axonos-template-actions';
+
+            const selectBtn = document.createElement('button');
+            selectBtn.type = 'button';
+            selectBtn.className = 'axonos-template-btn select-btn';
+            if (window.axonosSelectedTemplateId === t.id) {
+                selectBtn.textContent = 'Selected';
+            } else {
+                selectBtn.textContent = 'Select';
+            }
+            selectBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (window.axonosSelectedTemplateId === t.id) {
+                    window.axonosSelectedTemplateId = null;
+                } else {
+                    window.axonosSelectedTemplateId = t.id;
+                }
+                UI.updateAxonosSelectedTemplateBanner();
+                UI.renderAxonosTemplates(searchTerm, activeCategory);
+            });
+
+            const infoBtn = document.createElement('button');
+            infoBtn.type = 'button';
+            infoBtn.className = 'axonos-template-btn info-btn';
+            infoBtn.textContent = 'Info';
+            infoBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                UI.showAxonosTemplateDetails(t);
+            });
+
+            actions.appendChild(selectBtn);
+            actions.appendChild(infoBtn);
+            card.appendChild(actions);
+
+            // Card click also selects/deselects
+            card.addEventListener('click', () => {
+                if (window.axonosSelectedTemplateId === t.id) {
+                    window.axonosSelectedTemplateId = null;
+                } else {
+                    window.axonosSelectedTemplateId = t.id;
+                }
+                UI.updateAxonosSelectedTemplateBanner();
+                UI.renderAxonosTemplates(searchTerm, activeCategory);
+            });
+
+            grid.appendChild(card);
+        });
+    },
+
+    updateAxonosSelectedTemplateBanner() {
+        const banner = document.getElementById('axonos_selected_template_banner');
+        const iconEl = document.getElementById('axonos_selected_template_icon');
+        const titleEl = document.getElementById('axonos_selected_template_title');
+        if (!banner || !iconEl || !titleEl) return;
+
+        const currentId = window.axonosSelectedTemplateId;
+        if (!currentId) {
+            iconEl.replaceChildren();
+            iconEl.textContent = '🧬';
+            titleEl.textContent = 'AxonOS Default Desktop';
+            banner.style.borderColor = 'var(--rule-strong)';
+            banner.style.boxShadow = 'none';
+            return;
+        }
+
+        const template = AXONOS_TEMPLATES.find(t => t.id === currentId);
+        if (template) {
+            iconEl.replaceChildren();
+            try {
+                const parsedSvg = new DOMParser().parseFromString(template.icon, 'image/svg+xml');
+                iconEl.appendChild(parsedSvg.documentElement);
+            } catch (err) {
+                iconEl.textContent = '🧬';
+            }
+            titleEl.textContent = template.title;
+            banner.style.borderColor = 'var(--cyan)';
+            banner.style.boxShadow = '0 0 12px rgba(78, 195, 212, 0.15)';
+        } else {
+            iconEl.replaceChildren();
+            iconEl.textContent = '🧬';
+            titleEl.textContent = 'AxonOS Default Desktop';
+            banner.style.borderColor = 'var(--rule-strong)';
+            banner.style.boxShadow = 'none';
+        }
+    },
+
+    showAxonosTemplateDetails(t) {
+        const modal = document.getElementById('axonos_template_modal');
+        const modalBody = document.getElementById('axonos_modal_body');
+        if (!modal || !modalBody) return;
+
+        modalBody.replaceChildren();
+        const parser = new DOMParser();
+
+        // Title wrap
+        const titleWrap = document.createElement('div');
+        titleWrap.className = 'axonos-m-title-wrap';
+
+        const iconBox = document.createElement('div');
+        iconBox.className = 'axonos-m-icon-box';
+        try {
+            const parsedSvg = parser.parseFromString(t.icon, 'image/svg+xml');
+            iconBox.appendChild(parsedSvg.documentElement);
+        } catch (err) {
+            iconBox.textContent = '🧬';
+        }
+
+        const title = document.createElement('h3');
+        title.className = 'axonos-m-title';
+        title.id = 'axonos_modal_title';
+        title.textContent = t.title;
+
+        titleWrap.appendChild(iconBox);
+        titleWrap.appendChild(title);
+        modalBody.appendChild(titleWrap);
+
+        // Tags
+        const tagsWrap = document.createElement('div');
+        tagsWrap.className = 'axonos-m-tags';
+        t.tags.forEach(tag => {
+            const tagEl = document.createElement('span');
+            tagEl.className = 'axonos-template-tag';
+            tagEl.textContent = tag;
+            tagsWrap.appendChild(tagEl);
+        });
+        modalBody.appendChild(tagsWrap);
+
+        // Description
+        const desc = document.createElement('p');
+        desc.className = 'axonos-m-desc';
+        desc.textContent = t.desc;
+        modalBody.appendChild(desc);
+
+        // Docker Image Section
+        const imgSec = document.createElement('div');
+        imgSec.className = 'axonos-m-section';
+
+        const imgSecTitle = document.createElement('h5');
+        imgSecTitle.className = 'axonos-m-section-title';
+        imgSecTitle.textContent = 'Unified Base Docker Image';
+        imgSec.appendChild(imgSecTitle);
+
+        const imgBox = document.createElement('div');
+        imgBox.className = 'axonos-m-image-box';
+
+        const imgCode = document.createElement('code');
+        imgCode.textContent = 'axonos:public-beta';
+        imgBox.appendChild(imgCode);
+
+        const copyBtn = document.createElement('button');
+        copyBtn.type = 'button';
+        copyBtn.className = 'axonos-m-copy-btn';
+        copyBtn.textContent = 'Copy';
+        copyBtn.addEventListener('click', () => {
+            navigator.clipboard.writeText('axonos:public-beta').then(() => {
+                copyBtn.textContent = 'Copied!';
+                setTimeout(() => {
+                    copyBtn.textContent = 'Copy';
+                }, 2000);
+            }).catch(err => {
+                Log.Error('Could not copy docker image to clipboard: ' + err);
+            });
+        });
+        imgBox.appendChild(copyBtn);
+        imgSec.appendChild(imgBox);
+        modalBody.appendChild(imgSec);
+
+        // Env Variable Section
+        const envSec = document.createElement('div');
+        envSec.className = 'axonos-m-section';
+
+        const envSecTitle = document.createElement('h5');
+        envSecTitle.className = 'axonos-m-section-title';
+        envSecTitle.textContent = 'Runtime Activation Variable';
+        envSec.appendChild(envSecTitle);
+
+        const envBox = document.createElement('div');
+        envBox.className = 'axonos-m-image-box';
+
+        const envCode = document.createElement('code');
+        envCode.textContent = `AXONOS_SELECTED_TEMPLATE=${t.id}`;
+        envBox.appendChild(envCode);
+
+        const copyEnvBtn = document.createElement('button');
+        copyEnvBtn.type = 'button';
+        copyEnvBtn.className = 'axonos-m-copy-btn';
+        copyEnvBtn.textContent = 'Copy';
+        copyEnvBtn.addEventListener('click', () => {
+            navigator.clipboard.writeText(`AXONOS_SELECTED_TEMPLATE=${t.id}`).then(() => {
+                copyEnvBtn.textContent = 'Copied!';
+                setTimeout(() => {
+                    copyEnvBtn.textContent = 'Copy';
+                }, 2000);
+            }).catch(err => {
+                Log.Error('Could not copy env variable to clipboard: ' + err);
+            });
+        });
+        envBox.appendChild(copyEnvBtn);
+        envSec.appendChild(envBox);
+        modalBody.appendChild(envSec);
+
+        // Pre-installed Packages
+        const pkgSec = document.createElement('div');
+        pkgSec.className = 'axonos-m-section';
+
+        const pkgSecTitle = document.createElement('h5');
+        pkgSecTitle.className = 'axonos-m-section-title';
+        pkgSecTitle.textContent = 'Pre-installed Packages';
+        pkgSec.appendChild(pkgSecTitle);
+
+        const pkgGrid = document.createElement('div');
+        pkgGrid.className = 'axonos-m-pkgs-grid';
+        t.packages.forEach(pkg => {
+            const pkgBadge = document.createElement('span');
+            pkgBadge.className = 'axonos-m-pkg-badge';
+            pkgBadge.textContent = pkg;
+            pkgGrid.appendChild(pkgBadge);
+        });
+        pkgSec.appendChild(pkgGrid);
+        modalBody.appendChild(pkgSec);
+
+        // Shell Verification Command
+        const verifySec = document.createElement('div');
+        verifySec.className = 'axonos-m-section';
+
+        const verifySecTitle = document.createElement('h5');
+        verifySecTitle.className = 'axonos-m-section-title';
+        verifySecTitle.textContent = 'Verification Command (inside container)';
+        verifySec.appendChild(verifySecTitle);
+
+        const cmdBox = document.createElement('div');
+        cmdBox.className = 'axonos-m-command-box';
+
+        const pre = document.createElement('pre');
+        const codeEl = document.createElement('code');
+        codeEl.textContent = t.verifyCmd;
+        pre.appendChild(codeEl);
+        cmdBox.appendChild(pre);
+
+        verifySec.appendChild(cmdBox);
+        modalBody.appendChild(verifySec);
+
+        // Show Modal
+        modal.classList.add('active');
+        modal.setAttribute('aria-hidden', 'false');
     },
 
     addConnectionControlHandlers() {
@@ -1429,6 +1909,9 @@ const UI = {
             payload.requested_profile = (typeof window.axonosGetRequestedProfile === 'function')
                 ? window.axonosGetRequestedProfile()
                 : 'small';
+            if (window.axonosSelectedTemplateId) {
+                payload.requested_template = window.axonosSelectedTemplateId;
+            }
         }
         const url = new URL('/api/session/claim', window.location.origin).toString();
         const headers = {

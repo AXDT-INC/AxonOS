@@ -367,7 +367,8 @@ Copyright (C) 2019 The noVNC Authors
                 <p class="axonos-mobile-notice__text">AxonOS Desktop is designed for laptop and desktop use. For the
                     best experience, please open this page on a computer.</p>
             </div>
-            <!-- AxonOS Vision Header -->
+
+            <!-- AxonOS Vision Header (Spans both columns) -->
             <div class="axonos-vision-header">
                 <div class="axonos-particles"></div>
                 <h1 class="axonos-main-title">Axon<span class="axonos-highlight">OS</span> <span
@@ -377,23 +378,112 @@ Copyright (C) 2019 The noVNC Authors
                 <!-- Network banner: filled by applyAxonosNetworkEnvironmentUi() from /api/config axgt_chain_id (server AXGT_CHAIN_ID). -->
                 <p id="axonos_landing_network" class="axonos-network-banner axonos-network-banner--hidden"
                     aria-live="polite"></p>
-                <p id="axonos_session_storage_hint" style="font-size:0.72em;color:rgba(232,168,90,0.72);margin:0.4rem auto 0;max-width:26rem;line-height:1.5;text-align:center;font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.01em;">Sessions are<strong style="color:#e8a85a;margin-left:0.3em;">ephemeral</strong> — files and changes are NOT saved between sessions. Credits are consumed per GPU per wall-clock minute while active. Top up before expiry (or within 2 hours after) to keep your running session alive. Unused credits remain unspent for subsequent sessions. Persistent storage coming soon.</p>
+                <p id="axonos_session_storage_hint" style="font-size:0.72em;color:rgba(232,168,90,0.72);margin:0.4rem auto 0;max-width:min(96rem, 94%);line-height:1.5;text-align:center;font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.01em;">Sessions are <strong style="color:#e8a85a;margin-left:0.3em;">ephemeral</strong> — files and changes are NOT saved between sessions. Credits are consumed per GPU per wall-clock minute while active. Top up before expiry (or within 2 hours after) to keep your running session alive. Unused credits remain unspent for subsequent sessions. Persistent storage coming soon.</p>
                 <div class="axonos-dna-animation"></div>
             </div>
 
-            <!-- Mission Statement -->
-            <div class="axonos-mission">
-                <p class="axonos-mission-text">
-                    ⚡ <strong>GPU-Native</strong> • 🖥️ <strong>Full Desktop</strong> • 🚀 <strong>Raw
-                        Performance</strong>
-                </p>
-                <p class="axonos-subtitle">
-                    Direct driver passthrough. No virtualization overhead. Your GPU. Your Desktop.
-                </p>
+            <!-- Left column: Hero and Tabs content -->
+            <div class="axonos-hero-panel">
+
+                <!-- Tab Headers -->
+                <div class="axonos-tabs-nav">
+                    <button type="button" class="axonos-tab-btn active" id="axonos_tab_btn_templates" data-tab="templates">🧬 Science Templates</button>
+                    <button type="button" class="axonos-tab-btn" id="axonos_tab_btn_about" data-tab="about">ℹ️ About AxonOS</button>
+                </div>
+
+                <!-- Tab Content panes -->
+                <div class="axonos-tabs-content">
+                    <!-- Templates View -->
+                    <div class="axonos-tab-pane active" id="tab-templates">
+                        <div class="axonos-templates-controls">
+                            <div class="axonos-search-wrap">
+                                <input type="text" id="axonos_template_search" class="axonos-templates-search-input" placeholder="Search scientific templates (e.g. PyTorch, GROMACS)..." autocomplete="off" spellcheck="false" />
+                            </div>
+                            <div class="axonos-filter-pills" id="axonos_filter_pills">
+                                <button type="button" class="axonos-filter-pill active" data-category="all">All</button>
+                                <button type="button" class="axonos-filter-pill" data-category="ai-ml">AI / ML</button>
+                                <button type="button" class="axonos-filter-pill" data-category="bio-chem">Bio / Chem</button>
+                                <button type="button" class="axonos-filter-pill" data-category="data-science">Data Science</button>
+                                <button type="button" class="axonos-filter-pill" data-category="physics-quantum">Physics / Quantum</button>
+                            </div>
+                        </div>
+                        <div class="axonos-templates-grid" id="axonos_templates_grid">
+                            <!-- Populated programmatically in ui.js to prevent unsafe HTML injection -->
+                        </div>
+                    </div>
+
+                    <!-- About View -->
+                    <div class="axonos-tab-pane" id="tab-about">
+                        <!-- Mission Statement -->
+                        <div class="axonos-mission">
+                            <p class="axonos-mission-text">
+                                ⚡ <strong>GPU-Native</strong> • 🖥️ <strong>Full Desktop</strong> • 🚀 <strong>Raw
+                                    Performance</strong>
+                            </p>
+                            <p class="axonos-subtitle">
+                                Direct driver passthrough. No virtualization overhead. Your GPU. Your Desktop.
+                            </p>
+                        </div>
+                        <!-- Feature Highlights -->
+                        <div class="axonos-features">
+                            <div class="axonos-feature">
+                                <div class="axonos-feature-icon">⚡</div>
+                                <div class="axonos-feature-text">GPU-Native</div>
+                            </div>
+                            <div class="axonos-feature">
+                                <div class="axonos-feature-icon">🔬</div>
+                                <div class="axonos-feature-text">Scientific Tools</div>
+                            </div>
+                            <div class="axonos-feature">
+                                <div class="axonos-feature-icon">🧠</div>
+                                <div class="axonos-feature-text">AI Assistant</div>
+                            </div>
+                            <div class="axonos-feature">
+                                <div class="axonos-feature-icon">🖥️</div>
+                                <div class="axonos-feature-text">Full Desktop</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
-            <!-- Connect stack: GPU profile + launch (or resume saved session after credit pause) -->
+            <!-- Right Column: Connect Pane -->
             <div class="axonos-connect-wrapper">
+                <!-- Selected template banner -->
+                <div class="axonos-selected-template-banner" id="axonos_selected_template_banner">
+                    <span class="axonos-selected-template-label">Selected Environment</span>
+                    <div class="axonos-selected-template-title-wrap">
+                        <span class="axonos-selected-template-icon" id="axonos_selected_template_icon">🧬</span>
+                        <span class="axonos-selected-template-title" id="axonos_selected_template_title">AxonOS Default Desktop</span>
+                    </div>
+                </div>
+
+                <!-- Specs Overview Panel -->
+                <div class="axonos-specs-panel">
+                    <span class="axonos-selected-template-label">Environment Specs</span>
+                    <div class="axonos-spec-item">
+                        <span class="axonos-spec-icon">⚡</span>
+                        <div class="axonos-spec-details">
+                            <span class="axonos-spec-name">GPU Passthrough</span>
+                            <span class="axonos-spec-desc">Dedicated PCIe driver passthrough</span>
+                        </div>
+                    </div>
+                    <div class="axonos-spec-item">
+                        <span class="axonos-spec-icon">🖥️</span>
+                        <div class="axonos-spec-details">
+                            <span class="axonos-spec-name">Linux Desktop</span>
+                            <span class="axonos-spec-desc">XFCE4 with direct rendering</span>
+                        </div>
+                    </div>
+                    <div class="axonos-spec-item">
+                        <span class="axonos-spec-icon">📦</span>
+                        <div class="axonos-spec-details">
+                            <span class="axonos-spec-name">Storage Volume</span>
+                            <span class="axonos-spec-desc">Persistent host-backed home directory</span>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="axonos_resume_panel" class="axonos-resume-panel axonos-resume-panel--hidden"
                     aria-live="polite">
                     <p class="axonos-resume-panel__title">Your desktop is saved</p>
@@ -422,27 +512,7 @@ Copyright (C) 2019 The noVNC Authors
                 </div>
             </div>
 
-            <!-- Feature Highlights -->
-            <div class="axonos-features">
-                <div class="axonos-feature">
-                    <div class="axonos-feature-icon">⚡</div>
-                    <div class="axonos-feature-text">GPU-Native</div>
-                </div>
-                <div class="axonos-feature">
-                    <div class="axonos-feature-icon">🔬</div>
-                    <div class="axonos-feature-text">Scientific Tools</div>
-                </div>
-                <div class="axonos-feature">
-                    <div class="axonos-feature-icon">🧠</div>
-                    <div class="axonos-feature-text">AI Assistant</div>
-                </div>
-                <div class="axonos-feature">
-                    <div class="axonos-feature-icon">🖥️</div>
-                    <div class="axonos-feature-text">Full Desktop</div>
-                </div>
-            </div>
-
-            <!-- Scientific Quote -->
+            <!-- Scientific Quote (Footer) -->
             <div class="axonos-quote">
                 <p>"The best way to predict the future is to invent it."</p>
                 <cite>— Alan Kay</cite>
@@ -725,7 +795,7 @@ Copyright (C) 2019 The noVNC Authors
     <!-- AxonOS Branding -->
     <div class="axonos-branding">AxonOS v0.1</div>
     <div class="axonos-version">GPU-Native Scientific Computing</div>
-    <div
+    <div class="axonos-footer-banner"
         style="position:fixed;bottom:10px;left:0;right:0;text-align:center;font-size:11px;color:rgba(170,210,225,0.38);z-index:54;pointer-events:auto;font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.06em;">
         <span id="axonos_session_timer" class="axonos-session-timer axonos-session-timer--hidden"
             title="Desktop time remaining on your prepaid credit"><span
@@ -744,6 +814,36 @@ Copyright (C) 2019 The noVNC Authors
                     d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
             </svg></a>
     </div>
+
+    <!-- Template Details Modal -->
+    <div id="axonos_template_modal" class="axonos-modal" aria-hidden="true" role="dialog" aria-labelledby="axonos_modal_title">
+        <div class="axonos-modal-overlay" id="axonos_modal_overlay"></div>
+        <div class="axonos-modal-content">
+            <button type="button" id="axonos_modal_close" class="axonos-modal-close" aria-label="Close modal">&times;</button>
+            <div id="axonos_modal_body">
+                <!-- Programmatically populated in ui.js to comply with DOM parsing security rules -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+    // Landing-page scrollbars: reveal only while actively scrolling, then fade out.
+    // CSS keeps the themed thumb transparent until <html> carries .axonos-scrolling.
+    (function () {
+        var hideTimer = null;
+        function markScrolling() {
+            var root = document.documentElement;
+            root.classList.add('axonos-scrolling');
+            if (hideTimer) clearTimeout(hideTimer);
+            hideTimer = setTimeout(function () {
+                root.classList.remove('axonos-scrolling');
+            }, 900);
+        }
+        // Capture phase: scroll events don't bubble, so this catches scrolling from
+        // the document and from the inner fixed scroll container alike.
+        window.addEventListener('scroll', markScrolling, true);
+    }());
+    </script>
 </body>
 
 </html>

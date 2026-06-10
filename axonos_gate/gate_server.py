@@ -897,12 +897,13 @@ def api_session_claim():
     data = request.get_json() or {}
     wallet_address = (data.get('wallet_address') or '').strip()
     requested_profile = (data.get('requested_profile') or '').strip() or None
+    requested_template = (data.get('requested_template') or '').strip() or None
     if not wallet_address or not validate_wallet_address(wallet_address):
         return jsonify({"granted": False, "error": "Valid wallet_address required"}), 400
     auth_err = _require_auth_token(wallet_address)
     if auth_err:
         return auth_err
-    return jsonify(try_claim_session(wallet_address, requested_profile=requested_profile))
+    return jsonify(try_claim_session(wallet_address, requested_profile=requested_profile, requested_template=requested_template))
 
 
 @app.route('/api/session/heartbeat', methods=['POST', 'OPTIONS'])
