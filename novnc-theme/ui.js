@@ -73,7 +73,7 @@ const AXONOS_TEMPLATES = [
         tags: ['Bio/Chem', 'Genomics'],
         desc: 'Integrated bioinformatics suite. Offers a graphical interface for DNA/protein sequence analysis, alignments, phylogenetics, and secondary structure prediction.',
         image: 'axonos:public-beta',
-        verifyCmd: "ugenecl --version",
+        verifyCmd: "ugenecl --task help | head -n 1",
         packages: ['UGENE 50.0', 'MUSCLE', 'ClustalW', 'BLAST+', 'Bowtie2', 'Samtools'],
         icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 10.5C4.5 5.5 19.5 5.5 19.5 10.5C19.5 15.5 4.5 15.5 4.5 20.5"/><path d="M19.5 10.5C19.5 5.5 4.5 5.5 4.5 10.5C4.5 15.5 19.5 15.5 19.5 20.5"/><line x1="6" y1="8" x2="18" y2="8"/><line x1="6" y1="18" x2="18" y2="18"/><line x1="12" y1="5.5" x2="12" y2="15.5"/></svg>'
     },
@@ -84,7 +84,7 @@ const AXONOS_TEMPLATES = [
         tags: ['Physics', 'Quantum'],
         desc: 'An integrated suite of Open-Source computer codes for electronic-structure calculations and materials modeling at the nanoscale, based on DFT, plane waves, and pseudopotentials.',
         image: 'axonos:public-beta',
-        verifyCmd: "pw.x --version",
+        verifyCmd: "echo | pw.x 2>&1 | grep -i 'Program PWSCF'",
         packages: ['Quantum ESPRESSO 7.3', 'OpenMPI', 'ScaLAPACK', 'XCrySDen', 'Gnuplot'],
         icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="12" rx="3" ry="9" transform="rotate(45 12 12)"/><ellipse cx="12" cy="12" rx="3" ry="9" transform="rotate(-45 12 12)"/><circle cx="12" cy="12" r="2"/></svg>'
     },
@@ -472,9 +472,26 @@ const UI = {
         });
     },
 
+    persistAxonosSelectedTemplate() {
+        // Persist across the End-session → page-reload cycle (same tab) so a launch
+        // after reload still carries the template. Templates apply only at spawn.
+        try {
+            if (window.axonosSelectedTemplateId) {
+                window.sessionStorage.setItem('axonosSelectedTemplateId', window.axonosSelectedTemplateId);
+            } else {
+                window.sessionStorage.removeItem('axonosSelectedTemplateId');
+            }
+        } catch (e) { /* sessionStorage unavailable; selection just won't persist */ }
+    },
+
     initAxonosTemplates() {
-        // Initialize active template ID state
-        window.axonosSelectedTemplateId = null;
+        // Restore the last selection (survives reload); ignore unknown ids.
+        let restored = null;
+        try { restored = window.sessionStorage.getItem('axonosSelectedTemplateId'); } catch (e) { restored = null; }
+        if (restored && !AXONOS_TEMPLATES.some(t => t.id === restored)) {
+            restored = null;
+        }
+        window.axonosSelectedTemplateId = restored;
 
         // Toggle logic for Tab Navigation
         const templatesTabBtn = document.getElementById('axonos_tab_btn_templates');
@@ -652,6 +669,7 @@ const UI = {
                 } else {
                     window.axonosSelectedTemplateId = t.id;
                 }
+                UI.persistAxonosSelectedTemplate();
                 UI.updateAxonosSelectedTemplateBanner();
                 UI.renderAxonosTemplates(searchTerm, activeCategory);
             });
@@ -676,6 +694,7 @@ const UI = {
                 } else {
                     window.axonosSelectedTemplateId = t.id;
                 }
+                UI.persistAxonosSelectedTemplate();
                 UI.updateAxonosSelectedTemplateBanner();
                 UI.renderAxonosTemplates(searchTerm, activeCategory);
             });

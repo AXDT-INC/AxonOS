@@ -90,6 +90,18 @@ elif [ -z "${AXGT_SESSION_ID:-}" ]; then
     fi
 fi
 
+# Persist the selected environment template so the desktop session can align its
+# hero app with the user's choice. XFCE is started by supervisord with a fixed
+# environment= subset and does NOT inherit Docker ENV (see supervisord.conf), so
+# the autostart launcher reads this file instead of AXONOS_SELECTED_TEMPLATE.
+mkdir -p /home/aXonian/.config/axonos
+if [ -n "${AXONOS_SELECTED_TEMPLATE:-}" ]; then
+    printf '%s\n' "${AXONOS_SELECTED_TEMPLATE}" > /home/aXonian/.config/axonos/selected_template
+else
+    rm -f /home/aXonian/.config/axonos/selected_template 2>/dev/null || true
+fi
+chown -R aXonian:aXonian /home/aXonian/.config/axonos
+
 # Start supervisord
 /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf &
 
@@ -263,6 +275,12 @@ chmod +x /tmp/setup_x.sh
 if [ "${AXGT_DESKTOP_ENABLED:-true}" != "false" ]; then
     su - aXonian -c '/tmp/setup_x.sh'
     ( sleep 35; /usr/local/bin/post_deploy_theme.sh ) &
+    # Auto-launch the selected template's hero app once the desktop is up. Driven
+    # from here (not XDG autostart) because ~/.config/autostart is on the persistent
+    # home volume and would shadow any baked-in entry. The launcher reads the
+    # template id from the file written above, self-gates if none is set, and
+    # waits for X + xfce4-panel itself (no fixed delay needed here).
+    ( su - aXonian -c 'DISPLAY=:0 XAUTHORITY=/home/aXonian/.Xauthority /usr/local/bin/apply_session_template.sh' ) &
     echo "== Xorg log =="; ls -l /var/log/Xorg.0.log 2>/dev/null || true
     test -f /var/log/Xorg.0.log && tail -n 80 /var/log/Xorg.0.log || true
     ls -l /tmp/.X11-unix/X0 /tmp/.X0-lock 2>/dev/null || true

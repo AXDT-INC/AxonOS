@@ -100,7 +100,8 @@ Copyright (C) 2019 The noVNC Authors
     }());
     </script>
     <script src="app/error-handler.js"></script>
-    <script type="module" crossorigin="anonymous" src="app/ui.js"></script>
+    <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
+    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260610b"></script>
 </head>
 
 <body>
@@ -1222,6 +1223,12 @@ Copyright (C) 2019 The noVNC Authors
             const payload = { wallet_address: wallet };
             if (!window.axonosPausedResume && !window.axonosDetachedSession) {
                 payload.requested_profile = getRequestedProfile();
+                // This claim can be the one that SPAWNS the session (it races the
+                // claim in ui.js), and templates only apply at spawn — so it must
+                // carry the selected template too.
+                if (window.axonosSelectedTemplateId) {
+                    payload.requested_template = window.axonosSelectedTemplateId;
+                }
             }
             return axonosFetch({
                 method: 'POST',

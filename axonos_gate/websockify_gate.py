@@ -1218,12 +1218,13 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             data = self._read_json_body()
             wallet_address = (data.get('wallet_address') or '').strip()
             requested_profile = (data.get('requested_profile') or '').strip() or None
+            requested_template = (data.get('requested_template') or '').strip() or None
             if not wallet_address or not validate_wallet_address(wallet_address):
                 return self._send_json(400, {'granted': False, 'error': 'Valid wallet_address required'})
             auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
             if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
                 return self._send_json(401, {'granted': False, 'error': 'Valid auth token required'})
-            result = try_claim_session(wallet_address, requested_profile=requested_profile)
+            result = try_claim_session(wallet_address, requested_profile=requested_profile, requested_template=requested_template)
             return self._send_json(200, result)
 
         if _session_mgr_available and self.path.startswith('/api/session/heartbeat'):

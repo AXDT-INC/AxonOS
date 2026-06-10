@@ -109,3 +109,7 @@
   - [x] `_axgtSessionDesktopActive()` requires live RFB/WebRTC media (not teardown fn alone)
   - [x] Connection loader on Launch; errors cleared via `axonosPrepareDesktopLaunch`
 - [x] **Environment variables reference** — `docs/ENVIRONMENT_VARIABLES.md` (full codebase audit vs `env.example`)
+
+- [ ] **Structural cleanups from the template-launch debugging hunt (2026-06-10)** — either would have prevented most of it
+  - [ ] Consolidate the two `/api/session/claim` client implementations (`vnc.html` inline `claimSession()` and `ui.js` `_axonosFetchSessionClaim()`) into one shared function — the inline one spawned sessions without `requested_template` while the `ui.js` one was repeatedly fixed in vain
+  - [ ] Gate should send `Cache-Control: no-cache` for `vnc.html` — browsers heuristically cache documents served with only `Last-Modified`, so deployed fixes (including inline JS) silently never reached the browser

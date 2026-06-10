@@ -645,5 +645,57 @@ RUN mkdir -p /tmp/nvfbc-sdk && \
         -o /usr/local/bin/nvfbc_nvenc_streamer && \
     rm -rf /tmp/nvfbc-sdk /tmp/NVIDIA_Capture_SDK_7_1_9.tgz /tmp/nvfbc_nvenc_streamer.c
 
+# ---------------------------------------------------------------------------
+# Environment templates (kept as late layers so the heavy scientific builds
+# above retain their build cache). These back the landing-page template picker:
+# each session auto-opens its hero app via apply_session_template.sh.
+# ---------------------------------------------------------------------------
+
+# PyTorch AI Lab: CUDA-enabled PyTorch stack. cu121 wheels run on the CUDA 12.2
+# runtime base. JupyterLab is already installed above; add TensorBoard + Pandas.
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu121 \
+        torch torchvision torchaudio && \
+    pip install --no-cache-dir tensorboard pandas
+
+# Quantum ESPRESSO: DFT electronic-structure suite (provides pw.x), plus the
+# XCrySDen visualizer and gnuplot referenced by the template card.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        quantum-espresso xcrysden gnuplot && \
+    apt-get clean && rm -rf /var/lib/apt/lists/* && \
+    printf '%s\n' \
+        '[Desktop Entry]' \
+        'Name=Quantum ESPRESSO' \
+        'Comment=DFT electronic-structure suite (pw.x)' \
+        'Exec=terminator -x bash -lc "echo Quantum ESPRESSO ready. Run pw.x to start.; exec bash"' \
+        'Icon=applications-science' \
+        'Type=Application' \
+        'Terminal=false' \
+        'Categories=Science;' \
+        > /usr/share/applications/quantum-espresso.desktop
+
+# Desktop launcher for JupyterLab (hero app for PyTorch AI Lab and BeakerX).
+COPY scripts/open-jupyterlab.sh /usr/local/bin/open-jupyterlab.sh
+RUN chmod +x /usr/local/bin/open-jupyterlab.sh && \
+    printf '%s\n' \
+        '[Desktop Entry]' \
+        'Name=JupyterLab' \
+        'Comment=Browser-based notebooks (PyTorch, BeakerX kernels)' \
+        'Exec=/usr/local/bin/open-jupyterlab.sh' \
+        'Icon=applications-development' \
+        'Type=Application' \
+        'Terminal=false' \
+        'Categories=Development;Science;' \
+        > /usr/share/applications/jupyterlab.desktop
+
+# UGENE ships a CLI binary (ugenecl) alongside the GUI; expose it on PATH so the
+# template card's `ugenecl` command works.
+RUN if [ -x /opt/ugene-52.1/ugenecl ]; then ln -sf /opt/ugene-52.1/ugenecl /usr/local/bin/ugenecl; fi
+
+# Per-session template launcher. Invoked from startup.sh after the desktop is up
+# (not via XDG autostart — ~/.config/autostart is on the persistent home volume,
+# which would shadow any baked-in entry).
+COPY scripts/apply_session_template.sh /usr/local/bin/apply_session_template.sh
+RUN chmod +x /usr/local/bin/apply_session_template.sh
+
 # Start services
 CMD ["/startup.sh"]
