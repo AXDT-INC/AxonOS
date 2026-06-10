@@ -592,7 +592,7 @@ RUN chown -R aXonian:aXonian /home/aXonian/.config/autostart
 # Install NVIDIA Xorg/OpenGL userspace driver (for GPU-backed Xorg :0)
 # Keep this late in the Dockerfile to preserve cache for heavy build steps.
 # NVIDIA_DRIVER_VERSION: major branch (e.g. 535) matching host `nvidia-smi`.
-ARG NVIDIA_DRIVER_VERSION=535
+ARG NVIDIA_DRIVER_VERSION=580
 # NVIDIA_DRIVER_PKG_VERSION: pin ALL of these Ubuntu restricted packages together (same madison version):
 #   xserver-xorg-video-nvidia-*, libnvidia-gl-*, libnvidia-cfg1-*, libnvidia-common-*
 # The CUDA base image often preinstalls newer libnvidia-cfg1 (e.g. 535.309) — without pinning cfg1/common,

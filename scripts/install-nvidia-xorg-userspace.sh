@@ -14,21 +14,21 @@ echo "axonos: NVIDIA_PKG_RESOLVED=${NVIDIA_PKG_RESOLVED}"
 
 if echo "${NVIDIA_PKG_RESOLVED}" | grep -q '0ubuntu0.22.04'; then
   printf '%s\n' \
-    'Package: libnvidia-* xserver-xorg-video-nvidia-*' \
+    'Package: libnvidia-* xserver-xorg-video-nvidia-* nvidia-kernel-common-* nvidia-firmware-*' \
     'Pin: release o=Ubuntu' \
     'Pin-Priority: 1001' \
     '' \
-    'Package: libnvidia-* xserver-xorg-video-nvidia-*' \
+    'Package: libnvidia-* xserver-xorg-video-nvidia-* nvidia-kernel-common-* nvidia-firmware-*' \
     'Pin: origin developer.download.nvidia.com' \
     'Pin-Priority: 50' \
     > /etc/apt/preferences.d/axonos-nvidia.pref
 else
   printf '%s\n' \
-    'Package: libnvidia-* xserver-xorg-video-nvidia-*' \
+    'Package: libnvidia-* xserver-xorg-video-nvidia-* nvidia-kernel-common-* nvidia-firmware-*' \
     'Pin: origin developer.download.nvidia.com' \
     'Pin-Priority: 1001' \
     '' \
-    'Package: libnvidia-* xserver-xorg-video-nvidia-*' \
+    'Package: libnvidia-* xserver-xorg-video-nvidia-* nvidia-kernel-common-* nvidia-firmware-*' \
     'Pin: release o=Ubuntu' \
     'Pin-Priority: 50' \
     > /etc/apt/preferences.d/axonos-nvidia.pref
