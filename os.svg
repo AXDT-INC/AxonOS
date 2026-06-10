@@ -262,17 +262,6 @@
     </text>
   </g>
 
-  <g opacity="0.42">
-    <text x="1475" y="1000"
-          font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif"
-          font-size="18"
-          font-weight="500"
-          letter-spacing="3"
-          fill="#C4B5FD">
-      ART FOR OPEN SCIENCE
-    </text>
-  </g>
-
   <rect x="16" y="16" width="1888" height="1048" rx="28"
         stroke="url(#cyanStroke)" stroke-opacity="0.16" stroke-width="1.2"/>
 </svg>

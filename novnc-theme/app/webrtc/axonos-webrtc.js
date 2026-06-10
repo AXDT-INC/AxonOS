@@ -64,7 +64,9 @@ function _setBanner(text, state) {
         el = document.createElement('div');
         el.id = 'axonos_webrtc_banner';
         el.setAttribute('aria-live', 'polite');
-        el.style.cssText = 'position:fixed;bottom:12px;left:50%;transform:translateX(-50%);z-index:10000;padding:8px 14px;border-radius:8px;font:14px system-ui,sans-serif;max-width:90vw;text-align:center;';
+        // bottom: 44px clears the footer banner ("Built with ♥ by AxonDAO", fixed at
+        // bottom: 10px) so it stays readable while the desktop session loads.
+        el.style.cssText = 'position:fixed;bottom:44px;left:50%;transform:translateX(-50%);z-index:10000;padding:8px 14px;border-radius:8px;font:14px system-ui,sans-serif;max-width:90vw;text-align:center;';
         document.body.appendChild(el);
     }
     const colors = {

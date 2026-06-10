@@ -3157,6 +3157,9 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
 
 .axonos-loader-visual .axonos-spinner {
   margin-bottom: 0;
+  /* Keep the ring's outer box at exactly 80px (borders inside) so its center
+     coincides with the X overlay centered in the 80px .axonos-loader-visual. */
+  box-sizing: border-box;
 }
 
 .axonos-loader-x-wrap {
