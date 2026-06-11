@@ -3068,6 +3068,25 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
     border-radius: 8px;
     text-align: center;
   }
+  html:not(.noVNC_connected) {
+    height: auto !important;
+  }
+  html:not(.noVNC_connected) body {
+    height: auto !important;
+    touch-action: auto !important;
+  }
+  html:not(.noVNC_connected) .noVNC_center:has(.noVNC_open),
+  html:not(.noVNC_connected) .noVNC_center.noVNC_open {
+    position: relative !important;
+    height: auto !important;
+  }
+  #noVNC_credentials_dlg {
+    position: relative !important;
+    top: auto !important;
+    left: auto !important;
+    transform: none !important;
+    margin: 20px auto !important;
+  }
   html:not(.noVNC_connected) #noVNC_connect_dlg {
     max-height: none !important;
     overflow: visible !important;
