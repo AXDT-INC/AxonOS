@@ -340,6 +340,7 @@ const UI = {
         UI.initAxonosTemplates();
         UI.addConnectionControlHandlers();
         UI.addClipboardHandlers();
+        UI.addFilesHandlers();
         UI.addSettingsHandlers();
         document.getElementById("noVNC_status")
             .addEventListener('click', UI.hideStatus);
@@ -1740,6 +1741,7 @@ const UI = {
     closeAllPanels() {
         UI.closeSettingsPanel();
         UI.closeClipboardPanel();
+        UI.closeFilesPanel();
         UI.closeExtraKeys();
     },
 
@@ -1952,6 +1954,66 @@ const UI = {
             UI.openClipboardPanel();
         }
     },
+
+/* ------^-------
+ *   /CLIPBOARD
+ * ==============
+ *   FILES (panel)
+ * ------v------*/
+
+    _filesModule: null,
+
+    addFilesHandlers() {
+        const filesButton = document.getElementById("noVNC_files_button");
+        if (filesButton) {
+            filesButton.addEventListener('click', UI.toggleFilesPanel);
+        }
+    },
+
+    async ensureFilesModule() {
+        if (!UI._filesModule) {
+            UI._filesModule = await import(`./files/axonos-files.js?v=${Date.now()}`);
+        }
+        return UI._filesModule;
+    },
+
+    openFilesPanel() {
+        UI.closeAllPanels();
+        UI.releaseWebRtcPointerState();
+        UI.openControlbar();
+
+        document.getElementById('noVNC_files')
+            .classList.add("noVNC_open");
+        document.getElementById('noVNC_files_button')
+            .classList.add("noVNC_selected");
+
+        UI.ensureFilesModule()
+            .then((mod) => mod.onPanelOpen())
+            .catch((err) => Log.Error('AxonOS files panel failed to load: ' + err));
+    },
+
+    closeFilesPanel() {
+        const panel = document.getElementById('noVNC_files');
+        if (!panel) return;
+        panel.classList.remove("noVNC_open");
+        document.getElementById('noVNC_files_button')
+            .classList.remove("noVNC_selected");
+    },
+
+    toggleFilesPanel() {
+        if (document.getElementById('noVNC_files')
+            .classList.contains("noVNC_open")) {
+            UI.closeFilesPanel();
+        } else {
+            UI.openFilesPanel();
+        }
+    },
+
+/* ------^-------
+ *   /FILES
+ * ==============
+ *   CLIPBOARD (receive)
+ * ------v------*/
 
     clipboardReceive(e) {
         const text = (e && e.detail && typeof e.detail.text === 'string') ? e.detail.text : "";

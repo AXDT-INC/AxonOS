@@ -121,6 +121,14 @@ except ImportError:
         webrtc_config = None
         webrtc_service = None
 
+try:
+    import file_transfer as _file_transfer
+except ImportError:
+    try:
+        from axonos_gate import file_transfer as _file_transfer
+    except ImportError:
+        _file_transfer = None
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -689,6 +697,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             or self.path.startswith('/api/session/')
             or self.path.startswith('/api/webrtc/')
             or self.path.startswith('/api/public/')
+            or self.path.startswith('/api/files/')
         ):
             self.send_response(200)
             origin = cors_origin_for_request(
@@ -702,9 +711,9 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 self.send_header('Vary', 'Origin')
                 self.send_header(
                     'Access-Control-Allow-Headers',
-                    'Content-Type, X-Wallet-Address, X-AXGT-Auth-Token'
+                    'Content-Type, X-Wallet-Address, X-AXGT-Auth-Token, Range, If-Range'
                 )
-                self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+                self.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS')
                 self.send_header('Access-Control-Allow-Credentials', 'true')
             self.send_header('Content-Length', '0')
             self.end_headers()
@@ -726,6 +735,9 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             except Exception as exc:
                 self.send_error(500, str(exc))
             return
+
+        if _up_cfg(self.path).path.startswith('/api/files/'):
+            return self._handle_files_request('GET')
 
         if _up_cfg(self.path).path == '/api/config':
             policy = get_credit_policy()
@@ -1126,12 +1138,80 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         except Exception:
             return {}
 
+    def _handle_files_request(self, method: str):
+        """Authenticated streaming proxy for /api/files/* to the wallet's desktop file agent."""
+        if _file_transfer is None or not _file_transfer.files_enabled():
+            self.close_connection = True
+            return self._send_json(503, {'ok': False, 'error': 'File transfer unavailable'})
+        pu = urlparse(self.path)
+        suffix = pu.path[len('/api/files/'):]
+        route = _file_transfer.ROUTES.get(suffix)
+        if not route or route[0] != method:
+            self.close_connection = True
+            return self._send_json(404, {'ok': False, 'error': 'Unknown file route'})
+
+        wallet = _extract_wallet_from_path_and_headers(self.path, self.headers)
+        if not wallet or not validate_wallet_address(wallet):
+            self.close_connection = True
+            return self._send_json(403, {'ok': False, 'error': 'Valid wallet address required'})
+        auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+        if not auth_token or not _is_auth_token_valid(auth_token, wallet):
+            self.close_connection = True
+            return self._send_json(403, {'ok': False, 'error': 'Invalid or expired auth token'})
+        status = get_wallet_access_status(wallet, consume_usage=False)
+        if not status.get('verified'):
+            self.close_connection = True
+            return self._send_json(403, {'ok': False, 'error': status.get('reason') or 'Access denied'})
+
+        target, err = _file_transfer.resolve_target_for_wallet(wallet.strip().lower())
+        if err:
+            self.close_connection = True
+            return self._send_json(409, {'ok': False, 'error': err})
+
+        agent_path = _file_transfer.build_agent_url(suffix, pu.query)
+        try:
+            content_length = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            content_length = 0
+        try:
+            status_code, resp_headers, body_iter = _file_transfer.proxy_to_agent(
+                target,
+                method,
+                agent_path,
+                self.headers,
+                content_length=content_length,
+                body_read=self.rfile.read if method == 'PUT' else None,
+            )
+        except Exception as exc:
+            logger.warning("files proxy failed for %s: %s", mask_wallet_address(wallet), exc)
+            self.close_connection = True
+            return self._send_json(502, {'ok': False, 'error': 'Desktop file agent unreachable'})
+
+        self.send_response(status_code)
+        for name, value in resp_headers:
+            self.send_header(name, value)
+        self.end_headers()
+        try:
+            for chunk in body_iter:
+                self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            # Browser paused/aborted; Range requests let it resume on a new connection.
+            self.close_connection = True
+
+    def do_PUT(self):
+        if urlparse(self.path).path.startswith('/api/files/'):
+            return self._handle_files_request('PUT')
+        self.send_error(405, "Method Not Allowed")
+
     def do_POST(self):
         from urllib.parse import urlparse
 
         pu = urlparse(self.path)
         ponly = pu.path
         client_ip = self.client_address[0] if getattr(self, "client_address", None) else "unknown"
+
+        if ponly.startswith('/api/files/'):
+            return self._handle_files_request('POST')
 
         if webrtc_service and ponly.startswith("/api/webrtc/"):
             data = self._read_json_body()

@@ -76,17 +76,17 @@ def _persistent_storage_mount_path() -> str:
     return raw
 
 
-def launch_session(session_id: int, wallet: str, profile: str, gpu_ids: List[int], template: Optional[str] = None) -> Tuple[bool, Optional[str], Optional[str]]:
+def launch_session(session_id: int, wallet: str, profile: str, gpu_ids: List[int], template: Optional[str] = None, files_key: Optional[str] = None) -> Tuple[bool, Optional[str], Optional[str]]:
     """Launch user session runtime; returns (ok, container_id, error)."""
     if not _container_mode_enabled():
         return True, "shared-desktop", None
     mode = _launcher_mode()
     if mode == "http":
-        return _launch_via_http(session_id, wallet, profile, gpu_ids, template)
+        return _launch_via_http(session_id, wallet, profile, gpu_ids, template, files_key)
     if mode == "noop":
         # Useful when validating scheduler/queue logic without runtime orchestration.
         return True, _container_name_for_session(session_id), None
-    return _launch_via_docker_cli(session_id, wallet, profile, gpu_ids, template)
+    return _launch_via_docker_cli(session_id, wallet, profile, gpu_ids, template, files_key)
 
 
 def stop_session(session_id: int, container_id: Optional[str]) -> None:
@@ -102,7 +102,7 @@ def stop_session(session_id: int, container_id: Optional[str]) -> None:
     _stop_via_docker_cli(session_id, container_id)
 
 
-def _launch_via_docker_cli(session_id: int, wallet: str, profile: str, gpu_ids: List[int], template: Optional[str] = None) -> Tuple[bool, Optional[str], Optional[str]]:
+def _launch_via_docker_cli(session_id: int, wallet: str, profile: str, gpu_ids: List[int], template: Optional[str] = None, files_key: Optional[str] = None) -> Tuple[bool, Optional[str], Optional[str]]:
     image = (os.getenv("AXGT_SESSION_CONTAINER_IMAGE") or "").strip()
     if not image:
         return False, None, "AXGT_SESSION_CONTAINER_IMAGE is required in docker_cli mode"
@@ -139,6 +139,8 @@ def _launch_via_docker_cli(session_id: int, wallet: str, profile: str, gpu_ids: 
     ])
     if template:
         cmd.extend(["-e", f"AXONOS_SELECTED_TEMPLATE={template}"])
+    if files_key:
+        cmd.extend(["-e", f"AXGT_SESSION_FILES_KEY={files_key}"])
     cmd.extend(session_container_ompi_mca_env_flags())
     extra_raw = (os.getenv("AXGT_SESSION_CONTAINER_EXTRA_ARGS") or "").strip()
     if extra_raw:
@@ -178,7 +180,7 @@ def _stop_via_docker_cli(session_id: int, container_id: Optional[str]) -> None:
         logger.warning("session_launcher: docker cleanup failed for %s: %s", target, exc)
 
 
-def _launch_via_http(session_id: int, wallet: str, profile: str, gpu_ids: List[int], template: Optional[str] = None) -> Tuple[bool, Optional[str], Optional[str]]:
+def _launch_via_http(session_id: int, wallet: str, profile: str, gpu_ids: List[int], template: Optional[str] = None, files_key: Optional[str] = None) -> Tuple[bool, Optional[str], Optional[str]]:
     base_url = (os.getenv("AXGT_SESSION_LAUNCHER_URL") or "").strip().rstrip("/")
     if not base_url:
         return False, None, "AXGT_SESSION_LAUNCHER_URL is required in http mode"
@@ -188,6 +190,7 @@ def _launch_via_http(session_id: int, wallet: str, profile: str, gpu_ids: List[i
         "requested_profile": profile,
         "assigned_gpu_ids": gpu_ids,
         "requested_template": template,
+        "files_key": files_key,
     }
     status, data, err = _http_json("POST", f"{base_url}/launch", payload)
     if err:

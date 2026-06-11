@@ -216,6 +216,37 @@ Copyright (C) 2019 The noVNC Authors
                     </div>
                 </div>
 
+                <!-- File transfer -->
+                <input type="image" alt="Files" src="app/images/icons/files.svg" id="noVNC_files_button"
+                    class="noVNC_button" title="File transfer — upload to and download from the desktop">
+                <div class="noVNC_vcenter">
+                    <div id="noVNC_files" class="noVNC_panel axonos-files-panel">
+                        <div class="noVNC_heading">
+                            <img alt="" src="app/images/icons/files.svg"> Files
+                        </div>
+                        <p class="axonos-files-panel__help">Files land in your desktop home folder (persistent
+                            storage). Large uploads resume automatically after connection drops; downloads use the
+                            browser's download manager with pause/resume.</p>
+                        <div class="axonos-files-toolbar">
+                            <button type="button" id="axonos_files_up" class="axonos-files-toolbar__btn"
+                                title="Parent folder">⬆ Up</button>
+                            <span id="axonos_files_path" class="axonos-files-toolbar__path">/</span>
+                            <button type="button" id="axonos_files_refresh" class="axonos-files-toolbar__btn"
+                                title="Refresh listing">⟳</button>
+                            <button type="button" id="axonos_files_newdir" class="axonos-files-toolbar__btn"
+                                title="Create folder">＋ Folder</button>
+                        </div>
+                        <div id="axonos_files_drop" class="axonos-files-drop">
+                            <ul id="axonos_files_list" class="axonos-files-list"></ul>
+                        </div>
+                        <button type="button" id="axonos_files_upload_btn" class="noVNC_submit axonos-files-upload-btn">
+                            Upload files…</button>
+                        <input type="file" id="axonos_files_input" multiple hidden>
+                        <div id="axonos_files_transfers" class="axonos-files-transfers"></div>
+                        <div id="axonos_files_status" class="axonos-files-status"></div>
+                    </div>
+                </div>
+
                 <!-- Toggle fullscreen -->
                 <input type="image" alt="Fullscreen" src="app/images/fullscreen.svg" id="noVNC_fullscreen_button"
                     class="noVNC_button noVNC_hidden" title="Fullscreen">

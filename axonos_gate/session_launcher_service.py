@@ -246,6 +246,10 @@ def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], 
     if requested_template:
         cmd.extend(["-e", f"AXONOS_SELECTED_TEMPLATE={requested_template}"])
 
+    files_key = str(payload.get("files_key") or "").strip()
+    if files_key:
+        cmd.extend(["-e", f"AXGT_SESSION_FILES_KEY={files_key}"])
+
     for env_name in _env_passthrough_names():
         if env_name in ("AXGT_DESKTOP_ENABLED", "WEBRTC_AGENT_ENABLED"):
             continue

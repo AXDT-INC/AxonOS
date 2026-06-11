@@ -4142,3 +4142,212 @@ html:not(.noVNC_connected) body::after {
     max-height: 580px;
   }
 }
+
+/* ==============================================================
+ * File transfer panel (left deck)
+ * ------------------------------------------------------------ */
+
+.axonos-files-panel {
+  width: min(420px, calc(100vw - 90px));
+}
+
+.axonos-files-panel__help {
+  font-size: 0.78rem;
+  color: var(--axonos-light);
+  opacity: 0.75;
+  margin: 4px 0 8px;
+}
+
+.axonos-files-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.axonos-files-toolbar__btn {
+  background: var(--axonos-dark-3);
+  color: var(--axonos-light);
+  border: 1px solid var(--axonos-shadow);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.axonos-files-toolbar__btn:hover:not(:disabled) {
+  border-color: var(--axonos-primary);
+  color: var(--axonos-primary);
+}
+
+.axonos-files-toolbar__btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.axonos-files-toolbar__path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--axonos-primary);
+}
+
+.axonos-files-drop {
+  border: 1px dashed var(--axonos-shadow);
+  border-radius: 8px;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--axonos-dark-2);
+}
+
+.axonos-files-drop--over {
+  border-color: var(--axonos-primary);
+  background: var(--axonos-dark-3);
+}
+
+.axonos-files-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+}
+
+.axonos-files-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+}
+
+.axonos-files-entry:hover {
+  background: var(--axonos-dark-3);
+}
+
+.axonos-files-entry__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--axonos-light);
+}
+
+.axonos-files-entry--dir .axonos-files-entry__name {
+  cursor: pointer;
+  color: var(--axonos-primary);
+}
+
+.axonos-files-entry__size {
+  font-size: 0.72rem;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+.axonos-files-entry__dl {
+  background: none;
+  border: 1px solid var(--axonos-shadow);
+  border-radius: 6px;
+  color: var(--axonos-primary);
+  cursor: pointer;
+  padding: 1px 7px;
+}
+
+.axonos-files-entry__dl:hover {
+  border-color: var(--axonos-primary);
+}
+
+.axonos-files-empty {
+  padding: 14px 8px;
+  text-align: center;
+  font-size: 0.78rem;
+  opacity: 0.6;
+}
+
+.axonos-files-upload-btn {
+  margin-top: 8px;
+  width: 100%;
+  float: none;
+}
+
+.axonos-files-transfers {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.axonos-transfer {
+  background: var(--axonos-dark-2);
+  border: 1px solid var(--axonos-shadow);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.axonos-transfer__name {
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--axonos-light);
+}
+
+.axonos-transfer__bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--axonos-dark-3);
+  margin: 5px 0;
+  overflow: hidden;
+}
+
+.axonos-transfer__fill {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--axonos-primary), var(--axonos-hover));
+  transition: width 0.3s ease;
+}
+
+.axonos-transfer__meta {
+  font-size: 0.72rem;
+  opacity: 0.75;
+}
+
+.axonos-transfer__controls {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.axonos-transfer__btn {
+  background: none;
+  border: 1px solid var(--axonos-shadow);
+  border-radius: 6px;
+  color: var(--axonos-light);
+  font-size: 0.72rem;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+
+.axonos-transfer__btn:hover {
+  border-color: var(--axonos-primary);
+  color: var(--axonos-primary);
+}
+
+.axonos-files-status {
+  margin-top: 6px;
+  font-size: 0.72rem;
+  color: var(--axonos-light);
+  opacity: 0.7;
+  min-height: 1em;
+}
+
+.axonos-files-status--error {
+  color: #e87a7a;
+  opacity: 1;
+}

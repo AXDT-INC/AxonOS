@@ -10,7 +10,7 @@ import threading
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, Response, request, jsonify, send_from_directory, stream_with_context
 from flask_cors import CORS
 
 from security_utils import (
@@ -97,6 +97,21 @@ except ImportError:
     except ImportError:
         webrtc_config = None
         webrtc_service = None
+
+try:
+    import file_transfer as _file_transfer
+except ImportError:
+    try:
+        from axonos_gate import file_transfer as _file_transfer
+    except ImportError:
+        _file_transfer = None
+
+_files_connection_class = None
+if _file_transfer is not None:
+    try:
+        _files_connection_class = _file_transfer.gevent_connection_class()
+    except ImportError:
+        _files_connection_class = None
 
 _webrtc_sig_limiter = None
 
@@ -1151,6 +1166,62 @@ def api_webrtc_agent_fail():
     data = request.get_json() or {}
     st, payload = webrtc_service.handle_agent_fail(key, data)
     return jsonify(payload), st
+
+
+@app.route('/api/files/<route_suffix>', methods=['GET', 'POST', 'PUT', 'OPTIONS'])
+def api_files(route_suffix):
+    """Streaming proxy for browser <-> desktop file transfer (see file_transfer.py)."""
+    if request.method == 'OPTIONS':
+        return '', 200
+    if _file_transfer is None or not _file_transfer.files_enabled():
+        return jsonify({"ok": False, "error": "File transfer unavailable"}), 503
+    route = _file_transfer.ROUTES.get(route_suffix)
+    if not route or route[0] != request.method:
+        return jsonify({"ok": False, "error": "Unknown file route"}), 404
+    wallet = (
+        request.args.get('wallet')
+        or request.args.get('wallet_address')
+        or request.headers.get('X-Wallet-Address')
+        or ''
+    ).strip()
+    if not wallet or not validate_wallet_address(wallet):
+        return jsonify({"ok": False, "error": "Valid wallet_address required"}), 400
+    auth_err = _require_auth_token(wallet)
+    if auth_err:
+        return auth_err
+    wallet_norm = wallet.lower()
+    status = get_wallet_access_status(wallet_norm, consume_usage=False)
+    if not status.get("verified"):
+        return jsonify({"ok": False, "error": status.get("reason") or "Access denied"}), 403
+
+    target, err = _file_transfer.resolve_target_for_wallet(wallet_norm)
+    if err:
+        return jsonify({"ok": False, "error": err}), 409
+
+    agent_path = _file_transfer.build_agent_url(
+        route_suffix, request.query_string.decode('utf-8', 'replace')
+    )
+    content_length = request.content_length or 0
+    body_read = request.stream.read if request.method == 'PUT' else None
+    try:
+        status_code, resp_headers, body_iter = _file_transfer.proxy_to_agent(
+            target,
+            request.method,
+            agent_path,
+            request.headers,
+            content_length=content_length,
+            body_read=body_read,
+            connection_class=_files_connection_class,
+        )
+    except Exception as exc:
+        logger.warning("files proxy failed for %s: %s", mask_wallet_address(wallet_norm), exc)
+        return jsonify({"ok": False, "error": "Desktop file agent unreachable"}), 502
+    return Response(
+        stream_with_context(body_iter),
+        status=status_code,
+        headers=dict(resp_headers),
+        direct_passthrough=True,
+    )
 
 
 @app.route('/')

@@ -8,6 +8,7 @@ immediately (no waitlist).
 
 import logging
 import os
+import secrets
 import subprocess
 import time
 from threading import Lock
@@ -398,7 +399,8 @@ def _ensure_tables(conn) -> None:
                 last_heartbeat DOUBLE PRECISION NOT NULL,
                 last_billed_at DOUBLE PRECISION,
                 expires_at  DOUBLE PRECISION NOT NULL,
-                status      TEXT NOT NULL DEFAULT 'active'
+                status      TEXT NOT NULL DEFAULT 'active',
+                files_key   TEXT
             )
         """)
         # Add last_billed_at if table existed from before migration
@@ -413,6 +415,7 @@ def _ensure_tables(conn) -> None:
             ("gpu_ids", "TEXT"),
             ("container_id", "TEXT"),
             ("allocation_status", "TEXT NOT NULL DEFAULT 'allocated'"),
+            ("files_key", "TEXT"),
         ):
             cur.execute(
                 """
@@ -564,13 +567,14 @@ def _session_row_to_dict(row) -> Dict[str, Any]:
         "last_heartbeat": row[7],
         "last_billed_at": row[8],
         "expires_at": row[9],
+        "files_key": row[10] if len(row) > 10 else None,
     }
 
 
 def _get_active_rows(cur) -> List[Dict[str, Any]]:
     cur.execute(
         f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
-                   started_at, last_heartbeat, last_billed_at, expires_at
+                   started_at, last_heartbeat, last_billed_at, expires_at, files_key
             FROM {_SESSION_TABLE}
             WHERE status = 'active'
             ORDER BY started_at ASC""",
@@ -584,7 +588,7 @@ def _get_paused_rows(cur, now: float) -> List[Dict[str, Any]]:
     cutoff = now - _session_paused_max_seconds()
     cur.execute(
         f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
-                   started_at, last_heartbeat, last_billed_at, expires_at
+                   started_at, last_heartbeat, last_billed_at, expires_at, files_key
             FROM {_SESSION_TABLE}
             WHERE status = 'paused' AND last_heartbeat >= %s
             ORDER BY started_at ASC""",
@@ -602,7 +606,7 @@ def _get_gpu_reserved_rows(cur, now: float) -> List[Dict[str, Any]]:
 def _paused_session_for_wallet(cur, wallet: str, now: float) -> Optional[Dict[str, Any]]:
     cur.execute(
         f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
-                   started_at, last_heartbeat, last_billed_at, expires_at
+                   started_at, last_heartbeat, last_billed_at, expires_at, files_key
             FROM {_SESSION_TABLE}
             WHERE status = 'paused' AND wallet_address = %s AND last_heartbeat >= %s
             ORDER BY started_at DESC
@@ -623,7 +627,7 @@ def _get_active_row(cur) -> Optional[Dict[str, Any]]:
 def _active_session_for_wallet(cur, wallet: str) -> Optional[Dict[str, Any]]:
     cur.execute(
         f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
-                   started_at, last_heartbeat, last_billed_at, expires_at
+                   started_at, last_heartbeat, last_billed_at, expires_at, files_key
             FROM {_SESSION_TABLE}
             WHERE status = 'active' AND wallet_address = %s
             ORDER BY started_at DESC
@@ -805,7 +809,7 @@ def _cleanup_session_container(session_id: int) -> None:
     launcher.stop_session(session_id=session_id, container_id=None)
 
 
-def _spawn_session_container(session_id: int, wallet: str, profile: str, gpu_ids: List[int], template: Optional[str] = None) -> Tuple[bool, Optional[str], Optional[str]]:
+def _spawn_session_container(session_id: int, wallet: str, profile: str, gpu_ids: List[int], template: Optional[str] = None, files_key: Optional[str] = None) -> Tuple[bool, Optional[str], Optional[str]]:
     launcher = _import_session_launcher()
     return launcher.launch_session(
         session_id=session_id,
@@ -813,6 +817,7 @@ def _spawn_session_container(session_id: int, wallet: str, profile: str, gpu_ids
         profile=profile,
         gpu_ids=gpu_ids,
         template=template,
+        files_key=files_key,
     )
 
 
@@ -843,6 +848,31 @@ def get_active_session() -> Optional[Dict[str, Any]]:
             return rows[-1]
     except Exception as exc:
         logger.warning("get_active_session failed: %s", exc)
+        return None
+    finally:
+        conn.close()
+
+
+def get_session_for_wallet(wallet_address: str) -> Optional[Dict[str, Any]]:
+    """Active or credit-paused session row for *wallet_address*, or None.
+
+    Paused sessions are included so wallets can still retrieve files while
+    their container survives the paused TTL.
+    """
+    wallet = (wallet_address or "").strip().lower()
+    if not wallet or not _init_once():
+        return None
+    conn = _get_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor() as cur:
+            session = _active_session_for_wallet(cur, wallet)
+            if session is None:
+                session = _paused_session_for_wallet(cur, wallet, time.time())
+            return session
+    except Exception as exc:
+        logger.warning("get_session_for_wallet failed: %s", exc)
         return None
     finally:
         conn.close()
@@ -952,11 +982,14 @@ def try_claim_session(
                     }
 
                 max_secs = _session_max_seconds()
+                # Per-session secret for the in-container file agent; injected into
+                # the container env at launch and used by the gate file proxy.
+                files_key = secrets.token_urlsafe(32)
                 cur.execute(
                     f"""INSERT INTO {_SESSION_TABLE}
                         (wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
-                         started_at, last_heartbeat, last_billed_at, expires_at, status)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'active')
+                         started_at, last_heartbeat, last_billed_at, expires_at, status, files_key)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s)
                         RETURNING id""",
                     (
                         wallet,
@@ -968,6 +1001,7 @@ def try_claim_session(
                         now,
                         now,
                         now + max_secs,
+                        files_key,
                     ),
                 )
                 session_id = cur.fetchone()[0]
@@ -979,6 +1013,7 @@ def try_claim_session(
                     profile=profile_name,
                     gpu_ids=allocated_gpu_ids,
                     template=requested_template,
+                    files_key=files_key,
                 )
                 conn2 = _get_connection()
                 if conn2:
