@@ -127,6 +127,53 @@ case "$template" in
         # XCrySDen for visualizing crystal structures / QE output (GPU GL via vglrun).
         ( vglrun xcrysden >/dev/null 2>&1 || xcrysden >/dev/null 2>&1 ) &
         ;;
+    spyder)
+        log "launching spyder"
+        spyder >/dev/null 2>&1 &
+        ;;
+    octave)
+        log "launching octave"
+        octave --gui >/dev/null 2>&1 &
+        ;;
+    fiji)
+        log "launching fiji"
+        ( cd /opt/Fiji.app && ./fiji ) >/dev/null 2>&1 &
+        ;;
+    nextflow)
+        log "launching nextflow terminal"
+        launch_terminal "Nextflow — Workflow Manager" \
+            "echo 'Nextflow ready. Run nextflow -version to verify.'; echo; nextflow -version 2>/dev/null"
+        ;;
+    qgis-grass)
+        log "launching qgis"
+        qgis >/dev/null 2>&1 &
+        ;;
+    syncthing)
+        log "launching syncthing service and UI"
+        syncthing --no-browser >/dev/null 2>&1 &
+        sleep 2
+        firefox http://localhost:8384 >/dev/null 2>&1 &
+        ;;
+    ethercalc)
+        log "opening ethercalc"
+        firefox https://calc.domainepublic.net >/dev/null 2>&1 &
+        ;;
+    ngl-viewer)
+        log "opening ngl viewer"
+        firefox https://nglviewer.org/ngl >/dev/null 2>&1 &
+        ;;
+    remix-ide)
+        log "opening remix ide"
+        firefox https://remix.ethereum.org >/dev/null 2>&1 &
+        ;;
+    cellmodeller)
+        log "launching cellmodeller"
+        ( vglrun /usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py >/dev/null 2>&1 || /usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py >/dev/null 2>&1 ) &
+        ;;
+    ipfs-desktop)
+        log "launching ipfs-desktop"
+        ipfs-desktop --no-sandbox >/dev/null 2>&1 &
+        ;;
     *)
         log "no launcher mapping for '${template}'"
         ;;

@@ -63,7 +63,7 @@ const AXONOS_TEMPLATES = [
         desc: 'Versatile package to perform molecular dynamics, i.e. simulate the Newtonian equations of motion for systems with hundreds to millions of particles. GPU-accelerated.',
         image: 'axonos:public-beta',
         verifyCmd: "gmx -version | grep -i 'gromacs version'",
-        packages: ['GROMACS 2024', 'CUDA Accelerated', 'VMD (Visual Molecular Dynamics)', 'OpenMM', 'MPI Support'],
+        packages: ['GROMACS 2026', 'CUDA Accelerated', 'MPI Support', 'cuFFTMp (Multi-GPU FFT)', 'NVSHMEM Support', 'PyMOL (Structure Viewer)'],
         icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><line x1="3" y1="20" x2="9" y2="14"/><line x1="21" y1="20" x2="15" y2="14"/><line x1="12" y1="3" x2="12" y2="9"/><circle cx="3" cy="20" r="2"/><circle cx="21" cy="20" r="2"/><circle cx="12" cy="3" r="2"/></svg>'
     },
     {
@@ -74,7 +74,7 @@ const AXONOS_TEMPLATES = [
         desc: 'Integrated bioinformatics suite. Offers a graphical interface for DNA/protein sequence analysis, alignments, phylogenetics, and secondary structure prediction.',
         image: 'axonos:public-beta',
         verifyCmd: "ugenecl --task help | head -n 1",
-        packages: ['UGENE 50.0', 'MUSCLE', 'ClustalW', 'BLAST+', 'Bowtie2', 'Samtools'],
+        packages: ['UGENE 52.1', 'UGENE CLI (ugenecl)', 'PyMOL (Structure Viewer)'],
         icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 10.5C4.5 5.5 19.5 5.5 19.5 10.5C19.5 15.5 4.5 15.5 4.5 20.5"/><path d="M19.5 10.5C19.5 5.5 4.5 5.5 4.5 10.5C4.5 15.5 19.5 15.5 19.5 20.5"/><line x1="6" y1="8" x2="18" y2="8"/><line x1="6" y1="18" x2="18" y2="18"/><line x1="12" y1="5.5" x2="12" y2="15.5"/></svg>'
     },
     {
@@ -85,7 +85,7 @@ const AXONOS_TEMPLATES = [
         desc: 'An integrated suite of Open-Source computer codes for electronic-structure calculations and materials modeling at the nanoscale, based on DFT, plane waves, and pseudopotentials.',
         image: 'axonos:public-beta',
         verifyCmd: "echo | pw.x 2>&1 | grep -i 'Program PWSCF'",
-        packages: ['Quantum ESPRESSO 7.3', 'OpenMPI', 'ScaLAPACK', 'XCrySDen', 'Gnuplot'],
+        packages: ['Quantum ESPRESSO (DFT)', 'OpenMPI Support', 'XCrySDen (Visualizer)', 'Gnuplot'],
         icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="12" rx="3" ry="9" transform="rotate(45 12 12)"/><ellipse cx="12" cy="12" rx="3" ry="9" transform="rotate(-45 12 12)"/><circle cx="12" cy="12" r="2"/></svg>'
     },
     {
@@ -93,10 +93,10 @@ const AXONOS_TEMPLATES = [
         title: 'RStudio Data Science',
         category: 'data-science',
         tags: ['Data Science', 'Statistics'],
-        desc: 'Comprehensive R workspace for statistical computing and visualization. Preloaded with tidyverse, ggplot2, shiny, and devtools for scientific data analyses.',
+        desc: 'Comprehensive R workspace for statistical computing and visualization. Includes the RStudio Desktop IDE and the base R runtime environment.',
         image: 'axonos:public-beta',
         verifyCmd: "R --version | head -n 1",
-        packages: ['R 4.4.0', 'RStudio Desktop', 'tidyverse', 'ggplot2', 'shiny', 'caret'],
+        packages: ['R Environment', 'RStudio Desktop'],
         icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>'
     },
     {
@@ -104,11 +104,132 @@ const AXONOS_TEMPLATES = [
         title: 'BeakerX Jupyter Lab',
         category: 'data-science',
         tags: ['Data Science', 'Polyglot'],
-        desc: 'An extension to Jupyter Notebook and JupyterLab containing JVM kernels (Java, Kotlin, Groovy, Scala, Clojure), interactive widgets, plotting, and table enhancements.',
+        desc: 'An extension to Jupyter Notebook and JupyterLab providing interactive widgets, table enhancements, and JVM kernel support.',
         image: 'axonos:public-beta',
         verifyCmd: "jupyter kernelspec list",
-        packages: ['JupyterLab 4.1', 'JVM Kernels (Scala, Kotlin, Java)', 'BeakerX Widgets', 'Plotly', 'Spark Integration'],
+        packages: ['JupyterLab', 'BeakerX Extension', 'BeakerX Widgets', 'Java Runtime (JRE 17)'],
         icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 3h15"/><path d="M6 3v16a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V3"/><path d="M6 14h12"/></svg>'
+    },
+    {
+        id: 'spyder',
+        title: 'Spyder Python IDE',
+        category: 'data-science',
+        tags: ['Data Science', 'Python', 'IDE'],
+        desc: 'Scientific Python Development Environment. Powerful interactive development environment for Python with advanced editing, interactive testing, debugging, and introspection features.',
+        image: 'axonos:public-beta',
+        verifyCmd: "spyder --version 2>/dev/null || pip show spyder",
+        packages: ['Spyder IDE', 'PyQt5', 'NumPy', 'Matplotlib'],
+        icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/><line x1="12" y1="2" x2="12" y2="22"/></svg>'
+    },
+    {
+        id: 'octave',
+        title: 'GNU Octave',
+        category: 'data-science',
+        tags: ['Data Science', 'Simulation', 'Math'],
+        desc: 'Scientific programming language for numerical computations. Highly MATLAB-compatible environment for solving linear and nonlinear problems numerically.',
+        image: 'axonos:public-beta',
+        verifyCmd: "octave --version | head -n 1",
+        packages: ['GNU Octave Runtime', 'GNU Octave GUI'],
+        icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"/></svg>'
+    },
+    {
+        id: 'fiji',
+        title: 'Fiji (ImageJ) Microscopy',
+        category: 'bio-chem',
+        tags: ['Bio/Chem', 'Imaging', 'Analysis'],
+        desc: 'Image processing package for scientific microscopy. Bundles ImageJ with a curated set of plugins for biological-image analysis, registration, and segmentation.',
+        image: 'axonos:public-beta',
+        verifyCmd: "test -d /opt/Fiji.app",
+        packages: ['Fiji (ImageJ)', 'Bio-Formats Plugin', 'Java Runtime'],
+        icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>'
+    },
+    {
+        id: 'nextflow',
+        title: 'Nextflow Workflow',
+        category: 'bio-chem',
+        tags: ['Bio/Chem', 'Workflow', 'Bioinformatics'],
+        desc: 'Workflow manager to design and run scalable, portable, and reproducible scientific pipelines using software containers (Docker, Singularity).',
+        image: 'axonos:public-beta',
+        verifyCmd: "nextflow -version | head -n 1",
+        packages: ['Nextflow', 'Java 17 Runtime'],
+        icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>'
+    },
+    {
+        id: 'qgis-grass',
+        title: 'QGIS & GRASS GIS',
+        category: 'data-science',
+        tags: ['Data Science', 'GIS', 'Mapping'],
+        desc: 'Geographic Information System (GIS) application for geospatial data management, visual mapping, and advanced spatial raster/vector analysis.',
+        image: 'axonos:public-beta',
+        verifyCmd: "qgis --version | head -n 1",
+        packages: ['QGIS Desktop', 'GRASS GIS 8', 'Geospatial Libraries'],
+        icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>'
+    },
+    {
+        id: 'syncthing',
+        title: 'Syncthing Service',
+        category: 'data-science',
+        tags: ['Data Science', 'Utility', 'Sync'],
+        desc: 'Continuous decentralized file synchronization program. Synchronizes files in real-time between computers, fully encrypted and peer-to-peer.',
+        image: 'axonos:public-beta',
+        verifyCmd: "syncthing --version | head -n 1",
+        packages: ['Syncthing Daemon', 'Syncthing WebUI'],
+        icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>'
+    },
+    {
+        id: 'ethercalc',
+        title: 'EtherCalc Spreadsheet',
+        category: 'data-science',
+        tags: ['Data Science', 'Office', 'Spreadsheet'],
+        desc: 'Web-based collaborative spreadsheet. Multi-user real-time editing spreadsheet that runs in the browser.',
+        image: 'axonos:public-beta',
+        verifyCmd: "test -f /usr/share/applications/ethercalc.desktop",
+        packages: ['EtherCalc (Browser-based)'],
+        icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v18M3 9h18M3 15h18"/></svg>'
+    },
+    {
+        id: 'ngl-viewer',
+        title: 'NGL Molecular Viewer',
+        category: 'bio-chem',
+        tags: ['Bio/Chem', 'Visualization'],
+        desc: 'Web-based 3D molecular visualization client. Render large macromolecules, chemical structures, and simulation trajectories directly in the browser.',
+        image: 'axonos:public-beta',
+        verifyCmd: "test -f /usr/share/applications/nglviewer.desktop",
+        packages: ['NGL Viewer (Browser-based)'],
+        icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>'
+    },
+    {
+        id: 'remix-ide',
+        title: 'Remix Ethereum IDE',
+        category: 'data-science',
+        tags: ['Data Science', 'Web3', 'Development'],
+        desc: 'Web-based Ethereum Smart Contract IDE. Develop, compile, debug, deploy, and interact with Solidity smart contracts.',
+        image: 'axonos:public-beta',
+        verifyCmd: "test -f /usr/share/applications/remix-ide.desktop",
+        packages: ['Remix IDE (Browser-based)', 'Solidity Compiler'],
+        icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"/><polygon points="12 22 12 2"/></svg>'
+    },
+    {
+        id: 'cellmodeller',
+        title: 'CellModeller Simulation',
+        category: 'bio-chem',
+        tags: ['Bio/Chem', 'Simulation', 'Biophysics'],
+        desc: 'Multicellular biophysical simulation framework. Computes growing bacterial cell populations, physical interactions, genetic circuits, and nutrient diffusion.',
+        image: 'axonos:public-beta',
+        verifyCmd: "test -d /opt/CellModeller",
+        packages: ['CellModeller Engine', 'CellModeller GUI', 'OpenCL Support'],
+        icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><circle cx="18" cy="6" r="2"/><circle cx="6" cy="18" r="2"/></svg>'
+    },
+    {
+        id: 'ipfs-desktop',
+        title: 'IPFS Desktop',
+        category: 'data-science',
+        tags: ['Data Science', 'Web3', 'Storage'],
+        desc: 'InterPlanetary File System (IPFS) desktop client. Run a local IPFS peer, manage files on the decentralized network, and share storage across the Web3 ecosystem.',
+        image: 'axonos:public-beta',
+        verifyCmd: "which ipfs-desktop || test -f /usr/share/applications/ipfs-desktop.desktop",
+        packages: ['IPFS Desktop GUI', 'IPFS Daemon (kubo)', 'IPFS CLI (ipfs)'],
+        icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/></svg>'
     }
 ];
 

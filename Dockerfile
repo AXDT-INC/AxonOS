@@ -237,7 +237,7 @@ RUN git clone https://github.com/cellmodeller/CellModeller.git && \
     cd /opt/CellModeller && pip install -e . && \
     mkdir /opt/data && \
     chown -R $USER:$USER /opt/data && \
-    echo '[Desktop Entry]\nName=CellModeller\nExec=bash -c "cd /opt && /usr/bin/python3 CellModeller/Scripts/CellModellerGUI.py"\nIcon=applications-science\nType=Application\nTerminal=true\nCategories=Science;' \
+    echo '[Desktop Entry]\nName=CellModeller\nExec=bash -c "/usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py"\nIcon=applications-science\nType=Application\nTerminal=true\nCategories=Science;' \
     > /usr/share/applications/cellmodeller.desktop && \
     chmod 644 /usr/share/applications/cellmodeller.desktop && \
     update-desktop-database /usr/share/applications
