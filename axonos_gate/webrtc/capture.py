@@ -93,6 +93,20 @@ def capture_fps() -> float:
         return 30.0
 
 
+def audio_enabled() -> bool:
+    raw = (os.getenv("WEBRTC_AUDIO_ENABLED") or "true").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+def audio_source_name() -> str:
+    raw = (os.getenv("WEBRTC_AUDIO_SOURCE") or "axonos_out.monitor").strip()
+    return raw or "axonos_out.monitor"
+
+
+def offer_has_audio(offer_sdp: str) -> bool:
+    return any(line.startswith("m=audio") for line in (offer_sdp or "").splitlines())
+
+
 def x11grab_input(display: str) -> str:
     d = (display or ":0").strip()
     if not d:
@@ -181,6 +195,59 @@ def nvenc_runtime_ok(env: dict[str, str] | None = None) -> bool:
     if p.returncode != 0:
         err = (p.stderr or b"").decode("utf-8", errors="ignore")[:300]
         logger.debug("nvenc runtime probe exit=%s: %s", p.returncode, err)
+    return p.returncode == 0
+
+
+def ffmpeg_lists_pulse_input() -> bool:
+    try:
+        p = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-devices"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if p.returncode != 0:
+        return False
+    # Device lines look like " DE pulse           Pulse audio output"; the
+    # leading D marks demuxer (input) support, which is what capture needs.
+    return any(re.match(r"\s*DE?\s+pulse\s", line) for line in (p.stdout or "").splitlines())
+
+
+def pulse_runtime_ok(env: dict[str, str] | None = None) -> bool:
+    """True when system ffmpeg can actually record from the Pulse monitor source."""
+    if not ffmpeg_lists_pulse_input():
+        return False
+    try:
+        p = subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "pulse",
+                "-i",
+                audio_source_name(),
+                "-frames:a",
+                "1",
+                "-f",
+                "null",
+                "-",
+            ],
+            env=env,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.debug("pulse runtime probe failed: %s", exc)
+        return False
+    if p.returncode != 0:
+        err = (p.stderr or b"").decode("utf-8", errors="ignore")[:300]
+        logger.debug("pulse runtime probe exit=%s: %s", p.returncode, err)
     return p.returncode == 0
 
 
@@ -375,6 +442,39 @@ def build_nvfbc_streamer_cmd(
     if not draw_mouse:
         cmd.append("--no-cursor")
     return cmd
+
+
+def build_audio_ffmpeg_cmd(*, source: str) -> list[str]:
+    # System ffmpeg (built with libpulse) captures the monitor source; the PyAV
+    # wheel bundled with aiortc has no pulse device, so this must be a subprocess.
+    # WAV output carries sample rate/channels in the header, avoiding raw-PCM
+    # demuxer options that changed across FFmpeg majors (channels vs ch_layout).
+    return [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-f",
+        "pulse",
+        # 20ms fragments (48kHz stereo s16 = 3840 bytes) keep pulse-side
+        # buffering at one Opus frame; the default adds 100ms+ of latency.
+        "-fragment_size",
+        "3840",
+        "-i",
+        source,
+        "-ac",
+        "2",
+        "-ar",
+        "48000",
+        "-c:a",
+        "pcm_s16le",
+        "-flush_packets",
+        "1",
+        "-f",
+        "wav",
+        "pipe:1",
+    ]
 
 
 class LiveNvencVideoTrack:
@@ -678,6 +778,57 @@ def open_nvfbc_capture(
         _terminate_process(proc)
 
     return CaptureHandle(track=track, backend="nvfbc", cleanup=cleanup)
+
+
+def open_audio_capture(
+    *,
+    session_id: str,
+    env: dict[str, str],
+) -> CaptureHandle:
+    from aiortc.contrib.media import MediaPlayer
+
+    source = audio_source_name()
+    proc = subprocess.Popen(
+        build_audio_ffmpeg_cmd(source=source),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+    )
+    if proc.stdout is None:
+        _terminate_process(proc)
+        raise RuntimeError("ffmpeg pulse capture did not provide stdout pipe")
+
+    player = MediaPlayer(
+        proc.stdout,
+        format="wav",
+        options={
+            "fflags": "nobuffer+flush_packets",
+            "flags": "low_delay",
+            "probesize": "64",
+            "analyzeduration": "0",
+        },
+    )
+    # Live pipe, same rule as video: never let aiortc pace recv() by timestamps.
+    player._throttle_playback = False
+    track = player.audio
+    if track is None:
+        _terminate_process(proc)
+        raise RuntimeError("ffmpeg pulse capture produced no audio track")
+
+    logger.info(
+        "WebRTC audio capture session=%s source=%s",
+        session_id[:16],
+        source,
+    )
+
+    def cleanup() -> None:
+        try:
+            track.stop()
+        except Exception:
+            pass
+        _terminate_process(proc)
+
+    return CaptureHandle(track=track, backend="pulse", cleanup=cleanup)
 
 
 def _h264_profile_ids_from_offer(offer_sdp: str) -> list[str]:

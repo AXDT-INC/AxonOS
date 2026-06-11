@@ -357,9 +357,13 @@ export async function connectAxonOSWebRTC(opts) {
     } catch (e) {
         console.warn('AxonOS WebRTC H264 codec preference failed', e);
     }
+    // Desktop audio (Opus). The agent only attaches a track when server-side
+    // audio capture is enabled and healthy; an unanswered transceiver is harmless.
+    pc.addTransceiver('audio', { direction: 'recvonly' });
     window.axonosWebRtcPc = pc;
     window.axonosWebRtcVideo = video;
 
+    const remoteStream = new MediaStream();
     pc.ontrack = (ev) => {
         console.log('AxonOS WebRTC track', ev.track && ev.track.kind, ev.streams);
         if (ev.receiver && 'playoutDelayHint' in ev.receiver) {
@@ -368,10 +372,12 @@ export async function connectAxonOSWebRTC(opts) {
         if (ev.receiver && 'jitterBufferTarget' in ev.receiver) {
             ev.receiver.jitterBufferTarget = 0;
         }
-        if (ev.streams && ev.streams[0]) {
-            video.srcObject = ev.streams[0];
-        } else {
-            video.srcObject = new MediaStream([ev.track]);
+        // Audio and video can arrive as separate remote streams; collect the
+        // tracks into one local stream so the later track does not replace the
+        // already-attached earlier one on the element.
+        remoteStream.addTrack(ev.track);
+        if (video.srcObject !== remoteStream) {
+            video.srcObject = remoteStream;
         }
         ensureVideoPlaying();
     };
@@ -604,6 +610,15 @@ export async function connectAxonOSWebRTC(opts) {
     video.addEventListener('loadeddata', syncInputScale, { signal: inputSignal });
     video.addEventListener('loadeddata', ensureVideoPlaying, { signal: inputSignal });
     window.addEventListener('resize', syncInputScale, { signal: inputSignal });
+
+    // Autoplay policy requires the element to start muted; lift the mute on the
+    // first real gesture so desktop audio becomes audible without extra UI.
+    const unmuteOnGesture = () => {
+        video.muted = false;
+        ensureVideoPlaying();
+    };
+    video.addEventListener('pointerdown', unmuteOnGesture, { once: true, signal: inputSignal });
+    window.addEventListener('keydown', unmuteOnGesture, { once: true, signal: inputSignal });
 
     let inputChannelOpen = dcInput.readyState === 'open';
     // RFB-style bitmask: 1=left, 2=middle, 4=right (1 << DOM button index).

@@ -75,6 +75,24 @@ For **WebSocket-only** proxies, signaling still uses **HTTPS fetch** on the same
 
 Set `WEBRTC_CAPTURE_BACKEND=nvfbc` to require the native GPU capture path (falls back with a warning if the helper is missing). Build `tools/nvfbc_nvenc_streamer.c` against the NVIDIA Capture SDK headers and install it at `/usr/local/bin/nvfbc_nvenc_streamer`.
 
+## Audio
+
+The container has no audio hardware; a supervisord-managed **PulseAudio** daemon (`pulse-default.pa`) provides a **null sink `axonos_out`** that desktop apps play into via `/etc/pulse/client.conf` (`autospawn = no`, shared socket `/tmp/axonos-pulse.sock`). When `WEBRTC_AUDIO_ENABLED` (default `true`) and the browser offer contains an audio section, the agent records the sink's **monitor source** with system ffmpeg (`-f pulse`, 20 ms fragments, WAV pipe) and attaches it to the same peer connection; aiortc encodes **Opus** (~100 kbps, negligible next to video). Audio failures are never fatal — the session continues video-only with a `WebRTC audio setup failed` / `pulse capture unavailable` warning.
+
+Browser side: autoplay policy requires the `<video>` element to start **muted**; the client unmutes on the first pointer/key interaction with the desktop. Audio works with **all** capture backends (NvFBC, NVENC, MSS) since the capture process is independent of video.
+
+| Symptom | Check |
+|---------|--------|
+| No audio track in `chrome://webrtc-internals` | `WEBRTC_AUDIO_ENABLED`, `supervisorctl status pulseaudio`, then `pactl info` inside the container (should list `axonos_out`). |
+| Track present but silent | App may target a non-default sink: `pactl list sink-inputs`. Interact with the page once (click/keypress) so the element unmutes. |
+| Audio works, then stops after Pulse restart | The capture ffmpeg holds a dead connection; reconnect the WebRTC session (agent re-probes per session). |
+
+The classic noVNC fallback is video-only: RFB has no audio channel. Audio requires the WebRTC path.
+
+## Microphone (not implemented)
+
+Browser→desktop audio (sendrecv + a Pulse virtual source) is intentionally out of scope for now; it has separate consent/privacy implications.
+
 ## Input lifecycle validation
 
 Repeated WebRTC session spawn/teardown and teardown mouseup safety are documented in **[WEBRTC_INPUT_VALIDATION.md](./WEBRTC_INPUT_VALIDATION.md)**. Browser console runner:

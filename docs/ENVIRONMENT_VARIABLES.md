@@ -347,6 +347,8 @@ Configuration: [`axonos_gate/webrtc/config.py`](../axonos_gate/webrtc/config.py)
 | `WEBRTC_CAPTURE_NVFBC_PRESET` | `llhp` | Native streamer preset (`llhp`, `llhq`, `ll`, `hp`, `hq`, `default`). `llhp` is the lowest-latency starting point. |
 | `WEBRTC_CAPTURE_MAX_STALE_FRAMES` | `1` | NVENC live track: max extra frames to skip when the send queue runs ahead. `0` disables skip-ahead (may add latency). |
 | `WEBRTC_LOCAL_CURSOR` | `auto` | Browser overlay cursor: `auto` (off for H.264 capture, on for MSS), `true`, or `false`. H.264 capture embeds the host cursor. |
+| `WEBRTC_AUDIO_ENABLED` | `true` | Attach a desktop audio (Opus) track to WebRTC sessions. Requires the in-container PulseAudio daemon; degrades to video-only with a warning when capture is unavailable. |
+| `WEBRTC_AUDIO_SOURCE` | `axonos_out.monitor` | PulseAudio source ffmpeg records (the null sink monitor from `pulse-default.pa`). Change only with a custom Pulse layout. |
 | `WEBRTC_CLIPBOARD_MAX_BYTES` | `524288` | Max clipboard payload (floor 4096). |
 | `WEBRTC_CLIPBOARD_POLL_PRIMARY` | `false` | Include X PRIMARY selection (noisy); default CLIPBOARD only. |
 | `XAUTHORITY` | `/home/aXonian/.Xauthority` | X11 auth file for capture subprocesses. |

@@ -16,7 +16,7 @@ if _axonos_gate_root not in sys.path:
 class WebrtcCaptureTests(unittest.TestCase):
     def tearDown(self) -> None:
         for k in list(os.environ.keys()):
-            if k.startswith("WEBRTC_CAPTURE_"):
+            if k.startswith(("WEBRTC_CAPTURE_", "WEBRTC_AUDIO_")):
                 del os.environ[k]
 
     def test_capture_backend_aliases(self) -> None:
@@ -160,6 +160,46 @@ class WebrtcCaptureTests(unittest.TestCase):
 
         os.environ["WEBRTC_CAPTURE_BACKEND"] = "auto"
         self.assertEqual(resolve_capture_backend({}), "nvenc")
+
+    def test_audio_defaults(self) -> None:
+        from webrtc.capture import audio_enabled, audio_source_name
+
+        self.assertTrue(audio_enabled())
+        self.assertEqual(audio_source_name(), "axonos_out.monitor")
+
+    def test_audio_env_overrides(self) -> None:
+        from webrtc.capture import audio_enabled, audio_source_name
+
+        os.environ["WEBRTC_AUDIO_ENABLED"] = "false"
+        self.assertFalse(audio_enabled())
+        os.environ["WEBRTC_AUDIO_ENABLED"] = "1"
+        self.assertTrue(audio_enabled())
+        os.environ["WEBRTC_AUDIO_SOURCE"] = "custom_sink.monitor"
+        self.assertEqual(audio_source_name(), "custom_sink.monitor")
+        os.environ["WEBRTC_AUDIO_SOURCE"] = "   "
+        self.assertEqual(audio_source_name(), "axonos_out.monitor")
+
+    def test_build_audio_ffmpeg_cmd(self) -> None:
+        from webrtc.capture import build_audio_ffmpeg_cmd
+
+        cmd = build_audio_ffmpeg_cmd(source="axonos_out.monitor")
+        joined = " ".join(cmd)
+        self.assertIn("-f pulse", joined)
+        self.assertIn("-i axonos_out.monitor", joined)
+        self.assertIn("-fragment_size 3840", joined)
+        self.assertIn("-ar 48000", joined)
+        self.assertIn("-ac 2", joined)
+        self.assertIn("pcm_s16le", joined)
+        self.assertIn("-f wav pipe:1", joined)
+
+    def test_offer_has_audio(self) -> None:
+        from webrtc.capture import offer_has_audio
+
+        video_only = "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n"
+        with_audio = video_only + "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n"
+        self.assertFalse(offer_has_audio(video_only))
+        self.assertTrue(offer_has_audio(with_audio))
+        self.assertFalse(offer_has_audio(""))
 
     def test_prefer_h264_skips_mss(self) -> None:
         from webrtc.capture import prefer_h264_for_pc

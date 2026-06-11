@@ -1,0 +1,15 @@
+#!/usr/bin/pulseaudio -nF
+# AxonOS headless PulseAudio: loaded with `pulseaudio -nF` (skips the stock
+# default.pa, so module-suspend-on-idle is never loaded and the null sink keeps
+# producing a continuous monitor stream for WebRTC capture).
+
+# Single shared unix socket. Anonymous auth is acceptable inside the container:
+# the socket is not published, and it lets the root-owned webrtc-agent capture
+# from the aXonian-owned daemon without cookie juggling.
+load-module module-native-protocol-unix socket=/tmp/axonos-pulse.sock auth-anonymous=1
+
+# Virtual output device for desktop apps; WebRTC captures axonos_out.monitor.
+load-module module-null-sink sink_name=axonos_out sink_properties=device.description=AxonOS-Audio
+
+set-default-sink axonos_out
+set-default-source axonos_out.monitor

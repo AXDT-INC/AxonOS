@@ -962,8 +962,12 @@ async def _run_session(job: dict[str, Any]) -> None:
     sys.path.insert(0, "/axonos_gate")
     from webrtc.capture import (
         _video_codec_label_from_sdp,
+        audio_enabled,
+        offer_has_audio,
+        open_audio_capture,
         open_capture,
         prefer_h264_for_pc,
+        pulse_runtime_ok,
     )
 
     session_id = job["session_id"]
@@ -979,6 +983,16 @@ async def _run_session(job: dict[str, Any]) -> None:
 
     pc = RTCPeerConnection(_build_rtc_configuration())
     capture_handle = None
+    audio_handle = None
+
+    def _cleanup_captures() -> None:
+        for handle in (capture_handle, audio_handle):
+            if handle is not None:
+                try:
+                    handle.cleanup()
+                except Exception:
+                    pass
+
     key = _agent_key()
     gate = _gate_url()
     applied_ice: set[str] = set()
@@ -1279,6 +1293,31 @@ async def _run_session(job: dict[str, Any]) -> None:
         _agent_fail(session_id, "capture_setup_failed")
         return
 
+    # Desktop audio rides the same peer connection. Gated on the browser offer
+    # (no m=audio line means the answer must not add one) and never fatal:
+    # a silent session beats no session.
+    if audio_enabled() and offer_has_audio(offer_sdp):
+        try:
+            if pulse_runtime_ok(clipboard_env):
+                audio_handle = open_audio_capture(session_id=session_id, env=clipboard_env)
+                pc.addTrack(audio_handle.track)
+            else:
+                logger.warning(
+                    "WebRTC audio enabled but pulse capture unavailable session=%s",
+                    session_id[:16],
+                )
+        except Exception:
+            logger.exception(
+                "WebRTC audio setup failed session=%s; continuing video-only",
+                session_id[:16],
+            )
+            if audio_handle is not None:
+                try:
+                    audio_handle.cleanup()
+                except Exception:
+                    pass
+                audio_handle = None
+
     await pc.setRemoteDescription(RTCSessionDescription(sdp=offer_sdp, type=offer_type))
 
     async def poll_client_ice() -> None:
@@ -1348,10 +1387,7 @@ async def _run_session(job: dict[str, Any]) -> None:
     sdp_local = pc.localDescription
     if sdp_local is None:
         ice_task.cancel()
-        try:
-            capture_handle.cleanup()
-        except Exception:
-            pass
+        _cleanup_captures()
         await pc.close()
         _agent_fail(session_id, "no_local_description")
         return
@@ -1377,10 +1413,7 @@ async def _run_session(job: dict[str, Any]) -> None:
             if resp.status != 200:
                 logger.error("answer POST failed: %s %s", resp.status, (await resp.text())[:400])
                 ice_task.cancel()
-                try:
-                    capture_handle.cleanup()
-                except Exception:
-                    pass
+                _cleanup_captures()
                 await pc.close()
                 _agent_fail(session_id, "answer_post_failed")
                 return
@@ -1392,11 +1425,7 @@ async def _run_session(job: dict[str, Any]) -> None:
             await asyncio.sleep(0.5)
     finally:
         ice_task.cancel()
-        if capture_handle is not None:
-            try:
-                capture_handle.cleanup()
-            except Exception:
-                pass
+        _cleanup_captures()
         try:
             await pc.close()
         except Exception:

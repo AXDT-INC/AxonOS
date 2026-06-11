@@ -697,5 +697,15 @@ RUN if [ -x /opt/ugene-52.1/ugenecl ]; then ln -sf /opt/ugene-52.1/ugenecl /usr/
 COPY scripts/apply_session_template.sh /usr/local/bin/apply_session_template.sh
 RUN chmod +x /usr/local/bin/apply_session_template.sh
 
+# Desktop audio: headless PulseAudio null sink (no audio hardware in the
+# container). Desktop apps render into axonos_out via /etc/pulse/client.conf;
+# the WebRTC agent captures axonos_out.monitor (see [program:pulseaudio] in
+# supervisord.conf and docs/WEBRTC.md "Audio").
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        pulseaudio pulseaudio-utils && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+COPY pulse-default.pa /etc/pulse/axonos-default.pa
+COPY pulse-client.conf /etc/pulse/client.conf
+
 # Start services
 CMD ["/startup.sh"]
