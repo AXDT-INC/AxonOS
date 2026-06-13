@@ -4610,3 +4610,101 @@ html.axonos-mic-live::after {
   width: 100%;
   padding: 9px 0;
 }
+
+/* Custom Confirmation Modals aligned with AxonOS Theme */
+.axonos-confirm-content {
+  max-width: 440px !important;
+  border: 1px solid rgba(78, 195, 212, 0.22) !important;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7), 0 0 40px rgba(78, 195, 212, 0.12) !important;
+  padding: 28px !important;
+}
+
+.axonos-confirm-title {
+  font-size: 1.3rem !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.01em !important;
+  color: var(--ink) !important;
+  margin: 0 0 14px 0 !important;
+  line-height: 1.25 !important;
+}
+
+.axonos-confirm-body {
+  font-size: 0.9rem !important;
+  line-height: 1.55 !important;
+  color: var(--ink-dim) !important;
+  margin-bottom: 24px !important;
+  white-space: pre-wrap !important;
+}
+
+.axonos-confirm-footer {
+  display: flex !important;
+  justify-content: flex-end !important;
+  gap: 12px !important;
+}
+
+.axonos-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
+  padding: 10px 20px !important;
+  font-size: 0.9rem !important;
+  font-weight: 600 !important;
+  white-space: nowrap !important;
+  font-family: var(--font-body) !important;
+  letter-spacing: 0.04em !important;
+  border-radius: 999px !important;
+  cursor: pointer !important;
+  box-shadow: none !important;
+  transition: background .2s, border-color .2s, transform .2s, box-shadow .2s !important;
+}
+
+.axonos-btn--primary {
+  background: rgba(78, 195, 212, 0.1) !important;
+  border: 1px solid var(--hair-mint) !important;
+  color: var(--cyan) !important;
+  -webkit-text-fill-color: var(--cyan) !important;
+}
+.axonos-btn--primary:hover {
+  transform: translateY(-2px) !important;
+  background: rgba(78, 195, 212, 0.18) !important;
+  border-color: var(--cyan) !important;
+  box-shadow: 0 6px 22px rgba(78, 195, 212, 0.22) !important;
+}
+.axonos-btn--primary:active {
+  transform: translateY(0) !important;
+  box-shadow: none !important;
+}
+
+.axonos-btn--danger {
+  background: rgba(242, 96, 122, 0.1) !important;
+  border: 1px solid rgba(242, 96, 122, 0.35) !important;
+  color: var(--coral) !important;
+  -webkit-text-fill-color: var(--coral) !important;
+}
+.axonos-btn--danger:hover {
+  transform: translateY(-2px) !important;
+  background: rgba(242, 96, 122, 0.18) !important;
+  border-color: var(--coral) !important;
+  box-shadow: 0 6px 22px rgba(242, 96, 122, 0.22) !important;
+}
+.axonos-btn--danger:active {
+  transform: translateY(0) !important;
+  box-shadow: none !important;
+}
+
+.axonos-btn--secondary {
+  background: rgba(170, 210, 225, 0.06) !important;
+  border: 1px solid var(--rule-strong) !important;
+  color: var(--ink-mute) !important;
+  -webkit-text-fill-color: var(--ink-mute) !important;
+}
+.axonos-btn--secondary:hover {
+  transform: translateY(-2px) !important;
+  background: rgba(170, 210, 225, 0.12) !important;
+  border-color: var(--ink-mute) !important;
+}
+.axonos-btn--secondary:active {
+  transform: translateY(0) !important;
+}
+

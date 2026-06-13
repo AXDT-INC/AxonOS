@@ -1972,7 +1972,59 @@ const UI = {
  *  SESSION CONTROLS
  * ------v------*/
 
-    endSession() {
+    showConfirm(title, message, options = {}) {
+        return new Promise((resolve) => {
+            const modal = document.getElementById('axonos_confirm_modal');
+            const titleEl = document.getElementById('axonos_confirm_title');
+            const msgEl = document.getElementById('axonos_confirm_body');
+            const cancelBtn = document.getElementById('axonos_confirm_cancel');
+            const okBtn = document.getElementById('axonos_confirm_ok');
+            const overlay = document.getElementById('axonos_confirm_overlay');
+
+            if (!modal || !titleEl || !msgEl || !cancelBtn || !okBtn) {
+                resolve(window.confirm(title + "\n\n" + message));
+                return;
+            }
+
+            titleEl.textContent = title;
+            msgEl.textContent = message;
+
+            okBtn.textContent = options.confirmText || _('OK');
+            cancelBtn.textContent = options.cancelText || _('Cancel');
+
+            okBtn.className = 'axonos-btn';
+            if (options.confirmType === 'danger') {
+                okBtn.classList.add('axonos-btn--danger');
+            } else {
+                okBtn.classList.add('axonos-btn--primary');
+            }
+
+            const cleanup = () => {
+                modal.classList.remove('active');
+                okBtn.removeEventListener('click', onOk);
+                cancelBtn.removeEventListener('click', onCancel);
+                overlay.removeEventListener('click', onCancel);
+            };
+
+            const onOk = () => {
+                cleanup();
+                resolve(true);
+            };
+
+            const onCancel = () => {
+                cleanup();
+                resolve(false);
+            };
+
+            okBtn.addEventListener('click', onOk);
+            cancelBtn.addEventListener('click', onCancel);
+            overlay.addEventListener('click', onCancel);
+
+            modal.classList.add('active');
+        });
+    },
+
+    async endSession() {
         if (!UI.connected && !window.axonosSessionDetached) {
             return;
         }
@@ -1988,9 +2040,12 @@ const UI = {
             ? limitHours + " hour" + (limitHours !== 1 ? "s" : "")
             : limitAbs + " minute" + (limitAbs !== 1 ? "s" : "");
         const msg = storageEnabled
-            ? _("End session now?\n\nThis stops billing for compute, ends your session, and tears down the desktop container. Your files in the home folder are safely saved (persistent storage is charged at " + storageCost + " minutes per GB/hour, accruing as debt when your balance is empty). To avoid volume deletion, clear your debt before it exceeds " + limitStr + ".")
-            : _("End session now?\n\nThis stops billing, ends your session, and removes your remote desktop. Unsaved work may be lost.");
-        const confirmed = window.confirm(msg);
+            ? _("This stops billing for compute, ends your session, and tears down the desktop container. Your files in the home folder are safely saved (persistent storage is charged at " + storageCost + " minutes per GB/hour, accruing as debt when your balance is empty). To avoid volume deletion, clear your debt before it exceeds " + limitStr + ".")
+            : _("This stops billing, ends your session, and removes your remote desktop. Unsaved work may be lost.");
+        const confirmed = await UI.showConfirm(_("End session now?"), msg, {
+            confirmText: _("End Session"),
+            confirmType: 'danger'
+        });
         if (!confirmed) {
             return;
         }
@@ -1998,12 +2053,17 @@ const UI = {
         UI.disconnect();
     },
 
-    detach() {
+    async detach() {
         if (!UI.connected) {
             return;
         }
-        const confirmed = window.confirm(
-            _("Detach from the remote view?\n\nYou return to the home screen. Your desktop keeps running and prepaid minutes keep counting while this tab stays open.\n\nUse End session or close this tab when you are fully done.")
+        const confirmed = await UI.showConfirm(
+            _("Detach from the remote view?"),
+            _("You return to the home screen. Your desktop keeps running and prepaid minutes keep counting while this tab stays open.\n\nUse End session or close this tab when you are fully done."),
+            {
+                confirmText: _("Detach"),
+                confirmType: 'primary'
+            }
         );
         if (!confirmed) {
             return;
@@ -2011,7 +2071,7 @@ const UI = {
         UI.disconnect({ skipRelease: true, detach: true });
     },
 
-    restartDesktopSession() {
+    async restartDesktopSession() {
         if (!UI.connected && !window.axonosSessionDetached) return;
         const wallet = window.verifiedWalletAddress;
         if (!wallet) {
@@ -2019,8 +2079,13 @@ const UI = {
             return;
         }
 
-        const confirmed = window.confirm(
-            _("Restart desktop session now? Open apps in the remote desktop may close.")
+        const confirmed = await UI.showConfirm(
+            _("Restart desktop session now?"),
+            _("Open apps in the remote desktop may close."),
+            {
+                confirmText: _("Restart"),
+                confirmType: 'primary'
+            }
         );
         if (!confirmed) return;
 

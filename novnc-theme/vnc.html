@@ -963,6 +963,21 @@ Copyright (C) 2019 The noVNC Authors
             window.addEventListener('scroll', markScrolling, true);
         }());
     </script>
+
+    <!-- Beautiful AxonOS Confirmation Modal -->
+    <div id="axonos_confirm_modal" class="axonos-modal">
+        <div class="axonos-modal-overlay" id="axonos_confirm_overlay"></div>
+        <div class="axonos-modal-content axonos-confirm-content">
+            <h2 id="axonos_confirm_title" class="axonos-confirm-title">Confirm</h2>
+            <div id="axonos_confirm_body" class="axonos-confirm-body">
+                Are you sure you want to proceed?
+            </div>
+            <div class="axonos-confirm-footer">
+                <button type="button" id="axonos_confirm_cancel" class="axonos-btn axonos-btn--secondary">Cancel</button>
+                <button type="button" id="axonos_confirm_ok" class="axonos-btn axonos-btn--primary">Confirm</button>
+            </div>
+        </div>
+    </div>
 </body>
 
 </html>
