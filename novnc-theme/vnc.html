@@ -101,7 +101,7 @@ Copyright (C) 2019 The noVNC Authors
     </script>
     <script src="app/error-handler.js"></script>
     <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
-    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260613f"></script>
+    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260613k"></script>
 </head>
 
 <body>
@@ -1835,6 +1835,9 @@ Copyright (C) 2019 The noVNC Authors
             }
             return axonosSyncWalletAccessForResume(wallet).then(function (access) {
                 if (!access.verified) {
+                    if (typeof window.axonosHideConnectionLoader === 'function') {
+                        window.axonosHideConnectionLoader(true);
+                    }
                     var creditDlg = document.getElementById('noVNC_credentials_dlg');
                     if (creditDlg) creditDlg.classList.add('noVNC_open');
                     setWalletUIState('axonos_wallet_state_insufficient', {
@@ -2798,8 +2801,10 @@ Copyright (C) 2019 The noVNC Authors
                                     tryConnectAfterClaim();
                                 } else {
                                     handleSessionClaimDenied(claim, 'Session claim denied.');
-                                    var credentialsDialog = document.getElementById('noVNC_credentials_dlg');
-                                    if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
+                                    if (!axonosClaimReasonNeedsWalletOrResume(claim)) {
+                                        var credentialsDialog = document.getElementById('noVNC_credentials_dlg');
+                                        if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
+                                    }
                                 }
                             }).catch(function () {
                                 setWalletUIState('axonos_wallet_state_connect_error', {
@@ -2965,7 +2970,9 @@ Copyright (C) 2019 The noVNC Authors
                     if (claim.granted) tryConnectAfterClaim();
                     else {
                         handleSessionClaimDenied(claim, 'Session claim denied.');
-                        if (credDlg) credDlg.classList.remove('noVNC_open');
+                        if (!axonosClaimReasonNeedsWalletOrResume(claim)) {
+                            if (credDlg) credDlg.classList.remove('noVNC_open');
+                        }
                     }
                 }).catch(function () {
                     if (msgEl) msgEl.textContent = 'Credited, but session claim failed. Try Resume again.';
@@ -3425,7 +3432,10 @@ Copyright (C) 2019 The noVNC Authors
         var walletEventsProvider = getSafeWindowEthereum();
         if (walletEventsProvider && typeof walletEventsProvider.on === 'function') {
             walletEventsProvider.on('accountsChanged', function (accounts) {
-                if (!Array.isArray(accounts) || accounts.length === 0) {
+                var newAccount = (Array.isArray(accounts) && accounts[0]) ? String(accounts[0]).trim().toLowerCase() : '';
+                var oldAccount = (window.verifiedWalletAddress || '').trim().toLowerCase();
+
+                if (!newAccount) {
                     verifiedWalletAddress = null;
                     window.verifiedWalletAddress = null;
                     window.verifiedWalletAuthToken = null;
@@ -3433,7 +3443,11 @@ Copyright (C) 2019 The noVNC Authors
                     window.axonosPausedResume = null;
                     axonosApplyResumeConnectUi(false);
                     setWalletUIState('axonos_wallet_state_disconnected');
-                } else {
+                } else if (oldAccount && newAccount !== oldAccount) {
+                    verifiedWalletAddress = null;
+                    window.verifiedWalletAddress = null;
+                    window.verifiedWalletAuthToken = null;
+                    window.axonosAllowVncConnect = false;
                     window.axonosPausedResume = null;
                     axonosApplyResumeConnectUi(false);
                     setWalletUIState('axonos_wallet_state_disconnected');
@@ -3457,7 +3471,6 @@ Copyright (C) 2019 The noVNC Authors
             var obs = new MutationObserver(function () {
                 if (!dlg.classList.contains('noVNC_open')) return;
                 var hasActiveVerifiedSession =
-                    !!window.axonosAllowVncConnect &&
                     !!window.verifiedWalletAddress &&
                     !!window.verifiedWalletAuthToken;
                 if (hasActiveVerifiedSession) {
@@ -3467,21 +3480,38 @@ Copyright (C) 2019 The noVNC Authors
                     if (isDesktopActive) {
                         return;
                     }
+                    var isInsufficient = !document.getElementById('axonos_wallet_state_insufficient')?.classList.contains('axonos-wallet-state--hidden');
+                    var isError = !document.getElementById('axonos_wallet_state_connect_error')?.classList.contains('axonos-wallet-state--hidden');
+                    if (isInsufficient || isError) {
+                        return;
+                    }
                     if (typeof axonosRefreshPausedResumeStatus === 'function') {
                         axonosRefreshPausedResumeStatus().then(function () {
                             var hint = window.axonosPausedResume
                                 ? ('Connected · Resume ' + axonosProfileLabel(window.axonosPausedResume.profile))
                                 : 'Connected';
-                            setWalletUIState('axonos_wallet_state_verified', {
-                                address: window.verifiedWalletAddress,
-                                balanceDisplay: hint
-                            });
+                            if (window.axonosAllowVncConnect) {
+                                setWalletUIState('axonos_wallet_state_verified', {
+                                    address: window.verifiedWalletAddress,
+                                    balanceDisplay: hint
+                                });
+                            } else {
+                                setWalletUIState('axonos_wallet_state_insufficient', {
+                                    balanceDisplay: hint
+                                });
+                            }
                         });
                     } else {
-                        setWalletUIState('axonos_wallet_state_verified', {
-                            address: window.verifiedWalletAddress,
-                            balanceDisplay: 'Connected'
-                        });
+                        if (window.axonosAllowVncConnect) {
+                            setWalletUIState('axonos_wallet_state_verified', {
+                                address: window.verifiedWalletAddress,
+                                balanceDisplay: 'Connected'
+                            });
+                        } else {
+                            setWalletUIState('axonos_wallet_state_insufficient', {
+                                balanceDisplay: 'Connected'
+                            });
+                        }
                     }
                     return;
                 }

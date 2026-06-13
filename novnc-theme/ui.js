@@ -1521,8 +1521,10 @@ const UI = {
         // State change closes dialogs as they may not be relevant
         // anymore
         UI.closeAllPanels();
-        document.getElementById('noVNC_credentials_dlg')
-            .classList.remove('noVNC_open');
+        if (UI._axgtUsageOverlayState !== 'locked') {
+            document.getElementById('noVNC_credentials_dlg')
+                .classList.remove('noVNC_open');
+        }
     },
 
     showStatus(text, statusType, time) {
@@ -2410,7 +2412,7 @@ const UI = {
             UI._axonosCancelWebRtcClient();
         }
         UI.connected = false;
-        if (!opts.preserveStatus) {
+        if (!opts.preserveStatus && !opts.creditExhausted) {
             UI.hideStatus();
         }
         if (typeof window.axonosHideConnectionLoader === 'function') {
@@ -2425,6 +2427,13 @@ const UI = {
             UI.hideAxonosSshCard();
         }
         UI.updateSessionControlButtons();
+
+        if (opts.creditExhausted) {
+            UI.showStatus(
+                _("Session paused — usage credit exhausted. Add credit to resume."),
+                'warn'
+            );
+        }
     },
 
     /** Server ended or released the session (heartbeat while detached or idle). */
@@ -2448,7 +2457,8 @@ const UI = {
         }
     },
 
-    _axonosCompleteDetachUI() {
+    _axonosCompleteDetachUI(options) {
+        const opts = options && typeof options === 'object' ? options : {};
         UI._axonosCancelWebRtcClient();
         UI.connected = false;
         UI.hideStatus();
@@ -2456,14 +2466,21 @@ const UI = {
             window.axonosHideConnectionLoader(true);
         }
         UI.updateVisualState('disconnected');
-        UI.showStatus(
-            _("Detached — desktop still running. Launch again to reconnect, or End session when done."),
-            'normal'
-        );
+        if (opts.creditExhausted) {
+            UI.showStatus(
+                _("Session paused — usage credit exhausted. Add credit to resume."),
+                'warn'
+            );
+        } else {
+            UI.showStatus(
+                _("Detached — desktop still running. Launch again to reconnect, or End session when done."),
+                'normal'
+            );
+        }
         document.title = PAGE_TITLE;
         UI.openControlbar();
         UI.openConnectPanel();
-        if (!UI._axgtStatusPollId) {
+        if (!UI._axgtStatusPollId && !opts.creditExhausted) {
             UI._axgtStartSessionBillingPoll();
         }
         UI.updateSessionControlButtons();
@@ -2762,6 +2779,7 @@ const UI = {
         const opts = options && typeof options === 'object' ? options : {};
         const skipRelease = opts.skipRelease === true;
         const detach = opts.detach === true;
+        const creditExhausted = opts.creditExhausted === true;
 
         if (!detach && !skipRelease) {
             UI._axgtEndingSession = true;
@@ -2774,7 +2792,16 @@ const UI = {
             window.axonosHideConnectionLoader(true);
         }
 
-        if (detach) {
+        if (creditExhausted) {
+            window.axonosSessionDetached = false;
+            if (UI._axgtStatusPollId) {
+                clearInterval(UI._axgtStatusPollId);
+                UI._axgtStatusPollId = null;
+            }
+            if (typeof window.axonosClearDetachedSession === 'function') {
+                window.axonosClearDetachedSession();
+            }
+        } else if (detach) {
             window.axonosSessionDetached = true;
             if (typeof window.axonosSyncDetachedProfileUiImmediate === 'function') {
                 window.axonosSyncDetachedProfileUiImmediate();
@@ -2832,15 +2859,15 @@ const UI = {
                 } catch (err) {
                     Log.Warn("AxonOS disconnect failed: " + err);
                     if (detach || window.axonosSessionDetached) {
-                        UI._axonosCompleteDetachUI();
+                        UI._axonosCompleteDetachUI({ creditExhausted });
                     } else {
-                        UI._axonosReturnToHomeAfterDisconnect();
+                        UI._axonosReturnToHomeAfterDisconnect({ creditExhausted });
                     }
                 }
             } else if (detach || window.axonosSessionDetached) {
-                UI._axonosCompleteDetachUI();
+                UI._axonosCompleteDetachUI({ creditExhausted });
             } else {
-                UI._axonosReturnToHomeAfterDisconnect();
+                UI._axonosReturnToHomeAfterDisconnect({ creditExhausted });
             }
         };
 
@@ -2859,6 +2886,10 @@ const UI = {
         if (typeof window !== 'undefined') {
             window.axonosAllowVncConnect = false;
         }
+        if (UI._axgtStatusPollId) {
+            clearInterval(UI._axgtStatusPollId);
+            UI._axgtStatusPollId = null;
+        }
         if (typeof window.axonosResetQueueClientState === 'function') {
             window.axonosResetQueueClientState();
         } else if (typeof window.axonosHideQueueOverlay === 'function') {
@@ -2876,7 +2907,7 @@ const UI = {
             if (typeof window.axonosRefreshPausedResumeStatus === 'function') {
                 window.axonosRefreshPausedResumeStatus();
             }
-            setTimeout(() => UI.disconnect({ skipRelease: true }), 400);
+            setTimeout(() => UI.disconnect({ skipRelease: true, creditExhausted: true }), 400);
         };
 
         if (!wallet) {
