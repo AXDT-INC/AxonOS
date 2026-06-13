@@ -20,6 +20,17 @@ def fallback_enabled() -> bool:
     return raw in ("1", "true", "yes", "on")
 
 
+def mic_enabled() -> bool:
+    """Operator gate for browser→desktop microphone (off by default).
+
+    When false the browser keeps its audio transceiver recvonly (no mic path);
+    when true it offers sendrecv and shows an opt-in mic toggle (which still
+    triggers the browser's own getUserMedia permission prompt).
+    """
+    raw = (os.getenv("WEBRTC_MIC_ENABLED") or "false").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
 def session_timeout_seconds() -> int:
     raw = (os.getenv("WEBRTC_SESSION_TIMEOUT_SECONDS") or "").strip()
     if not raw:
@@ -142,6 +153,7 @@ def public_config() -> dict[str, Any]:
         "webrtc_answer_wait_ms": answer_wait_ms(),
         "webrtc_local_cursor": client_wants_local_cursor(),
         "webrtc_capture_backend": capture_backend_hint(),
+        "webrtc_mic_enabled": mic_enabled(),
     }
 
 

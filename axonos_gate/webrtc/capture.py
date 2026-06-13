@@ -107,6 +107,19 @@ def offer_has_audio(offer_sdp: str) -> bool:
     return any(line.startswith("m=audio") for line in (offer_sdp or "").splitlines())
 
 
+def mic_enabled() -> bool:
+    # Operator gate, off by default: browser→desktop mic is a separate privacy
+    # surface from desktop→browser audio, so it must be opted into at deploy time
+    # (and again per user via the browser permission prompt).
+    raw = (os.getenv("WEBRTC_MIC_ENABLED") or "false").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+def mic_sink_name() -> str:
+    raw = (os.getenv("WEBRTC_MIC_SINK") or "axonos_mic").strip()
+    return raw or "axonos_mic"
+
+
 def x11grab_input(display: str) -> str:
     d = (display or ":0").strip()
     if not d:
@@ -829,6 +842,105 @@ def open_audio_capture(
         _terminate_process(proc)
 
     return CaptureHandle(track=track, backend="pulse", cleanup=cleanup)
+
+
+def build_mic_pacat_cmd(*, sink: str) -> list[str]:
+    # pacat (pulseaudio-utils) plays raw interleaved PCM from stdin into the
+    # bridge sink; its monitor is remapped to the virtual mic source. s16le/48k
+    # stereo matches what we resample inbound Opus frames to.
+    return [
+        "pacat",
+        "--playback",
+        f"--device={sink}",
+        "--rate=48000",
+        "--channels=2",
+        "--format=s16le",
+        "--latency-msec=40",
+        "--client-name=axonos-mic-bridge",
+        "--stream-name=AxonOS Microphone",
+    ]
+
+
+async def pump_inbound_audio_to_pulse(track: Any, env: dict[str, str], session_id: str) -> None:
+    """Decode an inbound WebRTC audio track and feed it to the virtual mic sink.
+
+    Mirror of open_audio_capture: aiortc decodes Opus to PCM frames; we resample
+    to a fixed s16le/48k/stereo and feed pacat. pacat is started lazily on the
+    first frame so a connected-but-muted mic costs nothing. Cancel the task to
+    tear it down — the subprocess is terminated in the finally block.
+
+    pacat runs as an *asyncio* subprocess and we ``await drain()`` after each
+    write: a plain blocking ``proc.stdin.write`` stalls the event loop the moment
+    pacat's pipe buffer fills, which starves aiortc's ICE/RTCP/SCTP and drops the
+    whole session within seconds (same hazard the input handler avoids by
+    offloading to an executor). Backpressure must never block the loop.
+    """
+    import av  # type: ignore[import-untyped]
+    from aiortc.mediastreams import MediaStreamError
+
+    sink = mic_sink_name()
+    proc: asyncio.subprocess.Process | None = None
+    resampler: Any = None
+    frames = 0
+    try:
+        while True:
+            try:
+                frame = await track.recv()
+            except MediaStreamError:
+                break
+            if proc is None:
+                proc = await asyncio.create_subprocess_exec(
+                    *build_mic_pacat_cmd(sink=sink),
+                    stdin=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                    env=env,
+                )
+                resampler = av.AudioResampler(format="s16", layout="stereo", rate=48000)
+                logger.info("WebRTC mic stream started session=%s sink=%s", session_id[:16], sink)
+            if proc.stdin is None:
+                break
+            resampled = resampler.resample(frame)
+            if resampled is None:
+                continue
+            if not isinstance(resampled, list):
+                resampled = [resampled]
+            try:
+                for rframe in resampled:
+                    # to_ndarray() yields exactly the valid interleaved s16
+                    # samples; bytes(plane) would include FFmpeg's buffer
+                    # alignment padding and corrupt the PCM stream.
+                    proc.stdin.write(rframe.to_ndarray().tobytes())
+                await proc.stdin.drain()
+            except (BrokenPipeError, ConnectionResetError):
+                break
+            frames += 1
+            if frames == 1 or frames % 500 == 0:
+                logger.debug("WebRTC mic frames session=%s count=%s", session_id[:16], frames)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("WebRTC mic pump error session=%s", session_id[:16])
+    finally:
+        if proc is not None:
+            if proc.stdin is not None:
+                try:
+                    proc.stdin.close()
+                except Exception:
+                    pass
+            if proc.returncode is None:
+                try:
+                    proc.terminate()
+                except ProcessLookupError:
+                    pass
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
+                except Exception:
+                    pass
 
 
 def _h264_profile_ids_from_offer(offer_sdp: str) -> list[str]:

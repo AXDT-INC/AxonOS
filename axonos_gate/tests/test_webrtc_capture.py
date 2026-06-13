@@ -16,7 +16,7 @@ if _axonos_gate_root not in sys.path:
 class WebrtcCaptureTests(unittest.TestCase):
     def tearDown(self) -> None:
         for k in list(os.environ.keys()):
-            if k.startswith(("WEBRTC_CAPTURE_", "WEBRTC_AUDIO_")):
+            if k.startswith(("WEBRTC_CAPTURE_", "WEBRTC_AUDIO_", "WEBRTC_MIC_")):
                 del os.environ[k]
 
     def test_capture_backend_aliases(self) -> None:
@@ -200,6 +200,34 @@ class WebrtcCaptureTests(unittest.TestCase):
         self.assertFalse(offer_has_audio(video_only))
         self.assertTrue(offer_has_audio(with_audio))
         self.assertFalse(offer_has_audio(""))
+
+    def test_mic_disabled_by_default(self) -> None:
+        from webrtc.capture import mic_enabled, mic_sink_name
+
+        self.assertFalse(mic_enabled())
+        self.assertEqual(mic_sink_name(), "axonos_mic")
+
+    def test_mic_env_overrides(self) -> None:
+        from webrtc.capture import mic_enabled, mic_sink_name
+
+        os.environ["WEBRTC_MIC_ENABLED"] = "on"
+        self.assertTrue(mic_enabled())
+        os.environ["WEBRTC_MIC_SINK"] = "custom_mic"
+        self.assertEqual(mic_sink_name(), "custom_mic")
+        os.environ["WEBRTC_MIC_SINK"] = "   "
+        self.assertEqual(mic_sink_name(), "axonos_mic")
+
+    def test_build_mic_pacat_cmd(self) -> None:
+        from webrtc.capture import build_mic_pacat_cmd
+
+        cmd = build_mic_pacat_cmd(sink="axonos_mic")
+        joined = " ".join(cmd)
+        self.assertEqual(cmd[0], "pacat")
+        self.assertIn("--playback", joined)
+        self.assertIn("--device=axonos_mic", joined)
+        self.assertIn("--rate=48000", joined)
+        self.assertIn("--channels=2", joined)
+        self.assertIn("--format=s16le", joined)
 
     def test_prefer_h264_skips_mss(self) -> None:
         from webrtc.capture import prefer_h264_for_pc

@@ -89,9 +89,23 @@ Browser side: autoplay policy requires the `<video>` element to start **muted**;
 
 The classic noVNC fallback is video-only: RFB has no audio channel. Audio requires the WebRTC path.
 
-## Microphone (not implemented)
+## Microphone (browser → desktop)
 
-Browser→desktop audio (sendrecv + a Pulse virtual source) is intentionally out of scope for now; it has separate consent/privacy implications.
+Optional and **off by default**. Disabled, the browser keeps its audio transceiver `recvonly` and nothing changes. Two gates must both be satisfied for the mic to transmit:
+
+1. **Operator**: set `WEBRTC_MIC_ENABLED=true`. The gate then advertises `webrtc_mic_enabled` via `/api/config`, the browser offers a **`sendrecv`** audio transceiver (one bidirectional m-line: it receives desktop audio and can send mic), and a mic toggle appears on the session.
+2. **User**: click the mic toggle. This triggers the browser's own `getUserMedia` permission prompt and, on grant, `replaceTrack`s the live mic onto the already-negotiated sender — **no renegotiation**. Click again (or disconnect) to stop and release the device.
+
+Path: browser Opus → agent `pc.on("track")` → `pump_inbound_audio_to_pulse` decodes and resamples to s16le/48k stereo → `pacat` into the **`axonos_mic`** null sink → `module-remap-source` presents `axonos_mic.monitor` as the default source **`axonos_microphone`**, so desktop recording apps see a normal "AxonOS Microphone". When no mic is connected the source is silent (correct muted-mic behaviour). The pump task idles with zero cost until the first frame arrives and is torn down with the session.
+
+| Symptom | Check |
+|---------|--------|
+| No mic toggle on the session | `WEBRTC_MIC_ENABLED` must be `true`; confirm `/api/config` shows `webrtc_mic_enabled:true`, then hard-refresh. |
+| Toggle present, permission denied | Browser blocked the mic — allow it for the site. Note browsers only grant `getUserMedia` on a secure origin (HTTPS or localhost). |
+| Granted but desktop apps hear nothing | `pactl list short sources` should list `axonos_microphone`; the recording app must select it (or the default). Check the agent log for `WebRTC mic stream started`. |
+| Apps record desktop output instead of mic | Default source must be `axonos_microphone`, not `axonos_out.monitor` — verify `pulse-default.pa` loaded (a stale daemon from before this change can keep the old default). |
+
+Echo/feedback is avoided because the mic feeds `axonos_mic` while desktop output is captured from the separate `axonos_out` sink; the two never cross.
 
 ## Input lifecycle validation
 

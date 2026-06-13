@@ -32,6 +32,19 @@ class WebrtcConfigTests(unittest.TestCase):
         self.assertFalse(validate_sdp(""))
         self.assertFalse(validate_sdp("garbage" * 10000))
 
+    def test_mic_disabled_by_default(self) -> None:
+        from webrtc.config import mic_enabled, public_config
+
+        self.assertFalse(mic_enabled())
+        self.assertIs(public_config()["webrtc_mic_enabled"], False)
+
+    def test_mic_enabled_flag(self) -> None:
+        from webrtc.config import mic_enabled, public_config
+
+        os.environ["WEBRTC_MIC_ENABLED"] = "true"
+        self.assertTrue(mic_enabled())
+        self.assertIs(public_config()["webrtc_mic_enabled"], True)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -963,11 +963,13 @@ async def _run_session(job: dict[str, Any]) -> None:
     from webrtc.capture import (
         _video_codec_label_from_sdp,
         audio_enabled,
+        mic_enabled,
         offer_has_audio,
         open_audio_capture,
         open_capture,
         prefer_h264_for_pc,
         pulse_runtime_ok,
+        pump_inbound_audio_to_pulse,
     )
 
     session_id = job["session_id"]
@@ -986,6 +988,8 @@ async def _run_session(job: dict[str, Any]) -> None:
     audio_handle = None
 
     def _cleanup_captures() -> None:
+        if mic_task is not None and not mic_task.done():
+            mic_task.cancel()
         for handle in (capture_handle, audio_handle):
             if handle is not None:
                 try:
@@ -1008,6 +1012,7 @@ async def _run_session(job: dict[str, Any]) -> None:
     input_worker_task: asyncio.Task | None = None
     mouse_watchdog_task: asyncio.Task | None = None
     input_queue: asyncio.Queue[str] | None = None
+    mic_task: asyncio.Task | None = None
     session_tasks_started = False
 
     def _enqueue_client_clipboard(raw: str) -> None:
@@ -1246,6 +1251,24 @@ async def _run_session(job: dict[str, Any]) -> None:
             @channel.on("close")
             def on_close() -> None:  # type: ignore[no-untyped-def]
                 _cancel_session_io_tasks()
+
+    @pc.on("track")
+    def on_track(track) -> None:  # type: ignore[no-untyped-def]
+        # Only inbound audio reaches here (video/desktop-audio are agent→browser
+        # sends). When the mic feature is enabled, pump it into the virtual mic
+        # sink; the task idles silently until the user actually unmutes.
+        nonlocal mic_task
+        if track.kind != "audio":
+            return
+        if not mic_enabled():
+            logger.info("WebRTC inbound audio ignored (mic disabled) session=%s", session_id[:16])
+            return
+        if mic_task is not None and not mic_task.done():
+            return
+        logger.info("WebRTC mic track received session=%s", session_id[:16])
+        mic_task = asyncio.create_task(
+            pump_inbound_audio_to_pulse(track, clipboard_env, session_id)
+        )
 
     @pc.on("datachannel")
     def on_dc(channel) -> None:  # type: ignore[no-untyped-def]

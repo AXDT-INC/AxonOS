@@ -349,6 +349,8 @@ Configuration: [`axonos_gate/webrtc/config.py`](../axonos_gate/webrtc/config.py)
 | `WEBRTC_LOCAL_CURSOR` | `auto` | Browser overlay cursor: `auto` (off for H.264 capture, on for MSS), `true`, or `false`. H.264 capture embeds the host cursor. |
 | `WEBRTC_AUDIO_ENABLED` | `true` | Attach a desktop audio (Opus) track to WebRTC sessions. Requires the in-container PulseAudio daemon; degrades to video-only with a warning when capture is unavailable. |
 | `WEBRTC_AUDIO_SOURCE` | `axonos_out.monitor` | PulseAudio source ffmpeg records (the null sink monitor from `pulse-default.pa`). Change only with a custom Pulse layout. |
+| `WEBRTC_MIC_ENABLED` | `false` | Operator gate for browser→desktop microphone. When on, the browser offers a `sendrecv` audio transceiver and shows an opt-in mic toggle (still subject to the browser's `getUserMedia` prompt); the agent feeds the inbound track into the virtual `axonos_microphone` source. Off keeps audio one-directional. |
+| `WEBRTC_MIC_SINK` | `axonos_mic` | PulseAudio sink the agent plays the browser mic into (its monitor is remapped to `axonos_microphone`). Change only with a custom Pulse layout. |
 | `WEBRTC_CLIPBOARD_MAX_BYTES` | `524288` | Max clipboard payload (floor 4096). |
 | `WEBRTC_CLIPBOARD_POLL_PRIMARY` | `false` | Include X PRIMARY selection (noisy); default CLIPBOARD only. |
 | `XAUTHORITY` | `/home/aXonian/.Xauthority` | X11 auth file for capture subprocesses. |
