@@ -4351,3 +4351,109 @@ html:not(.noVNC_connected) body::after {
   color: #e87a7a;
   opacity: 1;
 }
+
+/* ---------------------------------------------------------------------------
+ * WebRTC control surface
+ * On the WebRTC path the desktop is a <video> element with data-channel input,
+ * so RFB-only controls (viewport drag, on-screen modifier keys, RFB encoding/
+ * transport/cursor settings) do nothing. They make sense ONLY during a classic
+ * noVNC/RFB session, so hide them on the landing page (not connected) and on
+ * the WebRTC path; they reappear for an RFB fallback session. The #id selector
+ * raises specificity to beat the deck's
+ * `#noVNC_control_bar .noVNC_button { display:block !important }`. */
+html:not(.noVNC_connected) #noVNC_control_bar .axonos-rfb-only,
+html.axonos-webrtc-active #noVNC_control_bar .axonos-rfb-only {
+  display: none !important;
+}
+
+/* The control deck is session-only: hide the whole bar on the landing page
+ * (no active session) so desktop controls don't appear before connect. It
+ * returns once a session is connected (noVNC_connected set for both WebRTC and
+ * RFB). */
+html:not(.noVNC_connected) #noVNC_control_bar_anchor {
+  display: none !important;
+}
+
+/* Microphone button — uses .noVNC_button for an exact box match with its deck
+ * neighbours; we only add the live dot, icon sizing, and state colours. The
+ * #id display rules beat the deck's `display:block !important`. */
+#noVNC_control_bar .axonos-mic-button {
+  display: none !important;
+  position: relative;
+}
+#noVNC_control_bar .axonos-mic-button.is-available {
+  display: block !important;
+}
+.axonos-mic-button {
+  /* Strip native <button> chrome so it resolves to the same transparent box as
+   * its <input type="image"> neighbours (otherwise the UA paints a white/grey
+   * background and its own sizing). */
+  -webkit-appearance: none;
+  appearance: none;
+  /* <button> defaults to border-box, but the deck's inputs are content-box, so
+   * the shared `width/height:32px` became total (→ 22px content) instead of the
+   * 42px box the peers get. Match them. */
+  box-sizing: content-box !important;
+  background: transparent;
+  color: var(--ink-mute);
+  cursor: pointer;
+}
+.axonos-mic-button svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.axonos-mic-button:hover {
+  color: #fff;
+}
+.axonos-mic-button.is-pending {
+  opacity: 0.6;
+}
+.axonos-mic-button.is-denied {
+  color: #e0a3c0 !important;
+  border-color: rgba(224, 163, 192, 0.5) !important;
+}
+.axonos-mic-button.is-live {
+  color: #fff !important;
+  background: rgba(200, 42, 42, 0.92) !important;
+  border-color: #ff5a5a !important;
+}
+/* Live "recording" dot on the button. */
+.axonos-mic-button__dot {
+  display: none;
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff3b3b;
+  box-shadow: 0 0 5px #ff3b3b;
+}
+.axonos-mic-button.is-live .axonos-mic-button__dot {
+  display: block;
+}
+
+/* Restart button: base noVNC gives .noVNC_submit `float: right`, which (with the
+ * theme's full-width pill) drops it out of flow and lets Logging overlap it.
+ * The deck pill is block + full width, so it must not float. */
+#noVNC_restart_session_button {
+  float: none !important;
+}
+
+/* Persistent live indicator: a small fixed red dot that stays visible even when
+ * the control bar is collapsed, since the mic streams to a remote desktop and
+ * its active state must always be glanceable. */
+html.axonos-mic-live::after {
+  content: '';
+  position: fixed;
+  left: 10px;
+  bottom: 10px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ff3b3b;
+  box-shadow: 0 0 8px #ff3b3b;
+  z-index: 100;
+  pointer-events: none;
+}

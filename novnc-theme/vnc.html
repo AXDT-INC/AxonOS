@@ -69,35 +69,35 @@ Copyright (C) 2019 The noVNC Authors
     <link rel="preload" as="image" href="app/images/warning.svg">
 
     <script>
-    // Suppress browser-extension errors (e.g. TronLink tronlinkParams proxy conflict)
-    // before noVNC's error-handler.js can display them as fatal UI errors.
-    (function () {
-        function isExtensionSrc(src) {
-            return typeof src === 'string' &&
-                   (src.indexOf('chrome-extension://') === 0 ||
-                    src.indexOf('moz-extension://') === 0);
-        }
-        // Capture phase fires before noVNC's bubble-phase error listener.
-        window.addEventListener('error', function (e) {
-            if (e && isExtensionSrc(e.filename)) {
-                e.stopImmediatePropagation();
-                e.preventDefault();
+        // Suppress browser-extension errors (e.g. TronLink tronlinkParams proxy conflict)
+        // before noVNC's error-handler.js can display them as fatal UI errors.
+        (function () {
+            function isExtensionSrc(src) {
+                return typeof src === 'string' &&
+                    (src.indexOf('chrome-extension://') === 0 ||
+                        src.indexOf('moz-extension://') === 0);
             }
-        }, true);
-        // Wrap window.onerror so any assignment by error-handler.js is also guarded.
-        var _saved = null;
-        Object.defineProperty(window, 'onerror', {
-            configurable: true,
-            enumerable: true,
-            get: function () { return _saved; },
-            set: function (fn) {
-                _saved = typeof fn === 'function' ? function (msg, src, line, col, err) {
-                    if (isExtensionSrc(src)) return true;
-                    return fn(msg, src, line, col, err);
-                } : fn;
-            }
-        });
-    }());
+            // Capture phase fires before noVNC's bubble-phase error listener.
+            window.addEventListener('error', function (e) {
+                if (e && isExtensionSrc(e.filename)) {
+                    e.stopImmediatePropagation();
+                    e.preventDefault();
+                }
+            }, true);
+            // Wrap window.onerror so any assignment by error-handler.js is also guarded.
+            var _saved = null;
+            Object.defineProperty(window, 'onerror', {
+                configurable: true,
+                enumerable: true,
+                get: function () { return _saved; },
+                set: function (fn) {
+                    _saved = typeof fn === 'function' ? function (msg, src, line, col, err) {
+                        if (isExtensionSrc(src)) return true;
+                        return fn(msg, src, line, col, err);
+                    } : fn;
+                }
+            });
+        }());
     </script>
     <script src="app/error-handler.js"></script>
     <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
@@ -165,9 +165,23 @@ Copyright (C) 2019 The noVNC Authors
 
                 <h1 class="noVNC_logo" translate="no"><span>Axon</span><br>OS</h1>
 
-                <!-- Drag/Pan the viewport -->
+                <!-- Drag/Pan the viewport (RFB-only; hidden on the WebRTC path, where the
+                     video auto-fits and there is no oversized canvas to pan) -->
                 <input type="image" alt="Drag" src="app/images/drag.svg" id="noVNC_view_drag_button"
-                    class="noVNC_button noVNC_hidden" title="Move/Drag Viewport">
+                    class="noVNC_button noVNC_hidden axonos-rfb-only" title="Move/Drag Viewport">
+
+                <!-- Microphone (browser -> desktop). Sits in the (otherwise dead) viewport-drag
+                     slot on the WebRTC path; shown only when the operator set WEBRTC_MIC_ENABLED.
+                     Wired in app/webrtc/axonos-webrtc.js. -->
+                <button type="button" id="axonos_mic_button" class="noVNC_button axonos-mic-button"
+                    title="Microphone — click to send your mic to the desktop" aria-label="Microphone off"
+                    aria-pressed="false">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path fill="currentColor"
+                            d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V22h2v-3.08A7 7 0 0 0 19 12h-2z" />
+                    </svg>
+                    <span class="axonos-mic-button__dot" aria-hidden="true"></span>
+                </button>
 
                 <!--noVNC Touch Device only buttons-->
                 <div id="noVNC_mobile_buttons">
@@ -175,9 +189,10 @@ Copyright (C) 2019 The noVNC Authors
                         class="noVNC_button" title="Show Keyboard">
                 </div>
 
-                <!-- Extra manual keys -->
+                <!-- Extra manual keys (RFB-only: route through UI.rfb.sendKey, which is a
+                     no-op on the WebRTC path — hidden there to avoid dead buttons) -->
                 <input type="image" alt="Extra keys" src="app/images/toggleextrakeys.svg"
-                    id="noVNC_toggle_extra_keys_button" class="noVNC_button" title="Show Extra Keys">
+                    id="noVNC_toggle_extra_keys_button" class="noVNC_button axonos-rfb-only" title="Show Extra Keys">
                 <div class="noVNC_vcenter">
                     <div id="noVNC_modifiers" class="noVNC_panel">
                         <input type="image" alt="Ctrl" src="app/images/ctrl.svg" id="noVNC_toggle_ctrl_button"
@@ -260,20 +275,24 @@ Copyright (C) 2019 The noVNC Authors
                             <li class="noVNC_heading">
                                 <img alt="" src="app/images/settings.svg"> Settings
                             </li>
-                            <li>
+                            <!-- RFB-only controls (Shared/View Only/Clip/Scaling and the Advanced
+                                 encoding/transport block) do nothing on the WebRTC path, so they
+                                 carry axonos-rfb-only and the theme hides them under
+                                 .axonos-webrtc-active. Restart/Logging/Version stay. -->
+                            <li class="axonos-rfb-only">
                                 <label><input id="noVNC_setting_shared" type="checkbox"> Shared Mode</label>
                             </li>
-                            <li>
+                            <li class="axonos-rfb-only">
                                 <label><input id="noVNC_setting_view_only" type="checkbox"> View Only</label>
                             </li>
-                            <li>
+                            <li class="axonos-rfb-only">
                                 <hr>
                             </li>
-                            <li>
+                            <li class="axonos-rfb-only">
                                 <label><input id="noVNC_setting_view_clip" type="checkbox"> Clip to
                                     Window</label><br><br>
                             </li>
-                            <li>
+                            <li class="axonos-rfb-only">
                                 <label for="noVNC_setting_resize">Scaling Mode:</label>
                                 <select id="noVNC_setting_resize" name="vncResize">
                                     <option value="off">None</option>
@@ -281,30 +300,30 @@ Copyright (C) 2019 The noVNC Authors
                                     <option value="remote">Remote Resizing</option>
                                 </select>
                             </li>
-                            <li>
+                            <li class="axonos-rfb-only">
                                 <hr>
                             </li>
                             <li>
                                 <div class="noVNC_expander">Advanced</div>
                                 <div>
                                     <ul>
-                                        <li>
+                                        <li class="axonos-rfb-only">
                                             <label for="noVNC_setting_quality">Quality:</label>
                                             <input id="noVNC_setting_quality" type="range" min="0" max="9" value="9">
                                         </li>
-                                        <li>
+                                        <li class="axonos-rfb-only">
                                             <label for="noVNC_setting_compression">Compression level:</label>
                                             <input id="noVNC_setting_compression" type="range" min="0" max="9"
                                                 value="9">
                                         </li>
-                                        <li>
+                                        <li class="axonos-rfb-only">
                                             <hr>
                                         </li>
-                                        <li>
+                                        <li class="axonos-rfb-only">
                                             <label for="noVNC_setting_repeaterID">Repeater ID:</label>
                                             <input id="noVNC_setting_repeaterID" type="text" value="">
                                         </li>
-                                        <li>
+                                        <li class="axonos-rfb-only">
                                             <div class="noVNC_expander">WebSocket</div>
                                             <div>
                                                 <ul>
@@ -327,25 +346,25 @@ Copyright (C) 2019 The noVNC Authors
                                                 </ul>
                                             </div>
                                         </li>
-                                        <li>
+                                        <li class="axonos-rfb-only">
                                             <hr>
                                         </li>
-                                        <li>
+                                        <li class="axonos-rfb-only">
                                             <label><input id="noVNC_setting_reconnect" type="checkbox"> Automatic
                                                 Reconnect</label><br>
                                         </li>
-                                        <li>
+                                        <li class="axonos-rfb-only">
                                             <label for="noVNC_setting_reconnect_delay">Reconnect Delay (ms):</label>
                                             <input id="noVNC_setting_reconnect_delay" type="number">
                                         </li>
-                                        <li>
+                                        <li class="axonos-rfb-only">
                                             <hr>
                                         </li>
-                                        <li>
+                                        <li class="axonos-rfb-only">
                                             <label><input id="noVNC_setting_show_dot" type="checkbox"> Show Dot when No
                                                 Cursor</label>
                                         </li>
-                                        <li>
+                                        <li class="axonos-rfb-only">
                                             <hr>
                                         </li>
                                         <li>
@@ -410,7 +429,12 @@ Copyright (C) 2019 The noVNC Authors
                 <!-- Network banner: filled by applyAxonosNetworkEnvironmentUi() from /api/config axgt_chain_id (server AXGT_CHAIN_ID). -->
                 <p id="axonos_landing_network" class="axonos-network-banner axonos-network-banner--hidden"
                     aria-live="polite"></p>
-                <p id="axonos_session_storage_hint" style="font-size:0.72em;color:rgba(232,168,90,0.72);margin:0.4rem auto 0;max-width:min(96rem, 94%);line-height:1.5;text-align:center;font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.01em;">Sessions are <strong style="color:#e8a85a;margin-left:0.3em;">ephemeral</strong> — files and changes are NOT saved between sessions. Credits are consumed per GPU per wall-clock minute while active. Top up before expiry (or within 2 hours after) to keep your running session alive. Unused credits remain unspent for subsequent sessions. Persistent storage coming soon.</p>
+                <p id="axonos_session_storage_hint"
+                    style="font-size:0.72em;color:rgba(232,168,90,0.72);margin:0.4rem auto 0;max-width:min(96rem, 94%);line-height:1.5;text-align:center;font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.01em;">
+                    Sessions are <strong style="color:#e8a85a;margin-left:0.3em;">ephemeral</strong> — files and changes
+                    are NOT saved between sessions. Credits are consumed per GPU per wall-clock minute while active. Top
+                    up before expiry (or within 2 hours after) to keep your running session alive. Unused credits remain
+                    unspent for subsequent sessions. Persistent storage coming soon.</p>
                 <div class="axonos-dna-animation"></div>
             </div>
 
@@ -419,8 +443,10 @@ Copyright (C) 2019 The noVNC Authors
 
                 <!-- Tab Headers -->
                 <div class="axonos-tabs-nav">
-                    <button type="button" class="axonos-tab-btn active" id="axonos_tab_btn_templates" data-tab="templates">🧬 Science Templates</button>
-                    <button type="button" class="axonos-tab-btn" id="axonos_tab_btn_about" data-tab="about">ℹ️ About AxonOS</button>
+                    <button type="button" class="axonos-tab-btn active" id="axonos_tab_btn_templates"
+                        data-tab="templates">🧬 Science Templates</button>
+                    <button type="button" class="axonos-tab-btn" id="axonos_tab_btn_about" data-tab="about">ℹ️ About
+                        AxonOS</button>
                 </div>
 
                 <!-- Tab Content panes -->
@@ -429,14 +455,19 @@ Copyright (C) 2019 The noVNC Authors
                     <div class="axonos-tab-pane active" id="tab-templates">
                         <div class="axonos-templates-controls">
                             <div class="axonos-search-wrap">
-                                <input type="text" id="axonos_template_search" class="axonos-templates-search-input" placeholder="Search scientific templates (e.g. PyTorch, GROMACS)..." autocomplete="off" spellcheck="false" />
+                                <input type="text" id="axonos_template_search" class="axonos-templates-search-input"
+                                    placeholder="Search scientific templates (e.g. PyTorch, GROMACS)..."
+                                    autocomplete="off" spellcheck="false" />
                             </div>
                             <div class="axonos-filter-pills" id="axonos_filter_pills">
                                 <button type="button" class="axonos-filter-pill active" data-category="all">All</button>
                                 <button type="button" class="axonos-filter-pill" data-category="ai-ml">AI / ML</button>
-                                <button type="button" class="axonos-filter-pill" data-category="bio-chem">Bio / Chem</button>
-                                <button type="button" class="axonos-filter-pill" data-category="data-science">Data Science</button>
-                                <button type="button" class="axonos-filter-pill" data-category="physics-quantum">Physics / Quantum</button>
+                                <button type="button" class="axonos-filter-pill" data-category="bio-chem">Bio /
+                                    Chem</button>
+                                <button type="button" class="axonos-filter-pill" data-category="data-science">Data
+                                    Science</button>
+                                <button type="button" class="axonos-filter-pill" data-category="physics-quantum">Physics
+                                    / Quantum</button>
                             </div>
                         </div>
                         <div class="axonos-templates-grid" id="axonos_templates_grid">
@@ -486,7 +517,8 @@ Copyright (C) 2019 The noVNC Authors
                     <span class="axonos-selected-template-label">Selected Environment</span>
                     <div class="axonos-selected-template-title-wrap">
                         <span class="axonos-selected-template-icon" id="axonos_selected_template_icon">🧬</span>
-                        <span class="axonos-selected-template-title" id="axonos_selected_template_title">AxonOS Default Desktop</span>
+                        <span class="axonos-selected-template-title" id="axonos_selected_template_title">AxonOS Default
+                            Desktop</span>
                     </div>
                 </div>
 
@@ -556,7 +588,8 @@ Copyright (C) 2019 The noVNC Authors
     <!-- AXGT Wallet Verification Dialog (replaces password dialog) -->
     <div class="noVNC_center noVNC_connect_layer">
         <div id="noVNC_credentials_dlg" class="noVNC_panel axonos-wallet-card">
-            <button type="button" id="axonos_wallet_close_btn" class="axonos-wallet-close-btn" title="Close" aria-label="Close">&times;</button>
+            <button type="button" id="axonos_wallet_close_btn" class="axonos-wallet-close-btn" title="Close"
+                aria-label="Close">&times;</button>
             <form id="axonos_wallet_form">
                 <div class="axonos-wallet-card__title">
                     <h2>Connect your wallet to continue</h2>
@@ -697,7 +730,8 @@ Copyright (C) 2019 The noVNC Authors
                         <p id="axonos_pay_eth_hint" class="axonos-pay-eth-hint" role="status" aria-live="polite"></p>
                         <p class="axonos-wallet-state__help" style="margin:0.35rem 0;font-size:0.82em;opacity:0.75;">
                             Manual: paste tx hash after sending from another wallet or DEX.</p>
-                        <p style="margin:0.5rem 0;display:flex;gap:0.5rem;align-items:center;justify-content:center;flex-wrap:nowrap;">
+                        <p
+                            style="margin:0.5rem 0;display:flex;gap:0.5rem;align-items:center;justify-content:center;flex-wrap:nowrap;">
                             <input type="text" id="axonos_tx_hash_input" placeholder="0x… transaction hash"
                                 autocomplete="off" spellcheck="false"
                                 style="flex:1;min-width:6rem;padding:0.45rem 0.6rem;border-radius:8px;border:1px solid rgba(140,200,220,.18);background:rgba(7,16,26,0.7);color:inherit;font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:0.85rem;" />
@@ -705,7 +739,8 @@ Copyright (C) 2019 The noVNC Authors
                                 style="margin:0;white-space:nowrap;">Credit deposit</button>
                             <a id="axonos_get_axgt_btn"
                                 href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=0x6112c3509a8a787df576028450febb3786a2274d"
-                                target="_blank" rel="noopener noreferrer" class="axonos-get-axgt-btn" style="margin:0;white-space:nowrap;">Get AXGT / Uniswap</a>
+                                target="_blank" rel="noopener noreferrer" class="axonos-get-axgt-btn"
+                                style="margin:0;white-space:nowrap;">Get AXGT / Uniswap</a>
                         </p>
                         <p id="axonos_verify_deposit_msg" class="axonos-wallet-state__msg"
                             style="font-size:0.85rem;min-height:0;margin:0;"></p>
@@ -832,17 +867,20 @@ Copyright (C) 2019 The noVNC Authors
     <div id="axonos_session_hud" class="axonos-session-hud axonos-session-hud--hidden" aria-hidden="true"
         title="Live billing status for this desktop session">
         <div class="axonos-session-hud__row"><span class="axonos-session-hud__label">Connected Wallet:</span>
-            <span id="axonos_session_hud_wallet" class="axonos-session-hud__value">—</span></div>
+            <span id="axonos_session_hud_wallet" class="axonos-session-hud__value">—</span>
+        </div>
         <div class="axonos-session-hud__row"><span class="axonos-session-hud__label">Active Billing Rate:</span>
-            <span id="axonos_session_hud_rate" class="axonos-session-hud__value">—</span></div>
+            <span id="axonos_session_hud_rate" class="axonos-session-hud__value">—</span>
+        </div>
         <div class="axonos-session-hud__row"><span class="axonos-session-hud__label">Remaining Credit Time:</span>
-            <span id="axonos_session_hud_remaining" class="axonos-session-hud__value">—</span></div>
+            <span id="axonos_session_hud_remaining" class="axonos-session-hud__value">—</span>
+        </div>
     </div>
     <div class="axonos-footer-banner"
         style="position:fixed;bottom:10px;left:0;right:0;text-align:center;font-size:11px;color:rgba(170,210,225,0.38);z-index:54;pointer-events:auto;font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.06em;">
         <span id="axonos_session_timer" class="axonos-session-timer axonos-session-timer--hidden"
-            title="Desktop time remaining on your prepaid credit"><span
-                class="axonos-session-timer__label">Time left</span>&nbsp;<span id="axonos_session_timer_value"
+            title="Desktop time remaining on your prepaid credit"><span class="axonos-session-timer__label">Time
+                left</span>&nbsp;<span id="axonos_session_timer_value"
                 class="axonos-session-timer__value">—:—</span></span><span id="axonos_session_timer_sep"
             class="axonos-session-timer--hidden" style="margin:0 0.4em;opacity:0.4;">|</span>
         Built with<span
@@ -859,10 +897,12 @@ Copyright (C) 2019 The noVNC Authors
     </div>
 
     <!-- Template Details Modal -->
-    <div id="axonos_template_modal" class="axonos-modal" aria-hidden="true" role="dialog" aria-labelledby="axonos_modal_title">
+    <div id="axonos_template_modal" class="axonos-modal" aria-hidden="true" role="dialog"
+        aria-labelledby="axonos_modal_title">
         <div class="axonos-modal-overlay" id="axonos_modal_overlay"></div>
         <div class="axonos-modal-content">
-            <button type="button" id="axonos_modal_close" class="axonos-modal-close" aria-label="Close modal">&times;</button>
+            <button type="button" id="axonos_modal_close" class="axonos-modal-close"
+                aria-label="Close modal">&times;</button>
             <div id="axonos_modal_body">
                 <!-- Programmatically populated in ui.js to comply with DOM parsing security rules -->
             </div>
@@ -870,22 +910,22 @@ Copyright (C) 2019 The noVNC Authors
     </div>
 
     <script>
-    // Landing-page scrollbars: reveal only while actively scrolling, then fade out.
-    // CSS keeps the themed thumb transparent until <html> carries .axonos-scrolling.
-    (function () {
-        var hideTimer = null;
-        function markScrolling() {
-            var root = document.documentElement;
-            root.classList.add('axonos-scrolling');
-            if (hideTimer) clearTimeout(hideTimer);
-            hideTimer = setTimeout(function () {
-                root.classList.remove('axonos-scrolling');
-            }, 900);
-        }
-        // Capture phase: scroll events don't bubble, so this catches scrolling from
-        // the document and from the inner fixed scroll container alike.
-        window.addEventListener('scroll', markScrolling, true);
-    }());
+        // Landing-page scrollbars: reveal only while actively scrolling, then fade out.
+        // CSS keeps the themed thumb transparent until <html> carries .axonos-scrolling.
+        (function () {
+            var hideTimer = null;
+            function markScrolling() {
+                var root = document.documentElement;
+                root.classList.add('axonos-scrolling');
+                if (hideTimer) clearTimeout(hideTimer);
+                hideTimer = setTimeout(function () {
+                    root.classList.remove('axonos-scrolling');
+                }, 900);
+            }
+            // Capture phase: scroll events don't bubble, so this catches scrolling from
+            // the document and from the inner fixed scroll container alike.
+            window.addEventListener('scroll', markScrolling, true);
+        }());
     </script>
 </body>
 
@@ -2187,29 +2227,29 @@ Copyright (C) 2019 The noVNC Authors
                     axonosConfig.gpu_weighted_billing_enabled = !!(
                         cfg && (cfg.gpu_weighted_billing_enabled || cfg.gpu_profiles_enabled)
                     );
-                     axonosConfig.persistent_storage_enabled = !cfg || cfg.persistent_storage_enabled !== false;
-                     axonosConfig.persistent_storage_gb_hour_cost_minutes = (cfg && (cfg.persistent_storage_gb_hour_cost_minutes != null)) ? parseFloat(cfg.persistent_storage_gb_hour_cost_minutes) : 0.05;
-                     if (isNaN(axonosConfig.persistent_storage_gb_hour_cost_minutes) || axonosConfig.persistent_storage_gb_hour_cost_minutes < 0) {
-                         axonosConfig.persistent_storage_gb_hour_cost_minutes = 0.05;
-                     }
-                     axonosConfig.persistent_storage_min_balance_limit_minutes = (cfg && (cfg.persistent_storage_min_balance_limit_minutes != null)) ? parseFloat(cfg.persistent_storage_min_balance_limit_minutes) : -1440.0;
-                     if (isNaN(axonosConfig.persistent_storage_min_balance_limit_minutes) || axonosConfig.persistent_storage_min_balance_limit_minutes > 0) {
-                         axonosConfig.persistent_storage_min_balance_limit_minutes = -1440.0;
-                     }
-                     var hintEl = document.getElementById('axonos_session_storage_hint');
-                     if (hintEl) {
-                         if (axonosConfig.persistent_storage_enabled) {
-                             var limitAbs = Math.abs(axonosConfig.persistent_storage_min_balance_limit_minutes);
-                             var limitHours = limitAbs / 60;
-                             var limitStr = (limitAbs % 60 === 0)
-                                 ? limitHours + ' hour' + (limitHours !== 1 ? 's' : '')
-                                 : limitAbs + ' minute' + (limitAbs !== 1 ? 's' : '');
-                             hintEl.innerHTML = 'Sessions feature <strong style="color:#e8a85a;margin-left:0.3em;">persistent storage</strong> (charged at ' + axonosConfig.persistent_storage_gb_hour_cost_minutes + ' minutes of compute credit per GB/hour) — files in your home folder are automatically saved for your wallet address. If your credit balance runs out, storage costs will accrue as debt. Your volume is deleted if your account debt exceeds ' + limitStr + '. Credits are consumed per GPU per wall-clock minute while active. Top up before expiry (or within 2 hours after) to keep your running session alive.';
-                         } else {
-                             hintEl.innerHTML = 'Sessions are <strong style="color:#e8a85a;margin-left:0.3em;">ephemeral</strong> — files and changes are NOT saved between sessions. Credits are consumed per GPU per wall-clock minute while active. Top up before expiry (or within 2 hours after) to keep your running session alive. Unused credits remain unspent for subsequent sessions. Persistent storage coming soon.';
-                         }
-                     }
-                     axonosUpdateProfileBurnHint();
+                    axonosConfig.persistent_storage_enabled = !cfg || cfg.persistent_storage_enabled !== false;
+                    axonosConfig.persistent_storage_gb_hour_cost_minutes = (cfg && (cfg.persistent_storage_gb_hour_cost_minutes != null)) ? parseFloat(cfg.persistent_storage_gb_hour_cost_minutes) : 0.05;
+                    if (isNaN(axonosConfig.persistent_storage_gb_hour_cost_minutes) || axonosConfig.persistent_storage_gb_hour_cost_minutes < 0) {
+                        axonosConfig.persistent_storage_gb_hour_cost_minutes = 0.05;
+                    }
+                    axonosConfig.persistent_storage_min_balance_limit_minutes = (cfg && (cfg.persistent_storage_min_balance_limit_minutes != null)) ? parseFloat(cfg.persistent_storage_min_balance_limit_minutes) : -1440.0;
+                    if (isNaN(axonosConfig.persistent_storage_min_balance_limit_minutes) || axonosConfig.persistent_storage_min_balance_limit_minutes > 0) {
+                        axonosConfig.persistent_storage_min_balance_limit_minutes = -1440.0;
+                    }
+                    var hintEl = document.getElementById('axonos_session_storage_hint');
+                    if (hintEl) {
+                        if (axonosConfig.persistent_storage_enabled) {
+                            var limitAbs = Math.abs(axonosConfig.persistent_storage_min_balance_limit_minutes);
+                            var limitHours = limitAbs / 60;
+                            var limitStr = (limitAbs % 60 === 0)
+                                ? limitHours + ' hour' + (limitHours !== 1 ? 's' : '')
+                                : limitAbs + ' minute' + (limitAbs !== 1 ? 's' : '');
+                            hintEl.innerHTML = 'Sessions feature <strong style="color:#e8a85a;margin-left:0.3em;">persistent storage</strong> (charged at ' + axonosConfig.persistent_storage_gb_hour_cost_minutes + ' minutes of compute credit per GB/hour) — files in your home folder are automatically saved for your wallet address. If your credit balance runs out, storage costs will accrue as debt. Your volume is deleted if your account debt exceeds ' + limitStr + '. Credits are consumed per GPU per wall-clock minute while active. Top up before expiry (or within 2 hours after) to keep your running session alive.';
+                        } else {
+                            hintEl.innerHTML = 'Sessions are <strong style="color:#e8a85a;margin-left:0.3em;">ephemeral</strong> — files and changes are NOT saved between sessions. Credits are consumed per GPU per wall-clock minute while active. Top up before expiry (or within 2 hours after) to keep your running session alive. Unused credits remain unspent for subsequent sessions. Persistent storage coming soon.';
+                        }
+                    }
+                    axonosUpdateProfileBurnHint();
                     var axgtRow = document.getElementById('axonos_pay_axgt_row');
                     if (axgtRow) axgtRow.style.display = axonosConfig.axgt_direct_deposits_enabled ? '' : 'none';
                     var revShort = rev && /^0x[a-fA-F0-9]{40}$/.test(rev) ? (rev.slice(0, 6) + '\u2026' + rev.slice(-4)) : '(set AXGT_REVENUE_WALLET)';

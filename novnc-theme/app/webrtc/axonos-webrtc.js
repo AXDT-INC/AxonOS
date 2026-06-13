@@ -631,71 +631,37 @@ export async function connectAxonOSWebRTC(opts) {
     // own getUserMedia permission prompt). The mic stays off until clicked.
     /** @type {MediaStream | null} */
     let micStream = null;
-    if (micCapable && typeof navigator !== 'undefined' && navigator.mediaDevices) {
-        const micBtn = document.createElement('button');
-        micBtn.id = 'axonos_webrtc_mic';
-        micBtn.type = 'button';
-        micBtn.setAttribute('aria-label', 'Microphone off');
-        micBtn.title = 'Send microphone to desktop';
-        micBtn.style.cssText = [
-            'position:fixed',
-            // right is set by positionMicButton() so the icon clears the
-            // wallet/billing HUD (#axonos_session_hud) instead of hiding behind it.
-            'right:14px',
-            'bottom:calc(14px + env(safe-area-inset-bottom, 0px))',
-            'width:42px',
-            'height:42px',
-            'border-radius:50%',
-            'border:1px solid rgba(255,255,255,0.25)',
-            'background:rgba(20,20,28,0.72)',
-            'color:#cfd2db',
-            'font-size:18px',
-            'cursor:pointer',
-            // Above the HUD (z-index 56) so it is never visually occluded.
-            'z-index:57',
-            'display:flex',
-            'align-items:center',
-            'justify-content:center',
-            'transition:background .15s,color .15s,right .15s',
-        ].join(';');
-
-        // Keep the mic button to the left of the wallet/billing HUD. The HUD
-        // width depends on its content (wallet address, remaining time), so
-        // measure it rather than hard-coding an offset; re-run when it shows or
-        // resizes. Falls back to the bottom-right corner when the HUD is hidden.
-        const sessionHud = document.getElementById('axonos_session_hud');
-        const positionMicButton = () => {
-            let rightPx = 14;
-            if (sessionHud && !sessionHud.classList.contains('axonos-session-hud--hidden')) {
-                const hudWidth = sessionHud.offsetWidth;
-                if (hudWidth > 0) {
-                    // HUD sits 12px from the right edge; leave a 10px gap.
-                    rightPx = 12 + hudWidth + 10;
-                }
-            }
-            micBtn.style.right = rightPx + 'px';
-        };
-        const MIC_OFF = '🎤';
-        const renderMic = (state) => {
-            micBtn.textContent = MIC_OFF;
+    const micBtn = document.getElementById('axonos_mic_button');
+    if (micCapable && micBtn && typeof navigator !== 'undefined' && navigator.mediaDevices) {
+        // Reflect mic state on the deck button via CSS classes, and mirror a
+        // page-level `axonos-mic-live` class so a persistent indicator stays
+        // visible even when the control bar is collapsed (the mic streams to a
+        // remote desktop, so its live state must always be glanceable).
+        const setMicState = (state) => {
+            micBtn.classList.remove('is-live', 'is-pending', 'is-denied');
             if (state === 'live') {
-                micBtn.style.background = 'rgba(196,42,42,0.85)';
-                micBtn.style.color = '#fff';
+                micBtn.classList.add('is-live');
                 micBtn.title = 'Microphone on — click to mute';
                 micBtn.setAttribute('aria-label', 'Microphone on');
-            } else if (state === 'pending') {
-                micBtn.style.background = 'rgba(60,60,72,0.85)';
+                micBtn.setAttribute('aria-pressed', 'true');
+                document.documentElement.classList.add('axonos-mic-live');
+                return;
+            }
+            document.documentElement.classList.remove('axonos-mic-live');
+            micBtn.setAttribute('aria-pressed', 'false');
+            if (state === 'pending') {
+                micBtn.classList.add('is-pending');
                 micBtn.title = 'Requesting microphone…';
+                micBtn.setAttribute('aria-label', 'Requesting microphone');
+            } else if (state === 'denied') {
+                micBtn.classList.add('is-denied');
+                micBtn.title = 'Microphone blocked — allow it in the browser to use it';
+                micBtn.setAttribute('aria-label', 'Microphone blocked');
             } else {
-                micBtn.style.background = 'rgba(20,20,28,0.72)';
-                micBtn.style.color = '#cfd2db';
-                micBtn.title = state === 'denied'
-                    ? 'Microphone blocked — allow it in the browser to use it'
-                    : 'Send microphone to desktop';
+                micBtn.title = 'Microphone — click to send your mic to the desktop';
                 micBtn.setAttribute('aria-label', 'Microphone off');
             }
         };
-        renderMic('off');
 
         const stopMic = () => {
             if (micStream) {
@@ -706,7 +672,7 @@ export async function connectAxonOSWebRTC(opts) {
             if (sender && typeof sender.replaceTrack === 'function') {
                 sender.replaceTrack(null).catch(() => {});
             }
-            renderMic('off');
+            setMicState('off');
         };
 
         let micBusy = false;
@@ -720,57 +686,36 @@ export async function connectAxonOSWebRTC(opts) {
                     stopMic();
                     return;
                 }
-                renderMic('pending');
+                setMicState('pending');
                 const stream = await navigator.mediaDevices.getUserMedia({
                     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
                 });
                 // Negotiation may have been torn down while the prompt was open.
                 if (pc.connectionState === 'closed' || !audioTx || !audioTx.sender) {
                     stream.getTracks().forEach((t) => t.stop());
-                    renderMic('off');
+                    setMicState('off');
                     return;
                 }
                 micStream = stream;
                 await audioTx.sender.replaceTrack(stream.getAudioTracks()[0]);
-                renderMic('live');
+                setMicState('live');
             } catch (e) {
                 console.warn('AxonOS WebRTC mic enable failed', e);
-                renderMic(e && (e.name === 'NotAllowedError' || e.name === 'SecurityError') ? 'denied' : 'off');
+                setMicState(e && (e.name === 'NotAllowedError' || e.name === 'SecurityError') ? 'denied' : 'off');
             } finally {
                 micBusy = false;
             }
         };
 
+        setMicState('off');
+        micBtn.classList.add('is-available');
         micBtn.addEventListener('click', toggleMic, { signal: inputSignal });
-        window.addEventListener('resize', positionMicButton, { signal: inputSignal });
-        // The HUD is shown/updated asynchronously (after billing starts), so
-        // re-place the mic whenever its visibility or content changes.
-        let hudObserver = null;
-        if (sessionHud && typeof MutationObserver === 'function') {
-            hudObserver = new MutationObserver(positionMicButton);
-            hudObserver.observe(sessionHud, {
-                attributes: true,
-                attributeFilter: ['class', 'aria-hidden'],
-                childList: true,
-                subtree: true,
-                characterData: true,
-            });
-        }
-        // Remove the button and release the mic when the session tears down.
+        // Release the mic and reset the deck button when the session tears down.
         inputSignal.addEventListener('abort', () => {
             stopMic();
-            if (hudObserver) {
-                hudObserver.disconnect();
-            }
-            if (micBtn.parentNode) {
-                micBtn.parentNode.removeChild(micBtn);
-            }
+            micBtn.classList.remove('is-available', 'is-live', 'is-pending', 'is-denied');
+            document.documentElement.classList.remove('axonos-mic-live');
         });
-        // Fixed-positioned, so attach to body (avoids container transform issues).
-        document.body.appendChild(micBtn);
-        positionMicButton();
-        // Catch the HUD appearing shortly after connect.
-        setTimeout(positionMicButton, 1200);
     }
 
     let inputChannelOpen = dcInput.readyState === 'open';
@@ -1521,6 +1466,10 @@ export async function connectAxonOSWebRTC(opts) {
     _inFlightNegotiation = null;
     UI.connected = true;
     window.axonosSessionDetached = false;
+    // Mark the page as WebRTC-active so the theme hides RFB-only controls
+    // (viewport drag, modifier keys, RFB encoding/transport settings) that do
+    // nothing on this path. Removed in _cleanup.
+    document.documentElement.classList.add('axonos-webrtc-active');
     UI.inhibitReconnect = false;
     if (typeof window.axonosHideConnectionLoader === 'function') {
         window.axonosHideConnectionLoader(true);
@@ -1605,5 +1554,6 @@ async function _cleanup(pc, video, sessionId, wallet) {
     if (cursor && cursor.parentNode) {
         cursor.parentNode.removeChild(cursor);
     }
+    document.documentElement.classList.remove('axonos-webrtc-active', 'axonos-mic-live');
     _hideBanner();
 }
