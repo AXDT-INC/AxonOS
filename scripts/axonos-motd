@@ -1,0 +1,15 @@
+
+      _                    ___  ____
+     / \   __  _____  _ __ / _ \/ ___|
+    / _ \  \ \/ / _ \| '_ \| | | \___ \
+   / ___ \  >  < (_) | | | | |_| |___) |
+  /_/   \_\/_/\_\___/|_| |_|\___/|____/   C O N S O L E
+
+  ──────────────────────────────────────────────────────────────
+   GPU-Native Scientific Computing  ·  Headless GPU Shell
+  ──────────────────────────────────────────────────────────────
+
+   • nvidia-smi     show the GPU(s) allocated to this session
+   • ~ (home)       persists for your wallet across sessions
+   • headless       shell only — no desktop/GUI on this session
+

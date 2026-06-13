@@ -60,6 +60,11 @@ services:
     ports:
       - "3478:3478/udp"
       - "3478:3478/tcp"
+      # TURN-over-TCP on 443 for clients behind firewalls that only allow well-known
+      # ports. Maps host 443 -> coturn's plain-TURN TCP listener (3478); advertised
+      # via WEBRTC_TURN_URLS (turn:...:443?transport=tcp). Host 443 is free on clu1
+      # (web HTTPS terminates on OKE), and inbound TCP 443 was opened at the edge.
+      - "443:3478/tcp"
       - "40500-41000:40500-41000/udp"
     volumes:
       - ./turnserver.conf:/etc/coturn/turnserver.conf:ro

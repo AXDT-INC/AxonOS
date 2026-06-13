@@ -472,6 +472,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssh-server 
     rm -f /etc/ssh/ssh_host_* && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# AxonOS Console login banner. The Ubuntu MOTD ("Welcome to Ubuntu…", "This
+# system has been minimized…") is emitted by pam_motd from /etc/update-motd.d on
+# SSH login (sshd's PrintMotd no does not suppress it — PAM does). Remove that
+# dynamic boilerplate + the legal notice and ship a static AxonOS banner.
+COPY scripts/axonos-motd /etc/motd
+RUN rm -f /etc/update-motd.d/* /etc/legal
+
 # Switch to aXonian user
 USER $USER
 WORKDIR /home/$USER
