@@ -718,9 +718,10 @@ RUN chmod +x /usr/local/bin/apply_session_template.sh
 # Desktop audio: headless PulseAudio null sink (no audio hardware in the
 # container). Desktop apps render into axonos_out via /etc/pulse/client.conf;
 # the WebRTC agent captures axonos_out.monitor (see [program:pulseaudio] in
-# supervisord.conf and docs/WEBRTC.md "Audio").
+# supervisord.conf and docs/WEBRTC.md "Audio"). Also install Speech Dispatcher
+# client library (libspeechd2) and audacity (audio editing software)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        pulseaudio pulseaudio-utils libspeechd2 && \
+        pulseaudio pulseaudio-utils libspeechd2 audacity && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 COPY pulse-default.pa /etc/pulse/axonos-default.pa
 COPY pulse-client.conf /etc/pulse/client.conf
