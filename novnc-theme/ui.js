@@ -867,30 +867,39 @@ const UI = {
     // When enabled, the session launches headless (no desktop/WebRTC) and the
     // landing page shows an `ssh ...` connect-string instead of the viewer.
 
-    /** True when the user has opted into a direct-SSH session. */
+    /** True when the user has opted into a direct-SSH session.
+     *  Read the live checkbox first — it's the source of truth and survives the
+     *  wallet-connect flow even when the window-global state gets reset. */
     axonosSshEnabled() {
+        const t = document.getElementById('axonos_ssh_toggle');
+        if (t) return !!t.checked;
         return !!window.axonosSshEnabled;
     },
 
-    /** Trimmed public key the user pasted (empty string if none). */
+    /** Trimmed public key the user pasted (empty string if none). Reads the live
+     *  textarea first for the same reason as axonosSshEnabled(). */
     axonosSshPubkey() {
+        const k = document.getElementById('axonos_ssh_pubkey');
+        if (k && k.value && k.value.trim()) return k.value.trim();
         return (window.axonosSshPubkey || '').trim();
     },
 
     persistAxonosSshState() {
+        // localStorage (not sessionStorage) so the choice survives any page reload
+        // the wallet-connect flow may trigger, not just same-tab reloads.
         try {
             if (window.axonosSshEnabled) {
-                window.sessionStorage.setItem('axonosSshEnabled', '1');
+                window.localStorage.setItem('axonosSshEnabled', '1');
             } else {
-                window.sessionStorage.removeItem('axonosSshEnabled');
+                window.localStorage.removeItem('axonosSshEnabled');
             }
             const key = (window.axonosSshPubkey || '').trim();
             if (key) {
-                window.sessionStorage.setItem('axonosSshPubkey', key);
+                window.localStorage.setItem('axonosSshPubkey', key);
             } else {
-                window.sessionStorage.removeItem('axonosSshPubkey');
+                window.localStorage.removeItem('axonosSshPubkey');
             }
-        } catch (e) { /* sessionStorage unavailable; selection just won't persist */ }
+        } catch (e) { /* localStorage unavailable; selection just won't persist */ }
     },
 
     /** Show/hide the key textarea and relabel the launch button to match the mode. */
@@ -911,13 +920,27 @@ const UI = {
                 connectSub.textContent = 'Full Linux environment with direct GPU access';
             }
         }
+        // Keep the other desktop-worded copy in sync with the mode. These are only
+        // shown transiently (the loader phase text, which is also SSH-aware, takes
+        // over during an actual launch).
+        const verifiedMsg = document.getElementById('axonos_wallet_verified_msg');
+        if (verifiedMsg) {
+            verifiedMsg.textContent = on ? 'Starting your SSH console…' : 'Connecting to desktop…';
+        }
+        const loaderSub = document.querySelector('#axonos-loader .axonos-loading-subtext');
+        if (loaderSub) {
+            loaderSub.textContent = on
+                ? 'Setting up your headless GPU console…'
+                : 'Connecting to AxonOS with direct GPU access…';
+        }
     },
 
     initAxonosSshToggle() {
-        // Restore prior choice (survives the end-session → reload cycle, same tab).
+        // Restore prior choice from localStorage (survives reloads incl. those the
+        // wallet-connect flow may trigger).
         try {
-            window.axonosSshEnabled = window.sessionStorage.getItem('axonosSshEnabled') === '1';
-            window.axonosSshPubkey = window.sessionStorage.getItem('axonosSshPubkey') || '';
+            window.axonosSshEnabled = window.localStorage.getItem('axonosSshEnabled') === '1';
+            window.axonosSshPubkey = window.localStorage.getItem('axonosSshPubkey') || '';
         } catch (e) {
             window.axonosSshEnabled = false;
             window.axonosSshPubkey = '';
@@ -2621,8 +2644,12 @@ const UI = {
                         window.axonosSetLaunchBusy(false);
                     }
                     UI.updateVisualState('disconnected');
+                    // Surface the server's denial reason prominently and persistently —
+                    // e.g. "Insufficient prepaid credit…" — so a credit/GPU denial never
+                    // looks like a silent hang (it did, and cost a long debug).
                     const reason = (claim && claim.reason) ? String(claim.reason) : _('Could not claim desktop session.');
-                    UI.showStatus(reason, 'warn');
+                    const hasReason = !!(claim && claim.reason);
+                    UI.showStatus(reason, hasReason ? 'error' : 'warn');
                     if (typeof window.axonosOnSessionClaimDenied === 'function') {
                         window.axonosOnSessionClaimDenied(claim || {});
                     }
@@ -3240,20 +3267,12 @@ const UI = {
                 if (hb && typeof hb.gpu_billing_enabled === 'boolean') {
                     window.axonosGpuBillingEnabled = hb.gpu_billing_enabled;
                 }
-                if (hb && hb.ok === true) {
-                    if (typeof hb.remaining_seconds === 'number') {
-                        const ttlEl = document.getElementById('axonos_ssh_card_ttl');
-                        if (ttlEl) {
-                            const mins = Math.max(0, Math.round(hb.remaining_seconds / 60));
-                            ttlEl.textContent = `Session time remaining: ~${mins} min`;
-                        }
-                    }
-                    if (hb.requested_profile && typeof window.axonosRememberOwnedSession === 'function') {
-                        window.axonosRememberOwnedSession(hb);
-                        if (window.axonosSessionDetached &&
-                            typeof window.axonosApplyDetachedSessionUi === 'function') {
-                            window.axonosApplyDetachedSessionUi(true);
-                        }
+                if (hb && hb.ok === true && hb.requested_profile &&
+                    typeof window.axonosRememberOwnedSession === 'function') {
+                    window.axonosRememberOwnedSession(hb);
+                    if (window.axonosSessionDetached &&
+                        typeof window.axonosApplyDetachedSessionUi === 'function') {
+                        window.axonosApplyDetachedSessionUi(true);
                     }
                 }
                 if (hb && hb.ok === false) {

@@ -101,7 +101,7 @@ Copyright (C) 2019 The noVNC Authors
     </script>
     <script src="app/error-handler.js"></script>
     <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
-    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260613a"></script>
+    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260613f"></script>
 </head>
 
 <body>
@@ -673,7 +673,7 @@ Copyright (C) 2019 The noVNC Authors
                         <p class="axonos-wallet-state__title">Wallet Verified</p>
                         <p id="axonos_wallet_verified_address" class="axonos-wallet-state__address">0x1234…abcd</p>
                         <p id="axonos_wallet_verified_balance" class="axonos-wallet-state__balance">— AXGT</p>
-                        <p class="axonos-wallet-state__msg">Connecting to desktop…</p>
+                        <p id="axonos_wallet_verified_msg" class="axonos-wallet-state__msg">Connecting to desktop…</p>
                     </div>
                     <div id="axonos_wallet_state_insufficient" class="axonos-wallet-state axonos-wallet-state--hidden">
                         <div class="axonos-wallet-state__icon axonos-wallet-state__icon--warning" aria-hidden="true">
@@ -1144,13 +1144,20 @@ Copyright (C) 2019 The noVNC Authors
             var titleEl = document.querySelector('#axonos-loader .axonos-loading-text');
             var subEl = document.querySelector('#axonos-loader .axonos-loading-subtext');
             var reconnect = axonosIsReconnectLaunch();
+            // Direct-SSH launches have no desktop/display — word the loader for a console.
+            var _sshToggle = document.getElementById('axonos_ssh_toggle');
+            var ssh = !reconnect && !!(_sshToggle && _sshToggle.checked);
             var phases = {
                 preparing: reconnect
                     ? ['Resuming session', 'Reconnecting to your running desktop…']
-                    : ['Preparing session', 'Checking wallet and saved desktop status…'],
+                    : ssh
+                        ? ['Preparing SSH session', 'Checking wallet and SSH key…']
+                        : ['Preparing session', 'Checking wallet and saved desktop status…'],
                 claiming: reconnect
                     ? ['Resuming session', 'Claiming your existing desktop and GPUs…']
-                    : ['Claiming desktop', 'Reserving your GPU allocation…'],
+                    : ssh
+                        ? ['Claiming console', 'Reserving your GPU allocation…']
+                        : ['Claiming desktop', 'Reserving your GPU allocation…'],
                 webrtc: reconnect
                     ? ['Resuming session', 'Reconnecting display (WebRTC may take a minute)…']
                     : ['Connecting display', 'Negotiating WebRTC stream (this can take a minute)…'],
@@ -1347,6 +1354,15 @@ Copyright (C) 2019 The noVNC Authors
                 if (window.axonosSelectedTemplateId) {
                     payload.requested_template = window.axonosSelectedTemplateId;
                 }
+            }
+            // SSH intent must ride this claim too: it races (and may win) the ui.js
+            // claim, so if it omits requested_ssh it would spawn a desktop session
+            // and clobber the SSH one. Read the live checkbox/textarea directly.
+            var _sshToggle = document.getElementById('axonos_ssh_toggle');
+            var _sshKey = document.getElementById('axonos_ssh_pubkey');
+            if (_sshToggle && _sshToggle.checked) {
+                payload.requested_ssh = true;
+                payload.ssh_pubkey = ((_sshKey && _sshKey.value) || '').trim();
             }
             return axonosFetch({
                 method: 'POST',
@@ -1566,6 +1582,15 @@ Copyright (C) 2019 The noVNC Authors
             if (mode === 'resume') {
                 connectText.textContent = 'Resume GPU-Native Desktop';
                 connectSub.textContent = 'Reconnect to your running desktop';
+                return;
+            }
+            // Respect the Direct SSH toggle so ending an SSH session doesn't flip the
+            // button back to desktop mode (this is the second button-text writer; the
+            // other is ui.js updateAxonosSshUi — keep the labels in sync).
+            var _sshToggle = document.getElementById('axonos_ssh_toggle');
+            if (_sshToggle && _sshToggle.checked) {
+                connectText.textContent = 'Launch Direct SSH Session';
+                connectSub.textContent = 'Headless GPU shell — connect from your terminal';
                 return;
             }
             connectText.textContent = 'Launch GPU-Native Desktop';
