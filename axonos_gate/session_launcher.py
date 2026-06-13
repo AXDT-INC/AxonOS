@@ -76,17 +76,17 @@ def _persistent_storage_mount_path() -> str:
     return raw
 
 
-def launch_session(session_id: int, wallet: str, profile: str, gpu_ids: List[int], template: Optional[str] = None, files_key: Optional[str] = None) -> Tuple[bool, Optional[str], Optional[str]]:
+def launch_session(session_id: int, wallet: str, profile: str, gpu_ids: List[int], template: Optional[str] = None, files_key: Optional[str] = None, ssh_enabled: bool = False, ssh_pubkey: Optional[str] = None) -> Tuple[bool, Optional[str], Optional[str]]:
     """Launch user session runtime; returns (ok, container_id, error)."""
     if not _container_mode_enabled():
         return True, "shared-desktop", None
     mode = _launcher_mode()
     if mode == "http":
-        return _launch_via_http(session_id, wallet, profile, gpu_ids, template, files_key)
+        return _launch_via_http(session_id, wallet, profile, gpu_ids, template, files_key, ssh_enabled, ssh_pubkey)
     if mode == "noop":
         # Useful when validating scheduler/queue logic without runtime orchestration.
         return True, _container_name_for_session(session_id), None
-    return _launch_via_docker_cli(session_id, wallet, profile, gpu_ids, template, files_key)
+    return _launch_via_docker_cli(session_id, wallet, profile, gpu_ids, template, files_key, ssh_enabled, ssh_pubkey)
 
 
 def stop_session(session_id: int, container_id: Optional[str]) -> None:
@@ -102,25 +102,67 @@ def stop_session(session_id: int, container_id: Optional[str]) -> None:
     _stop_via_docker_cli(session_id, container_id)
 
 
-def _launch_via_docker_cli(session_id: int, wallet: str, profile: str, gpu_ids: List[int], template: Optional[str] = None, files_key: Optional[str] = None) -> Tuple[bool, Optional[str], Optional[str]]:
+# Per-session port scheme. WebRTC sessions get a UDP block for direct ICE; SSH
+# sessions instead get a single published TCP port -> container :22. Both are
+# deterministic from session_id so the gate can derive the connect details
+# without a round-trip (see session_manager._ssh_port_for_session — keep in sync).
+_WEBRTC_BASE_PORT = 40000
+_WEBRTC_BLOCK_SIZE = 10
+_SSH_BASE_PORT = 42000
+_MAX_SESSIONS = 50
+
+
+def _webrtc_port_range(session_id: int) -> str:
+    start_port = _WEBRTC_BASE_PORT + (session_id % _MAX_SESSIONS) * _WEBRTC_BLOCK_SIZE
+    end_port = start_port + _WEBRTC_BLOCK_SIZE - 1
+    return f"{start_port}-{end_port}"
+
+
+def _ssh_port(session_id: int) -> int:
+    return _SSH_BASE_PORT + (session_id % _MAX_SESSIONS)
+
+
+def _publish_args_for_session(session_id: int, ssh_enabled: bool) -> List[str]:
+    if ssh_enabled:
+        return ["-p", f"{_ssh_port(session_id)}:22/tcp"]
+    port_range = _webrtc_port_range(session_id)
+    return ["-p", f"{port_range}:{port_range}/udp"]
+
+
+def _mode_env_args(session_id: int, ssh_enabled: bool, ssh_pubkey: Optional[str]) -> List[str]:
+    """Env that selects the session runtime: headless SSH vs. WebRTC desktop.
+
+    SSH sessions disable the X desktop and WebRTC capture entirely — the
+    container becomes a headless GPU shell reachable only over sshd.
+    """
+    if ssh_enabled:
+        args = [
+            "-e", "AXGT_DESKTOP_ENABLED=false",
+            "-e", "WEBRTC_AGENT_ENABLED=false",
+            "-e", "AXGT_SSH_ENABLED=true",
+        ]
+        if ssh_pubkey:
+            args.extend(["-e", f"AXGT_SSH_PUBKEY={ssh_pubkey}"])
+        return args
+    return [
+        "-e", "AXGT_DESKTOP_ENABLED=true",
+        "-e", "WEBRTC_AGENT_ENABLED=true",
+        "-e", f"WEBRTC_PORT_RANGE={_webrtc_port_range(session_id)}",
+    ]
+
+
+def _launch_via_docker_cli(session_id: int, wallet: str, profile: str, gpu_ids: List[int], template: Optional[str] = None, files_key: Optional[str] = None, ssh_enabled: bool = False, ssh_pubkey: Optional[str] = None) -> Tuple[bool, Optional[str], Optional[str]]:
     image = (os.getenv("AXGT_SESSION_CONTAINER_IMAGE") or "").strip()
     if not image:
         return False, None, "AXGT_SESSION_CONTAINER_IMAGE is required in docker_cli mode"
     gpu_spec = ",".join(str(i) for i in gpu_ids)
     name = _container_name_for_session(session_id)
-    # Calculate unique UDP port range for WebRTC ICE direct connection (Path B)
-    base_port = 40000
-    block_size = 10
-    max_sessions = 50
-    start_port = base_port + (session_id % max_sessions) * block_size
-    end_port = start_port + block_size - 1
-    port_range = f"{start_port}-{end_port}"
 
     cmd: List[str] = [
         "docker", "run", "-d", "--rm",
         "--name", name,
-        "-p", f"{port_range}:{port_range}/udp",
     ]
+    cmd.extend(_publish_args_for_session(session_id, ssh_enabled))
     if _persistent_storage_enabled():
         safe_wallet = "".join(c for c in wallet if c.isalnum() or c in ("-", "_")).lower()
         volume_name = f"{_persistent_storage_volume_prefix()}{safe_wallet}"
@@ -133,10 +175,8 @@ def _launch_via_docker_cli(session_id: int, wallet: str, profile: str, gpu_ids: 
         "-e", f"AXGT_WALLET_ADDRESS={wallet}",
         "-e", f"AXGT_REQUESTED_PROFILE={profile}",
         "-e", f"AXGT_ASSIGNED_GPU_IDS={gpu_spec}",
-        "-e", "AXGT_DESKTOP_ENABLED=true",
-        "-e", "WEBRTC_AGENT_ENABLED=true",
-        "-e", f"WEBRTC_PORT_RANGE={port_range}",
     ])
+    cmd.extend(_mode_env_args(session_id, ssh_enabled, ssh_pubkey))
     if template:
         cmd.extend(["-e", f"AXONOS_SELECTED_TEMPLATE={template}"])
     if files_key:
@@ -180,7 +220,7 @@ def _stop_via_docker_cli(session_id: int, container_id: Optional[str]) -> None:
         logger.warning("session_launcher: docker cleanup failed for %s: %s", target, exc)
 
 
-def _launch_via_http(session_id: int, wallet: str, profile: str, gpu_ids: List[int], template: Optional[str] = None, files_key: Optional[str] = None) -> Tuple[bool, Optional[str], Optional[str]]:
+def _launch_via_http(session_id: int, wallet: str, profile: str, gpu_ids: List[int], template: Optional[str] = None, files_key: Optional[str] = None, ssh_enabled: bool = False, ssh_pubkey: Optional[str] = None) -> Tuple[bool, Optional[str], Optional[str]]:
     base_url = (os.getenv("AXGT_SESSION_LAUNCHER_URL") or "").strip().rstrip("/")
     if not base_url:
         return False, None, "AXGT_SESSION_LAUNCHER_URL is required in http mode"
@@ -191,6 +231,8 @@ def _launch_via_http(session_id: int, wallet: str, profile: str, gpu_ids: List[i
         "assigned_gpu_ids": gpu_ids,
         "requested_template": template,
         "files_key": files_key,
+        "ssh_enabled": ssh_enabled,
+        "ssh_pubkey": ssh_pubkey,
     }
     status, data, err = _http_json("POST", f"{base_url}/launch", payload)
     if err:

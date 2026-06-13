@@ -338,6 +338,7 @@ const UI = {
         UI.addMachineHandlers();
         UI.addAxonosSessionLifecycleHandlers();
         UI.initAxonosTemplates();
+        UI.initAxonosSshToggle();
         UI.addConnectionControlHandlers();
         UI.addClipboardHandlers();
         UI.addFilesHandlers();
@@ -860,6 +861,154 @@ const UI = {
             banner.style.borderColor = 'var(--rule-strong)';
             banner.style.boxShadow = 'none';
         }
+    },
+
+    // ---- Direct SSH access toggle -----------------------------------------
+    // When enabled, the session launches headless (no desktop/WebRTC) and the
+    // landing page shows an `ssh ...` connect-string instead of the viewer.
+
+    /** True when the user has opted into a direct-SSH session. */
+    axonosSshEnabled() {
+        return !!window.axonosSshEnabled;
+    },
+
+    /** Trimmed public key the user pasted (empty string if none). */
+    axonosSshPubkey() {
+        return (window.axonosSshPubkey || '').trim();
+    },
+
+    persistAxonosSshState() {
+        try {
+            if (window.axonosSshEnabled) {
+                window.sessionStorage.setItem('axonosSshEnabled', '1');
+            } else {
+                window.sessionStorage.removeItem('axonosSshEnabled');
+            }
+            const key = (window.axonosSshPubkey || '').trim();
+            if (key) {
+                window.sessionStorage.setItem('axonosSshPubkey', key);
+            } else {
+                window.sessionStorage.removeItem('axonosSshPubkey');
+            }
+        } catch (e) { /* sessionStorage unavailable; selection just won't persist */ }
+    },
+
+    /** Show/hide the key textarea and relabel the launch button to match the mode. */
+    updateAxonosSshUi() {
+        const keyWrap = document.getElementById('axonos_ssh_key_wrap');
+        const toggle = document.getElementById('axonos_ssh_toggle');
+        const on = !!window.axonosSshEnabled;
+        if (toggle) toggle.checked = on;
+        if (keyWrap) keyWrap.classList.toggle('axonos-ssh-key--hidden', !on);
+        const connectText = document.querySelector('#noVNC_connect_button .axonos-connect-text');
+        const connectSub = document.querySelector('#noVNC_connect_button .axonos-connect-subtext');
+        if (connectText && connectSub) {
+            if (on) {
+                connectText.textContent = 'Launch Direct SSH Session';
+                connectSub.textContent = 'Headless GPU shell — connect from your terminal';
+            } else {
+                connectText.textContent = 'Launch GPU-Native Desktop';
+                connectSub.textContent = 'Full Linux environment with direct GPU access';
+            }
+        }
+    },
+
+    initAxonosSshToggle() {
+        // Restore prior choice (survives the end-session → reload cycle, same tab).
+        try {
+            window.axonosSshEnabled = window.sessionStorage.getItem('axonosSshEnabled') === '1';
+            window.axonosSshPubkey = window.sessionStorage.getItem('axonosSshPubkey') || '';
+        } catch (e) {
+            window.axonosSshEnabled = false;
+            window.axonosSshPubkey = '';
+        }
+
+        const toggle = document.getElementById('axonos_ssh_toggle');
+        const keyInput = document.getElementById('axonos_ssh_pubkey');
+        if (keyInput && window.axonosSshPubkey) {
+            keyInput.value = window.axonosSshPubkey;
+        }
+        if (toggle) {
+            toggle.addEventListener('change', () => {
+                window.axonosSshEnabled = toggle.checked;
+                UI.persistAxonosSshState();
+                UI.updateAxonosSshUi();
+                if (toggle.checked && keyInput) keyInput.focus();
+            });
+        }
+        if (keyInput) {
+            keyInput.addEventListener('input', () => {
+                window.axonosSshPubkey = keyInput.value;
+                UI.persistAxonosSshState();
+            });
+        }
+
+        const copyBtn = document.getElementById('axonos_ssh_copy_btn');
+        if (copyBtn) {
+            copyBtn.addEventListener('click', () => {
+                const cmd = document.getElementById('axonos_ssh_connect_cmd');
+                const text = cmd ? cmd.textContent : '';
+                if (!text || text === '—') return;
+                const done = () => { copyBtn.textContent = 'Copied'; setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500); };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(() => {});
+                }
+            });
+        }
+        const endBtn = document.getElementById('axonos_ssh_end_btn');
+        if (endBtn) {
+            endBtn.addEventListener('click', () => {
+                UI.hideAxonosSshCard();
+                UI.disconnect();
+            });
+        }
+        UI.updateAxonosSshUi();
+    },
+
+    /** Basic client-side sanity check so we fail fast before the claim round-trip. */
+    axonosSshKeyLooksValid(key) {
+        const k = (key || '').trim();
+        if (!k || k.indexOf('\n') !== -1) return false;
+        const parts = k.split(/\s+/);
+        if (parts.length < 2 || parts.length > 3) return false;
+        const types = ['ssh-ed25519', 'ssh-rsa', 'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384',
+            'ecdsa-sha2-nistp521', 'sk-ssh-ed25519@openssh.com', 'sk-ecdsa-sha2-nistp256@openssh.com'];
+        return types.indexOf(parts[0]) !== -1 && /^[A-Za-z0-9+/=]+$/.test(parts[1]);
+    },
+
+    /** Hide/restore the launch controls so the active SSH session view is uncluttered. */
+    _axonosToggleSshLaunchControls(hidden) {
+        ['noVNC_connect_button', 'axonos_ssh_toggle_wrap', 'axonos_profile_picker_wrap'].forEach((id) => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = hidden ? 'none' : '';
+        });
+    },
+
+    /** Render the SSH connect-string card from a granted SSH claim. */
+    showAxonosSshCard(claim) {
+        const card = document.getElementById('axonos_ssh_connect_card');
+        const cmdEl = document.getElementById('axonos_ssh_connect_cmd');
+        if (!card || !cmdEl) return;
+        // Keep the landing dialog open (the card lives inside it) but hide the
+        // launch controls while the session is active.
+        UI.openConnectPanel();
+        const user = claim.ssh_user || 'aXonian';
+        const host = claim.ssh_host || window.location.hostname;
+        const port = claim.ssh_port;
+        cmdEl.textContent = `ssh -p ${port} ${user}@${host}`;
+        const ttlEl = document.getElementById('axonos_ssh_card_ttl');
+        if (ttlEl && typeof claim.remaining_seconds === 'number') {
+            const mins = Math.max(0, Math.round(claim.remaining_seconds / 60));
+            ttlEl.textContent = `Session time remaining: ~${mins} min`;
+        }
+        UI._axonosToggleSshLaunchControls(true);
+        card.classList.remove('axonos-ssh-card--hidden');
+    },
+
+    hideAxonosSshCard() {
+        const card = document.getElementById('axonos_ssh_connect_card');
+        if (card) card.classList.add('axonos-ssh-card--hidden');
+        UI._axonosToggleSshLaunchControls(false);
     },
 
     showAxonosTemplateDetails(t) {
@@ -2115,6 +2264,12 @@ const UI = {
                 payload.requested_template = window.axonosSelectedTemplateId;
             }
         }
+        // SSH intent is sent on every claim (including reload re-claims) so the
+        // gate can return the connect-string for an already-owned SSH session.
+        if (UI.axonosSshEnabled()) {
+            payload.requested_ssh = true;
+            payload.ssh_pubkey = UI.axonosSshPubkey();
+        }
         const url = new URL('/api/session/claim', window.location.origin).toString();
         const headers = {
             'Content-Type': 'application/json',
@@ -2242,6 +2397,10 @@ const UI = {
         document.title = PAGE_TITLE;
         UI.openControlbar();
         UI.openConnectPanel();
+        // Clear any SSH connect card and restore the launch controls.
+        if (typeof UI.hideAxonosSshCard === 'function') {
+            UI.hideAxonosSshCard();
+        }
         UI.updateSessionControlButtons();
     },
 
@@ -2431,6 +2590,20 @@ const UI = {
         // (see websockify_gate / gate_server). Launch previously skipped claim if the user
         // left the queue and clicked connect — server returned 403 / abnormal close (1006).
         const runSessionClaim = () => {
+            // Fail fast on a missing/invalid SSH key so the user gets a precise
+            // message instead of a generic claim rejection round-trip.
+            if (UI.axonosSshEnabled() && !UI.axonosSshKeyLooksValid(UI.axonosSshPubkey())) {
+                if (typeof window.axonosHideConnectionLoader === 'function') {
+                    window.axonosHideConnectionLoader(true);
+                } else if (typeof window.axonosSetLaunchBusy === 'function') {
+                    window.axonosSetLaunchBusy(false);
+                }
+                UI.updateVisualState('disconnected');
+                UI.showStatus(_('Paste a valid SSH public key (e.g. the contents of ~/.ssh/id_ed25519.pub) to use SSH access.'), 'warn');
+                const keyInput = document.getElementById('axonos_ssh_pubkey');
+                if (keyInput) keyInput.focus();
+                return;
+            }
             if (typeof window.axonosSetConnectionLoaderPhase === 'function') {
                 window.axonosSetConnectionLoaderPhase('claiming');
             }
@@ -2457,6 +2630,28 @@ const UI = {
                 }
                 if (typeof window.axonosRememberOwnedSession === 'function') {
                     window.axonosRememberOwnedSession(claim);
+                }
+                if (claim && claim.ssh_enabled) {
+                    // Headless SSH session: no browser viewer. Show the connect-string
+                    // and keep the session alive with the same detached-home heartbeat
+                    // loop — which heartbeats only while this tab stays open.
+                    window.axonosSessionDetached = true;
+                    if (typeof window.axonosHideConnectionLoader === 'function') {
+                        window.axonosHideConnectionLoader(true);
+                    } else if (typeof window.axonosSetLaunchBusy === 'function') {
+                        window.axonosSetLaunchBusy(false);
+                    }
+                    UI.showAxonosSshCard(claim);
+                    UI._axgtStartSessionBillingPoll();
+                    if (typeof UI.updateSessionControlButtons === 'function') {
+                        UI.updateSessionControlButtons();
+                    }
+                    if (Array.isArray(claim.assigned_gpu_ids) && claim.assigned_gpu_ids.length > 0) {
+                        UI.showStatus(`SSH session active on GPU(s): ${claim.assigned_gpu_ids.join(',')}`, 'normal', 3000);
+                    } else {
+                        UI.showStatus(_('SSH session ready — connect from your terminal.'), 'normal', 3000);
+                    }
+                    return;
                 }
                 if (claim && claim.resumed === true && typeof window.axonosRefreshPausedResumeStatus === 'function') {
                     window.axonosPausedResume = null;
@@ -3045,12 +3240,20 @@ const UI = {
                 if (hb && typeof hb.gpu_billing_enabled === 'boolean') {
                     window.axonosGpuBillingEnabled = hb.gpu_billing_enabled;
                 }
-                if (hb && hb.ok === true && hb.requested_profile &&
-                    typeof window.axonosRememberOwnedSession === 'function') {
-                    window.axonosRememberOwnedSession(hb);
-                    if (window.axonosSessionDetached &&
-                        typeof window.axonosApplyDetachedSessionUi === 'function') {
-                        window.axonosApplyDetachedSessionUi(true);
+                if (hb && hb.ok === true) {
+                    if (typeof hb.remaining_seconds === 'number') {
+                        const ttlEl = document.getElementById('axonos_ssh_card_ttl');
+                        if (ttlEl) {
+                            const mins = Math.max(0, Math.round(hb.remaining_seconds / 60));
+                            ttlEl.textContent = `Session time remaining: ~${mins} min`;
+                        }
+                    }
+                    if (hb.requested_profile && typeof window.axonosRememberOwnedSession === 'function') {
+                        window.axonosRememberOwnedSession(hb);
+                        if (window.axonosSessionDetached &&
+                            typeof window.axonosApplyDetachedSessionUi === 'function') {
+                            window.axonosApplyDetachedSessionUi(true);
+                        }
                     }
                 }
                 if (hb && hb.ok === false) {

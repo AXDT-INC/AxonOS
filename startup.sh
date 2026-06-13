@@ -102,6 +102,68 @@ else
 fi
 chown -R aXonian:aXonian /home/aXonian/.config/axonos
 
+# Direct-SSH session setup (AXGT_SSH_ENABLED=true): the landing-page SSH toggle
+# launches a headless session (no X desktop / WebRTC) reachable only via sshd.
+# Configure pubkey auth + host keys here, before supervisord starts sshd. The
+# public key arriving in AXGT_SSH_PUBKEY was already validated gate-side
+# (single line, known key type) so it is safe to write verbatim.
+_ssh_on=$(echo "${AXGT_SSH_ENABLED:-}" | tr '[:upper:]' '[:lower:]')
+if [ "${_ssh_on}" = "true" ] || [ "${_ssh_on}" = "1" ] || [ "${_ssh_on}" = "yes" ]; then
+    echo "AXGT_SSH_ENABLED: configuring direct SSH access for aXonian..."
+
+    # Researcher's authorized key (single key; latest claim wins).
+    install -d -m 700 -o aXonian -g aXonian /home/aXonian/.ssh
+    if [ -n "${AXGT_SSH_PUBKEY:-}" ]; then
+        printf '%s\n' "${AXGT_SSH_PUBKEY}" > /home/aXonian/.ssh/authorized_keys
+        chmod 600 /home/aXonian/.ssh/authorized_keys
+        chown aXonian:aXonian /home/aXonian/.ssh/authorized_keys
+    else
+        echo "WARNING: AXGT_SSH_ENABLED set but AXGT_SSH_PUBKEY empty; no key installed."
+    fi
+
+    # Persist host keys under the (per-wallet) home volume so a returning wallet
+    # keeps a stable fingerprint — no known_hosts churn between sessions. Kept
+    # root:600 so the unprivileged login user cannot read the host private keys.
+    HOSTKEY_DIR=/home/aXonian/.config/axonos/ssh
+    install -d -m 700 -o root -g root "$HOSTKEY_DIR"
+    [ -f "$HOSTKEY_DIR/ssh_host_ed25519_key" ] || ssh-keygen -q -t ed25519 -N '' -f "$HOSTKEY_DIR/ssh_host_ed25519_key"
+    [ -f "$HOSTKEY_DIR/ssh_host_rsa_key" ] || ssh-keygen -q -t rsa -b 4096 -N '' -f "$HOSTKEY_DIR/ssh_host_rsa_key"
+    cp -f "$HOSTKEY_DIR"/ssh_host_*_key /etc/ssh/ 2>/dev/null || true
+    cp -f "$HOSTKEY_DIR"/ssh_host_*_key.pub /etc/ssh/ 2>/dev/null || true
+    chmod 600 /etc/ssh/ssh_host_*_key 2>/dev/null || true
+    chmod 644 /etc/ssh/ssh_host_*_key.pub 2>/dev/null || true
+
+    # Hardened drop-in. The Ubuntu sshd_config reads sshd_config.d/*.conf via an
+    # Include at the TOP of the file, so these directives win over later defaults
+    # (sshd honours the first occurrence of each keyword). Ensure that Include is
+    # present in case the base image lacks it.
+    mkdir -p /etc/ssh/sshd_config.d
+    if ! grep -q 'sshd_config.d/\*.conf' /etc/ssh/sshd_config 2>/dev/null; then
+        printf 'Include /etc/ssh/sshd_config.d/*.conf\n%s' "$(cat /etc/ssh/sshd_config 2>/dev/null)" > /etc/ssh/sshd_config.axtmp \
+            && mv /etc/ssh/sshd_config.axtmp /etc/ssh/sshd_config
+    fi
+    cat > /etc/ssh/sshd_config.d/axonos.conf <<'SSHD'
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+PubkeyAuthentication yes
+AllowUsers aXonian
+X11Forwarding no
+PrintMotd no
+MaxAuthTries 3
+MaxStartups 10:30:60
+ClientAliveInterval 120
+ClientAliveCountMax 5
+SSHD
+
+    # aXonian needs a login shell and a non-locked (but unusable) password so PAM
+    # account checks permit pubkey login; '*' blocks password auth without the
+    # locked-account ('!') state that pam_unix can reject.
+    usermod -s /bin/bash aXonian 2>/dev/null || true
+    usermod -p '*' aXonian 2>/dev/null || true
+fi
+
 # Start supervisord
 /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf &
 

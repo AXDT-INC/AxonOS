@@ -56,6 +56,7 @@ try:
         get_credit_policy,
         get_wallet_access_status,
         mask_wallet_address,
+        validate_ssh_public_key,
         validate_wallet_address,
         verify_signed_challenge,
     )
@@ -68,6 +69,7 @@ except ImportError:
             get_credit_policy,
             get_wallet_access_status,
             mask_wallet_address,
+            validate_ssh_public_key,
             validate_wallet_address,
             verify_signed_challenge,
         )
@@ -1299,12 +1301,24 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             wallet_address = (data.get('wallet_address') or '').strip()
             requested_profile = (data.get('requested_profile') or '').strip() or None
             requested_template = (data.get('requested_template') or '').strip() or None
+            requested_ssh = bool(data.get('requested_ssh'))
+            ssh_pubkey = None
+            if requested_ssh:
+                ssh_pubkey = validate_ssh_public_key(data.get('ssh_pubkey'))
+                if not ssh_pubkey:
+                    return self._send_json(400, {'granted': False, 'error': 'A valid SSH public key is required for SSH access'})
             if not wallet_address or not validate_wallet_address(wallet_address):
                 return self._send_json(400, {'granted': False, 'error': 'Valid wallet_address required'})
             auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
             if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
                 return self._send_json(401, {'granted': False, 'error': 'Valid auth token required'})
-            result = try_claim_session(wallet_address, requested_profile=requested_profile, requested_template=requested_template)
+            result = try_claim_session(
+                wallet_address,
+                requested_profile=requested_profile,
+                requested_template=requested_template,
+                requested_ssh=requested_ssh,
+                ssh_pubkey=ssh_pubkey,
+            )
             return self._send_json(200, result)
 
         if _session_mgr_available and self.path.startswith('/api/session/heartbeat'):

@@ -152,6 +152,50 @@ def _env_passthrough_names() -> List[str]:
     return [tok.strip() for tok in raw.split(",") if tok.strip()]
 
 
+# Per-session port scheme — must match axonos_gate/session_launcher.py and
+# session_manager._ssh_port_for_session so the gate-advertised connect-string
+# matches the port actually published here.
+_WEBRTC_BASE_PORT = 40000
+_WEBRTC_BLOCK_SIZE = 10
+_SSH_BASE_PORT = 42000
+_MAX_SESSIONS = 50
+
+
+def _webrtc_port_range(session_id: int) -> str:
+    start_port = _WEBRTC_BASE_PORT + (session_id % _MAX_SESSIONS) * _WEBRTC_BLOCK_SIZE
+    end_port = start_port + _WEBRTC_BLOCK_SIZE - 1
+    return f"{start_port}-{end_port}"
+
+
+def _ssh_port(session_id: int) -> int:
+    return _SSH_BASE_PORT + (session_id % _MAX_SESSIONS)
+
+
+def _publish_args_for_session(session_id: int, ssh_enabled: bool) -> List[str]:
+    if ssh_enabled:
+        return ["-p", f"{_ssh_port(session_id)}:22/tcp"]
+    port_range = _webrtc_port_range(session_id)
+    return ["-p", f"{port_range}:{port_range}/udp"]
+
+
+def _mode_env_args(session_id: int, ssh_enabled: bool, ssh_pubkey: str) -> List[str]:
+    """Runtime-selecting env: headless SSH shell vs. WebRTC desktop."""
+    if ssh_enabled:
+        args = [
+            "-e", "AXGT_DESKTOP_ENABLED=false",
+            "-e", "WEBRTC_AGENT_ENABLED=false",
+            "-e", "AXGT_SSH_ENABLED=true",
+        ]
+        if ssh_pubkey:
+            args.extend(["-e", f"AXGT_SSH_PUBKEY={ssh_pubkey}"])
+        return args
+    return [
+        "-e", "AXGT_DESKTOP_ENABLED=true",
+        "-e", "WEBRTC_AGENT_ENABLED=true",
+        "-e", f"WEBRTC_PORT_RANGE={_webrtc_port_range(session_id)}",
+    ]
+
+
 def _run_cmd(cmd: List[str]) -> Tuple[bool, str]:
     env = subprocess_env_for_nested_docker()
     try:
@@ -194,13 +238,8 @@ def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], 
     gpu_spec = ",".join(str(i) for i in gpu_ids)
     name = _container_name(session_id)
 
-    # Calculate unique UDP port range for WebRTC ICE direct connection (Path B)
-    base_port = 40000
-    block_size = 10
-    max_sessions = 50
-    start_port = base_port + (session_id % max_sessions) * block_size
-    end_port = start_port + block_size - 1
-    port_range = f"{start_port}-{end_port}"
+    ssh_enabled = bool(payload.get("ssh_enabled"))
+    ssh_pubkey = str(payload.get("ssh_pubkey") or "").strip()
 
     cmd: List[str] = [
         "docker",
@@ -209,9 +248,8 @@ def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], 
         "--rm",
         "--name",
         name,
-        "-p",
-        f"{port_range}:{port_range}/udp",
     ]
+    cmd.extend(_publish_args_for_session(session_id, ssh_enabled))
     if _persistent_storage_enabled():
         safe_wallet = "".join(c for c in wallet if c.isalnum() or c in ("-", "_")).lower()
         volume_name = f"{_persistent_storage_volume_prefix()}{safe_wallet}"
@@ -233,14 +271,9 @@ def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], 
             f"AXGT_REQUESTED_PROFILE={profile}",
             "-e",
             f"AXGT_ASSIGNED_GPU_IDS={gpu_spec}",
-            "-e",
-            "AXGT_DESKTOP_ENABLED=true",
-            "-e",
-            "WEBRTC_AGENT_ENABLED=true",
-            "-e",
-            f"WEBRTC_PORT_RANGE={port_range}",
         ]
     )
+    cmd.extend(_mode_env_args(session_id, ssh_enabled, ssh_pubkey))
 
     requested_template = str(payload.get("requested_template") or "").strip()
     if requested_template:

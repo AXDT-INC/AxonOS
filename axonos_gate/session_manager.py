@@ -809,7 +809,36 @@ def _cleanup_session_container(session_id: int) -> None:
     launcher.stop_session(session_id=session_id, container_id=None)
 
 
-def _spawn_session_container(session_id: int, wallet: str, profile: str, gpu_ids: List[int], template: Optional[str] = None, files_key: Optional[str] = None) -> Tuple[bool, Optional[str], Optional[str]]:
+# Direct-SSH session template: each session gets one published TCP port -> container :22.
+# Same deterministic per-session scheme as the WebRTC UDP blocks (port = base + id % N),
+# and the launcher MUST publish the identical port for the connect-string to be valid.
+_SSH_BASE_PORT = 42000
+_SSH_MAX_SESSIONS = 50
+
+
+def _ssh_port_for_session(session_id: int) -> int:
+    return _SSH_BASE_PORT + (session_id % _SSH_MAX_SESSIONS)
+
+
+def _ssh_public_host() -> str:
+    return (os.getenv("AXGT_SSH_PUBLIC_HOST") or "").strip()
+
+
+def _ssh_user() -> str:
+    return (os.getenv("AXGT_SSH_USER") or "aXonian").strip() or "aXonian"
+
+
+def _ssh_connection_fields(session_id: int) -> Dict[str, Any]:
+    """Connection details the landing page renders into the SSH connect-string."""
+    return {
+        "ssh_enabled": True,
+        "ssh_host": _ssh_public_host(),
+        "ssh_port": _ssh_port_for_session(session_id),
+        "ssh_user": _ssh_user(),
+    }
+
+
+def _spawn_session_container(session_id: int, wallet: str, profile: str, gpu_ids: List[int], template: Optional[str] = None, files_key: Optional[str] = None, ssh_enabled: bool = False, ssh_pubkey: Optional[str] = None) -> Tuple[bool, Optional[str], Optional[str]]:
     launcher = _import_session_launcher()
     return launcher.launch_session(
         session_id=session_id,
@@ -818,6 +847,8 @@ def _spawn_session_container(session_id: int, wallet: str, profile: str, gpu_ids
         gpu_ids=gpu_ids,
         template=template,
         files_key=files_key,
+        ssh_enabled=ssh_enabled,
+        ssh_pubkey=ssh_pubkey,
     )
 
 
@@ -882,6 +913,8 @@ def try_claim_session(
     wallet_address: str,
     requested_profile: Optional[str] = None,
     requested_template: Optional[str] = None,
+    requested_ssh: bool = False,
+    ssh_pubkey: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Attempt to claim the desktop session for *wallet_address*.
 
@@ -939,7 +972,7 @@ def try_claim_session(
             if owned:
                 remaining = max(0, owned["expires_at"] - now)
                 conn.commit()
-                return {
+                owned_resp = {
                     "granted": True,
                     "session_id": owned["id"],
                     "requested_profile": owned.get("requested_profile") or profile_name,
@@ -948,6 +981,11 @@ def try_claim_session(
                     "allocation_status": "allocated",
                     "remaining_seconds": int(remaining),
                 }
+                # The SSH port is deterministic from the session id, so a reload that
+                # re-asserts ssh intent can recover the connect-string without a DB column.
+                if requested_ssh:
+                    owned_resp.update(_ssh_connection_fields(owned["id"]))
+                return owned_resp
 
             if (not _multi_session_enabled()) and blocking and blocking["wallet_address"] != wallet:
                 conn.commit()
@@ -1014,6 +1052,8 @@ def try_claim_session(
                     gpu_ids=allocated_gpu_ids,
                     template=requested_template,
                     files_key=files_key,
+                    ssh_enabled=requested_ssh,
+                    ssh_pubkey=ssh_pubkey,
                 )
                 conn2 = _get_connection()
                 if conn2:
@@ -1045,7 +1085,7 @@ def try_claim_session(
                         "reason": "Failed to start user container",
                         "container_error": spawn_error,
                     }
-                return {
+                granted = {
                     "granted": True,
                     "session_id": session_id,
                     "requested_profile": profile_name,
@@ -1054,6 +1094,9 @@ def try_claim_session(
                     "allocation_status": "allocated",
                     "remaining_seconds": max_secs,
                 }
+                if requested_ssh:
+                    granted.update(_ssh_connection_fields(session_id))
+                return granted
 
             # Legacy single-session mode (explicitly disabled multi-session)
             max_secs = _session_max_seconds()

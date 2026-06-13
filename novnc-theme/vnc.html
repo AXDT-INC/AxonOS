@@ -61,7 +61,7 @@ Copyright (C) 2019 The noVNC Authors
 
     <!-- Stylesheets -->
     <link rel="stylesheet" href="app/styles/base.css">
-    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=17.2&t=1749136000">
+    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=18.0&t=1749136000">
 
     <!-- Images that will later appear via CSS -->
     <link rel="preload" as="image" href="app/images/info.svg">
@@ -101,7 +101,7 @@ Copyright (C) 2019 The noVNC Authors
     </script>
     <script src="app/error-handler.js"></script>
     <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
-    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260610b"></script>
+    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260613a"></script>
 </head>
 
 <body>
@@ -565,6 +565,26 @@ Copyright (C) 2019 The noVNC Authors
                     </select>
                     <p id="axonos_profile_burn_hint" class="axonos-profile-picker__hint" aria-live="polite"></p>
                 </div>
+                <!-- Direct SSH toggle: launches a headless GPU shell over SSH and
+                     bypasses the browser desktop/WebRTC viewer entirely. -->
+                <div id="axonos_ssh_toggle_wrap" class="axonos-ssh-toggle" role="group" aria-label="Direct SSH access">
+                    <label class="axonos-ssh-toggle__row">
+                        <input type="checkbox" id="axonos_ssh_toggle" class="axonos-ssh-toggle__input" />
+                        <span class="axonos-ssh-toggle__text">
+                            <span class="axonos-ssh-toggle__title">⌨️ Direct SSH access</span>
+                            <span class="axonos-ssh-toggle__desc">Headless GPU shell over SSH instead of the
+                                desktop — full scp/sftp and port forwarding, no browser viewer.</span>
+                        </span>
+                    </label>
+                    <div id="axonos_ssh_key_wrap" class="axonos-ssh-key axonos-ssh-key--hidden">
+                        <label class="axonos-ssh-key__label" for="axonos_ssh_pubkey">Your SSH public key</label>
+                        <textarea id="axonos_ssh_pubkey" class="axonos-ssh-key__input" rows="3" spellcheck="false"
+                            autocomplete="off" autocapitalize="off"
+                            placeholder="ssh-ed25519 AAAA… you@host   (the contents of ~/.ssh/id_ed25519.pub)"></textarea>
+                        <p class="axonos-ssh-key__hint">Public key only — authentication is key-only, no password.
+                            Keep this tab open to keep the session alive.</p>
+                    </div>
+                </div>
                 <div id="noVNC_connect_button" class="axonos-enhanced-connect">
                     <div class="axonos-connect-content">
                         <div class="axonos-connect-icon">
@@ -573,6 +593,22 @@ Copyright (C) 2019 The noVNC Authors
                         <span class="axonos-connect-text">Launch GPU-Native Desktop</span>
                         <div class="axonos-connect-subtext">Full Linux environment with direct GPU access</div>
                     </div>
+                </div>
+                <!-- SSH connect card: shown after a granted SSH claim in place of the viewer. -->
+                <div id="axonos_ssh_connect_card" class="axonos-ssh-card axonos-ssh-card--hidden" aria-live="polite">
+                    <div class="axonos-ssh-card__header">
+                        <span class="axonos-ssh-card__icon">⌨️</span>
+                        <span class="axonos-ssh-card__title">SSH session ready</span>
+                    </div>
+                    <p class="axonos-ssh-card__label">Connect from your terminal</p>
+                    <div class="axonos-ssh-card__cmd-row">
+                        <code id="axonos_ssh_connect_cmd" class="axonos-ssh-card__cmd">—</code>
+                        <button type="button" id="axonos_ssh_copy_btn" class="axonos-ssh-card__copy"
+                            title="Copy SSH command">Copy</button>
+                    </div>
+                    <p id="axonos_ssh_card_ttl" class="axonos-ssh-card__ttl"></p>
+                    <p class="axonos-ssh-card__note">Keep this tab open — the session is released when it closes.</p>
+                    <button type="button" id="axonos_ssh_end_btn" class="axonos-ssh-card__end">End session</button>
                 </div>
             </div>
 

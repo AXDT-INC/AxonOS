@@ -68,6 +68,79 @@ def validate_wallet_address(address: str) -> bool:
     return bool(re.match(r"^0x[a-fA-F0-9]{40}$", address))
 
 
+# OpenSSH public-key types we accept for the direct-SSH session template.
+_SSH_KEY_TYPES = {
+    "ssh-ed25519",
+    "ssh-rsa",
+    "ecdsa-sha2-nistp256",
+    "ecdsa-sha2-nistp384",
+    "ecdsa-sha2-nistp521",
+    "sk-ssh-ed25519@openssh.com",
+    "sk-ecdsa-sha2-nistp256@openssh.com",
+}
+_SSH_KEY_MAX_LEN = 16384  # generous upper bound; RSA-4096 keys are ~720 chars
+
+
+def validate_ssh_public_key(raw: Optional[str]) -> Optional[str]:
+    """Validate a single OpenSSH public key and return its normalized form.
+
+    Returns the sanitized ``"<type> <base64> [comment]"`` string when valid, or
+    ``None`` otherwise. The result is injected (via ``docker run -e``) into the
+    session container, which writes it verbatim to ``authorized_keys`` — so this
+    rejects anything that could smuggle a second key line or authorized_keys
+    options: multi-line input, leading option fields, control characters, and
+    bodies whose embedded algorithm name does not match the declared type.
+    """
+    if not raw:
+        return None
+    key = raw.strip()
+    # Single physical line only — no embedded newlines / CR / NUL / other control chars.
+    if len(key) > _SSH_KEY_MAX_LEN:
+        return None
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in key):
+        return None
+
+    parts = key.split()
+    # Exactly: <type> <base64> with an optional free-form comment. A leading
+    # options field (no space => unsplittable from type) is rejected because the
+    # first field must be a known key type.
+    if len(parts) < 2 or len(parts) > 3:
+        return None
+    key_type, body = parts[0], parts[1]
+    if key_type not in _SSH_KEY_TYPES:
+        return None
+
+    # The base64 body encodes a length-prefixed algorithm name that must match
+    # the declared type. This is the check that makes the value non-spoofable.
+    import base64
+    import struct
+
+    try:
+        blob = base64.b64decode(body, validate=True)
+    except (ValueError, _binascii_error()):
+        return None
+    if len(blob) < 4:
+        return None
+    name_len = struct.unpack(">I", blob[:4])[0]
+    if name_len <= 0 or name_len > 64 or 4 + name_len > len(blob):
+        return None
+    try:
+        embedded_type = blob[4 : 4 + name_len].decode("ascii")
+    except UnicodeDecodeError:
+        return None
+    if embedded_type != key_type:
+        return None
+
+    comment = parts[2] if len(parts) == 3 else ""
+    return f"{key_type} {body} {comment}".strip()
+
+
+def _binascii_error():
+    import binascii
+
+    return binascii.Error
+
+
 def _challenge_ttl_seconds() -> int:
     raw = (os.getenv("AXGT_CHALLENGE_TTL_SECONDS") or "").strip()
     if not raw:

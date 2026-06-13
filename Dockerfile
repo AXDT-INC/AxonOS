@@ -462,6 +462,16 @@ RUN sed -i 's#^Exec=pymol$#Exec=bash -c "vglrun pymol 2>/dev/null || pymol"#' /u
 # Install Terminator (in universe; enable repo + update in same layer)
 RUN apt-get update && apt-get install -y terminator && rm -rf /var/lib/apt/lists/*
 
+# OpenSSH server for the direct-SSH session toggle (AXGT_SSH_ENABLED=true). Such
+# sessions skip the X desktop/WebRTC capture entirely and expose only sshd;
+# startup.sh writes the user's authorized_keys and (persistent) host keys at
+# runtime. Baked-in default host keys are removed so each deployment generates
+# its own rather than shipping a shared, publicly-known fingerprint.
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-server && \
+    mkdir -p /var/run/sshd && \
+    rm -f /etc/ssh/ssh_host_* && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
 # Switch to aXonian user
 USER $USER
 WORKDIR /home/$USER

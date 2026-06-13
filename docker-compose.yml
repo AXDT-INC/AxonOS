@@ -112,6 +112,12 @@ services:
       AXGT_PERSISTENT_STORAGE_GB_HOUR_COST_MINUTES: ${AXGT_PERSISTENT_STORAGE_GB_HOUR_COST_MINUTES:-0.05}
       AXGT_PERSISTENT_STORAGE_MIN_BALANCE_LIMIT_MINUTES: ${AXGT_PERSISTENT_STORAGE_MIN_BALANCE_LIMIT_MINUTES:--1440.0}
 
+      # Direct-SSH session toggle: public host the gate puts in the `ssh -p <port> <user>@<host>`
+      # connect-string. Set to the media-plane public IP (per-session TCP 42000-42049 are
+      # published by the launcher and NAT'd to it). Empty disables the toggle's usefulness
+      # (UI would fall back to the page hostname, which is the OKE proxy — not reachable for SSH).
+      AXGT_SSH_PUBLIC_HOST: ${AXGT_SSH_PUBLIC_HOST:-}
+      AXGT_SSH_USER: ${AXGT_SSH_USER:-aXonian}
 
       # Gate must listen on all interfaces so axgt-session-* agents can reach :8889 via http://axonos:8889.
       GATE_HOST: ${GATE_HOST:-0.0.0.0}

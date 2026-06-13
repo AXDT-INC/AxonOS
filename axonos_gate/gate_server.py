@@ -33,6 +33,7 @@ try:
         get_credit_policy,
         get_wallet_access_status,
         mask_wallet_address,
+        validate_ssh_public_key,
         validate_wallet_address,
         verify_signed_challenge,
     )
@@ -45,6 +46,7 @@ except ImportError:
             get_credit_policy,
             get_wallet_access_status,
             mask_wallet_address,
+            validate_ssh_public_key,
             validate_wallet_address,
             verify_signed_challenge,
         )
@@ -913,12 +915,24 @@ def api_session_claim():
     wallet_address = (data.get('wallet_address') or '').strip()
     requested_profile = (data.get('requested_profile') or '').strip() or None
     requested_template = (data.get('requested_template') or '').strip() or None
+    requested_ssh = bool(data.get('requested_ssh'))
+    ssh_pubkey = None
+    if requested_ssh:
+        ssh_pubkey = validate_ssh_public_key(data.get('ssh_pubkey'))
+        if not ssh_pubkey:
+            return jsonify({"granted": False, "error": "A valid SSH public key is required for SSH access"}), 400
     if not wallet_address or not validate_wallet_address(wallet_address):
         return jsonify({"granted": False, "error": "Valid wallet_address required"}), 400
     auth_err = _require_auth_token(wallet_address)
     if auth_err:
         return auth_err
-    return jsonify(try_claim_session(wallet_address, requested_profile=requested_profile, requested_template=requested_template))
+    return jsonify(try_claim_session(
+        wallet_address,
+        requested_profile=requested_profile,
+        requested_template=requested_template,
+        requested_ssh=requested_ssh,
+        ssh_pubkey=ssh_pubkey,
+    ))
 
 
 @app.route('/api/session/heartbeat', methods=['POST', 'OPTIONS'])
