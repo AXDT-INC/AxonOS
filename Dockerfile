@@ -720,7 +720,7 @@ RUN chmod +x /usr/local/bin/apply_session_template.sh
 # the WebRTC agent captures axonos_out.monitor (see [program:pulseaudio] in
 # supervisord.conf and docs/WEBRTC.md "Audio").
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        pulseaudio pulseaudio-utils && \
+        pulseaudio pulseaudio-utils libspeechd2 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 COPY pulse-default.pa /etc/pulse/axonos-default.pa
 COPY pulse-client.conf /etc/pulse/client.conf
