@@ -107,6 +107,7 @@ try:
         restart_desktop_session,
         session_status,
         try_claim_session,
+        validate_session_files_key,
     )
     _session_mgr_available = True
 except ImportError:
@@ -119,6 +120,7 @@ except ImportError:
             restart_desktop_session,
             session_status,
             try_claim_session,
+            validate_session_files_key,
         )
         _session_mgr_available = True
     except ImportError:
@@ -1389,6 +1391,11 @@ def api_session_heartbeat():
     wallet_address = (data.get('wallet_address') or '').strip()
     if not wallet_address or not validate_wallet_address(wallet_address):
         return jsonify({"ok": False, "error": "Valid wallet_address required"}), 400
+    # Auth: normal wallet auth token (browser) OR the per-session files_key
+    # (headless/SSH in-container heartbeat daemon, no browser sign-in).
+    session_key = (request.headers.get('X-AXGT-Session-Key') or data.get('session_key') or '').strip()
+    if session_key and validate_session_files_key(wallet_address, session_key):
+        return jsonify(session_heartbeat(wallet_address))
     auth_err = _require_auth_token(wallet_address)
     if auth_err:
         return auth_err

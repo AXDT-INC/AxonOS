@@ -130,6 +130,7 @@ try:
         restart_desktop_session,
         session_status,
         try_claim_session,
+        validate_session_files_key,
     )
     _session_mgr_available = True
 except ImportError:
@@ -142,10 +143,12 @@ except ImportError:
             restart_desktop_session,
             session_status,
             try_claim_session,
+            validate_session_files_key,
         )
         _session_mgr_available = True
     except ImportError:
         _session_mgr_available = False
+        validate_session_files_key = None
 
 try:
     from webrtc import config as webrtc_config
@@ -1520,6 +1523,10 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             wallet_address = (data.get('wallet_address') or '').strip()
             if not wallet_address or not validate_wallet_address(wallet_address):
                 return self._send_json(400, {'ok': False, 'error': 'Valid wallet_address required'})
+            # Auth: wallet token (browser) OR per-session files_key (headless/SSH daemon).
+            session_key = (self.headers.get('X-AXGT-Session-Key') or data.get('session_key') or '').strip()
+            if session_key and validate_session_files_key and validate_session_files_key(wallet_address, session_key):
+                return self._send_json(200, session_heartbeat(wallet_address))
             auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
             if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
                 return self._send_json(401, {'ok': False, 'error': 'Valid auth token required'})

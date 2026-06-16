@@ -1487,3 +1487,37 @@ def is_session_owner(wallet_address: str) -> bool:
         return False
     finally:
         conn.close()
+
+
+def validate_session_files_key(wallet_address: str, files_key: str) -> bool:
+    """True if *files_key* matches the active session's per-session secret for *wallet*.
+
+    Lets a headless/SSH session container authenticate its own heartbeats (no
+    browser wallet token). The files_key is minted at claim, stored on the session
+    row, and injected into the container env as AXGT_SESSION_FILES_KEY.
+    """
+    wallet = (wallet_address or "").lower()
+    key = (files_key or "").strip()
+    if not wallet or not key:
+        return False
+    if not _init_once():
+        return False
+    conn = _get_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""SELECT files_key FROM {_SESSION_TABLE}
+                    WHERE wallet_address = %s AND status = 'active'
+                    ORDER BY started_at DESC LIMIT 1""",
+                (wallet,),
+            )
+            row = cur.fetchone()
+        stored = (row[0] if row else None) or ""
+        return bool(stored) and secrets.compare_digest(stored, key)
+    except Exception as exc:
+        logger.warning("validate_session_files_key failed: %s", exc)
+        return False
+    finally:
+        conn.close()
