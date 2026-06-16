@@ -608,6 +608,18 @@ def _axgt_direct_deposits_enabled_flag() -> bool:
     return raw in ("1", "true", "yes", "on")
 
 
+def _axgt_bonus_percent_display() -> float:
+    raw = (os.getenv("AXGT_USD_BONUS_PERCENT") or "").strip()
+    if raw:
+        try:
+            v = float(raw)
+            if v >= 0:
+                return v
+        except ValueError:
+            pass
+    return 25.0
+
+
 def get_credit_policy() -> Dict[str, Any]:
     """Deposit-credit policy: min deposit (AXGT/ETH), credit rates, warning threshold, discount tiers."""
     eth_enabled = eth_deposits_enabled()
@@ -628,6 +640,20 @@ def get_credit_policy() -> Dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 — non-fatal: tiers are optional in policy
         logger.warning("Failed to load discount tiers for credit policy: %s", exc)
         discount_tiers = []
+    usdc_enabled = (os.getenv("AXGT_ENABLE_USDC_DEPOSITS") or "").strip().lower() not in ("0", "false", "no", "off")
+    usdc_min = (os.getenv("USDC_MIN_DEPOSIT") or "").strip() or "1"
+    try:
+        usdc_rate = float((os.getenv("USDC_CREDIT_PER_USDC_MINUTES") or "").strip() or 60.0)
+        if usdc_rate <= 0:
+            usdc_rate = 60.0
+    except ValueError:
+        usdc_rate = 60.0
+    usdc_min_minutes = None
+    if usdc_enabled:
+        try:
+            usdc_min_minutes = round(float(Decimal(usdc_min) * Decimal(str(usdc_rate))), 4)
+        except (InvalidOperation, ValueError, TypeError):
+            usdc_min_minutes = None
     gpu_profiles_enabled = (
         os.getenv("AXGT_GPU_PROFILES_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
     )
@@ -644,6 +670,12 @@ def get_credit_policy() -> Dict[str, Any]:
         "min_axgt_deposit_minutes": round(_min_axgt_deposit_credit_minutes(), 4),
         "min_eth_deposit_minutes": eth_min_minutes,
         "axgt_direct_deposits_enabled": axgt_direct,
+        "usdc_deposits_enabled": usdc_enabled,
+        "axgt_bonus_percent": _axgt_bonus_percent_display(),
+        "dynamic_pricing_enabled": (os.getenv("AXGT_DYNAMIC_PRICING") or "").strip().lower() in ("1", "true", "yes", "on"),
+        "usdc_min_deposit": usdc_min,
+        "usdc_credit_per_usdc_minutes": usdc_rate,
+        "min_usdc_deposit_minutes": usdc_min_minutes,
         "axgt_discount_tiers": discount_tiers,
         "gpu_profiles_enabled": gpu_profiles_enabled,
         "gpu_weighted_billing_enabled": gpu_weighted_billing,

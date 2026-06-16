@@ -66,6 +66,25 @@ def _import_discount():
         return None
 
 
+def _import_price_oracle():
+    """Import the price oracle across flat and packaged sys.path layouts."""
+    try:
+        from . import price_oracle as _po
+        return _po
+    except ImportError:
+        pass
+    try:
+        from axonos_gate import price_oracle as _po
+        return _po
+    except ImportError:
+        pass
+    try:
+        import price_oracle as _po
+        return _po
+    except ImportError:
+        return None
+
+
 def _rpc(url: str, method: str, params: List[Any]) -> Optional[Any]:
     payload = {"jsonrpc": "2.0", "method": method, "params": params, "id": 1}
     try:
@@ -163,6 +182,19 @@ def _credit_per_100_minutes() -> float:
     except ValueError:
         pass
     return float(DEFAULT_CREDIT_PER_100_AXGT_MINUTES)
+
+
+def _axgt_bonus_pct_fixed() -> Decimal:
+    """AXGT payment bonus % (Model B) for the fixed-rate fallback path."""
+    raw = (os.getenv("AXGT_USD_BONUS_PERCENT") or "").strip()
+    if raw:
+        try:
+            v = Decimal(raw)
+            if v >= 0:
+                return v
+        except Exception:
+            pass
+    return Decimal("25")
 
 
 def _min_eth_deposit() -> Decimal:
@@ -446,15 +478,22 @@ def verify_deposit(
                     f"ETH deposit below minimum ({min_eth} ETH after AXGT discount; base {base_min_eth} ETH)"
                 )
 
-            credit_per_eth = Decimal(str(_eth_credit_per_eth_minutes()))
-            # Discount-adjusted credit rate: a 25% discount means the user can
-            # pay 25% less ETH for the same minutes ⇒ the effective minutes per
-            # ETH are scaled up by 1/(1-d).
+            # Base minutes: live USD-equivalent pricing when the oracle is enabled
+            # and a fresh price is available; otherwise the fixed ETH rate.
+            base_minutes = None
+            _oracle = _import_price_oracle()
+            if _oracle is not None and _oracle.oracle_enabled():
+                m = _oracle.minutes_for_eth(eth_amount)
+                if m is not None:
+                    base_minutes = Decimal(str(m))
+            if base_minutes is None:
+                base_minutes = eth_amount * Decimal(str(_eth_credit_per_eth_minutes()))
+            # AXGT-holder discount still applies on the ETH rail: a d discount means
+            # the same ETH buys 1/(1-d) more minutes.
             if discount_pct >= 1:
-                effective_rate = credit_per_eth
+                credited_minutes = float(base_minutes)
             else:
-                effective_rate = credit_per_eth / (Decimal("1") - discount_pct)
-            credited_minutes = float(eth_amount * effective_rate)
+                credited_minutes = float(base_minutes / (Decimal("1") - discount_pct))
             ok, remaining, err = deposit_ledger.credit_eth_deposit(
                 wallet,
                 eth_amount,
@@ -517,9 +556,27 @@ def verify_deposit(
         )
         return fail(f"Deposit amount below minimum ({min_dep} AXGT)")
 
-    # Credit: (axgt_amount / 100) * credit_per_100
-    credit_per_100 = _credit_per_100_minutes()
-    credited_minutes = float(axgt_amount / Decimal("100") * Decimal(str(credit_per_100)))
+    # Model B: paying in AXGT is simply the best deal — a flat USD-equivalent rate
+    # PLUS a fixed bonus (default +25%), with NO holder-tier discount on the AXGT
+    # rail. AXGT's two utilities are kept distinct: holding AXGT discounts ETH/USDC
+    # payments (tiers, elsewhere); paying IN AXGT gets the bonus rate here.
+    #
+    # When dynamic pricing is enabled, minutes are priced off AXGT's live USD value
+    # (so the user pays the USD-equivalent); otherwise the fixed per-100 rate.
+    bonus_pct = Decimal("0")
+    credited_minutes = None
+    _oracle = _import_price_oracle()
+    if _oracle is not None and _oracle.oracle_enabled():
+        m = _oracle.minutes_for_axgt(axgt_amount)  # already includes the bonus
+        if m is not None:
+            credited_minutes = float(m)
+            bonus_pct = _oracle.axgt_bonus_pct()
+    if credited_minutes is None:
+        # Fixed-rate fallback: (axgt_amount/100)*credit_per_100, then apply bonus.
+        credit_per_100 = _credit_per_100_minutes()
+        bonus_pct = _axgt_bonus_pct_fixed()
+        base = axgt_amount / Decimal("100") * Decimal(str(credit_per_100))
+        credited_minutes = float(base * (Decimal("1") + bonus_pct / Decimal("100")))
 
     ok, remaining, err = deposit_ledger.credit_deposit(
         wallet,
@@ -538,6 +595,7 @@ def verify_deposit(
         "deposit_currency": "AXGT",
         "axgt_amount": str(axgt_amount),
         "eth_amount": None,
+        "axgt_bonus_percent": float(bonus_pct),
         "credited_minutes": round(credited_minutes, 2),
         "remaining_minutes": round(remaining, 2),
         "confirmations": confirmations,

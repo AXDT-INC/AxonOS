@@ -3,6 +3,7 @@ flask-cors>=4.0.0
 requests>=2.31.0
 websockets>=12.0
 eth-account>=0.10.0
+eth-abi>=4.2.0
 psycopg2-binary>=2.9.0
 # WebRTC in-container agent + signaling helpers
 aiortc>=1.6.0

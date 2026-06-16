@@ -685,6 +685,24 @@ Copyright (C) 2019 The noVNC Authors
                         <p id="axonos_wallet_insufficient_balance" class="axonos-wallet-state__balance">Wallet AXGT
                             balance: —</p>
 
+                        <!-- Payment method selector: shows only the chosen rail's panel + input. -->
+                        <div id="axonos_pay_rail_toggle" class="axonos-pay-rail-toggle"
+                            role="tablist" aria-label="Payment method"
+                            style="display:none;justify-content:center;gap:0.4rem;margin:0.6rem auto 0.2rem;flex-wrap:wrap;">
+                            <button type="button" id="axonos_pay_rail_usdc" role="tab"
+                                class="axonos-connect-wallet-btn axonos-pay-rail-btn"
+                                data-rail="usdc"
+                                style="margin:0;padding:0.4rem 1rem;font-size:0.85rem;">USDC <span style="opacity:0.7;">(Base)</span></button>
+                            <button type="button" id="axonos_pay_rail_eth" role="tab"
+                                class="axonos-connect-wallet-btn axonos-pay-rail-btn"
+                                data-rail="eth"
+                                style="margin:0;padding:0.4rem 1rem;font-size:0.85rem;">ETH</button>
+                            <button type="button" id="axonos_pay_rail_axgt" role="tab"
+                                class="axonos-connect-wallet-btn axonos-pay-rail-btn"
+                                data-rail="axgt"
+                                style="margin:0;padding:0.4rem 1rem;font-size:0.85rem;display:none;">AXGT</button>
+                        </div>
+
                         <!-- AXGT holder discount panel: server-quoted; client cannot manipulate. -->
                         <div id="axonos_discount_panel" class="axonos-discount-panel"
                             style="margin:0.6rem auto 0.4rem;width:100%;max-width:30rem;border:1px solid rgba(140,200,220,.14);border-radius:12px;padding:0.7rem 0.9rem;background:rgba(10,20,36,0.55);text-align:left;font-size:0.9rem;line-height:1.45;">
@@ -734,6 +752,98 @@ Copyright (C) 2019 The noVNC Authors
                                 RPC balance check failed — paying full ETH price (no discount applied).</p>
                         </div>
 
+                        <!-- AXGT holder discount panel for USDC (Base). Same tier; USDC-denominated. -->
+                        <div id="axonos_usdc_discount_panel" class="axonos-discount-panel"
+                            style="display:none;margin:0.6rem auto 0.4rem;width:100%;max-width:30rem;border:1px solid rgba(140,200,220,.14);border-radius:12px;padding:0.7rem 0.9rem;background:rgba(10,20,36,0.55);text-align:left;font-size:0.9rem;line-height:1.45;">
+                            <div
+                                style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:0.4rem;">
+                                <strong>AXGT discount tier · USDC (Base)</strong>
+                                <span id="axonos_usdc_discount_status" style="font-size:0.78rem;opacity:0.7;">Loading
+                                    on-chain balance…</span>
+                            </div>
+                            <ul style="list-style:none;padding:0;margin:0.45rem 0 0.2rem;">
+                                <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
+                                        style="opacity:0.78;">Minimum (list)</span><strong
+                                        id="axonos_usdc_discount_base">—</strong></li>
+                                <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
+                                        style="opacity:0.78;">Wallet AXGT balance</span><strong
+                                        id="axonos_usdc_discount_balance">—</strong></li>
+                                <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
+                                        style="opacity:0.78;">Eligible tier</span><strong
+                                        id="axonos_usdc_discount_tier">—</strong></li>
+                                <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
+                                        style="opacity:0.78;">Holder discount</span><strong id="axonos_usdc_discount_percent"
+                                        style="color:#7adf8a;">—</strong></li>
+                                <li
+                                    style="display:flex;justify-content:space-between;gap:0.5rem;border-top:1px dashed rgba(140,200,220,.18);margin-top:0.35rem;padding-top:0.35rem;">
+                                    <span>Minimum USDC (your tier)</span><strong id="axonos_usdc_discount_min"
+                                        style="color:#e8a85a;">—</strong>
+                                </li>
+                                <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
+                                        style="opacity:0.78;">Minimum desktop time</span><strong
+                                        id="axonos_usdc_discount_min_minutes">—</strong></li>
+                            </ul>
+                            <ul id="axonos_usdc_discount_preview" class="axonos-discount-preview"
+                                style="list-style:none;padding:0;margin:0.35rem 0 0;display:none;">
+                                <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
+                                        style="opacity:0.78;">You pay</span><strong
+                                        id="axonos_usdc_discount_pay">—</strong></li>
+                                <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
+                                        style="opacity:0.78;">Estimated desktop time</span><strong
+                                        id="axonos_usdc_discount_preview_minutes" style="color:#7adf8a;">—</strong></li>
+                                <li id="axonos_usdc_discount_preview_baseline_row"
+                                    style="display:none;justify-content:space-between;gap:0.5rem;"><span
+                                        style="opacity:0.78;">Without AXGT (same USDC)</span><strong
+                                        id="axonos_usdc_discount_preview_baseline">—</strong></li>
+                            </ul>
+                            <p id="axonos_usdc_discount_warn" class="axonos-wallet-state__msg"
+                                style="font-size:0.78rem;min-height:0;margin:0.35rem 0 0;color:#f0a878;display:none;">
+                                RPC balance check failed — paying full USDC price (no discount applied).</p>
+                        </div>
+
+                        <!-- AXGT holder discount panel for paying directly in AXGT. Tier is from
+                             pre-payment balance; discount boosts minutes-per-AXGT. -->
+                        <div id="axonos_axgt_discount_panel" class="axonos-discount-panel"
+                            style="display:none;margin:0.6rem auto 0.4rem;width:100%;max-width:30rem;border:1px solid rgba(140,200,220,.14);border-radius:12px;padding:0.7rem 0.9rem;background:rgba(10,20,36,0.55);text-align:left;font-size:0.9rem;line-height:1.45;">
+                            <div
+                                style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:0.4rem;">
+                                <strong>Paying in AXGT · best rate</strong>
+                                <span id="axonos_axgt_discount_status" style="font-size:0.78rem;opacity:0.7;">Live USD
+                                    pricing</span>
+                            </div>
+                            <ul style="list-style:none;padding:0;margin:0.45rem 0 0.2rem;">
+                                <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
+                                        style="opacity:0.78;">Minimum</span><strong
+                                        id="axonos_axgt_discount_base">—</strong></li>
+                                <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
+                                        style="opacity:0.78;">Wallet AXGT balance</span><strong
+                                        id="axonos_axgt_discount_balance">—</strong></li>
+                                <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
+                                        style="opacity:0.78;">Pricing</span><strong
+                                        id="axonos_axgt_discount_tier">—</strong></li>
+                                <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
+                                        style="opacity:0.78;">AXGT bonus</span><strong id="axonos_axgt_discount_percent"
+                                        style="color:#7adf8a;">—</strong></li>
+                                <li
+                                    style="display:flex;justify-content:space-between;gap:0.5rem;border-top:1px dashed rgba(140,200,220,.18);margin-top:0.35rem;padding-top:0.35rem;">
+                                    <span>Minimum AXGT</span><strong id="axonos_axgt_discount_min"
+                                        style="color:#e8a85a;">—</strong>
+                                </li>
+                            </ul>
+                            <ul id="axonos_axgt_discount_preview" class="axonos-discount-preview"
+                                style="list-style:none;padding:0;margin:0.35rem 0 0;display:none;">
+                                <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
+                                        style="opacity:0.78;">You pay</span><strong
+                                        id="axonos_axgt_discount_pay">—</strong></li>
+                                <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
+                                        style="opacity:0.78;">Estimated desktop time</span><strong
+                                        id="axonos_axgt_discount_preview_minutes" style="color:#7adf8a;">—</strong></li>
+                            </ul>
+                            <p style="font-size:0.74rem;opacity:0.6;margin:0.4rem 0 0;">Paying in AXGT is charged at
+                                live USD value and includes a bonus — the best per-dollar rate. (Holding AXGT also
+                                discounts ETH/USDC payments.)</p>
+                        </div>
+
                         <p class="axonos-wallet-state__help"
                             style="margin:0.55rem 0 0.35rem;font-size:0.9em;opacity:0.9;">Enter the ETH you will pay.
                             Estimates are wall-clock desktop time for your currently selected GPU profile. AXGT holders
@@ -760,6 +870,16 @@ Copyright (C) 2019 The noVNC Authors
                                 <div class="axonos-pay-deposit-actions">
                                     <button type="button" id="axonos_pay_eth_btn"
                                         class="axonos-connect-wallet-btn axonos-pay-send-btn">Pay with ETH</button>
+                                </div>
+                            </div>
+                            <div class="axonos-pay-deposit-row" id="axonos_pay_usdc_row" style="display:none;">
+                                <span class="axonos-pay-row-label">USDC</span>
+                                <input type="text" id="axonos_pay_usdc_amount" inputmode="decimal" autocomplete="off"
+                                    spellcheck="false" aria-label="USDC amount to pay" class="axonos-pay-amount-input"
+                                    placeholder="USDC amount" />
+                                <div class="axonos-pay-deposit-actions">
+                                    <button type="button" id="axonos_pay_usdc_btn"
+                                        class="axonos-connect-wallet-btn axonos-pay-send-btn">Pay with USDC</button>
                                 </div>
                             </div>
                         </div>
@@ -984,7 +1104,7 @@ Copyright (C) 2019 The noVNC Authors
 
 <script>
     // Must be declared before DOMContentLoaded handlers (axonosUpdateProfileBurnHint reads it).
-    window.axonosConfig = { axgt_contract_address: '', axgt_revenue_wallet: '', axgt_chain_id: null, axgt_min_deposit: '100', eth_deposits_enabled: true, eth_min_deposit: '0.0005', axgt_token_decimals: 18, credit_per_100_axgt: 60, eth_credit_per_eth: 120000, min_axgt_minutes: 60, min_eth_minutes: 60, axgt_direct_deposits_enabled: false, axgt_discount_tiers: [], gpu_profiles: { small: 1, medium: 2, large: 4, max: 8 }, gpu_weighted_billing_enabled: false, persistent_storage_enabled: true, persistent_storage_gb_hour_cost_minutes: 0.05, persistent_storage_min_balance_limit_minutes: -1440.0 };
+    window.axonosConfig = { axgt_contract_address: '', axgt_revenue_wallet: '', axgt_chain_id: null, axgt_min_deposit: '100', eth_deposits_enabled: true, eth_min_deposit: '0.0005', axgt_token_decimals: 18, credit_per_100_axgt: 60, eth_credit_per_eth: 120000, min_axgt_minutes: 60, min_eth_minutes: 60, axgt_direct_deposits_enabled: false, usdc_deposits_enabled: true, usdc_contract_address: '', usdc_chain_id: 8453, usdc_min_deposit: '1', usdc_credit_per_usdc: 60, min_usdc_minutes: 60, axgt_bonus_percent: 25, axgt_discount_tiers: [], gpu_profiles: { small: 1, medium: 2, large: 4, max: 8 }, gpu_weighted_billing_enabled: false, persistent_storage_enabled: true, persistent_storage_gb_hour_cost_minutes: 0.05, persistent_storage_min_balance_limit_minutes: -1440.0 };
     var axonosConfig = window.axonosConfig;
     let axonosLastDiscountQuote = null;
     let axonosLastDiscountMinQuote = null;
@@ -1481,6 +1601,7 @@ Copyright (C) 2019 The noVNC Authors
             setWalletUIState('axonos_wallet_state_insufficient', { balanceDisplay: String(msg) });
             if (window.verifiedWalletAddress && typeof refreshDiscountQuote === 'function') {
                 refreshDiscountQuote(window.verifiedWalletAddress);
+                refreshUsdcDiscountQuote(window.verifiedWalletAddress);
             }
         }
 
@@ -1863,6 +1984,9 @@ Copyright (C) 2019 The noVNC Authors
                     if (typeof refreshDiscountQuote === 'function') {
                         refreshDiscountQuote(wallet);
                     }
+                    if (typeof refreshUsdcDiscountQuote === 'function') {
+                        refreshUsdcDiscountQuote(wallet);
+                    }
                     return false;
                 }
                 window.axonosAllowVncConnect = true;
@@ -2090,13 +2214,20 @@ Copyright (C) 2019 The noVNC Authors
             }
             var id = String(n);
             var known = AXONOS_KNOWN_CHAIN_ENV[id];
+            // USDC runs on its own network (Base); note it so users know Pay with
+            // USDC switches their wallet to a different chain than ETH/AXGT.
+            var usdcOnCfg = axonosConfig.usdc_deposits_enabled
+                && /^0x[a-fA-F0-9]{40}$/.test(String(axonosConfig.usdc_contract_address || ''));
+            var usdcChainName = AXONOS_KNOWN_CHAIN_ENV[String(axonosConfig.usdc_chain_id || '8453')];
+            usdcChainName = (usdcChainName && usdcChainName.label) || 'Base';
+            var usdcNote = usdcOnCfg ? (' · USDC paid on ' + usdcChainName + ' (wallet switches networks).') : '';
             if (known) {
                 if (known.kind === 'mainnet') {
                     return {
                         chainId: id,
                         kind: 'mainnet',
-                        landingText: known.label + (axonosConfig.axgt_direct_deposits_enabled ? ' · Real AXGT / ETH deposits' : ' · Real ETH deposits'),
-                        walletText: 'Network: ' + known.label + ' — use the same network in your wallet before paying.'
+                        landingText: known.label + (axonosConfig.axgt_direct_deposits_enabled ? ' · Real AXGT / ETH deposits' : ' · Real ETH deposits') + usdcNote,
+                        walletText: 'Network: ' + known.label + ' — use the same network in your wallet before paying.' + usdcNote
                     };
                 }
                 var testnetFundsLine = axonosConfig.eth_deposits_enabled
@@ -2105,8 +2236,8 @@ Copyright (C) 2019 The noVNC Authors
                 return {
                     chainId: id,
                     kind: 'testnet',
-                    landingText: known.label + (known.caution ? ' — ' + known.caution : ''),
-                    walletText: known.label + (known.caution ? ' — ' + known.caution : '') + testnetFundsLine
+                    landingText: known.label + (known.caution ? ' — ' + known.caution : '') + usdcNote,
+                    walletText: known.label + (known.caution ? ' — ' + known.caution : '') + testnetFundsLine + usdcNote
                 };
             }
             // Non-mainnet ID not in the map: still warn (operator may use a custom test/staging chain).
@@ -2301,6 +2432,13 @@ Copyright (C) 2019 The noVNC Authors
                     axonosConfig.axgt_token_decimals = (cfg && (cfg.axgt_token_decimals != null)) ? parseInt(cfg.axgt_token_decimals, 10) : 18;
                     if (isNaN(axonosConfig.axgt_token_decimals) || axonosConfig.axgt_token_decimals < 0) axonosConfig.axgt_token_decimals = 18;
                     axonosConfig.axgt_direct_deposits_enabled = !!(cfg && cfg.axgt_direct_deposits_enabled);
+                    axonosConfig.usdc_deposits_enabled = !cfg || cfg.usdc_deposits_enabled !== false;
+                    axonosConfig.usdc_contract_address = (cfg && cfg.usdc_contract_address) ? String(cfg.usdc_contract_address) : '';
+                    axonosConfig.usdc_chain_id = (cfg && cfg.usdc_chain_id) ? String(cfg.usdc_chain_id) : '8453';
+                    axonosConfig.usdc_min_deposit = (cfg && cfg.usdc_min_deposit != null) ? String(cfg.usdc_min_deposit) : '1';
+                    axonosConfig.usdc_credit_per_usdc = (cfg && cfg.usdc_credit_per_usdc_minutes != null) ? Number(cfg.usdc_credit_per_usdc_minutes) : 60;
+                    axonosConfig.axgt_bonus_percent = (cfg && cfg.axgt_bonus_percent != null) ? Number(cfg.axgt_bonus_percent) : 25;
+                    axonosConfig.min_usdc_minutes = (cfg && cfg.min_usdc_deposit_minutes != null) ? Number(cfg.min_usdc_deposit_minutes) : (Number(axonosConfig.usdc_min_deposit) * axonosConfig.usdc_credit_per_usdc);
                     axonosConfig.axgt_discount_tiers = (cfg && Array.isArray(cfg.axgt_discount_tiers)) ? cfg.axgt_discount_tiers : [];
                     axonosConfig.gpu_profiles = (cfg && cfg.gpu_profiles) ? cfg.gpu_profiles : { small: 1, medium: 2, large: 4, max: 8 };
                     axonosConfig.gpu_weighted_billing_enabled = !!(
@@ -2329,8 +2467,18 @@ Copyright (C) 2019 The noVNC Authors
                         }
                     }
                     axonosUpdateProfileBurnHint();
-                    var axgtRow = document.getElementById('axonos_pay_axgt_row');
-                    if (axgtRow) axgtRow.style.display = axonosConfig.axgt_direct_deposits_enabled ? '' : 'none';
+                    // Row/panel visibility is owned by the rail toggle. Re-apply it
+                    // now that config (which rails are enabled) is known. If no rail
+                    // is active yet, default per saved/preference.
+                    var usdcOk = axonosConfig.usdc_deposits_enabled
+                        && /^0x[a-fA-F0-9]{40}$/.test(String(axonosConfig.usdc_contract_address || ''));
+                    if (usdcOk && typeof refreshUsdcDiscountQuote === 'function') {
+                        var vw = window.verifiedWalletAddress || verifiedWalletAddress;
+                        if (vw && /^0x[a-fA-F0-9]{40}$/.test(vw)) refreshUsdcDiscountQuote(vw);
+                    }
+                    if (typeof axonosSelectPayRail === 'function') {
+                        axonosSelectPayRail(axonosActivePayRail || 'usdc');
+                    }
                     var revShort = rev && /^0x[a-fA-F0-9]{40}$/.test(rev) ? (rev.slice(0, 6) + '\u2026' + rev.slice(-4)) : '(set AXGT_REVENUE_WALLET)';
                     if (revenueShortEl) revenueShortEl.textContent = revShort;
                     var short = addr ? (addr.slice(0, 6) + '\u2026' + addr.slice(-4)) : '(not configured)';
@@ -2380,16 +2528,27 @@ Copyright (C) 2019 The noVNC Authors
                             ? ('Pay with ETH: 1 ETH → ' + ethPer1Ins + ' min; min ' + minEth + ' ETH → ~' + formatCreditMinutes(meMin) + '. AXGT holders get a tiered discount on the ETH price.')
                             : 'ETH payments are currently disabled. Contact the operator.';
                     }
+                    var usdcEnabledCopy = axonosConfig.usdc_deposits_enabled
+                        && /^0x[a-fA-F0-9]{40}$/.test(String(axonosConfig.usdc_contract_address || ''));
                     if (insufficientCreditTitle) {
-                        insufficientCreditTitle.textContent = 'Pay with ETH, save with AXGT';
+                        insufficientCreditTitle.textContent = usdcEnabledCopy
+                            ? 'Pay with ETH or USDC, save with AXGT'
+                            : 'Pay with ETH, save with AXGT';
                     }
                     if (revenueDepositLabel) {
-                        revenueDepositLabel.textContent = 'Pay ETH here · AXGT for discounts';
+                        revenueDepositLabel.textContent = usdcEnabledCopy
+                            ? 'Pay ETH / USDC here · AXGT for discounts'
+                            : 'Pay ETH here · AXGT for discounts';
                     }
                     if (prereqDepositLine) {
+                        var usdcCopy = usdcEnabledCopy
+                            ? (' Or pay in <strong>USDC</strong> on <strong>Base</strong> (min ' + (axonosConfig.usdc_min_deposit || '1') + ' USDC → ' + formatCreditMinutes(axonosConfig.min_usdc_minutes || 60) + ' desktop time) — use the in-page Pay with USDC button; your wallet will switch to the Base network.')
+                            : '';
                         prereqDepositLine.innerHTML = ethEnabled
-                            ? ('Prepaid <strong>desktop minutes</strong>: <strong>min ' + minEth + ' ETH</strong> → <strong id="axonos_prereq_eth_min_label">' + formatCreditMinutes(meMin) + ' desktop time</strong>. <strong>AXGT holders save</strong> on the ETH price (connect wallet to see your tier). Send ETH to the revenue wallet, or use the in-page Pay with ETH button (<a href="' + getAxgtHref + '" target="_blank" rel="noopener noreferrer">' + getAxgtLabel + '</a>)')
-                            : 'ETH payments are currently disabled. Contact the operator for a manual top-up path.';
+                            ? ('Prepaid <strong>desktop minutes</strong>: <strong>min ' + minEth + ' ETH</strong> → <strong id="axonos_prereq_eth_min_label">' + formatCreditMinutes(meMin) + ' desktop time</strong>. <strong>AXGT holders save</strong> on the ETH price (connect wallet to see your tier). Send ETH to the revenue wallet, or use the in-page Pay with ETH button (<a href="' + getAxgtHref + '" target="_blank" rel="noopener noreferrer">' + getAxgtLabel + '</a>).' + usdcCopy)
+                            : (usdcEnabledCopy
+                                ? ('ETH payments are currently disabled. Pay in <strong>USDC</strong> on <strong>Base</strong> instead (min ' + (axonosConfig.usdc_min_deposit || '1') + ' USDC → ' + formatCreditMinutes(axonosConfig.min_usdc_minutes || 60) + ' desktop time) using the Pay with USDC button.')
+                                : 'ETH payments are currently disabled. Contact the operator for a manual top-up path.');
                     }
                     var payAxgtIn = document.getElementById('axonos_pay_axgt_amount');
                     var payEthIn = document.getElementById('axonos_pay_eth_amount');
@@ -2400,6 +2559,12 @@ Copyright (C) 2019 The noVNC Authors
                     if (payEthIn) {
                         payEthIn.placeholder = 'min ' + minEth;
                         if (!payEthIn.dataset.axonosUserAmount) payEthIn.value = minEth;
+                    }
+                    var payUsdcIn = document.getElementById('axonos_pay_usdc_amount');
+                    if (payUsdcIn) {
+                        var minUsdc = String(axonosConfig.usdc_min_deposit || '1');
+                        payUsdcIn.placeholder = 'min ' + minUsdc + ' USDC';
+                        if (!payUsdcIn.dataset.axonosUserAmount) payUsdcIn.value = minUsdc;
                     }
                     setEthDepositUiEnabled(ethEnabled);
                     function etherscanBase(chainId) {
@@ -2468,6 +2633,7 @@ Copyright (C) 2019 The noVNC Authors
                     } else {
                         setWalletUIState('axonos_wallet_state_insufficient', { balanceDisplay: balanceDisplay });
                         refreshDiscountQuote(wallet);
+                        refreshUsdcDiscountQuote(wallet);
                     }
                 })
                 .catch(function () {
@@ -2490,6 +2656,24 @@ Copyright (C) 2019 The noVNC Authors
             if (state === 'axonos_wallet_state_insufficient' && data) {
                 var insufBal = document.getElementById('axonos_wallet_insufficient_balance');
                 if (insufBal) insufBal.textContent = 'Wallet AXGT balance (info only): ' + balanceText;
+                // Show the payment-rail toggle and select the default rail every time
+                // the deposit dialog opens (config is reliably loaded by now). The
+                // toggle owns which discount panel + input row is visible.
+                if (typeof axonosSelectPayRail === 'function') {
+                    var toggleEl = document.getElementById('axonos_pay_rail_toggle');
+                    var avail = axonosPayRailAvailability();
+                    var nRails = (avail.eth ? 1 : 0) + (avail.usdc ? 1 : 0) + (avail.axgt ? 1 : 0);
+                    // Only show the toggle when there's a real choice (>1 rail).
+                    if (toggleEl) toggleEl.style.display = nRails > 1 ? 'flex' : 'none';
+                    var saved = null;
+                    try { saved = localStorage.getItem('axonos_pay_rail'); } catch (e) {}
+                    var preferred = (saved && avail[saved]) ? saved
+                        : (avail.usdc ? 'usdc' : (avail.eth ? 'eth' : 'axgt'));
+                    axonosSelectPayRail(preferred);
+                    var vwallet = window.verifiedWalletAddress || verifiedWalletAddress;
+                    if (avail.usdc && typeof refreshUsdcDiscountQuote === 'function') refreshUsdcDiscountQuote(vwallet);
+                    if (avail.axgt && typeof refreshAxgtDiscountQuote === 'function') refreshAxgtDiscountQuote(vwallet);
+                }
             }
             if (state === 'axonos_wallet_state_connect_error' && data && data.msg) {
                 var det = document.getElementById('axonos_wallet_connect_error_detail');
@@ -2603,6 +2787,260 @@ Copyright (C) 2019 The noVNC Authors
             } else if (baseRow) {
                 baseRow.style.display = 'none';
             }
+        }
+
+        // ---- USDC discount panel (mirror of the ETH panel; same AXGT tier) ----
+        var axonosLastUsdcDiscountQuote = null;
+        var axonosUsdcAmountQuoteTimer = null;
+        var axonosUsdcAmountQuoteSeq = 0;
+
+        function applyUsdcDiscountTierPanel(d) {
+            var statusEl = document.getElementById('axonos_usdc_discount_status');
+            var baseEl = document.getElementById('axonos_usdc_discount_base');
+            var balEl = document.getElementById('axonos_usdc_discount_balance');
+            var tierEl = document.getElementById('axonos_usdc_discount_tier');
+            var pctEl = document.getElementById('axonos_usdc_discount_percent');
+            var minEl = document.getElementById('axonos_usdc_discount_min');
+            var minMinEl = document.getElementById('axonos_usdc_discount_min_minutes');
+            var warnEl = document.getElementById('axonos_usdc_discount_warn');
+            if (!d || !d.ok) {
+                if (statusEl) statusEl.textContent = 'Could not load discount.';
+                return;
+            }
+            var baseUsdc = d.base_usdc || d.base_amount;
+            var finalUsdc = d.final_usdc || d.final_amount;
+            if (baseEl) baseEl.textContent = String(baseUsdc || '—') + ' USDC';
+            if (balEl) balEl.textContent = (d.axgt_balance != null ? String(d.axgt_balance) : '0') + ' AXGT';
+            if (tierEl) tierEl.textContent = (d.tier_label || ('Tier ' + (d.tier_index != null ? d.tier_index : 0))) + (d.tier_min_axgt != null ? ' (≥ ' + d.tier_min_axgt + ' AXGT)' : '');
+            if (pctEl) pctEl.textContent = (d.discount_percent != null ? Number(d.discount_percent) : 0) + '%';
+            if (minEl) minEl.textContent = String(finalUsdc || baseUsdc || '—') + ' USDC';
+            // Minutes for the (discounted) minimum: min_usdc_minutes is the base; a
+            // discount means the same minimum-USDC buys the same minutes (minimum
+            // tracks down with the discount), so the base minute figure stands.
+            if (minMinEl) minMinEl.textContent = axonosFormatDesktopTimeLabel(Number(axonosConfig.min_usdc_minutes));
+            if (statusEl) statusEl.textContent = d.balance_check_ok ? 'On-chain balance verified' : 'On-chain check failed — no discount';
+            if (warnEl) {
+                if (d.balance_check_ok === false) {
+                    warnEl.textContent = (d.balance_check_error ? ('RPC error: ' + d.balance_check_error) : 'RPC balance check failed') + ' — paying full USDC price (no discount applied).';
+                    warnEl.style.display = '';
+                } else {
+                    warnEl.style.display = 'none';
+                }
+            }
+        }
+
+        function axonosBaselineMinutesForUsdc(usdcStr) {
+            var n = parseFloat(String(usdcStr || '').trim());
+            if (!(n > 0)) return null;
+            return n * Number(axonosConfig.usdc_credit_per_usdc || 60);
+        }
+
+        function updateUsdcPaymentPreview(quote, payUsdcStr) {
+            var preview = document.getElementById('axonos_usdc_discount_preview');
+            var payEl = document.getElementById('axonos_usdc_discount_pay');
+            var minEl = document.getElementById('axonos_usdc_discount_preview_minutes');
+            var baseRow = document.getElementById('axonos_usdc_discount_preview_baseline_row');
+            var baseEl = document.getElementById('axonos_usdc_discount_preview_baseline');
+            var trimmed = String(payUsdcStr || '').trim();
+            if (!trimmed || !(parseFloat(trimmed) > 0)) {
+                if (preview) preview.style.display = 'none';
+                return;
+            }
+            if (preview) preview.style.display = '';
+            if (payEl) payEl.textContent = trimmed + ' USDC';
+            var prepaidEst = (quote && quote.estimated_minutes != null)
+                ? Number(quote.estimated_minutes)
+                : axonosBaselineMinutesForUsdc(trimmed);
+            var estLabel = axonosFormatDesktopTimeLabel(prepaidEst);
+            if (minEl) minEl.textContent = estLabel !== '—' ? ('~' + estLabel) : '—';
+            var discPct = (quote && quote.discount_percent != null) ? Number(quote.discount_percent) : 0;
+            var baselineLabel = axonosFormatDesktopTimeLabel(axonosBaselineMinutesForUsdc(trimmed));
+            if (baseRow && baseEl && discPct > 0 && baselineLabel !== '—') {
+                baseRow.style.display = 'flex';
+                baseEl.textContent = '~' + baselineLabel;
+            } else if (baseRow) {
+                baseRow.style.display = 'none';
+            }
+        }
+
+        // Populate the USDC panel from static config (no on-chain discount) so it
+        // is never blank, even before/without a successful quote.
+        function applyUsdcDiscountFallbackPanel() {
+            applyUsdcDiscountTierPanel({
+                ok: true,
+                base_usdc: String(axonosConfig.usdc_min_deposit || '1'),
+                final_usdc: String(axonosConfig.usdc_min_deposit || '1'),
+                discount_percent: 0,
+                tier_index: 0,
+                tier_label: 'Tier 0',
+                tier_min_axgt: 0,
+                axgt_balance: '0',
+                balance_check_ok: true,
+            });
+        }
+
+        function refreshUsdcDiscountQuote(walletAddress) {
+            // Panel show/hide is owned by the rail toggle (axonosSelectPayRail);
+            // this function only POPULATES the panel contents.
+            var usdcEnabled = axonosConfig.usdc_deposits_enabled
+                && /^0x[a-fA-F0-9]{40}$/.test(String(axonosConfig.usdc_contract_address || ''));
+            if (!usdcEnabled) {
+                return Promise.resolve(null);
+            }
+            // Show config-based values immediately; the live quote (below) refines
+            // them with the on-chain AXGT discount when a valid wallet is present.
+            applyUsdcDiscountFallbackPanel();
+            if (!walletAddress || !/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) {
+                return Promise.resolve(null);
+            }
+            var url = new URL('/api/discount/quote', window.location.origin);
+            url.searchParams.set('wallet_address', walletAddress);
+            url.searchParams.set('currency', 'usdc');
+            return fetch(url.toString(), { method: 'GET', headers: { 'X-Wallet-Address': walletAddress }, credentials: 'include' })
+                .then(function (r) { return r.text().then(function (t) { try { return t ? JSON.parse(t) : {}; } catch (e) { return {}; } }); })
+                .then(function (d) {
+                    if (!d || !d.ok) return null;
+                    axonosLastUsdcDiscountQuote = d;
+                    applyUsdcDiscountTierPanel(d);
+                    var usdcInput = document.getElementById('axonos_pay_usdc_amount');
+                    if (usdcInput && !usdcInput.dataset.axonosUserAmount) {
+                        usdcInput.value = String(d.final_usdc || d.base_usdc || axonosConfig.usdc_min_deposit || '1');
+                    }
+                    var payVal = usdcInput ? String(usdcInput.value || '').trim() : '';
+                    updateUsdcPaymentPreview(d, payVal);
+                    return d;
+                })
+                .catch(function () { return null; });
+        }
+
+        function scheduleUsdcAmountQuoteRefresh(walletAddress) {
+            if (axonosUsdcAmountQuoteTimer) clearTimeout(axonosUsdcAmountQuoteTimer);
+            var usdcInput = document.getElementById('axonos_pay_usdc_amount');
+            var val = usdcInput ? String(usdcInput.value || '').trim() : '';
+            if (!walletAddress || !val || !(parseFloat(val) > 0)) {
+                updateUsdcPaymentPreview(axonosLastUsdcDiscountQuote, val);
+                return;
+            }
+            axonosUsdcAmountQuoteTimer = setTimeout(function () {
+                axonosUsdcAmountQuoteTimer = null;
+                var seq = ++axonosUsdcAmountQuoteSeq;
+                var url = new URL('/api/discount/quote', window.location.origin);
+                url.searchParams.set('wallet_address', walletAddress);
+                url.searchParams.set('currency', 'usdc');
+                url.searchParams.set('base_amount', val);
+                fetch(url.toString(), { method: 'GET', headers: { 'X-Wallet-Address': walletAddress }, credentials: 'include' })
+                    .then(function (r) { return r.text().then(function (t) { try { return t ? JSON.parse(t) : {}; } catch (e) { return {}; } }); })
+                    .then(function (d) {
+                        if (seq !== axonosUsdcAmountQuoteSeq || !d || !d.ok) return;
+                        var cur = document.getElementById('axonos_pay_usdc_amount');
+                        if (cur && String(cur.value || '').trim() === val) {
+                            updateUsdcPaymentPreview(d, val);
+                        }
+                    }).catch(function () {});
+            }, 400);
+        }
+
+        // ---- AXGT discount panel (paying directly in AXGT; tier boosts minutes) ----
+        var axonosLastAxgtDiscountQuote = null;
+        var axonosAxgtAmountQuoteTimer = null;
+        var axonosAxgtAmountQuoteSeq = 0;
+
+        function applyAxgtDiscountTierPanel(d) {
+            // Model B: paying in AXGT has no holder tier — just a flat bonus rate.
+            var statusEl = document.getElementById('axonos_axgt_discount_status');
+            var baseEl = document.getElementById('axonos_axgt_discount_base');
+            var balEl = document.getElementById('axonos_axgt_discount_balance');
+            var tierEl = document.getElementById('axonos_axgt_discount_tier');
+            var pctEl = document.getElementById('axonos_axgt_discount_percent');
+            var minEl = document.getElementById('axonos_axgt_discount_min');
+            if (!d || !d.ok) { if (statusEl) statusEl.textContent = 'Could not load rate.'; return; }
+            var baseAxgt = d.base_axgt || d.base_amount;
+            var bonus = (axonosConfig.axgt_bonus_percent != null) ? Number(axonosConfig.axgt_bonus_percent) : 25;
+            if (baseEl) baseEl.textContent = String(baseAxgt || '—') + ' AXGT';
+            if (balEl) balEl.textContent = (d.axgt_balance != null ? String(d.axgt_balance) : '0') + ' AXGT';
+            if (tierEl) tierEl.textContent = 'Best rate — paid at USD value';
+            if (pctEl) pctEl.textContent = '+' + bonus + '% bonus minutes';
+            if (minEl) minEl.textContent = String(baseAxgt || '—') + ' AXGT';
+            if (statusEl) statusEl.textContent = 'Live USD pricing';
+        }
+
+        function applyAxgtDiscountFallbackPanel() {
+            applyAxgtDiscountTierPanel({
+                ok: true,
+                base_axgt: String(axonosConfig.axgt_min_deposit || '100'),
+                final_axgt: String(axonosConfig.axgt_min_deposit || '100'),
+                discount_percent: 0, tier_index: 0, tier_label: 'Tier 0', tier_min_axgt: 0,
+                axgt_balance: '0', balance_check_ok: true,
+            });
+        }
+
+        function axonosBaselineMinutesForAxgt(axgtStr) {
+            var n = parseFloat(String(axgtStr || '').trim());
+            if (!(n > 0)) return null;
+            return n / 100 * Number(axonosConfig.credit_per_100_axgt || 60);
+        }
+
+        function updateAxgtPaymentPreview(quote, payStr) {
+            var preview = document.getElementById('axonos_axgt_discount_preview');
+            var payEl = document.getElementById('axonos_axgt_discount_pay');
+            var minEl = document.getElementById('axonos_axgt_discount_preview_minutes');
+            var trimmed = String(payStr || '').trim();
+            if (!trimmed || !(parseFloat(trimmed) > 0)) {
+                if (preview) preview.style.display = 'none';
+                return;
+            }
+            if (preview) preview.style.display = '';
+            if (payEl) payEl.textContent = trimmed + ' AXGT';
+            var est = (quote && quote.estimated_minutes != null) ? Number(quote.estimated_minutes) : axonosBaselineMinutesForAxgt(trimmed);
+            var estLabel = axonosFormatDesktopTimeLabel(est);
+            if (minEl) minEl.textContent = estLabel !== '—' ? ('~' + estLabel) : '—';
+        }
+
+        function refreshAxgtDiscountQuote(walletAddress) {
+            // Panel show/hide owned by the rail toggle; this only populates contents.
+            if (!axonosConfig.axgt_direct_deposits_enabled) return Promise.resolve(null);
+            applyAxgtDiscountFallbackPanel();
+            if (!walletAddress || !/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) return Promise.resolve(null);
+            var url = new URL('/api/discount/quote', window.location.origin);
+            url.searchParams.set('wallet_address', walletAddress);
+            url.searchParams.set('currency', 'axgt');
+            return fetch(url.toString(), { method: 'GET', headers: { 'X-Wallet-Address': walletAddress }, credentials: 'include' })
+                .then(function (r) { return r.text().then(function (t) { try { return t ? JSON.parse(t) : {}; } catch (e) { return {}; } }); })
+                .then(function (d) {
+                    if (!d || !d.ok) return null;
+                    axonosLastAxgtDiscountQuote = d;
+                    applyAxgtDiscountTierPanel(d);
+                    var axIn = document.getElementById('axonos_pay_axgt_amount');
+                    var payVal = axIn ? String(axIn.value || '').trim() : '';
+                    updateAxgtPaymentPreview(d, payVal);
+                    return d;
+                })
+                .catch(function () { return null; });
+        }
+
+        function scheduleAxgtAmountQuoteRefresh(walletAddress) {
+            if (axonosAxgtAmountQuoteTimer) clearTimeout(axonosAxgtAmountQuoteTimer);
+            var axIn = document.getElementById('axonos_pay_axgt_amount');
+            var val = axIn ? String(axIn.value || '').trim() : '';
+            if (!walletAddress || !val || !(parseFloat(val) > 0)) {
+                updateAxgtPaymentPreview(axonosLastAxgtDiscountQuote, val);
+                return;
+            }
+            axonosAxgtAmountQuoteTimer = setTimeout(function () {
+                axonosAxgtAmountQuoteTimer = null;
+                var seq = ++axonosAxgtAmountQuoteSeq;
+                var url = new URL('/api/discount/quote', window.location.origin);
+                url.searchParams.set('wallet_address', walletAddress);
+                url.searchParams.set('currency', 'axgt');
+                url.searchParams.set('base_amount', val);
+                fetch(url.toString(), { method: 'GET', headers: { 'X-Wallet-Address': walletAddress }, credentials: 'include' })
+                    .then(function (r) { return r.text().then(function (t) { try { return t ? JSON.parse(t) : {}; } catch (e) { return {}; } }); })
+                    .then(function (d) {
+                        if (seq !== axonosAxgtAmountQuoteSeq || !d || !d.ok) return;
+                        var cur = document.getElementById('axonos_pay_axgt_amount');
+                        if (cur && String(cur.value || '').trim() === val) updateAxgtPaymentPreview(d, val);
+                    }).catch(function () {});
+            }, 400);
         }
 
         function updateEthPayHint(payEthStr) {
@@ -2899,7 +3337,7 @@ Copyright (C) 2019 The noVNC Authors
         }
 
         function setPayDepositButtonsBusy(busy) {
-            var ids = ['axonos_pay_axgt_btn', 'axonos_pay_eth_btn', 'axonos_pay_axgt_min_btn'];
+            var ids = ['axonos_pay_axgt_btn', 'axonos_pay_eth_btn', 'axonos_pay_usdc_btn', 'axonos_pay_axgt_min_btn'];
             ids.forEach(function (id) {
                 var btn = document.getElementById(id);
                 if (btn) {
@@ -2907,7 +3345,7 @@ Copyright (C) 2019 The noVNC Authors
                     btn.style.opacity = busy ? '0.55' : '';
                 }
             });
-            ['axonos_pay_axgt_amount', 'axonos_pay_eth_amount'].forEach(function (id) {
+            ['axonos_pay_axgt_amount', 'axonos_pay_eth_amount', 'axonos_pay_usdc_amount'].forEach(function (id) {
                 var el = document.getElementById(id);
                 if (el) el.disabled = !!busy;
             });
@@ -3034,10 +3472,14 @@ Copyright (C) 2019 The noVNC Authors
             });
         }
 
+        // Endpoint used by the verify/poll machinery. Defaults to the AXGT/ETH
+        // rail; switched to the USDC rail by axonosPayUsdcFromWallet().
+        var axonosVerifyDepositEndpoint = '/api/auth/verify-deposit';
+
         function axonosVerifyDepositFetch(txHash) {
             var wallet = verifiedWalletAddress;
             var tok = window.verifiedWalletAuthToken;
-            return fetch(new URL('/api/auth/verify-deposit', window.location.origin).toString(), {
+            return fetch(new URL(axonosVerifyDepositEndpoint, window.location.origin).toString(), {
                 method: 'POST',
                 credentials: 'include',
                 headers: {
@@ -3264,7 +3706,119 @@ Copyright (C) 2019 The noVNC Authors
             });
         }
 
+        function axonosUsdcChainIdHex() {
+            var id = parseInt(axonosConfig.usdc_chain_id, 10);
+            if (!id || id <= 0) id = 8453; // Base mainnet
+            return '0x' + id.toString(16);
+        }
+
+        // Known Base networks for the wallet_addEthereumChain (4902) fallback.
+        var AXONOS_BASE_CHAINS = {
+            '0x2105': {
+                chainId: '0x2105', chainName: 'Base',
+                nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+                rpcUrls: ['https://mainnet.base.org'],
+                blockExplorerUrls: ['https://basescan.org']
+            },
+            '0x14a34': {
+                chainId: '0x14a34', chainName: 'Base Sepolia',
+                nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+                rpcUrls: ['https://sepolia.base.org'],
+                blockExplorerUrls: ['https://sepolia.basescan.org']
+            }
+        };
+
+        function axonosEnsureUsdcChain(eth) {
+            var chainIdHex = axonosUsdcChainIdHex();
+            return eth.request({
+                method: 'wallet_switchEthereumChain',
+                params: [{ chainId: chainIdHex }]
+            }).catch(function (e) {
+                // 4902 = chain not added; offer to add the known Base network, then retry switch.
+                var def = AXONOS_BASE_CHAINS[chainIdHex];
+                if (e && e.code === 4902 && def) {
+                    return eth.request({
+                        method: 'wallet_addEthereumChain',
+                        params: [def]
+                    });
+                }
+                throw e;
+            });
+        }
+
+        function axonosPayUsdcFromWallet() {
+            if (axonosConfig.usdc_deposits_enabled === false) {
+                var disEl = document.getElementById('axonos_verify_deposit_msg');
+                if (disEl) disEl.textContent = 'USDC top-ups are currently disabled.';
+                return;
+            }
+            var eth = resolveEthereumProvider();
+            var wallet = verifiedWalletAddress;
+            var tok = window.verifiedWalletAuthToken;
+            var msgEl = document.getElementById('axonos_verify_deposit_msg');
+            var inp = document.getElementById('axonos_tx_hash_input');
+            var contract = axonosConfig.usdc_contract_address;
+            var revenue = axonosConfig.axgt_revenue_wallet;
+            if (!wallet || !tok) {
+                if (msgEl) msgEl.textContent = 'Connect and sign in first.';
+                return;
+            }
+            if (!eth || typeof eth.request !== 'function') {
+                if (msgEl) msgEl.textContent = 'No wallet available.';
+                return;
+            }
+            if (!contract || !/^0x[a-fA-F0-9]{40}$/i.test(contract)) {
+                if (msgEl) msgEl.textContent = 'USDC contract not configured (USDC_CONTRACT_ADDRESS).';
+                return;
+            }
+            if (!revenue || !/^0x[a-fA-F0-9]{40}$/i.test(revenue)) {
+                if (msgEl) msgEl.textContent = 'Revenue wallet not configured (AXGT_REVENUE_WALLET).';
+                return;
+            }
+            // Use the discount-adjusted minimum from the latest quote when available
+            // (backend re-checks on credit); fall back to base USDC_MIN_DEPOSIT.
+            var baseMinUsdc = String(axonosConfig.usdc_min_deposit || '1');
+            var minUsdc = (axonosLastUsdcDiscountQuote && (axonosLastUsdcDiscountQuote.final_usdc || axonosLastUsdcDiscountQuote.final_amount))
+                ? String(axonosLastUsdcDiscountQuote.final_usdc || axonosLastUsdcDiscountQuote.final_amount)
+                : baseMinUsdc;
+            var amtEl = document.getElementById('axonos_pay_usdc_amount');
+            var rawUsdc = (amtEl && String(amtEl.value || '').trim()) ? String(amtEl.value).trim() : minUsdc;
+            var amtNum = parseFloat(rawUsdc);
+            var minNum = parseFloat(minUsdc);
+            if (!(amtNum > 0) || amtNum < minNum) {
+                if (msgEl) msgEl.textContent = 'Enter a USDC amount ≥ minimum (' + minUsdc + ' USDC' + (minUsdc !== baseMinUsdc ? ' after AXGT discount; base ' + baseMinUsdc + ' USDC' : '') + ').';
+                return;
+            }
+            // USDC is 6 decimals on Base.
+            var data = axonosErc20TransferData(revenue, rawUsdc, 6);
+            setPayDepositButtonsBusy(true);
+            if (msgEl) msgEl.textContent = 'Switching to Base and confirming ' + rawUsdc + ' USDC…';
+            axonosEnsureUsdcChain(eth).then(function () {
+                return eth.request({
+                    method: 'eth_sendTransaction',
+                    params: [{ from: wallet, to: contract, data: data }]
+                });
+            }).then(function (txHash) {
+                var h = String(txHash || '').trim();
+                if (inp) inp.value = h;
+                axonosVerifyDepositEndpoint = '/api/auth/verify-usdc-deposit';
+                if (msgEl) msgEl.textContent = 'Transaction sent. Waiting for confirmations…';
+                axonosPollVerifyDeposit(h);
+            }).catch(function (e) {
+                setPayDepositButtonsBusy(false);
+                if (e && (e.code === 4001 || /user rejected|denied/i.test(String(e.message || '')))) {
+                    if (msgEl) msgEl.textContent = 'Cancelled.';
+                } else if (msgEl) {
+                    msgEl.textContent = (e && e.message) ? String(e.message) : 'Transaction failed.';
+                }
+            });
+        }
+
         function runVerifyDeposit() {
+            // Manual tx-hash paste: the backend auto-detects the rail (ETH/AXGT or
+            // USDC) server-side, so the client just hits one endpoint. This avoids
+            // polling the wrong rail while a tx is briefly unconfirmed.
+            axonosVerifyDepositEndpoint = '/api/auth/verify-deposit-auto';
             var wallet = verifiedWalletAddress;
             var tok = window.verifiedWalletAuthToken;
             var inp = document.getElementById('axonos_tx_hash_input');
@@ -3391,8 +3945,14 @@ Copyright (C) 2019 The noVNC Authors
         var payAxgtBtn = document.getElementById('axonos_pay_axgt_btn');
         var payEthBtn = document.getElementById('axonos_pay_eth_btn');
         var payAxgtMinBtn = document.getElementById('axonos_pay_axgt_min_btn');
+        var payUsdcBtn = document.getElementById('axonos_pay_usdc_btn');
         if (payAxgtBtn) payAxgtBtn.addEventListener('click', function () { axonosPayAxgtFromWallet(); });
         if (payEthBtn) payEthBtn.addEventListener('click', function () { axonosPayEthFromWallet(); });
+        if (payUsdcBtn) payUsdcBtn.addEventListener('click', function () { axonosPayUsdcFromWallet(); });
+        ['axonos_pay_rail_eth', 'axonos_pay_rail_usdc', 'axonos_pay_rail_axgt'].forEach(function (id) {
+            var pill = document.getElementById(id);
+            if (pill) pill.addEventListener('click', function () { axonosSelectPayRail(pill.getAttribute('data-rail')); });
+        });
         if (payAxgtMinBtn) payAxgtMinBtn.addEventListener('click', function () {
             var el = document.getElementById('axonos_pay_axgt_amount');
             if (el) {
@@ -3400,6 +3960,49 @@ Copyright (C) 2019 The noVNC Authors
                 delete el.dataset.axonosUserAmount;
             }
         });
+        // Segmented payment-rail selector. Shows ONLY the chosen rail's discount
+        // panel + input row; hides the others entirely. Persists the choice.
+        var axonosActivePayRail = null;
+        function axonosPayRailAvailability() {
+            return {
+                eth: axonosConfig.eth_deposits_enabled !== false,
+                usdc: axonosConfig.usdc_deposits_enabled
+                    && /^0x[a-fA-F0-9]{40}$/.test(String(axonosConfig.usdc_contract_address || '')),
+                axgt: !!axonosConfig.axgt_direct_deposits_enabled,
+            };
+        }
+        function axonosSelectPayRail(rail) {
+            var avail = axonosPayRailAvailability();
+            if (!avail[rail]) {
+                // Fall back to first available rail (USDC preferred, then ETH, then AXGT).
+                rail = avail.usdc ? 'usdc' : (avail.eth ? 'eth' : (avail.axgt ? 'axgt' : 'eth'));
+            }
+            axonosActivePayRail = rail;
+            try { localStorage.setItem('axonos_pay_rail', rail); } catch (e) {}
+
+            var ethRowEl = document.getElementById('axonos_pay_eth_amount');
+            ethRowEl = ethRowEl && ethRowEl.closest ? ethRowEl.closest('.axonos-pay-deposit-row') : null;
+            var map = {
+                eth: { row: ethRowEl, panel: document.getElementById('axonos_discount_panel'), pill: document.getElementById('axonos_pay_rail_eth') },
+                usdc: { row: document.getElementById('axonos_pay_usdc_row'), panel: document.getElementById('axonos_usdc_discount_panel'), pill: document.getElementById('axonos_pay_rail_usdc') },
+                axgt: { row: document.getElementById('axonos_pay_axgt_row'), panel: document.getElementById('axonos_axgt_discount_panel'), pill: document.getElementById('axonos_pay_rail_axgt') }
+            };
+            ['eth', 'usdc', 'axgt'].forEach(function (r) {
+                var m = map[r];
+                var active = (r === rail);
+                var shown = avail[r];
+                if (m.pill) {
+                    m.pill.style.display = shown ? '' : 'none';
+                    m.pill.setAttribute('aria-selected', active ? 'true' : 'false');
+                    m.pill.style.opacity = active ? '1' : '0.55';
+                    m.pill.style.borderColor = active ? 'rgba(122,223,138,.65)' : '';
+                    m.pill.style.background = active ? 'rgba(122,223,138,.12)' : '';
+                }
+                if (m.row) m.row.style.display = (active && shown) ? '' : 'none';
+                if (m.panel) m.panel.style.display = (active && shown) ? '' : 'none';
+            });
+        }
+
         var payEthInput = document.getElementById('axonos_pay_eth_amount');
         if (payEthInput) {
             payEthInput.addEventListener('input', function () {
@@ -3414,9 +4017,26 @@ Copyright (C) 2019 The noVNC Authors
                 }
             });
         }
+        var payUsdcInput = document.getElementById('axonos_pay_usdc_amount');
+        if (payUsdcInput) {
+            payUsdcInput.addEventListener('input', function () {
+                payUsdcInput.dataset.axonosUserAmount = '1';
+                var wallet = window.verifiedWalletAddress || verifiedWalletAddress;
+                scheduleUsdcAmountQuoteRefresh(wallet);
+            });
+            payUsdcInput.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    axonosPayUsdcFromWallet();
+                }
+            });
+        }
         var payAxgtInput = document.getElementById('axonos_pay_axgt_amount');
         if (payAxgtInput) {
-            payAxgtInput.addEventListener('input', function () { payAxgtInput.dataset.axonosUserAmount = '1'; });
+            payAxgtInput.addEventListener('input', function () {
+                payAxgtInput.dataset.axonosUserAmount = '1';
+                scheduleAxgtAmountQuoteRefresh(window.verifiedWalletAddress || verifiedWalletAddress);
+            });
             payAxgtInput.addEventListener('keydown', function (e) {
                 if (e.key === 'Enter') {
                     e.preventDefault();

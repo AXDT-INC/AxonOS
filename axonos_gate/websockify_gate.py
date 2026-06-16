@@ -87,6 +87,35 @@ except ImportError:
         verify_deposit_is_pending = None
 
 try:
+    from x402_verifier import (
+        verify_usdc_deposit,
+        verify_usdc_deposit_is_pending,
+        payment_required_body,
+        settle_x402_payment,
+    )
+except ImportError:
+    try:
+        from axonos_gate.x402_verifier import (
+            verify_usdc_deposit,
+            verify_usdc_deposit_is_pending,
+            payment_required_body,
+            settle_x402_payment,
+        )
+    except ImportError:
+        verify_usdc_deposit = None
+        verify_usdc_deposit_is_pending = None
+        payment_required_body = None
+        settle_x402_payment = None
+
+try:
+    from deposit_router import verify_deposit_auto
+except ImportError:
+    try:
+        from axonos_gate.deposit_router import verify_deposit_auto
+    except ImportError:
+        verify_deposit_auto = None
+
+try:
     from session_manager import (
         get_active_session,
         heartbeat as session_heartbeat,
@@ -663,6 +692,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         payload: dict,
         set_cookie: str | None = None,
         no_cache: bool = False,
+        extra_headers: dict | None = None,
     ):
         body = json.dumps(payload).encode('utf-8')
         self.send_response(status_code)
@@ -683,12 +713,15 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             self.send_header('Vary', 'Origin')
             self.send_header(
                 'Access-Control-Allow-Headers',
-                'Content-Type, X-Wallet-Address, X-AXGT-Auth-Token'
+                'Content-Type, X-Wallet-Address, X-AXGT-Auth-Token, X-PAYMENT'
             )
             self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
             self.send_header('Access-Control-Allow-Credentials', 'true')
         if set_cookie:
             self.send_header('Set-Cookie', set_cookie)
+        if extra_headers:
+            for hk, hv in extra_headers.items():
+                self.send_header(hk, hv)
         self.end_headers()
         self.wfile.write(body)
 
@@ -700,6 +733,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             or self.path.startswith('/api/webrtc/')
             or self.path.startswith('/api/public/')
             or self.path.startswith('/api/files/')
+            or self.path.startswith('/api/x402/')
         ):
             self.send_response(200)
             origin = cors_origin_for_request(
@@ -713,7 +747,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 self.send_header('Vary', 'Origin')
                 self.send_header(
                     'Access-Control-Allow-Headers',
-                    'Content-Type, X-Wallet-Address, X-AXGT-Auth-Token, Range, If-Range'
+                    'Content-Type, X-Wallet-Address, X-AXGT-Auth-Token, X-PAYMENT, Range, If-Range'
                 )
                 self.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS')
                 self.send_header('Access-Control-Allow-Credentials', 'true')
@@ -740,6 +774,30 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
 
         if _up_cfg(self.path).path.startswith('/api/files/'):
             return self._handle_files_request('GET')
+
+        if _up_cfg(self.path).path == '/api/x402/access':
+            if payment_required_body is None:
+                return self._send_json(503, {"error": "x402 unavailable"})
+            from urllib.parse import parse_qs as _pq
+            _q = _pq(_up_cfg(self.path).query)
+            wallet_address = (
+                (_q.get('wallet_address', [''])[0] or '').strip()
+                or (self.headers.get('X-Wallet-Address') or '').strip()
+            )
+            if not wallet_address or not validate_wallet_address(wallet_address):
+                return self._send_json(400, {"error": "Valid wallet_address required"})
+            try:
+                minutes_wanted = float(_q.get('minutes', ['0'])[0] or 0)
+            except (ValueError, TypeError):
+                minutes_wanted = 0.0
+            status = get_wallet_access_status(wallet_address)
+            if status.get('verified') and status.get('remaining_minutes', 0) > 0:
+                return self._send_json(200, {
+                    "access": True,
+                    "remaining_minutes": status.get('remaining_minutes'),
+                })
+            return self._send_json(402, payment_required_body(
+                minutes_wanted=minutes_wanted, error="Payment required for access"))
 
         if _up_cfg(self.path).path == '/api/config':
             policy = get_credit_policy()
@@ -776,6 +834,15 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 "min_axgt_deposit_minutes": policy.get("min_axgt_deposit_minutes"),
                 "min_eth_deposit_minutes": policy.get("min_eth_deposit_minutes"),
                 "axgt_direct_deposits_enabled": policy.get("axgt_direct_deposits_enabled"),
+                "usdc_deposits_enabled": policy.get("usdc_deposits_enabled"),
+                "axgt_bonus_percent": policy.get("axgt_bonus_percent"),
+                "dynamic_pricing_enabled": policy.get("dynamic_pricing_enabled"),
+                "usdc_contract_address": (os.getenv("USDC_CONTRACT_ADDRESS") or "").strip() or None,
+                "usdc_chain_id": (os.getenv("USDC_CHAIN_ID") or "8453").strip() or None,
+                "usdc_network": (os.getenv("USDC_NETWORK") or "base").strip() or None,
+                "usdc_min_deposit": policy.get("usdc_min_deposit"),
+                "usdc_credit_per_usdc_minutes": policy.get("usdc_credit_per_usdc_minutes"),
+                "min_usdc_deposit_minutes": policy.get("min_usdc_deposit_minutes"),
                 "axgt_discount_tiers": policy.get("axgt_discount_tiers", []),
                 "multi_session_enabled": (os.getenv("AXGT_MULTI_SESSION_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")),
                 "gpu_profiles_enabled": (os.getenv("AXGT_GPU_PROFILES_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")),
@@ -820,35 +887,88 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 return self._send_json(503, {'ok': False, 'error': 'Discount module unavailable'})
             policy = get_credit_policy()
             from decimal import Decimal as _D, InvalidOperation as _IO
-            base_raw = (qs.get('base_eth', [''])[0] or '').strip()
+            # currency: 'eth' (default) or 'usdc'. AXGT tier/discount is identical
+            # across currencies; only denomination and credit rate differ.
+            currency = (qs.get('currency', ['eth'])[0] or 'eth').strip().lower()
+            if currency not in ('eth', 'usdc', 'axgt'):
+                return self._send_json(400, {'ok': False, 'error': 'Invalid currency (eth|usdc|axgt)'})
+            base_raw = (qs.get('base_amount', [''])[0] or qs.get('base_eth', [''])[0] or '').strip()
+            if currency == 'usdc':
+                default_base = str(policy.get('usdc_min_deposit') or '1')
+                rate = _D(str(policy.get('usdc_credit_per_usdc_minutes') or 60))
+            elif currency == 'axgt':
+                default_base = str(policy.get('min_deposit') or '100')
+                rate = _D(str(policy.get('credit_per_100_axgt_minutes') or 60)) / _D('100')
+            else:
+                default_base = str(policy.get('eth_min_deposit') or '0.0005')
+                rate = _D(str(policy.get('eth_credit_per_eth_minutes') or 120000))
             if base_raw:
                 try:
-                    base_eth = _D(base_raw)
-                    if base_eth <= 0:
-                        raise _IO("base_eth must be positive")
+                    base_amount = _D(base_raw)
+                    if base_amount <= 0:
+                        raise _IO("base_amount must be positive")
                 except (_IO, ValueError):
-                    return self._send_json(400, {'ok': False, 'error': 'Invalid base_eth value'})
+                    return self._send_json(400, {'ok': False, 'error': 'Invalid base_amount value'})
             else:
                 try:
-                    base_eth = _D(str(policy.get('eth_min_deposit') or '0.0005'))
+                    base_amount = _D(default_base)
                 except (_IO, ValueError):
-                    base_eth = _D('0.0005')
+                    base_amount = _D('1') if currency == 'usdc' else _D('0.0005')
             bal = _disc.fetch_axgt_balance(wallet_address)
             floor_axgt = bal.floor_axgt() if bal.ok else 0
             tier = _disc.resolve_tier(floor_axgt) if bal.ok else _disc.resolve_tier(0)
-            discount_pct_for_quote = tier.discount_percent if bal.ok else 0.0
-            final_eth = _disc.apply_discount(base_eth, discount_pct_for_quote)
-            eth_rate = _D(str(policy.get('eth_credit_per_eth_minutes') or 120000))
-            if discount_pct_for_quote >= 100:
-                effective_rate = eth_rate
+            if currency == 'axgt':
+                # Model B: no holder tier on the AXGT rail — flat +bonus (+ live price).
+                try:
+                    from . import price_oracle as _po
+                except ImportError:
+                    try:
+                        from axonos_gate import price_oracle as _po
+                    except ImportError:
+                        try:
+                            import price_oracle as _po
+                        except ImportError:
+                            _po = None
+                discount_pct_for_quote = 0.0
+                final_amount = base_amount
+                est = None
+                if _po is not None and _po.oracle_enabled():
+                    est = _po.minutes_for_axgt(base_amount)
+                if est is None:
+                    bonus = _D(str(_po.axgt_bonus_pct())) if _po is not None else _D('25')
+                    est = float(base_amount * rate * (_D('1') + bonus / _D('100')))
+                estimated_minutes = est
             else:
-                effective_rate = eth_rate / (_D('1') - _D(str(discount_pct_for_quote)) / _D('100'))
-            estimated_minutes = float(base_eth * effective_rate)
-            return self._send_json(200, {
+                discount_pct_for_quote = tier.discount_percent if bal.ok else 0.0
+                final_amount = _disc.apply_discount(base_amount, discount_pct_for_quote)
+                base_minutes = None
+                if currency == 'eth':
+                    try:
+                        from . import price_oracle as _po2
+                    except ImportError:
+                        try:
+                            from axonos_gate import price_oracle as _po2
+                        except ImportError:
+                            try:
+                                import price_oracle as _po2
+                            except ImportError:
+                                _po2 = None
+                    if _po2 is not None and _po2.oracle_enabled():
+                        m = _po2.minutes_for_eth(base_amount)
+                        if m is not None:
+                            base_minutes = _D(str(m))
+                if base_minutes is None:
+                    base_minutes = base_amount * rate
+                if discount_pct_for_quote >= 100:
+                    estimated_minutes = float(base_minutes)
+                else:
+                    estimated_minutes = float(base_minutes / (_D('1') - _D(str(discount_pct_for_quote)) / _D('100')))
+            _quote = {
                 'ok': True,
                 'wallet_address': wallet_address,
-                'base_eth': format(base_eth.normalize(), 'f') if base_eth > 0 else '0',
-                'final_eth': format(final_eth.normalize(), 'f') if final_eth > 0 else '0',
+                'currency': currency,
+                'base_amount': format(base_amount.normalize(), 'f') if base_amount > 0 else '0',
+                'final_amount': format(final_amount.normalize(), 'f') if final_amount > 0 else '0',
                 'discount_percent': discount_pct_for_quote,
                 'tier_index': tier.index,
                 'tier_label': tier.label,
@@ -859,8 +979,20 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 'balance_check_error': bal.error if not bal.ok else None,
                 'tiers': _disc.public_tiers(),
                 'estimated_minutes': round(estimated_minutes, 2),
-                'eth_credit_per_eth_minutes': float(policy.get('eth_credit_per_eth_minutes') or 120000),
-            })
+            }
+            if currency == 'eth':
+                _quote['base_eth'] = _quote['base_amount']
+                _quote['final_eth'] = _quote['final_amount']
+                _quote['eth_credit_per_eth_minutes'] = float(policy.get('eth_credit_per_eth_minutes') or 120000)
+            elif currency == 'axgt':
+                _quote['base_axgt'] = _quote['base_amount']
+                _quote['final_axgt'] = _quote['final_amount']
+                _quote['credit_per_100_axgt_minutes'] = float(policy.get('credit_per_100_axgt_minutes') or 60)
+            else:
+                _quote['base_usdc'] = _quote['base_amount']
+                _quote['final_usdc'] = _quote['final_amount']
+                _quote['usdc_credit_per_usdc_minutes'] = float(policy.get('usdc_credit_per_usdc_minutes') or 60)
+            return self._send_json(200, _quote)
 
         if self.path.startswith('/api/auth/challenge'):
             wallet_address = _extract_wallet_from_path_and_headers(self.path, self.headers)
@@ -1376,6 +1508,100 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             result = verify_deposit(authenticated_wallet=wallet_address, tx_hash=tx_hash)
             if result.get("verified") or verify_deposit_is_pending(result):
                 return self._send_json(200, result)
+            return self._send_json(400, result)
+
+        if self.path.startswith('/api/auth/verify-usdc-deposit'):
+            if verify_usdc_deposit is None:
+                return self._send_json(
+                    503, {"verified": False, "error": "USDC deposit verification unavailable"}
+                )
+            data = self._read_json_body()
+            wallet_address = (data.get("wallet_address") or "").strip()
+            tx_hash = (data.get("tx_hash") or "").strip()
+            if not wallet_address or not validate_wallet_address(wallet_address):
+                return self._send_json(
+                    400, {"verified": False, "error": "Valid wallet_address required"}
+                )
+            if not tx_hash:
+                return self._send_json(400, {"verified": False, "error": "tx_hash required"})
+            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+            if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
+                return self._send_json(
+                    401, {"verified": False, "error": "Valid auth token required"}
+                )
+            result = verify_usdc_deposit(authenticated_wallet=wallet_address, tx_hash=tx_hash)
+            if result.get("verified") or verify_usdc_deposit_is_pending(result):
+                return self._send_json(200, result)
+            return self._send_json(400, result)
+
+        if self.path.startswith('/api/auth/verify-deposit-auto'):
+            if verify_deposit_auto is None:
+                return self._send_json(
+                    503, {"verified": False, "error": "Deposit verification unavailable"}
+                )
+            data = self._read_json_body()
+            wallet_address = (data.get("wallet_address") or "").strip()
+            tx_hash = (data.get("tx_hash") or "").strip()
+            if not wallet_address or not validate_wallet_address(wallet_address):
+                return self._send_json(
+                    400, {"verified": False, "error": "Valid wallet_address required"}
+                )
+            if not tx_hash:
+                return self._send_json(400, {"verified": False, "error": "tx_hash required"})
+            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+            if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
+                return self._send_json(
+                    401, {"verified": False, "error": "Valid auth token required"}
+                )
+            result, is_pending = verify_deposit_auto(
+                authenticated_wallet=wallet_address,
+                tx_hash=tx_hash,
+                verify_eth=verify_deposit,
+                eth_is_pending=verify_deposit_is_pending,
+                verify_usdc=verify_usdc_deposit,
+                usdc_is_pending=verify_usdc_deposit_is_pending,
+            )
+            if result.get("verified") or is_pending:
+                return self._send_json(200, result)
+            return self._send_json(400, result)
+
+        if self.path.startswith('/api/x402/settle'):
+            if settle_x402_payment is None:
+                return self._send_json(
+                    503, {"verified": False, "error": "x402 settlement unavailable"}
+                )
+            x_payment = self.headers.get('X-PAYMENT') or ''
+            if not x_payment:
+                if payment_required_body is not None:
+                    return self._send_json(402, payment_required_body(error="X-PAYMENT header required"))
+                return self._send_json(402, {"verified": False, "error": "X-PAYMENT header required"})
+            data = self._read_json_body() or {}
+            wallet_address = (
+                data.get("wallet_address") or self.headers.get('X-Wallet-Address') or ''
+            ).strip()
+            if not wallet_address or not validate_wallet_address(wallet_address):
+                return self._send_json(
+                    400, {"verified": False, "error": "Valid wallet_address required"}
+                )
+            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+            if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
+                return self._send_json(
+                    401, {"verified": False, "error": "Valid auth token required"}
+                )
+            result = settle_x402_payment(authenticated_wallet=wallet_address, x_payment_header=x_payment)
+            extra_headers = None
+            if result.get("settlement_tx_hash"):
+                import base64 as _b64
+                import json as _json
+                extra_headers = {
+                    'X-PAYMENT-RESPONSE': _b64.b64encode(_json.dumps({
+                        "success": True,
+                        "txHash": result["settlement_tx_hash"],
+                        "network": result.get("deposit_currency", "USDC"),
+                    }).encode()).decode()
+                }
+            if result.get("verified") or verify_usdc_deposit_is_pending(result):
+                return self._send_json(200, result, extra_headers=extra_headers)
             return self._send_json(400, result)
 
         if not self.path.startswith('/api/auth/verify-wallet'):

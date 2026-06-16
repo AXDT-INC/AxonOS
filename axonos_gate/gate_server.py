@@ -64,6 +64,35 @@ except ImportError:
         verify_deposit_is_pending = None
 
 try:
+    from x402_verifier import (
+        verify_usdc_deposit,
+        verify_usdc_deposit_is_pending,
+        payment_required_body,
+        settle_x402_payment,
+    )
+except ImportError:
+    try:
+        from axonos_gate.x402_verifier import (
+            verify_usdc_deposit,
+            verify_usdc_deposit_is_pending,
+            payment_required_body,
+            settle_x402_payment,
+        )
+    except ImportError:
+        verify_usdc_deposit = None
+        verify_usdc_deposit_is_pending = None
+        payment_required_body = None
+        settle_x402_payment = None
+
+try:
+    from deposit_router import verify_deposit_auto
+except ImportError:
+    try:
+        from axonos_gate.deposit_router import verify_deposit_auto
+    except ImportError:
+        verify_deposit_auto = None
+
+try:
     from session_manager import (
         get_active_session,
         heartbeat as session_heartbeat,
@@ -413,6 +442,166 @@ def api_verify_deposit():
     return jsonify(result), 400
 
 
+@app.route('/api/auth/verify-usdc-deposit', methods=['POST', 'OPTIONS'])
+def api_verify_usdc_deposit():
+    """Verify a USDC deposit (x402 rail) by tx hash. Requires authenticated wallet (auth token)."""
+    if request.method == 'OPTIONS':
+        return '', 200
+    if verify_usdc_deposit is None:
+        return jsonify({"verified": False, "error": "USDC deposit verification unavailable"}), 503
+    data = request.get_json()
+    if not data:
+        return jsonify({"verified": False, "error": "JSON body required"}), 400
+    wallet_address = (data.get("wallet_address") or "").strip()
+    tx_hash = (data.get("tx_hash") or "").strip()
+    if not wallet_address or not validate_wallet_address(wallet_address):
+        return jsonify({"verified": False, "error": "Valid wallet_address required"}), 400
+    if not tx_hash:
+        return jsonify({"verified": False, "error": "tx_hash required"}), 400
+    auth_err = _require_auth_token(wallet_address)
+    if auth_err:
+        return auth_err
+    result = verify_usdc_deposit(authenticated_wallet=wallet_address, tx_hash=tx_hash)
+    if result.get("verified") or verify_usdc_deposit_is_pending(result):
+        try:
+            token, ttl = _issue_gate_auth_token(wallet_address)
+            result = dict(result)
+            result["auth_token"] = token
+            result["auth_token_expires_in_seconds"] = ttl
+        except Exception as ex:
+            logger.warning("Auth token refresh failed for %s: %s", mask_wallet_address(wallet_address), ex)
+        return jsonify(result)
+    return jsonify(result), 400
+
+
+@app.route('/api/auth/verify-deposit-auto', methods=['POST', 'OPTIONS'])
+def api_verify_deposit_auto():
+    """Verify a pasted tx hash against both rails (ETH/AXGT and USDC), server-side.
+
+    Avoids the client having to guess the rail or poll the wrong one while a tx is
+    briefly unconfirmed. Requires an authenticated wallet.
+    """
+    if request.method == 'OPTIONS':
+        return '', 200
+    if verify_deposit_auto is None:
+        return jsonify({"verified": False, "error": "Deposit verification unavailable"}), 503
+    data = request.get_json()
+    if not data:
+        return jsonify({"verified": False, "error": "JSON body required"}), 400
+    wallet_address = (data.get("wallet_address") or "").strip()
+    tx_hash = (data.get("tx_hash") or "").strip()
+    if not wallet_address or not validate_wallet_address(wallet_address):
+        return jsonify({"verified": False, "error": "Valid wallet_address required"}), 400
+    if not tx_hash:
+        return jsonify({"verified": False, "error": "tx_hash required"}), 400
+    auth_err = _require_auth_token(wallet_address)
+    if auth_err:
+        return auth_err
+    result, is_pending = verify_deposit_auto(
+        authenticated_wallet=wallet_address,
+        tx_hash=tx_hash,
+        verify_eth=verify_deposit,
+        eth_is_pending=verify_deposit_is_pending,
+        verify_usdc=verify_usdc_deposit,
+        usdc_is_pending=verify_usdc_deposit_is_pending,
+    )
+    if result.get("verified") or is_pending:
+        try:
+            token, ttl = _issue_gate_auth_token(wallet_address)
+            result = dict(result)
+            result["auth_token"] = token
+            result["auth_token_expires_in_seconds"] = ttl
+        except Exception as ex:
+            logger.warning("Auth token refresh failed for %s: %s", mask_wallet_address(wallet_address), ex)
+        return jsonify(result)
+    return jsonify(result), 400
+
+
+@app.route('/api/x402/access', methods=['GET', 'OPTIONS'])
+def api_x402_access():
+    """
+    x402-native access gate. Returns 200 when the wallet has remaining minutes,
+    otherwise HTTP 402 with the x402 payment-requirements body so an x402 client
+    can pay via /api/x402/settle.
+    """
+    if request.method == 'OPTIONS':
+        return '', 200
+    if payment_required_body is None:
+        return jsonify({"error": "x402 unavailable"}), 503
+    wallet_address = (request.args.get('wallet_address') or request.headers.get('X-Wallet-Address') or '').strip()
+    if not wallet_address or not validate_wallet_address(wallet_address):
+        return jsonify({"error": "Valid wallet_address required"}), 400
+    try:
+        minutes_wanted = float(request.args.get('minutes') or 0)
+    except (ValueError, TypeError):
+        minutes_wanted = 0.0
+    status = get_wallet_access_status(wallet_address)
+    if status.get('verified') and status.get('remaining_minutes', 0) > 0:
+        return jsonify({
+            "access": True,
+            "remaining_minutes": status.get('remaining_minutes'),
+        })
+    body = payment_required_body(minutes_wanted=minutes_wanted, error="Payment required for access")
+    resp = jsonify(body)
+    resp.status_code = 402
+    return resp
+
+
+@app.route('/api/x402/settle', methods=['POST', 'OPTIONS'])
+def api_x402_settle():
+    """
+    Settle an x402 payment. The signed EIP-3009 authorization is supplied in the
+    X-PAYMENT header (base64 x402 payload). Requires an authenticated wallet.
+    On success, USDC is settled on-chain and minutes are credited.
+    """
+    if request.method == 'OPTIONS':
+        return '', 200
+    if settle_x402_payment is None:
+        return jsonify({"verified": False, "error": "x402 settlement unavailable"}), 503
+    x_payment = request.headers.get('X-PAYMENT') or ''
+    if not x_payment:
+        if payment_required_body is not None:
+            body = payment_required_body(error="X-PAYMENT header required")
+            resp = jsonify(body)
+            resp.status_code = 402
+            return resp
+        return jsonify({"verified": False, "error": "X-PAYMENT header required"}), 402
+    data = request.get_json(silent=True) or {}
+    wallet_address = (
+        data.get("wallet_address")
+        or request.headers.get('X-Wallet-Address')
+        or ''
+    ).strip()
+    if not wallet_address or not validate_wallet_address(wallet_address):
+        return jsonify({"verified": False, "error": "Valid wallet_address required"}), 400
+    auth_err = _require_auth_token(wallet_address)
+    if auth_err:
+        return auth_err
+    result = settle_x402_payment(authenticated_wallet=wallet_address, x_payment_header=x_payment)
+    if result.get("verified") or verify_usdc_deposit_is_pending(result):
+        try:
+            token, ttl = _issue_gate_auth_token(wallet_address)
+            result = dict(result)
+            result["auth_token"] = token
+            result["auth_token_expires_in_seconds"] = ttl
+        except Exception as ex:
+            logger.warning("Auth token refresh failed for %s: %s", mask_wallet_address(wallet_address), ex)
+        resp = jsonify(result)
+        # Echo settlement proof in X-PAYMENT-RESPONSE per the x402 convention.
+        if result.get("settlement_tx_hash"):
+            import base64 as _b64
+            import json as _json
+            resp.headers['X-PAYMENT-RESPONSE'] = _b64.b64encode(
+                _json.dumps({
+                    "success": True,
+                    "txHash": result["settlement_tx_hash"],
+                    "network": result.get("deposit_currency", "USDC"),
+                }).encode()
+            ).decode()
+        return resp
+    return jsonify(result), 400
+
+
 @app.route('/api/config', methods=['GET'])
 def api_config():
     policy = get_credit_policy()
@@ -449,6 +638,15 @@ def api_config():
         'min_axgt_deposit_minutes': policy.get("min_axgt_deposit_minutes"),
         'min_eth_deposit_minutes': policy.get("min_eth_deposit_minutes"),
         'axgt_direct_deposits_enabled': policy.get("axgt_direct_deposits_enabled"),
+        'usdc_deposits_enabled': policy.get("usdc_deposits_enabled"),
+        'axgt_bonus_percent': policy.get("axgt_bonus_percent"),
+        'dynamic_pricing_enabled': policy.get("dynamic_pricing_enabled"),
+        'usdc_contract_address': (os.getenv("USDC_CONTRACT_ADDRESS") or "").strip() or None,
+        'usdc_chain_id': (os.getenv("USDC_CHAIN_ID") or "8453").strip() or None,
+        'usdc_network': (os.getenv("USDC_NETWORK") or "base").strip() or None,
+        'usdc_min_deposit': policy.get("usdc_min_deposit"),
+        'usdc_credit_per_usdc_minutes': policy.get("usdc_credit_per_usdc_minutes"),
+        'min_usdc_deposit_minutes': policy.get("min_usdc_deposit_minutes"),
         'axgt_discount_tiers': policy.get("axgt_discount_tiers", []),
         'multi_session_enabled': (os.getenv("AXGT_MULTI_SESSION_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")),
         'gpu_profiles_enabled': (os.getenv("AXGT_GPU_PROFILES_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")),
@@ -500,37 +698,98 @@ def api_discount_quote():
         return jsonify({'ok': False, 'error': 'Discount module unavailable'}), 503
 
     from decimal import Decimal as _D, InvalidOperation as _IO
-    base_eth_raw = (request.args.get('base_eth') or '').strip()
     policy = get_credit_policy()
-    if base_eth_raw:
+    # currency: 'eth' (default) or 'usdc'. The AXGT tier/discount is identical
+    # across currencies; only the denomination and credit rate differ.
+    currency = (request.args.get('currency') or 'eth').strip().lower()
+    if currency not in ('eth', 'usdc', 'axgt'):
+        return jsonify({'ok': False, 'error': 'Invalid currency (eth|usdc|axgt)'}), 400
+
+    base_amount_raw = (request.args.get('base_amount') or request.args.get('base_eth') or '').strip()
+    if currency == 'usdc':
+        default_base = str(policy.get('usdc_min_deposit') or '1')
+        rate = _D(str(policy.get('usdc_credit_per_usdc_minutes') or 60))
+    elif currency == 'axgt':
+        default_base = str(policy.get('min_deposit') or '100')
+        # credit_per_100_axgt_minutes is minutes per 100 AXGT → per-AXGT rate.
+        rate = _D(str(policy.get('credit_per_100_axgt_minutes') or 60)) / _D('100')
+    else:
+        default_base = str(policy.get('eth_min_deposit') or '0.0005')
+        rate = _D(str(policy.get('eth_credit_per_eth_minutes') or 120000))
+
+    if base_amount_raw:
         try:
-            base_eth = _D(base_eth_raw)
-            if base_eth <= 0:
-                raise _IO("base_eth must be positive")
+            base_amount = _D(base_amount_raw)
+            if base_amount <= 0:
+                raise _IO("base_amount must be positive")
         except (_IO, ValueError):
-            return jsonify({'ok': False, 'error': 'Invalid base_eth value'}), 400
+            return jsonify({'ok': False, 'error': 'Invalid base_amount value'}), 400
     else:
         try:
-            base_eth = _D(str(policy.get('eth_min_deposit') or '0.0005'))
+            base_amount = _D(default_base)
         except (_IO, ValueError):
-            base_eth = _D('0.0005')
+            base_amount = _D('1') if currency == 'usdc' else _D('0.0005')
 
     bal = _disc.fetch_axgt_balance(wallet_address)
     floor_axgt = bal.floor_axgt() if bal.ok else 0
     tier = _disc.resolve_tier(floor_axgt) if bal.ok else _disc.resolve_tier(0)
-    discount_pct_for_quote = tier.discount_percent if bal.ok else 0.0
-    final_eth = _disc.apply_discount(base_eth, discount_pct_for_quote)
-    eth_rate = _D(str(policy.get('eth_credit_per_eth_minutes') or 120000))
-    if discount_pct_for_quote >= 100:
-        effective_rate = eth_rate
+
+    if currency == 'axgt':
+        # Model B: paying IN AXGT has NO holder tier — just a flat +bonus rate
+        # (and live USD pricing when enabled). Holder tiers apply only on ETH/USDC.
+        try:
+            from . import price_oracle as _po
+        except ImportError:
+            try:
+                from axonos_gate import price_oracle as _po
+            except ImportError:
+                try:
+                    import price_oracle as _po
+                except ImportError:
+                    _po = None
+        discount_pct_for_quote = 0.0
+        final_amount = base_amount  # no discount on the amount itself
+        est = None
+        if _po is not None and _po.oracle_enabled():
+            est = _po.minutes_for_axgt(base_amount)  # includes bonus + live price
+        if est is None:
+            bonus = _D(str(_po.axgt_bonus_pct())) if _po is not None else _D('25')
+            est = float(base_amount * rate * (_D('1') + bonus / _D('100')))
+        estimated_minutes = est
     else:
-        effective_rate = eth_rate / (_D('1') - _D(str(discount_pct_for_quote)) / _D('100'))
-    estimated_minutes = float(base_eth * effective_rate)
-    return jsonify({
+        discount_pct_for_quote = tier.discount_percent if bal.ok else 0.0
+        final_amount = _disc.apply_discount(base_amount, discount_pct_for_quote)
+        # Base minutes: live USD value for ETH when the oracle is on; else fixed rate.
+        # (USDC stays fixed — it's a stablecoin pegged to the $1/min baseline.)
+        base_minutes = None
+        if currency == 'eth':
+            try:
+                from . import price_oracle as _po2
+            except ImportError:
+                try:
+                    from axonos_gate import price_oracle as _po2
+                except ImportError:
+                    try:
+                        import price_oracle as _po2
+                    except ImportError:
+                        _po2 = None
+            if _po2 is not None and _po2.oracle_enabled():
+                m = _po2.minutes_for_eth(base_amount)
+                if m is not None:
+                    base_minutes = _D(str(m))
+        if base_minutes is None:
+            base_minutes = base_amount * rate
+        if discount_pct_for_quote >= 100:
+            estimated_minutes = float(base_minutes)
+        else:
+            estimated_minutes = float(base_minutes / (_D('1') - _D(str(discount_pct_for_quote)) / _D('100')))
+
+    resp = {
         'ok': True,
         'wallet_address': wallet_address,
-        'base_eth': format(base_eth.normalize(), 'f') if base_eth > 0 else '0',
-        'final_eth': format(final_eth.normalize(), 'f') if final_eth > 0 else '0',
+        'currency': currency,
+        'base_amount': format(base_amount.normalize(), 'f') if base_amount > 0 else '0',
+        'final_amount': format(final_amount.normalize(), 'f') if final_amount > 0 else '0',
         'discount_percent': discount_pct_for_quote,
         'tier_index': tier.index,
         'tier_label': tier.label,
@@ -541,8 +800,21 @@ def api_discount_quote():
         'balance_check_error': bal.error if not bal.ok else None,
         'tiers': _disc.public_tiers(),
         'estimated_minutes': round(estimated_minutes, 2),
-        'eth_credit_per_eth_minutes': float(policy.get('eth_credit_per_eth_minutes') or 120000),
-    })
+    }
+    # Back-compat aliases: existing ETH frontend reads base_eth/final_eth.
+    if currency == 'eth':
+        resp['base_eth'] = resp['base_amount']
+        resp['final_eth'] = resp['final_amount']
+        resp['eth_credit_per_eth_minutes'] = float(policy.get('eth_credit_per_eth_minutes') or 120000)
+    elif currency == 'axgt':
+        resp['base_axgt'] = resp['base_amount']
+        resp['final_axgt'] = resp['final_amount']
+        resp['credit_per_100_axgt_minutes'] = float(policy.get('credit_per_100_axgt_minutes') or 60)
+    else:
+        resp['base_usdc'] = resp['base_amount']
+        resp['final_usdc'] = resp['final_amount']
+        resp['usdc_credit_per_usdc_minutes'] = float(policy.get('usdc_credit_per_usdc_minutes') or 60)
+    return jsonify(resp)
 
 
 def _require_admin():
