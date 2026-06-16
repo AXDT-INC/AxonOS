@@ -656,6 +656,9 @@ def _submit_transfer_with_authorization(
         )
         data = _TWA_SELECTOR + args.hex()
 
+        from eth_utils import to_checksum_address
+        contract_cs = to_checksum_address(contract)
+
         acct = Account.from_key(pk)
         sender = acct.address
         # Nonce + gas price from the chain.
@@ -666,7 +669,7 @@ def _submit_transfer_with_authorization(
             return None, "Could not fetch nonce/gas price for settlement"
         gas_est = _dv._rpc(
             rpc_url, "eth_estimateGas",
-            [{"from": sender, "to": contract, "data": data}],
+            [{"from": sender, "to": contract_cs, "data": "0x" + data if not data.startswith("0x") else data}],
         )
         try:
             gas_limit = int(gas_est, 16) if isinstance(gas_est, str) else int(gas_est)
@@ -674,12 +677,12 @@ def _submit_transfer_with_authorization(
         except (ValueError, TypeError):
             gas_limit = 200000
         tx = {
-            "to": contract,
+            "to": contract_cs,
             "value": 0,
             "gas": gas_limit,
             "gasPrice": int(gas_price, 16) if isinstance(gas_price, str) else int(gas_price),
             "nonce": int(tx_count, 16) if isinstance(tx_count, str) else int(tx_count),
-            "data": data,
+            "data": data if data.startswith("0x") else "0x" + data,
             "chainId": chain_id,
         }
         signed = Account.sign_transaction(tx, pk)
@@ -777,9 +780,34 @@ def settle_x402_payment(authenticated_wallet: str, x_payment_header: str) -> Dic
     if not settle_tx:
         return fail(settle_err or "Settlement failed")
 
+    # We just broadcast the tx, so the deposit verifier would see it as pending
+    # (unmined / 0 confirmations) and credit nothing. Wait for the receipt + the
+    # required confirmations before verifying, so the agent gets credited in this
+    # same call. Bounded wait — on timeout we return a pollable pending result with
+    # the settlement tx hash so the client can retry verification.
+    _wait_for_confirmations(rpc_url, settle_tx, _min_confirmations())
+
     # Credit via the same tx-hash verifier (handles confirmations + replay guard).
     result = verify_usdc_deposit(authenticated_wallet=wallet, tx_hash=settle_tx)
     result = dict(result)
     result["settlement_tx_hash"] = settle_tx
     result["x402"] = True
     return result
+
+
+def _wait_for_confirmations(rpc_url: str, tx_hash: str, min_conf: int, timeout_s: int = 90) -> bool:
+    """Poll until tx_hash has >= min_conf confirmations (or timeout). Returns True if reached."""
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        receipt = _dv._rpc(rpc_url, "eth_getTransactionReceipt", [tx_hash])
+        if receipt and receipt.get("blockNumber") is not None:
+            try:
+                blk = int(receipt["blockNumber"], 16) if isinstance(receipt["blockNumber"], str) else int(receipt["blockNumber"])
+                latest_raw = _dv._rpc(rpc_url, "eth_blockNumber", [])
+                latest = int(latest_raw, 16) if isinstance(latest_raw, str) else int(latest_raw)
+                if (latest - blk + 1) >= max(1, min_conf):
+                    return True
+            except (ValueError, TypeError):
+                pass
+        time.sleep(3)
+    return False
