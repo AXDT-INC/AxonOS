@@ -479,7 +479,7 @@ def build_payment_requirements(minutes_wanted: float = 0.0) -> Dict[str, Any]:
 
 
 def payment_required_body(minutes_wanted: float = 0.0, error: Optional[str] = None) -> Dict[str, Any]:
-    """Full x402 402 response body: x402Version + accepts list (+ optional error)."""
+    """Full x402 v1 402 response body: x402Version + accepts list (+ optional error)."""
     body: Dict[str, Any] = {
         "x402Version": _X402_VERSION,
         "accepts": [build_payment_requirements(minutes_wanted)],
@@ -487,6 +487,73 @@ def payment_required_body(minutes_wanted: float = 0.0, error: Optional[str] = No
     if error:
         body["error"] = error
     return body
+
+
+# --- x402 v2 (CAIP-2 network, `amount`, resource object, X-PAYMENT-REQUIRED header) ---
+# Verified against Coinbase x402 SDK 2.13.0. v2 is what off-the-shelf agents use.
+
+_X402_V2_VERSION = 2
+# x402 v2 header names (verified against Coinbase SDK 2.13.0): the 402 carries
+# requirements in the `PAYMENT-REQUIRED` response header (NO `X-` prefix in v2);
+# the request payment header stays `X-PAYMENT`; settlement proof is `PAYMENT-RESPONSE`.
+PAYMENT_REQUIRED_HEADER = "PAYMENT-REQUIRED"
+PAYMENT_RESPONSE_HEADER_V2 = "PAYMENT-RESPONSE"
+
+
+def _caip2_network() -> str:
+    """v2 network is CAIP-2, e.g. eip155:84532. Derive from USDC_CHAIN_ID."""
+    return f"eip155:{_usdc_chain_id()}"
+
+
+def _resource_url() -> str:
+    """Absolute resource URL for the v2 resource object (falls back to a relative path)."""
+    base = (os.getenv("X402_RESOURCE_URL") or os.getenv("AXGT_PUBLIC_BASE_URL") or "").strip().rstrip("/")
+    path = os.getenv("X402_RESOURCE") or "/api/x402/access"
+    return (base + path) if base else path
+
+
+def build_payment_requirements_v2(minutes_wanted: float = 0.0) -> Dict[str, Any]:
+    """v2 PaymentRequirements: `amount` (not maxAmountRequired), CAIP-2 network."""
+    revenue = _get_revenue_wallet()
+    contract = _get_usdc_contract()
+    per_minute = usdc_base_units_per_minute()
+    if minutes_wanted and minutes_wanted > 0:
+        amount = max(per_minute, round(per_minute * minutes_wanted))
+    else:
+        try:
+            amount = int((_min_deposit() * Decimal(1_000_000)).to_integral_value())
+        except Exception:
+            amount = 1_000_000
+    return {
+        "scheme": _X402_SCHEME,
+        "network": _caip2_network(),
+        "asset": contract,
+        "amount": str(amount),
+        "payTo": revenue,
+        "maxTimeoutSeconds": 120,
+        "extra": {"name": _usdc_eip712_name(), "version": _usdc_eip712_version()},
+    }
+
+
+def payment_required_v2(minutes_wanted: float = 0.0, error: Optional[str] = None) -> Dict[str, Any]:
+    """Full v2 PaymentRequired object (goes in the X-PAYMENT-REQUIRED header + body)."""
+    body: Dict[str, Any] = {
+        "x402Version": _X402_V2_VERSION,
+        "error": error or "Payment required",
+        "resource": {
+            "url": _resource_url(),
+            "description": "AxonOS GPU desktop session minutes",
+            "mimeType": "application/json",
+        },
+        "accepts": [build_payment_requirements_v2(minutes_wanted)],
+    }
+    return body
+
+
+def encode_payment_required_header(minutes_wanted: float = 0.0, error: Optional[str] = None) -> str:
+    """Base64-encode the v2 PaymentRequired for the X-PAYMENT-REQUIRED response header."""
+    import base64 as _b64, json as _json
+    return _b64.b64encode(_json.dumps(payment_required_v2(minutes_wanted, error)).encode()).decode()
 
 
 def discovery_document() -> Dict[str, Any]:
@@ -531,6 +598,22 @@ def discovery_document() -> Dict[str, Any]:
         },
         "notes": "SSH is the agent-usable session type (text I/O). The GUI desktop is not exposed to agents.",
     }
+
+
+def wallet_from_x_payment(x_payment: str) -> Optional[str]:
+    """Extract the paying wallet (authorization.from) from an X-PAYMENT header.
+
+    Lets the canonical resource endpoint identify the payer without a separate
+    wallet_address field — a generic x402 client only sends X-PAYMENT.
+    """
+    payload = _decode_x402_header(x_payment)
+    if not payload:
+        return None
+    try:
+        frm = (((payload.get("payload") or {}).get("authorization") or {}).get("from") or "").strip()
+        return frm or None
+    except Exception:
+        return None
 
 
 def _decode_x402_header(x_payment: str) -> Optional[Dict[str, Any]]:
@@ -726,12 +809,25 @@ def settle_x402_payment(authenticated_wallet: str, x_payment_header: str) -> Dic
     payload = _decode_x402_header(x_payment_header)
     if not payload:
         return fail("Malformed X-PAYMENT header")
-    if int(payload.get("x402Version", 0)) != _X402_VERSION:
-        return fail(f"Unsupported x402Version (need {_X402_VERSION})")
-    if (payload.get("scheme") or "").lower() != _X402_SCHEME:
+
+    # Accept BOTH x402 v1 and v2 X-PAYMENT payloads.
+    #   v1: {x402Version:1, scheme, network:"base-sepolia", payload:{authorization, signature}}
+    #   v2: {x402Version:2, accepted:{...}, payload:{authorization, signature}, ...}
+    # The inner EVM 'exact' EIP-3009 authorization is the same in both; only the
+    # envelope and the network format (CAIP-2 eip155:<id> in v2) differ.
+    ver = int(payload.get("x402Version", 0) or 0)
+    if ver not in (1, 2):
+        return fail("Unsupported x402Version (need 1 or 2)")
+
+    # Scheme + network may live at the top (v1) or in `accepted` (v2).
+    accepted = payload.get("accepted") or {}
+    scheme = (payload.get("scheme") or accepted.get("scheme") or _X402_SCHEME or "").lower()
+    if scheme != _X402_SCHEME:
         return fail(f"Unsupported scheme (need '{_X402_SCHEME}')")
-    if (payload.get("network") or "").lower() != _usdc_network():
-        return fail(f"Unsupported network (need '{_usdc_network()}')")
+    net = (payload.get("network") or accepted.get("network") or "").lower()
+    # Normalize: v1 'base-sepolia' OR v2 'eip155:84532' must match our chain.
+    if net and net not in (_usdc_network().lower(), _caip2_network().lower()):
+        return fail(f"Unsupported network (got '{net}', need '{_usdc_network()}' or '{_caip2_network()}')")
 
     pay = payload.get("payload") or {}
     authorization = pay.get("authorization") or {}

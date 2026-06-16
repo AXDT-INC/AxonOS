@@ -70,6 +70,7 @@ try:
         payment_required_body,
         settle_x402_payment,
         discovery_document,
+        wallet_from_x_payment,
     )
 except ImportError:
     try:
@@ -79,6 +80,7 @@ except ImportError:
             payment_required_body,
             settle_x402_payment,
             discovery_document,
+            wallet_from_x_payment,
         )
     except ImportError:
         verify_usdc_deposit = None
@@ -86,6 +88,7 @@ except ImportError:
         payment_required_body = None
         settle_x402_payment = None
         discovery_document = None
+        wallet_from_x_payment = None
 
 try:
     from deposit_router import verify_deposit_auto
@@ -533,30 +536,89 @@ def api_x402_discovery():
 @app.route('/api/x402/access', methods=['GET', 'OPTIONS'])
 def api_x402_access():
     """
-    x402-native access gate. Returns 200 when the wallet has remaining minutes,
-    otherwise HTTP 402 with the x402 payment-requirements body so an x402 client
-    can pay via /api/x402/settle.
+    Canonical x402 resource endpoint: works with off-the-shelf x402 clients.
+
+      GET (no X-PAYMENT)        -> 200 if funded, else 402 + payment requirements
+      GET (with X-PAYMENT)      -> settle the payment inline, then 200 + access
+
+    This is the spec pattern a generic x402 client follows: request the resource,
+    get 402, retry the SAME resource with the X-PAYMENT header, get the resource.
+    The wallet is taken from X-PAYMENT's authorization.from (no separate
+    wallet_address needed) so a vanilla client needs zero AxonOS-specific knowledge.
+    The dedicated /api/x402/settle and /api/x402/session endpoints remain for
+    AxonOS-aware clients (e.g. one-shot SSH provisioning).
     """
     if request.method == 'OPTIONS':
         return '', 200
     if payment_required_body is None:
         return jsonify({"error": "x402 unavailable"}), 503
-    wallet_address = (request.args.get('wallet_address') or request.headers.get('X-Wallet-Address') or '').strip()
-    if not wallet_address or not validate_wallet_address(wallet_address):
-        return jsonify({"error": "Valid wallet_address required"}), 400
     try:
         minutes_wanted = float(request.args.get('minutes') or 0)
     except (ValueError, TypeError):
         minutes_wanted = 0.0
-    status = get_wallet_access_status(wallet_address)
-    if status.get('verified') and status.get('remaining_minutes', 0) > 0:
-        return jsonify({
-            "access": True,
-            "remaining_minutes": status.get('remaining_minutes'),
-        })
+
+    # Payment header: X-PAYMENT (x402 v1) or PAYMENT-SIGNATURE (x402 v2).
+    x_payment = request.headers.get('X-PAYMENT') or request.headers.get('PAYMENT-SIGNATURE') or ''
+
+    # --- Payment present: settle inline (canonical "pay the resource") ---
+    if x_payment and settle_x402_payment is not None:
+        # Wallet comes from the signed authorization; fall back to explicit hints.
+        wallet_address = ((wallet_from_x_payment(x_payment) if wallet_from_x_payment else None) \
+            or request.args.get('wallet_address') or request.headers.get('X-Wallet-Address') or '').strip()
+        if not wallet_address or not validate_wallet_address(wallet_address):
+            return jsonify({"error": "Could not determine paying wallet from X-PAYMENT"}), 400
+        result = settle_x402_payment(authenticated_wallet=wallet_address, x_payment_header=x_payment)
+        if result.get("verified") or verify_usdc_deposit_is_pending(result):
+            status = get_wallet_access_status(wallet_address)
+            out = {
+                "access": bool(status.get('verified') and status.get('remaining_minutes', 0) > 0),
+                "remaining_minutes": status.get('remaining_minutes'),
+                "payment": {
+                    "verified": result.get("verified"),
+                    "credited_minutes": result.get("credited_minutes"),
+                    "settlement_tx_hash": result.get("settlement_tx_hash"),
+                },
+            }
+            resp = jsonify(out)
+            if result.get("settlement_tx_hash"):
+                import base64 as _b64, json as _json
+                _pr = _b64.b64encode(_json.dumps({
+                    "success": True, "txHash": result["settlement_tx_hash"],
+                    "network": result.get("deposit_currency", "USDC"),
+                }).encode()).decode()
+                resp.headers['X-PAYMENT-RESPONSE'] = _pr   # v1
+                resp.headers['PAYMENT-RESPONSE'] = _pr      # v2 (SDK header name)
+            return resp
+        r402 = jsonify({"error": result.get("error") or "Payment failed", "payment": result})
+        r402.status_code = 402
+        return _attach_x402_v2_header(r402, minutes_wanted, result.get("error") or "Payment failed")
+
+    # --- No payment: report access or 402 with terms ---
+    wallet_address = (request.args.get('wallet_address') or request.headers.get('X-Wallet-Address') or '').strip()
+    if wallet_address and validate_wallet_address(wallet_address):
+        status = get_wallet_access_status(wallet_address)
+        if status.get('verified') and status.get('remaining_minutes', 0) > 0:
+            return jsonify({"access": True, "remaining_minutes": status.get('remaining_minutes')})
+    # v1 body (back-compat) + v2 X-PAYMENT-REQUIRED header (generic agents).
     body = payment_required_body(minutes_wanted=minutes_wanted, error="Payment required for access")
     resp = jsonify(body)
     resp.status_code = 402
+    return _attach_x402_v2_header(resp, minutes_wanted, "Payment required for access")
+
+
+def _attach_x402_v2_header(resp, minutes_wanted=0.0, error=None):
+    """Add the x402 v2 X-PAYMENT-REQUIRED header to a 402 (alongside the v1 body)."""
+    try:
+        from x402_verifier import encode_payment_required_header, PAYMENT_REQUIRED_HEADER
+    except ImportError:
+        try:
+            from axonos_gate.x402_verifier import encode_payment_required_header, PAYMENT_REQUIRED_HEADER
+        except ImportError:
+            return resp
+    try:
+        resp.headers[PAYMENT_REQUIRED_HEADER] = encode_payment_required_header(minutes_wanted, error)
+    except Exception as exc:
+        logger.debug("x402 v2 header encode failed: %s", exc)
     return resp
 
 

@@ -93,6 +93,7 @@ try:
         payment_required_body,
         settle_x402_payment,
         discovery_document,
+        wallet_from_x_payment,
     )
 except ImportError:
     try:
@@ -102,6 +103,7 @@ except ImportError:
             payment_required_body,
             settle_x402_payment,
             discovery_document,
+            wallet_from_x_payment,
         )
     except ImportError:
         verify_usdc_deposit = None
@@ -109,6 +111,7 @@ except ImportError:
         payment_required_body = None
         settle_x402_payment = None
         discovery_document = None
+        wallet_from_x_payment = None
 
 try:
     from deposit_router import verify_deposit_auto
@@ -435,6 +438,21 @@ def _clear_auth_cookie() -> str:
     )
 
 
+def _x402_v2_headers(minutes_wanted: float = 0.0, error: str = None) -> dict:
+    """X-PAYMENT-REQUIRED (x402 v2) header for a 402, alongside the v1 body."""
+    try:
+        from x402_verifier import encode_payment_required_header, PAYMENT_REQUIRED_HEADER
+    except ImportError:
+        try:
+            from axonos_gate.x402_verifier import encode_payment_required_header, PAYMENT_REQUIRED_HEADER
+        except ImportError:
+            return None
+    try:
+        return {PAYMENT_REQUIRED_HEADER: encode_payment_required_header(minutes_wanted, error)}
+    except Exception:
+        return None
+
+
 def _issue_auth_token(wallet_address: str) -> tuple[str, int]:
     now_ts = time.time()
     ttl = _auth_ttl_seconds()
@@ -716,10 +734,12 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             self.send_header('Vary', 'Origin')
             self.send_header(
                 'Access-Control-Allow-Headers',
-                'Content-Type, X-Wallet-Address, X-AXGT-Auth-Token, X-PAYMENT'
+                'Content-Type, X-Wallet-Address, X-AXGT-Auth-Token, X-PAYMENT, PAYMENT-SIGNATURE'
             )
             self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
             self.send_header('Access-Control-Allow-Credentials', 'true')
+            # Let browser-based x402 clients read the payment headers.
+            self.send_header('Access-Control-Expose-Headers', 'PAYMENT-REQUIRED, PAYMENT-RESPONSE, X-PAYMENT-REQUIRED, X-PAYMENT-RESPONSE')
         if set_cookie:
             self.send_header('Set-Cookie', set_cookie)
         if extra_headers:
@@ -784,28 +804,61 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             return self._send_json(200, discovery_document())
 
         if _up_cfg(self.path).path == '/api/x402/access':
+            # Canonical x402 resource endpoint (works with generic x402 clients):
+            #   GET (no X-PAYMENT)   -> 200 if funded else 402 + terms
+            #   GET (with X-PAYMENT) -> settle inline, then 200 + access
             if payment_required_body is None:
                 return self._send_json(503, {"error": "x402 unavailable"})
             from urllib.parse import parse_qs as _pq
             _q = _pq(_up_cfg(self.path).query)
-            wallet_address = (
-                (_q.get('wallet_address', [''])[0] or '').strip()
-                or (self.headers.get('X-Wallet-Address') or '').strip()
-            )
-            if not wallet_address or not validate_wallet_address(wallet_address):
-                return self._send_json(400, {"error": "Valid wallet_address required"})
             try:
                 minutes_wanted = float(_q.get('minutes', ['0'])[0] or 0)
             except (ValueError, TypeError):
                 minutes_wanted = 0.0
-            status = get_wallet_access_status(wallet_address)
-            if status.get('verified') and status.get('remaining_minutes', 0) > 0:
-                return self._send_json(200, {
-                    "access": True,
-                    "remaining_minutes": status.get('remaining_minutes'),
-                })
+            x_payment = self.headers.get('X-PAYMENT') or self.headers.get('PAYMENT-SIGNATURE') or ''
+            if x_payment and settle_x402_payment is not None:
+                wallet_address = (
+                    (wallet_from_x_payment(x_payment) if wallet_from_x_payment else None)
+                    or (_q.get('wallet_address', [''])[0] or '').strip()
+                    or (self.headers.get('X-Wallet-Address') or '').strip()
+                )
+                if not wallet_address or not validate_wallet_address(wallet_address):
+                    return self._send_json(400, {"error": "Could not determine paying wallet from X-PAYMENT"})
+                result = settle_x402_payment(authenticated_wallet=wallet_address, x_payment_header=x_payment)
+                if result.get("verified") or verify_usdc_deposit_is_pending(result):
+                    status = get_wallet_access_status(wallet_address)
+                    out = {
+                        "access": bool(status.get('verified') and status.get('remaining_minutes', 0) > 0),
+                        "remaining_minutes": status.get('remaining_minutes'),
+                        "payment": {
+                            "verified": result.get("verified"),
+                            "credited_minutes": result.get("credited_minutes"),
+                            "settlement_tx_hash": result.get("settlement_tx_hash"),
+                        },
+                    }
+                    extra_headers = None
+                    if result.get("settlement_tx_hash"):
+                        import base64 as _b64, json as _json
+                        _pr = _b64.b64encode(_json.dumps({
+                            "success": True, "txHash": result["settlement_tx_hash"],
+                            "network": result.get("deposit_currency", "USDC"),
+                        }).encode()).decode()
+                        extra_headers = {'X-PAYMENT-RESPONSE': _pr, 'PAYMENT-RESPONSE': _pr}
+                    return self._send_json(200, out, extra_headers=extra_headers)
+                return self._send_json(402, {"error": result.get("error") or "Payment failed", "payment": result},
+                                       extra_headers=_x402_v2_headers(minutes_wanted, result.get("error") or "Payment failed"))
+            wallet_address = (
+                (_q.get('wallet_address', [''])[0] or '').strip()
+                or (self.headers.get('X-Wallet-Address') or '').strip()
+            )
+            if wallet_address and validate_wallet_address(wallet_address):
+                status = get_wallet_access_status(wallet_address)
+                if status.get('verified') and status.get('remaining_minutes', 0) > 0:
+                    return self._send_json(200, {"access": True, "remaining_minutes": status.get('remaining_minutes')})
+            # v1 body (back-compat) + v2 X-PAYMENT-REQUIRED header (generic agents).
             return self._send_json(402, payment_required_body(
-                minutes_wanted=minutes_wanted, error="Payment required for access"))
+                minutes_wanted=minutes_wanted, error="Payment required for access"),
+                extra_headers=_x402_v2_headers(minutes_wanted, "Payment required for access"))
 
         if _up_cfg(self.path).path == '/api/config':
             policy = get_credit_policy()
@@ -1579,7 +1632,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 return self._send_json(
                     503, {"verified": False, "error": "x402 settlement unavailable"}
                 )
-            x_payment = self.headers.get('X-PAYMENT') or ''
+            x_payment = self.headers.get('X-PAYMENT') or self.headers.get('PAYMENT-SIGNATURE') or ''
             if not x_payment:
                 if payment_required_body is not None:
                     return self._send_json(402, payment_required_body(error="X-PAYMENT header required"))
@@ -1627,7 +1680,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             if not ssh_pubkey:
                 return self._send_json(400, {"granted": False, "error": "A valid ssh_pubkey is required for an agent SSH session"})
             requested_profile = (data.get("requested_profile") or '').strip() or None
-            x_payment = self.headers.get('X-PAYMENT') or ''
+            x_payment = self.headers.get('X-PAYMENT') or self.headers.get('PAYMENT-SIGNATURE') or ''
             settle_result = None
             auth_token = None
             auth_ttl = None
