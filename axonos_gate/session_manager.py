@@ -296,6 +296,58 @@ def _session_max_seconds() -> int:
     return 60 * 60  # default 60 min
 
 
+def _remaining_minutes_for(wallet: str) -> Optional[float]:
+    """Current prepaid remaining minutes for a wallet (for the SSH hard cap)."""
+    try:
+        try:
+            from . import deposit_ledger
+        except ImportError:
+            try:
+                from axonos_gate import deposit_ledger
+            except ImportError:
+                import deposit_ledger
+        if not deposit_ledger.init_once():
+            return None
+        st = deposit_ledger.get_deposit_status(wallet)
+        return float(st.get("remaining_minutes") or 0)
+    except Exception as exc:
+        logger.warning("_remaining_minutes_for failed: %s", exc)
+        return None
+
+
+def _ssh_hard_cap_seconds(remaining_minutes: Optional[float]) -> Optional[float]:
+    """Hard billing cap for a headless/SSH session, in seconds from now.
+
+    An SSH session bills for at most the time it can afford,
+    optionally clamped to an operator ceiling (AXGT_SSH_MAX_SESSION_MINUTES). The
+    in-container heartbeat daemon keeps a headless session alive with no natural
+    "user left" signal, so without this an abandoned session would slide
+    expires_at forward until the entire prepaid balance is drained.
+
+    Returns seconds-from-now for the cap, or None to disable (no SSH cap).
+    """
+    # Operator ceiling (0/unset = no ceiling).
+    ceiling_min = None
+    raw = (os.getenv("AXGT_SSH_MAX_SESSION_MINUTES") or "").strip()
+    if raw:
+        try:
+            n = float(raw)
+            if n > 0:
+                ceiling_min = n
+        except (ValueError, TypeError):
+            pass
+
+    # Affordability: cap to the minutes the wallet can pay for (× GPU billing
+    # already reflected in remaining_minutes deduction rate is per heartbeat, so
+    # use remaining minutes directly as a wall-clock-ish bound).
+    afford_min = remaining_minutes if (remaining_minutes is not None and remaining_minutes > 0) else None
+
+    candidates = [m for m in (ceiling_min, afford_min) if m is not None]
+    if not candidates:
+        return None  # nothing to cap on (e.g. no ceiling + unknown balance)
+    return min(candidates) * 60.0
+
+
 def _heartbeat_timeout_seconds() -> int:
     raw = (os.getenv("AXGT_HEARTBEAT_TIMEOUT_SECONDS") or "").strip()
     try:
@@ -416,6 +468,10 @@ def _ensure_tables(conn) -> None:
             ("container_id", "TEXT"),
             ("allocation_status", "TEXT NOT NULL DEFAULT 'allocated'"),
             ("files_key", "TEXT"),
+            # Non-sliding hard cap (unlike expires_at, which slides on heartbeat).
+            # Set for headless/SSH sessions so an abandoned session can't drain the
+            # whole prepaid balance. NULL = no cap (e.g. desktop, legacy rows).
+            ("hard_expires_at", "DOUBLE PRECISION"),
         ):
             cur.execute(
                 """
@@ -505,9 +561,11 @@ def _expire_stale_session(cur, now: float) -> Tuple[Optional[tuple], List[tuple]
         f"""UPDATE {_SESSION_TABLE}
             SET status = 'ended'
             WHERE status = 'active'
-              AND (last_heartbeat < %s OR expires_at <= %s)
+              AND (last_heartbeat < %s
+                   OR expires_at <= %s
+                   OR (hard_expires_at IS NOT NULL AND hard_expires_at <= %s))
             RETURNING wallet_address, id""",
-        (hb_cutoff, now),
+        (hb_cutoff, now, now),
     )
     row = cur.fetchone()
     ended = (row[0], row[1]) if row else None
@@ -568,13 +626,14 @@ def _session_row_to_dict(row) -> Dict[str, Any]:
         "last_billed_at": row[8],
         "expires_at": row[9],
         "files_key": row[10] if len(row) > 10 else None,
+        "hard_expires_at": row[11] if len(row) > 11 else None,
     }
 
 
 def _get_active_rows(cur) -> List[Dict[str, Any]]:
     cur.execute(
         f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
-                   started_at, last_heartbeat, last_billed_at, expires_at, files_key
+                   started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at
             FROM {_SESSION_TABLE}
             WHERE status = 'active'
             ORDER BY started_at ASC""",
@@ -588,7 +647,7 @@ def _get_paused_rows(cur, now: float) -> List[Dict[str, Any]]:
     cutoff = now - _session_paused_max_seconds()
     cur.execute(
         f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
-                   started_at, last_heartbeat, last_billed_at, expires_at, files_key
+                   started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at
             FROM {_SESSION_TABLE}
             WHERE status = 'paused' AND last_heartbeat >= %s
             ORDER BY started_at ASC""",
@@ -606,7 +665,7 @@ def _get_gpu_reserved_rows(cur, now: float) -> List[Dict[str, Any]]:
 def _paused_session_for_wallet(cur, wallet: str, now: float) -> Optional[Dict[str, Any]]:
     cur.execute(
         f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
-                   started_at, last_heartbeat, last_billed_at, expires_at, files_key
+                   started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at
             FROM {_SESSION_TABLE}
             WHERE status = 'paused' AND wallet_address = %s AND last_heartbeat >= %s
             ORDER BY started_at DESC
@@ -627,7 +686,7 @@ def _get_active_row(cur) -> Optional[Dict[str, Any]]:
 def _active_session_for_wallet(cur, wallet: str) -> Optional[Dict[str, Any]]:
     cur.execute(
         f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
-                   started_at, last_heartbeat, last_billed_at, expires_at, files_key
+                   started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at
             FROM {_SESSION_TABLE}
             WHERE status = 'active' AND wallet_address = %s
             ORDER BY started_at DESC
@@ -1023,11 +1082,19 @@ def try_claim_session(
                 # Per-session secret for the in-container file agent; injected into
                 # the container env at launch and used by the gate file proxy.
                 files_key = secrets.token_urlsafe(32)
+                # Hard billing cap for headless/SSH sessions (no browser "user left"
+                # signal). expires_at slides on heartbeat (idle timeout); hard_expires_at
+                # does NOT, bounding an abandoned session to min(affordable, ceiling).
+                hard_expires_at = None
+                if requested_ssh:
+                    cap_secs = _ssh_hard_cap_seconds(_remaining_minutes_for(wallet))
+                    if cap_secs is not None:
+                        hard_expires_at = now + cap_secs
                 cur.execute(
                     f"""INSERT INTO {_SESSION_TABLE}
                         (wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
-                         started_at, last_heartbeat, last_billed_at, expires_at, status, files_key)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s)
+                         started_at, last_heartbeat, last_billed_at, expires_at, status, files_key, hard_expires_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s, %s)
                         RETURNING id""",
                     (
                         wallet,
@@ -1040,6 +1107,7 @@ def try_claim_session(
                         now,
                         now + max_secs,
                         files_key,
+                        hard_expires_at,
                     ),
                 )
                 session_id = cur.fetchone()[0]

@@ -1412,9 +1412,13 @@ def api_session_release():
     wallet_address = (data.get('wallet_address') or '').strip()
     if not wallet_address or not validate_wallet_address(wallet_address):
         return jsonify({"released": False, "error": "Valid wallet_address required"}), 400
-    auth_err = _require_auth_token(wallet_address)
-    if auth_err:
-        return auth_err
+    # Auth: wallet token OR per-session files_key (headless/SSH self-release —
+    # explicit "stop" for sessions with no browser End-session UI).
+    session_key = (request.headers.get('X-AXGT-Session-Key') or data.get('session_key') or '').strip()
+    if not (session_key and validate_session_files_key(wallet_address, session_key)):
+        auth_err = _require_auth_token(wallet_address)
+        if auth_err:
+            return auth_err
     return jsonify(release_session(wallet_address))
 
 
