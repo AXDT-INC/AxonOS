@@ -120,9 +120,9 @@ Copyright (C) 2019 The noVNC Authors
                                 rel="noopener noreferrer">MetaMask</a>)</span>
                         <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
                         <span id="axonos_prereq_deposit_line" class="axonos-prerequisites-ticker__chunk"><strong>Pay
-                                with ETH, save with AXGT</strong>: each <strong id="axonos_prereq_min_eth">—</strong>
-                            <strong>ETH</strong> (min.) → <strong id="axonos_prereq_eth_min_label">—</strong>.
-                            <strong>AXGT holders</strong> automatically get a tiered discount on the ETH price (<a
+                                with ETH, USDC, or AXGT</strong> for prepaid desktop minutes.
+                            <strong>AXGT holders</strong> get a discount on ETH/USDC, and paying in AXGT is the best
+                            rate (<a
                                 href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=0x6112c3509a8a787df576028450febb3786a2274d"
                                 target="_blank" rel="noopener noreferrer">Get AXGT</a>)</span>
                         <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
@@ -1104,7 +1104,7 @@ Copyright (C) 2019 The noVNC Authors
 
 <script>
     // Must be declared before DOMContentLoaded handlers (axonosUpdateProfileBurnHint reads it).
-    window.axonosConfig = { axgt_contract_address: '', axgt_revenue_wallet: '', axgt_chain_id: null, axgt_min_deposit: '100', eth_deposits_enabled: true, eth_min_deposit: '0.0005', axgt_token_decimals: 18, credit_per_100_axgt: 60, eth_credit_per_eth: 120000, min_axgt_minutes: 60, min_eth_minutes: 60, axgt_direct_deposits_enabled: false, usdc_deposits_enabled: true, usdc_contract_address: '', usdc_chain_id: 8453, usdc_min_deposit: '1', usdc_credit_per_usdc: 60, min_usdc_minutes: 60, axgt_bonus_percent: 25, axgt_discount_tiers: [], gpu_profiles: { small: 1, medium: 2, large: 4, max: 8 }, gpu_weighted_billing_enabled: false, persistent_storage_enabled: true, persistent_storage_gb_hour_cost_minutes: 0.05, persistent_storage_min_balance_limit_minutes: -1440.0 };
+    window.axonosConfig = { axgt_contract_address: '', axgt_revenue_wallet: '', axgt_chain_id: null, axgt_min_deposit: '100', eth_deposits_enabled: true, eth_min_deposit: '0.0005', axgt_token_decimals: 18, credit_per_100_axgt: 60, eth_credit_per_eth: 120000, min_axgt_minutes: 60, min_eth_minutes: 60, axgt_direct_deposits_enabled: false, usdc_deposits_enabled: true, usdc_contract_address: '', usdc_chain_id: 8453, usdc_min_deposit: '1', usdc_credit_per_usdc: 60, min_usdc_minutes: 60, axgt_bonus_percent: 25, dynamic_pricing_enabled: false, usd_per_hour: 1, axgt_discount_tiers: [], gpu_profiles: { small: 1, medium: 2, large: 4, max: 8 }, gpu_weighted_billing_enabled: false, persistent_storage_enabled: true, persistent_storage_gb_hour_cost_minutes: 0.05, persistent_storage_min_balance_limit_minutes: -1440.0 };
     var axonosConfig = window.axonosConfig;
     let axonosLastDiscountQuote = null;
     let axonosLastDiscountMinQuote = null;
@@ -2438,6 +2438,8 @@ Copyright (C) 2019 The noVNC Authors
                     axonosConfig.usdc_min_deposit = (cfg && cfg.usdc_min_deposit != null) ? String(cfg.usdc_min_deposit) : '1';
                     axonosConfig.usdc_credit_per_usdc = (cfg && cfg.usdc_credit_per_usdc_minutes != null) ? Number(cfg.usdc_credit_per_usdc_minutes) : 60;
                     axonosConfig.axgt_bonus_percent = (cfg && cfg.axgt_bonus_percent != null) ? Number(cfg.axgt_bonus_percent) : 25;
+                    axonosConfig.dynamic_pricing_enabled = !!(cfg && cfg.dynamic_pricing_enabled);
+                    axonosConfig.usd_per_hour = (cfg && cfg.usd_per_hour != null) ? Number(cfg.usd_per_hour) : 1;
                     axonosConfig.min_usdc_minutes = (cfg && cfg.min_usdc_deposit_minutes != null) ? Number(cfg.min_usdc_deposit_minutes) : (Number(axonosConfig.usdc_min_deposit) * axonosConfig.usdc_credit_per_usdc);
                     axonosConfig.axgt_discount_tiers = (cfg && Array.isArray(cfg.axgt_discount_tiers)) ? cfg.axgt_discount_tiers : [];
                     axonosConfig.gpu_profiles = (cfg && cfg.gpu_profiles) ? cfg.gpu_profiles : { small: 1, medium: 2, large: 4, max: 8 };
@@ -2508,12 +2510,17 @@ Copyright (C) 2019 The noVNC Authors
                     if (dlgHints) {
                         var ethPer1 = (cpe >= 1e6) ? String(Math.round(cpe)) : String(Math.round(cpe * 1e6) / 1e6);
                         var axgtDirect = !!axonosConfig.axgt_direct_deposits_enabled;
-                        var rateHint = ethEnabled
-                            ? ('<strong>1 ETH</strong> → <strong>' + ethPer1 + '</strong> min · <strong>min ' + minEth + ' ETH</strong> → ~' + formatCreditMinutes(meMin))
-                            : 'ETH top-ups disabled';
-                        var discountHint = '<strong>AXGT holders save</strong> on the ETH price — connect your wallet to see your tier, balance, and final ETH payable.';
+                        var dynPricing = !!axonosConfig.dynamic_pricing_enabled;
+                        var axgtBonus = (axonosConfig.axgt_bonus_percent != null) ? Number(axonosConfig.axgt_bonus_percent) : 25;
+                        var usdPerHr = '$' + (axonosConfig.usd_per_hour != null ? axonosConfig.usd_per_hour : 1);
+                        var rateHint = dynPricing
+                            ? ('Pay in <strong>ETH</strong>, <strong>USDC</strong>' + (axgtDirect ? ' or <strong>AXGT</strong>' : '') + ' at <strong>live USD value</strong> (' + usdPerHr + '/hour)')
+                            : (ethEnabled
+                                ? ('<strong>1 ETH</strong> → <strong>' + ethPer1 + '</strong> min · <strong>min ' + minEth + ' ETH</strong> → ~' + formatCreditMinutes(meMin))
+                                : 'ETH top-ups disabled');
+                        var discountHint = '<strong>AXGT holders save</strong>: holding AXGT applies a tiered discount on ETH/USDC payments — connect your wallet to see your tier.';
                         var legacyHint = axgtDirect
-                            ? (' · Legacy AXGT direct: ' + cp100 + ' min per 100 AXGT')
+                            ? (' · Paying <strong>in AXGT</strong> is the best rate (+' + axgtBonus + '% bonus minutes)')
                             : '';
                         var billingHint = axonosGpuWeightedBillingEnabled()
                             ? (' While connected, usage burns <strong>' + axonosGpuCountForProfile(getRequestedProfile()) + '×</strong> prepaid minutes per real minute for your selected GPU profile (idle counts if this tab stays open).')
@@ -2524,9 +2531,13 @@ Copyright (C) 2019 The noVNC Authors
                     var insRates = document.getElementById('axonos_insufficient_credit_rates');
                     if (insRates) {
                         var ethPer1Ins = (cpe >= 1e6) ? String(Math.round(cpe)) : String(Math.round(cpe * 1e6) / 1e6);
-                        insRates.textContent = ethEnabled
-                            ? ('Pay with ETH: 1 ETH → ' + ethPer1Ins + ' min; min ' + minEth + ' ETH → ~' + formatCreditMinutes(meMin) + '. AXGT holders get a tiered discount on the ETH price.')
-                            : 'ETH payments are currently disabled. Contact the operator.';
+                        var _dyn = !!axonosConfig.dynamic_pricing_enabled;
+                        var _bonus = (axonosConfig.axgt_bonus_percent != null) ? Number(axonosConfig.axgt_bonus_percent) : 25;
+                        insRates.textContent = _dyn
+                            ? ('ETH, USDC' + (axonosConfig.axgt_direct_deposits_enabled ? ' and AXGT' : '') + ' are charged at live USD value. Holding AXGT discounts ETH/USDC payments' + (axonosConfig.axgt_direct_deposits_enabled ? '; paying in AXGT gives +' + _bonus + '% bonus minutes' : '') + '.')
+                            : (ethEnabled
+                                ? ('Pay with ETH: 1 ETH → ' + ethPer1Ins + ' min; min ' + minEth + ' ETH → ~' + formatCreditMinutes(meMin) + '. AXGT holders get a tiered discount on the ETH price.')
+                                : 'ETH payments are currently disabled. Contact the operator.');
                     }
                     var usdcEnabledCopy = axonosConfig.usdc_deposits_enabled
                         && /^0x[a-fA-F0-9]{40}$/.test(String(axonosConfig.usdc_contract_address || ''));

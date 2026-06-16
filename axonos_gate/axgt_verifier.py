@@ -608,6 +608,18 @@ def _axgt_direct_deposits_enabled_flag() -> bool:
     return raw in ("1", "true", "yes", "on")
 
 
+def _usd_per_hour_display() -> float:
+    raw = (os.getenv("AXGT_USD_PER_HOUR") or "").strip()
+    if raw:
+        try:
+            v = float(raw)
+            if v > 0:
+                return v
+        except ValueError:
+            pass
+    return 1.0
+
+
 def _axgt_bonus_percent_display() -> float:
     raw = (os.getenv("AXGT_USD_BONUS_PERCENT") or "").strip()
     if raw:
@@ -673,6 +685,7 @@ def get_credit_policy() -> Dict[str, Any]:
         "usdc_deposits_enabled": usdc_enabled,
         "axgt_bonus_percent": _axgt_bonus_percent_display(),
         "dynamic_pricing_enabled": (os.getenv("AXGT_DYNAMIC_PRICING") or "").strip().lower() in ("1", "true", "yes", "on"),
+        "usd_per_hour": _usd_per_hour_display(),
         "usdc_min_deposit": usdc_min,
         "usdc_credit_per_usdc_minutes": usdc_rate,
         "min_usdc_deposit_minutes": usdc_min_minutes,

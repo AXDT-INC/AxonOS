@@ -837,6 +837,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 "usdc_deposits_enabled": policy.get("usdc_deposits_enabled"),
                 "axgt_bonus_percent": policy.get("axgt_bonus_percent"),
                 "dynamic_pricing_enabled": policy.get("dynamic_pricing_enabled"),
+                "usd_per_hour": policy.get("usd_per_hour"),
                 "usdc_contract_address": (os.getenv("USDC_CONTRACT_ADDRESS") or "").strip() or None,
                 "usdc_chain_id": (os.getenv("USDC_CHAIN_ID") or "8453").strip() or None,
                 "usdc_network": (os.getenv("USDC_NETWORK") or "base").strip() or None,
