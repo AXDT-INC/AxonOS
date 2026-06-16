@@ -69,6 +69,7 @@ try:
         verify_usdc_deposit_is_pending,
         payment_required_body,
         settle_x402_payment,
+        discovery_document,
     )
 except ImportError:
     try:
@@ -77,12 +78,14 @@ except ImportError:
             verify_usdc_deposit_is_pending,
             payment_required_body,
             settle_x402_payment,
+            discovery_document,
         )
     except ImportError:
         verify_usdc_deposit = None
         verify_usdc_deposit_is_pending = None
         payment_required_body = None
         settle_x402_payment = None
+        discovery_document = None
 
 try:
     from deposit_router import verify_deposit_auto
@@ -517,6 +520,16 @@ def api_verify_deposit_auto():
     return jsonify(result), 400
 
 
+@app.route('/.well-known/x402', methods=['GET', 'OPTIONS'])
+def api_x402_discovery():
+    """x402 discovery descriptor for agents."""
+    if request.method == 'OPTIONS':
+        return '', 200
+    if discovery_document is None:
+        return jsonify({"error": "x402 unavailable"}), 503
+    return jsonify(discovery_document())
+
+
 @app.route('/api/x402/access', methods=['GET', 'OPTIONS'])
 def api_x402_access():
     """
@@ -600,6 +613,102 @@ def api_x402_settle():
             ).decode()
         return resp
     return jsonify(result), 400
+
+
+@app.route('/api/x402/session', methods=['POST', 'OPTIONS'])
+def api_x402_session():
+    """
+    One-shot agent loop: pay via x402 (if needed) and claim an SSH session.
+
+    This is the agent-native path — an x402 client can go from "needs compute" to
+    "has an SSH endpoint" in a single call, WITHOUT the browser wallet-signature
+    sign-in: the EIP-3009 payment signature in X-PAYMENT is the authorization.
+
+    Body: { wallet_address, ssh_pubkey, requested_profile? }
+    Header: X-PAYMENT (x402 EIP-3009 payload) — required unless the wallet already
+            has prepaid minutes.
+
+    Flow:
+      1. If X-PAYMENT present → settle it (credits minutes, mints an auth token).
+      2. Else require existing prepaid minutes (top-up-free reclaim).
+      3. Claim an SSH session with the agent's pubkey.
+      4. Return { granted, ssh_host, ssh_port, remaining_minutes, auth_token, ... }.
+
+    On insufficient funds and no payment → HTTP 402 with x402 payment requirements.
+    """
+    if request.method == 'OPTIONS':
+        return '', 200
+    if not _session_mgr_available:
+        return jsonify({"granted": False, "error": "Session manager unavailable"}), 503
+
+    data = request.get_json(silent=True) or {}
+    wallet_address = (data.get("wallet_address") or request.headers.get('X-Wallet-Address') or '').strip()
+    if not wallet_address or not validate_wallet_address(wallet_address):
+        return jsonify({"granted": False, "error": "Valid wallet_address required"}), 400
+
+    # SSH is the agent-usable session type (text I/O). A pubkey is mandatory.
+    ssh_pubkey = validate_ssh_public_key(data.get('ssh_pubkey'))
+    if not ssh_pubkey:
+        return jsonify({"granted": False, "error": "A valid ssh_pubkey is required for an agent SSH session"}), 400
+    requested_profile = (data.get("requested_profile") or '').strip() or None
+
+    x_payment = request.headers.get('X-PAYMENT') or ''
+    settle_result = None
+    auth_token = None
+    auth_ttl = None
+
+    if x_payment:
+        if settle_x402_payment is None:
+            return jsonify({"granted": False, "error": "x402 settlement unavailable"}), 503
+        settle_result = settle_x402_payment(authenticated_wallet=wallet_address, x_payment_header=x_payment)
+        if not (settle_result.get("verified") or verify_usdc_deposit_is_pending(settle_result)):
+            return jsonify({"granted": False, "error": settle_result.get("error") or "Payment failed", "payment": settle_result}), 400
+        # Payment authorized → mint a gate auth token for subsequent heartbeats/release.
+        try:
+            auth_token, auth_ttl = _issue_gate_auth_token(wallet_address)
+        except Exception as ex:
+            logger.warning("x402/session token issue failed for %s: %s", mask_wallet_address(wallet_address), ex)
+    else:
+        # No payment: only proceed if the wallet already has prepaid minutes.
+        _st = get_wallet_access_status(wallet_address, consume_usage=False)
+        if not (_st.get("verified") and _st.get("remaining_minutes", 0) > 0):
+            if payment_required_body is None:
+                return jsonify({"granted": False, "error": "Payment required"}), 402
+            resp = jsonify(payment_required_body(error="Payment required: include an X-PAYMENT header or pre-fund the wallet"))
+            resp.status_code = 402
+            return resp
+        try:
+            auth_token, auth_ttl = _issue_gate_auth_token(wallet_address)
+        except Exception as ex:
+            logger.warning("x402/session token issue failed for %s: %s", mask_wallet_address(wallet_address), ex)
+
+    claim = try_claim_session(
+        wallet_address,
+        requested_profile=requested_profile,
+        requested_ssh=True,
+        ssh_pubkey=ssh_pubkey,
+    )
+    out = dict(claim)
+    if settle_result is not None:
+        out["payment"] = {
+            "verified": settle_result.get("verified"),
+            "credited_minutes": settle_result.get("credited_minutes"),
+            "settlement_tx_hash": settle_result.get("settlement_tx_hash"),
+        }
+    if auth_token:
+        out["auth_token"] = auth_token
+        out["auth_token_expires_in_seconds"] = auth_ttl
+    resp = jsonify(out)
+    if settle_result and settle_result.get("settlement_tx_hash"):
+        import base64 as _b64
+        import json as _json
+        resp.headers['X-PAYMENT-RESPONSE'] = _b64.b64encode(_json.dumps({
+            "success": True,
+            "txHash": settle_result["settlement_tx_hash"],
+            "network": settle_result.get("deposit_currency", "USDC"),
+        }).encode()).decode()
+    resp.status_code = 200 if claim.get("granted") else 409
+    return resp
 
 
 @app.route('/api/config', methods=['GET'])

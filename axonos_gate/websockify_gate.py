@@ -92,6 +92,7 @@ try:
         verify_usdc_deposit_is_pending,
         payment_required_body,
         settle_x402_payment,
+        discovery_document,
     )
 except ImportError:
     try:
@@ -100,12 +101,14 @@ except ImportError:
             verify_usdc_deposit_is_pending,
             payment_required_body,
             settle_x402_payment,
+            discovery_document,
         )
     except ImportError:
         verify_usdc_deposit = None
         verify_usdc_deposit_is_pending = None
         payment_required_body = None
         settle_x402_payment = None
+        discovery_document = None
 
 try:
     from deposit_router import verify_deposit_auto
@@ -774,6 +777,11 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
 
         if _up_cfg(self.path).path.startswith('/api/files/'):
             return self._handle_files_request('GET')
+
+        if _up_cfg(self.path).path == '/.well-known/x402':
+            if discovery_document is None:
+                return self._send_json(503, {"error": "x402 unavailable"})
+            return self._send_json(200, discovery_document())
 
         if _up_cfg(self.path).path == '/api/x402/access':
             if payment_required_body is None:
@@ -1604,6 +1612,71 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             if result.get("verified") or verify_usdc_deposit_is_pending(result):
                 return self._send_json(200, result, extra_headers=extra_headers)
             return self._send_json(400, result)
+
+        if self.path.startswith('/api/x402/session'):
+            # One-shot agent loop: pay via x402 (if needed) + claim an SSH session.
+            # The EIP-3009 payment signature is the authorization — no prior
+            # browser wallet sign-in required. SSH is the agent-usable session type.
+            if not _session_mgr_available:
+                return self._send_json(503, {"granted": False, "error": "Session manager unavailable"})
+            data = self._read_json_body() or {}
+            wallet_address = (data.get("wallet_address") or self.headers.get('X-Wallet-Address') or '').strip()
+            if not wallet_address or not validate_wallet_address(wallet_address):
+                return self._send_json(400, {"granted": False, "error": "Valid wallet_address required"})
+            ssh_pubkey = validate_ssh_public_key(data.get('ssh_pubkey'))
+            if not ssh_pubkey:
+                return self._send_json(400, {"granted": False, "error": "A valid ssh_pubkey is required for an agent SSH session"})
+            requested_profile = (data.get("requested_profile") or '').strip() or None
+            x_payment = self.headers.get('X-PAYMENT') or ''
+            settle_result = None
+            auth_token = None
+            auth_ttl = None
+            if x_payment:
+                if settle_x402_payment is None:
+                    return self._send_json(503, {"granted": False, "error": "x402 settlement unavailable"})
+                settle_result = settle_x402_payment(authenticated_wallet=wallet_address, x_payment_header=x_payment)
+                if not (settle_result.get("verified") or verify_usdc_deposit_is_pending(settle_result)):
+                    return self._send_json(400, {"granted": False, "error": settle_result.get("error") or "Payment failed", "payment": settle_result})
+                try:
+                    auth_token, auth_ttl = _issue_auth_token(wallet_address)
+                except Exception as ex:
+                    logger.warning("x402/session token issue failed: %s", ex)
+            else:
+                _st = get_wallet_access_status(wallet_address, consume_usage=False)
+                if not (_st.get("verified") and _st.get("remaining_minutes", 0) > 0):
+                    if payment_required_body is None:
+                        return self._send_json(402, {"granted": False, "error": "Payment required"})
+                    return self._send_json(402, payment_required_body(error="Payment required: include an X-PAYMENT header or pre-fund the wallet"))
+                try:
+                    auth_token, auth_ttl = _issue_auth_token(wallet_address)
+                except Exception as ex:
+                    logger.warning("x402/session token issue failed: %s", ex)
+            claim = try_claim_session(
+                wallet_address,
+                requested_profile=requested_profile,
+                requested_ssh=True,
+                ssh_pubkey=ssh_pubkey,
+            )
+            out = dict(claim)
+            if settle_result is not None:
+                out["payment"] = {
+                    "verified": settle_result.get("verified"),
+                    "credited_minutes": settle_result.get("credited_minutes"),
+                    "settlement_tx_hash": settle_result.get("settlement_tx_hash"),
+                }
+            if auth_token:
+                out["auth_token"] = auth_token
+                out["auth_token_expires_in_seconds"] = auth_ttl
+            extra_headers = None
+            if settle_result and settle_result.get("settlement_tx_hash"):
+                import base64 as _b64
+                import json as _json
+                extra_headers = {'X-PAYMENT-RESPONSE': _b64.b64encode(_json.dumps({
+                    "success": True,
+                    "txHash": settle_result["settlement_tx_hash"],
+                    "network": settle_result.get("deposit_currency", "USDC"),
+                }).encode()).decode()}
+            return self._send_json(200 if claim.get("granted") else 409, out, extra_headers=extra_headers)
 
         if not self.path.startswith('/api/auth/verify-wallet'):
             return self.send_error(404, "Not Found")

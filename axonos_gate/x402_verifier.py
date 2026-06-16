@@ -489,6 +489,50 @@ def payment_required_body(minutes_wanted: float = 0.0, error: Optional[str] = No
     return body
 
 
+def discovery_document() -> Dict[str, Any]:
+    """
+    Machine-readable x402 discovery descriptor (served at /.well-known/x402).
+
+    Tells an agent what AxonOS sells, how to pay, and the agent-native endpoint
+    that goes from payment → a usable SSH session in one call. The desktop (GUI)
+    rail is intentionally NOT advertised to agents: it's a pixel stream and needs
+    a computer-use bridge to be agent-usable.
+    """
+    return {
+        "x402Version": _X402_VERSION,
+        "name": "AxonOS GPU compute",
+        "description": "On-demand GPU Linux compute, rented by the minute, paid in USDC via x402.",
+        "accepts": [build_payment_requirements()],
+        "endpoints": [
+            {
+                "resource": "/api/x402/access",
+                "method": "GET",
+                "description": "Check access / get payment requirements (returns 402 with terms when unfunded).",
+                "query": {"wallet_address": "0x...", "minutes": "optional int"},
+            },
+            {
+                "resource": "/api/x402/settle",
+                "method": "POST",
+                "description": "Settle an x402 EIP-3009 payment (X-PAYMENT header); credits minutes.",
+                "headers": {"X-PAYMENT": "base64 x402 payload"},
+            },
+            {
+                "resource": "/api/x402/session",
+                "method": "POST",
+                "description": "Agent-native one-shot: pay (X-PAYMENT) AND claim an SSH session. Returns ssh_host/ssh_port + auth_token. No prior wallet sign-in needed.",
+                "headers": {"X-PAYMENT": "base64 x402 payload (or omit if pre-funded)"},
+                "body": {"wallet_address": "0x...", "ssh_pubkey": "ssh-ed25519 ...", "requested_profile": "optional"},
+                "returns": {"granted": "bool", "ssh_host": "str", "ssh_port": "int", "remaining_minutes": "float", "auth_token": "str"},
+            },
+        ],
+        "session_lifecycle": {
+            "heartbeat": {"resource": "/api/session/heartbeat", "method": "POST", "note": "send periodically with auth_token to keep the session alive"},
+            "release": {"resource": "/api/session/release", "method": "POST"},
+        },
+        "notes": "SSH is the agent-usable session type (text I/O). The GUI desktop is not exposed to agents.",
+    }
+
+
 def _decode_x402_header(x_payment: str) -> Optional[Dict[str, Any]]:
     """Decode a base64-encoded X-PAYMENT header into its JSON payload."""
     if not x_payment:
