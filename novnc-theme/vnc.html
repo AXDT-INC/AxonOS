@@ -4077,26 +4077,45 @@ Copyright (C) 2019 The noVNC Authors
 
         var walletEventsProvider = getSafeWindowEthereum();
         if (walletEventsProvider && typeof walletEventsProvider.on === 'function') {
+            // Tear down any live/stale desktop session bound to the OLD wallet, then
+            // clear in-page wallet identity. Order matters: UI.disconnect() reads the
+            // current wallet/auth-token globals to release server-side ownership, so it
+            // must run BEFORE we null them. Default disconnect (no skipRelease) releases
+            // ownership so the credited session pauses cleanly and isn't trapped behind a
+            // now-departed browser; the new wallet must re-authenticate to get its own.
+            var clearWalletIdentityAndUi = function () {
+                verifiedWalletAddress = null;
+                window.verifiedWalletAddress = null;
+                window.verifiedWalletAuthToken = null;
+                window.axonosAllowVncConnect = false;
+                window.axonosPausedResume = null;
+                axonosApplyResumeConnectUi(false);
+                setWalletUIState('axonos_wallet_state_disconnected');
+            };
+
+            var teardownSessionForWalletChange = function () {
+                var liveSession = (typeof UI !== 'undefined' && UI.connected &&
+                    typeof UI._axgtSessionDesktopActive === 'function' && UI._axgtSessionDesktopActive()) ||
+                    document.documentElement.classList.contains("noVNC_connected");
+                if (liveSession && typeof UI !== 'undefined' && typeof UI.disconnect === 'function') {
+                    try {
+                        UI.disconnect();
+                    } catch (err) {
+                        // Disconnect is best-effort; identity is still cleared below.
+                    }
+                }
+            };
+
             walletEventsProvider.on('accountsChanged', function (accounts) {
                 var newAccount = (Array.isArray(accounts) && accounts[0]) ? String(accounts[0]).trim().toLowerCase() : '';
                 var oldAccount = (window.verifiedWalletAddress || '').trim().toLowerCase();
 
                 if (!newAccount) {
-                    verifiedWalletAddress = null;
-                    window.verifiedWalletAddress = null;
-                    window.verifiedWalletAuthToken = null;
-                    window.axonosAllowVncConnect = false;
-                    window.axonosPausedResume = null;
-                    axonosApplyResumeConnectUi(false);
-                    setWalletUIState('axonos_wallet_state_disconnected');
+                    teardownSessionForWalletChange();
+                    clearWalletIdentityAndUi();
                 } else if (oldAccount && newAccount !== oldAccount) {
-                    verifiedWalletAddress = null;
-                    window.verifiedWalletAddress = null;
-                    window.verifiedWalletAuthToken = null;
-                    window.axonosAllowVncConnect = false;
-                    window.axonosPausedResume = null;
-                    axonosApplyResumeConnectUi(false);
-                    setWalletUIState('axonos_wallet_state_disconnected');
+                    teardownSessionForWalletChange();
+                    clearWalletIdentityAndUi();
                 }
             });
         }
