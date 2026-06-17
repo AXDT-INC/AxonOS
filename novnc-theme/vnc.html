@@ -3867,6 +3867,7 @@ Copyright (C) 2019 The noVNC Authors
         function onConnectWalletClick(provider) {
             if (provider) {
                 selectedEthereumProvider = provider;
+                bindWalletAccountEvents(provider);
                 setWalletUIState('axonos_wallet_state_checking');
                 requestConnectedWallet(provider)
                     .then(function (account) { runVerify(account, provider); })
@@ -4075,73 +4076,95 @@ Copyright (C) 2019 The noVNC Authors
             });
         }
 
-        var walletEventsProvider = getSafeWindowEthereum();
-        if (walletEventsProvider && typeof walletEventsProvider.on === 'function') {
-            // Tear down any live/stale desktop session bound to the OLD wallet, then
-            // clear in-page wallet identity. Order matters: UI.disconnect() reads the
-            // current wallet/auth-token globals to release server-side ownership, so it
-            // must run BEFORE we null them. Default disconnect (no skipRelease) releases
-            // ownership so the credited session pauses cleanly and isn't trapped behind a
-            // now-departed browser; the new wallet must re-authenticate to get its own.
-            var clearWalletIdentityAndUi = function () {
-                verifiedWalletAddress = null;
-                window.verifiedWalletAddress = null;
-                window.verifiedWalletAuthToken = null;
-                window.axonosAllowVncConnect = false;
-                window.axonosPausedResume = null;
-                axonosApplyResumeConnectUi(false);
-                setWalletUIState('axonos_wallet_state_disconnected');
-            };
-
-            var teardownSessionForWalletChange = function () {
-                // A WebRTC desktop can be live OR mid-negotiation ("Connecting display").
-                // The noVNC connected flags are not reliably set in either WebRTC phase,
-                // so detect the WebRTC peer / teardown directly in addition to the noVNC
-                // liveness signals. window.axonosWebRtcPc is set early in negotiation (as
-                // soon as the peer is created), so it also covers the negotiating phase.
-                var novncLive = (typeof UI !== 'undefined' && UI.connected &&
-                    typeof UI._axgtSessionDesktopActive === 'function' && UI._axgtSessionDesktopActive()) ||
-                    document.documentElement.classList.contains("noVNC_connected");
-                var webrtcLive = !!window.axonosWebRtcPc ||
-                    typeof window.axonosWebRtcTeardown === 'function';
-
-                if (!novncLive && !webrtcLive) {
-                    return;
-                }
-
-                // Full teardown: UI.disconnect() cancels any in-flight negotiation, tears
-                // down the WebRTC peer, and releases server-side ownership (default path,
-                // no skipRelease). Belt-and-suspenders: explicitly cancel negotiation too,
-                // since UI.disconnect() can short-circuit before connect completes.
-                if (typeof UI !== 'undefined' && typeof UI.disconnect === 'function') {
-                    try {
-                        UI.disconnect();
-                    } catch (err) {
-                        // Disconnect is best-effort; identity is still cleared below.
-                    }
-                }
-                if (typeof window.axonosCancelWebRtcNegotiation === 'function') {
-                    try {
-                        window.axonosCancelWebRtcNegotiation();
-                    } catch (err) {
-                        // Best-effort.
-                    }
-                }
-            };
-
-            walletEventsProvider.on('accountsChanged', function (accounts) {
-                var newAccount = (Array.isArray(accounts) && accounts[0]) ? String(accounts[0]).trim().toLowerCase() : '';
-                var oldAccount = (window.verifiedWalletAddress || '').trim().toLowerCase();
-
-                if (!newAccount) {
-                    teardownSessionForWalletChange();
-                    clearWalletIdentityAndUi();
-                } else if (oldAccount && newAccount !== oldAccount) {
-                    teardownSessionForWalletChange();
-                    clearWalletIdentityAndUi();
-                }
-            });
+        // Tear down any live/stale desktop session bound to the OLD wallet, then
+        // clear in-page wallet identity. Order matters: UI.disconnect() reads the
+        // current wallet/auth-token globals to release server-side ownership, so it
+        // must run BEFORE we null them. Default disconnect (no skipRelease) releases
+        // ownership so the credited session pauses cleanly and isn't trapped behind a
+        // now-departed browser; the new wallet must re-authenticate to get its own.
+        function clearWalletIdentityAndUi() {
+            verifiedWalletAddress = null;
+            window.verifiedWalletAddress = null;
+            window.verifiedWalletAuthToken = null;
+            window.axonosAllowVncConnect = false;
+            window.axonosPausedResume = null;
+            axonosApplyResumeConnectUi(false);
+            setWalletUIState('axonos_wallet_state_disconnected');
         }
+
+        function teardownSessionForWalletChange() {
+            // A WebRTC desktop can be live OR mid-negotiation ("Connecting display").
+            // The noVNC connected flags are not reliably set in either WebRTC phase,
+            // so detect the WebRTC peer / teardown directly in addition to the noVNC
+            // liveness signals. window.axonosWebRtcPc is set early in negotiation (as
+            // soon as the peer is created), so it also covers the negotiating phase.
+            var novncLive = (typeof UI !== 'undefined' && UI.connected &&
+                typeof UI._axgtSessionDesktopActive === 'function' && UI._axgtSessionDesktopActive()) ||
+                document.documentElement.classList.contains("noVNC_connected");
+            var webrtcLive = !!window.axonosWebRtcPc ||
+                typeof window.axonosWebRtcTeardown === 'function';
+
+            if (!novncLive && !webrtcLive) {
+                return;
+            }
+
+            // Full teardown: UI.disconnect() cancels any in-flight negotiation, tears
+            // down the WebRTC peer, and releases server-side ownership (default path,
+            // no skipRelease). Belt-and-suspenders: explicitly cancel negotiation too,
+            // since UI.disconnect() can short-circuit before connect completes.
+            if (typeof UI !== 'undefined' && typeof UI.disconnect === 'function') {
+                try {
+                    UI.disconnect();
+                } catch (err) {
+                    // Disconnect is best-effort; identity is still cleared below.
+                }
+            }
+            if (typeof window.axonosCancelWebRtcNegotiation === 'function') {
+                try {
+                    window.axonosCancelWebRtcNegotiation();
+                } catch (err) {
+                    // Best-effort.
+                }
+            }
+        }
+
+        function onWalletAccountsChanged(accounts) {
+            var newAccount = (Array.isArray(accounts) && accounts[0]) ? String(accounts[0]).trim().toLowerCase() : '';
+            var oldAccount = (window.verifiedWalletAddress || '').trim().toLowerCase();
+
+            if (!newAccount) {
+                teardownSessionForWalletChange();
+                clearWalletIdentityAndUi();
+            } else if (oldAccount && newAccount !== oldAccount) {
+                teardownSessionForWalletChange();
+                clearWalletIdentityAndUi();
+            }
+        }
+
+        // accountsChanged fires on the SPECIFIC provider the user connected with —
+        // which, with EIP-6963 / multiple injected wallets, is frequently NOT the same
+        // object as window.ethereum. Binding only to window.ethereum at load misses the
+        // event entirely. So bind to every provider we touch (window.ethereum at load
+        // as a fallback, and the user-selected provider at connect time), idempotently.
+        var _walletEventsBound = (typeof WeakSet === 'function') ? new WeakSet() : null;
+        function bindWalletAccountEvents(provider) {
+            if (!provider || typeof provider.on !== 'function') return;
+            if (_walletEventsBound) {
+                if (_walletEventsBound.has(provider)) return;
+                _walletEventsBound.add(provider);
+            } else if (provider.__axonosAccountsBound) {
+                return;
+            } else {
+                try { provider.__axonosAccountsBound = true; } catch (e) { /* frozen provider */ }
+            }
+            try {
+                provider.on('accountsChanged', onWalletAccountsChanged);
+            } catch (e) {
+                // Provider may not support .on; ignore.
+            }
+        }
+
+        bindWalletAccountEvents(getSafeWindowEthereum());
 
         var credentialsForm = document.querySelector('#noVNC_credentials_dlg form');
         if (credentialsForm) {
