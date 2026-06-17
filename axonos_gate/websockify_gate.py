@@ -694,20 +694,24 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
     - Gate WebSocket upgrades using wallet + short-lived auth token
     """
 
-    # Track whether the current response is HTML so end_headers() can inject
-    # Cache-Control: no-cache, preventing browsers from serving stale vnc.html.
-    _response_is_html: bool = False
+    # Track whether the current response is a cacheable static asset (HTML/JS/CSS)
+    # so end_headers() can inject Cache-Control: no-cache. Without this the browser
+    # (and upstream proxies) serve stale vnc.html / app JS after a deploy, so client
+    # fixes appear not to take effect. JS/CSS get no-cache too, not just HTML.
+    _response_no_cache: bool = False
 
     def send_header(self, keyword, value):
-        if keyword.lower() == 'content-type' and 'text/html' in str(value).lower():
-            self._response_is_html = True
+        if keyword.lower() == 'content-type':
+            ct = str(value).lower()
+            if ('text/html' in ct or 'javascript' in ct or 'text/css' in ct):
+                self._response_no_cache = True
         super().send_header(keyword, value)
 
     def end_headers(self):
-        if getattr(self, '_response_is_html', False):
+        if getattr(self, '_response_no_cache', False):
             super().send_header('Cache-Control', 'no-cache, must-revalidate')
             super().send_header('Pragma', 'no-cache')
-            self._response_is_html = False
+            self._response_no_cache = False
         super().end_headers()
 
     def _send_json(
