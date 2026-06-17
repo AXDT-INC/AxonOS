@@ -3867,6 +3867,7 @@ Copyright (C) 2019 The noVNC Authors
         function onConnectWalletClick(provider) {
             if (provider) {
                 selectedEthereumProvider = provider;
+                window.__axonosSelectedProvider = provider;
                 bindWalletAccountEvents(provider);
                 setWalletUIState('axonos_wallet_state_checking');
                 requestConnectedWallet(provider)
@@ -4131,6 +4132,7 @@ Copyright (C) 2019 The noVNC Authors
         function onWalletAccountsChanged(accounts) {
             var newAccount = (Array.isArray(accounts) && accounts[0]) ? String(accounts[0]).trim().toLowerCase() : '';
             var oldAccount = (window.verifiedWalletAddress || '').trim().toLowerCase();
+            console.log('[AxonOS] accountsChanged fired:', { accounts: accounts, newAccount: newAccount, oldAccount: oldAccount, willTeardown: (!newAccount) || (oldAccount && newAccount !== oldAccount) });
 
             if (!newAccount) {
                 teardownSessionForWalletChange();
@@ -4165,6 +4167,30 @@ Copyright (C) 2019 The noVNC Authors
         }
 
         bindWalletAccountEvents(getSafeWindowEthereum());
+
+        // DIAGNOSTIC: independent listener on window.ethereum + all EIP-6963 providers,
+        // to see which provider object actually emits accountsChanged on a dropdown switch.
+        (function diagnoseAccountsChangedSources() {
+            try {
+                var we = getSafeWindowEthereum();
+                if (we && typeof we.on === 'function') {
+                    we.on('accountsChanged', function (a) {
+                        console.log('[AxonOS DIAG] window.ethereum accountsChanged:', a, 'isMetaMask=', we.isMetaMask, 'sameAsSelected=', we === window.__axonosSelectedProvider);
+                    });
+                }
+                window.addEventListener('eip6963:announceProvider', function (ev) {
+                    var d = ev && ev.detail;
+                    if (d && d.provider && typeof d.provider.on === 'function') {
+                        d.provider.on('accountsChanged', function (a) {
+                            console.log('[AxonOS DIAG] EIP-6963 provider accountsChanged:', (d.info && d.info.name), a, 'sameAsSelected=', d.provider === window.__axonosSelectedProvider);
+                        });
+                    }
+                });
+                window.dispatchEvent(new Event('eip6963:requestProvider'));
+            } catch (e) {
+                console.warn('[AxonOS DIAG] setup failed', e);
+            }
+        })();
 
         var credentialsForm = document.querySelector('#noVNC_credentials_dlg form');
         if (credentialsForm) {

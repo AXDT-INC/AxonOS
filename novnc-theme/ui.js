@@ -4110,4 +4110,12 @@ if (l10n.language === "en" || l10n.dictionary !== undefined) {
         .then(UI.prime);
 }
 
+// Expose UI on the global scope so the (non-module) inline scripts in vnc.html
+// can drive session control — disconnect, teardown, connected state, etc.
+// ui.js is loaded as an ES module, so `UI` is otherwise module-scoped and the
+// inline wallet/session code's bare `UI.*` references silently fail to resolve.
+if (typeof window !== 'undefined') {
+    window.UI = UI;
+}
+
 export default UI;
