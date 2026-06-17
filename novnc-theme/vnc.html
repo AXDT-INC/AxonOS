@@ -4094,14 +4094,37 @@ Copyright (C) 2019 The noVNC Authors
             };
 
             var teardownSessionForWalletChange = function () {
-                var liveSession = (typeof UI !== 'undefined' && UI.connected &&
+                // A WebRTC desktop can be live OR mid-negotiation ("Connecting display").
+                // The noVNC connected flags are not reliably set in either WebRTC phase,
+                // so detect the WebRTC peer / teardown directly in addition to the noVNC
+                // liveness signals. window.axonosWebRtcPc is set early in negotiation (as
+                // soon as the peer is created), so it also covers the negotiating phase.
+                var novncLive = (typeof UI !== 'undefined' && UI.connected &&
                     typeof UI._axgtSessionDesktopActive === 'function' && UI._axgtSessionDesktopActive()) ||
                     document.documentElement.classList.contains("noVNC_connected");
-                if (liveSession && typeof UI !== 'undefined' && typeof UI.disconnect === 'function') {
+                var webrtcLive = !!window.axonosWebRtcPc ||
+                    typeof window.axonosWebRtcTeardown === 'function';
+
+                if (!novncLive && !webrtcLive) {
+                    return;
+                }
+
+                // Full teardown: UI.disconnect() cancels any in-flight negotiation, tears
+                // down the WebRTC peer, and releases server-side ownership (default path,
+                // no skipRelease). Belt-and-suspenders: explicitly cancel negotiation too,
+                // since UI.disconnect() can short-circuit before connect completes.
+                if (typeof UI !== 'undefined' && typeof UI.disconnect === 'function') {
                     try {
                         UI.disconnect();
                     } catch (err) {
                         // Disconnect is best-effort; identity is still cleared below.
+                    }
+                }
+                if (typeof window.axonosCancelWebRtcNegotiation === 'function') {
+                    try {
+                        window.axonosCancelWebRtcNegotiation();
+                    } catch (err) {
+                        // Best-effort.
                     }
                 }
             };
