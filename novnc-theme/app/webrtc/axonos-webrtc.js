@@ -868,12 +868,15 @@ export async function connectAxonOSWebRTC(opts) {
             clearInterval(inputHealthTimer);
             inputHealthTimer = null;
         }
-        if (UI.connected) {
+        // Only auto-reconnect on an unexpected channel loss. Intentional teardowns
+        // (account switch, user disconnect, credit exhaustion) set UI.inhibitReconnect,
+        // and must drop to the landing/connect screen — not show "reconnecting…".
+        if (UI.connected && !UI.inhibitReconnect) {
             _setBanner('Input channel lost — reconnecting…', 'reconnecting');
             // Attempt an automatic full session reconnect after a brief delay
             // so the user doesn't have to manually click anything.
             setTimeout(() => {
-                if (typeof window.axonosWebRtcTeardown === 'function' && UI.connected) {
+                if (typeof window.axonosWebRtcTeardown === 'function' && UI.connected && !UI.inhibitReconnect) {
                     console.warn('AxonOS WebRTC: dcInput closed, triggering reconnect');
                     if (typeof UI.reconnect_webrtc === 'function') {
                         UI.reconnect_webrtc();
@@ -917,6 +920,10 @@ export async function connectAxonOSWebRTC(opts) {
                 console.warn('AxonOS WebRTC: input health check failed (%d missed pongs)', inputPingPending);
                 clearInterval(inputHealthTimer);
                 inputHealthTimer = null;
+                // Don't fight an intentional teardown (account switch / user disconnect).
+                if (UI.inhibitReconnect) {
+                    return;
+                }
                 _setBanner('Input stalled — reconnecting…', 'reconnecting');
                 if (typeof UI.reconnect_webrtc === 'function') {
                     UI.reconnect_webrtc();
