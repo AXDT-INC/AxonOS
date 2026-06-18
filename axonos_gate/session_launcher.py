@@ -11,6 +11,7 @@ import logging
 import os
 import shlex
 import subprocess
+import time
 import urllib.error
 import urllib.request
 from typing import List, Optional, Tuple
@@ -74,6 +75,66 @@ def _persistent_storage_mount_path() -> str:
     if not raw.startswith("/") or any(c in raw for c in (" ", "\t", ";", "&", "|", "$", "`")):
         return "/home/aXonian"
     return raw
+
+
+def _launch_timeout_seconds() -> float:
+    """HTTP timeout for launch/stop calls to the host launcher.
+
+    Default 90s (was 10s): `docker run -d` of a GPU desktop image routinely
+    exceeds 10s on a cold image cache, during GPU/nvidia-runtime init, with
+    ``--shm-size 32g``, or under docker-daemon contention. A premature client
+    timeout was being treated as a hard spawn failure even though the container
+    went on to start moments later — surfacing "Failed to start user
+    container / timed out" as a false positive over a healthy session.
+    """
+    raw = (os.getenv("AXGT_SESSION_LAUNCHER_TIMEOUT_SECONDS") or "").strip()
+    try:
+        return float(raw) if raw else 90.0
+    except ValueError:
+        return 90.0
+
+
+def _launch_verify_attempts() -> int:
+    raw = (os.getenv("AXGT_SESSION_LAUNCH_VERIFY_ATTEMPTS") or "").strip()
+    try:
+        return max(0, int(raw)) if raw else 5
+    except ValueError:
+        return 5
+
+
+def _launch_verify_interval_seconds() -> float:
+    raw = (os.getenv("AXGT_SESSION_LAUNCH_VERIFY_INTERVAL_SECONDS") or "").strip()
+    try:
+        return max(0.0, float(raw)) if raw else 2.0
+    except ValueError:
+        return 2.0
+
+
+def _verify_container_started_via_http(session_id: int) -> Optional[str]:
+    """Confirm whether the session container actually came up on the host.
+
+    Called when ``/launch`` did not return a clean success — most commonly a
+    client-side timeout while ``docker run`` was still finishing. A timeout is
+    NOT proof the spawn failed, so before declaring failure we poll the
+    launcher's running-container list; if the deterministic session container is
+    present we treat the launch as successful and return its id. This is the
+    keystone guard against false "Failed to start user container" reports.
+    """
+    base_url = (os.getenv("AXGT_SESSION_LAUNCHER_URL") or "").strip().rstrip("/")
+    if not base_url:
+        return None
+    name = _container_name_for_session(session_id)
+    attempts = max(1, _launch_verify_attempts())
+    interval = _launch_verify_interval_seconds()
+    for i in range(attempts):
+        status, data, err = _http_json("GET", f"{base_url}/list-containers", None, timeout_s=5.0)
+        if not err and status < 400 and isinstance(data, dict) and data.get("ok"):
+            for c in (data.get("containers") or []):
+                if isinstance(c, dict) and c.get("name") == name:
+                    return str(c.get("short_id") or name)
+        if i < attempts - 1 and interval > 0:
+            time.sleep(interval)
+    return None
 
 
 def launch_session(session_id: int, wallet: str, profile: str, gpu_ids: List[int], template: Optional[str] = None, files_key: Optional[str] = None, ssh_enabled: bool = False, ssh_pubkey: Optional[str] = None) -> Tuple[bool, Optional[str], Optional[str]]:
@@ -235,14 +296,31 @@ def _launch_via_http(session_id: int, wallet: str, profile: str, gpu_ids: List[i
         "ssh_pubkey": ssh_pubkey,
     }
     status, data, err = _http_json("POST", f"{base_url}/launch", payload)
-    if err:
-        return False, None, err
-    if status >= 400:
-        return False, None, (data.get("error") if isinstance(data, dict) else f"http {status}")
-    if not isinstance(data, dict) or not data.get("ok"):
-        return False, None, (data.get("error") if isinstance(data, dict) else "launcher rejected request")
-    container_id = (data.get("container_id") or _container_name_for_session(session_id))
-    return True, str(container_id), None
+    launch_ok = (not err) and status < 400 and isinstance(data, dict) and bool(data.get("ok"))
+    if launch_ok:
+        container_id = (data.get("container_id") or _container_name_for_session(session_id))
+        return True, str(container_id), None
+
+    reason = err or (data.get("error") if isinstance(data, dict) else f"http {status}") or "launcher rejected request"
+
+    # Only the *inconclusive* outcomes can be a false failure over a live
+    # container: a transport error/timeout (err set, status 0) or a 5xx where
+    # the launch may have proceeded behind a proxy. A 4xx is a definitive
+    # rejection (bad request / auth) — nothing was launched, so fail fast and
+    # skip the verify poll.
+    if not (bool(err) or status >= 500):
+        return False, None, reason
+
+    # The container may have started anyway (slow `docker run` outliving our
+    # HTTP timeout is the common case) — verify host state before failing.
+    verified = _verify_container_started_via_http(session_id)
+    if verified:
+        logger.warning(
+            "session_launcher: /launch for %s was inconclusive (%s) but the container is running; treating as success",
+            _container_name_for_session(session_id), reason,
+        )
+        return True, verified, None
+    return False, None, reason
 
 
 def _stop_via_http(session_id: int, container_id: Optional[str]) -> None:
@@ -307,16 +385,14 @@ def enumerate_host_gpus_via_http() -> Optional[List[int]]:
     return out if out else None
 
 
-def _http_json(method: str, url: str, payload: dict) -> Tuple[int, object, Optional[str]]:
+def _http_json(method: str, url: str, payload: Optional[dict], timeout_s: Optional[float] = None) -> Tuple[int, object, Optional[str]]:
     token = (os.getenv("AXGT_SESSION_LAUNCHER_TOKEN") or "").strip()
-    timeout_raw = (os.getenv("AXGT_SESSION_LAUNCHER_TIMEOUT_SECONDS") or "").strip()
-    try:
-        timeout_s = float(timeout_raw) if timeout_raw else 10.0
-    except ValueError:
-        timeout_s = 10.0
-    body = json.dumps(payload).encode("utf-8")
+    if timeout_s is None:
+        timeout_s = _launch_timeout_seconds()
+    body = json.dumps(payload).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(url=url, method=method, data=body)
-    req.add_header("Content-Type", "application/json")
+    if body is not None:
+        req.add_header("Content-Type", "application/json")
     if token:
         req.add_header("Authorization", f"Bearer {token}")
     try:

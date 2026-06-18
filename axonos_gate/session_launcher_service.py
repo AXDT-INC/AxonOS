@@ -600,7 +600,10 @@ def main():
         logger.info("Started automatic volume pruning background thread")
 
     logger.info("starting host launcher on %s:%s", host, port)
-    app.run(host=host, port=port, debug=False, use_reloader=False)
+    # threaded=True so a slow /launch (cold `docker run`) or the volume-prune /
+    # enumerate `docker run`s don't head-of-line block concurrent launch
+    # requests — serialized handling was a source of gate-side launch timeouts.
+    app.run(host=host, port=port, debug=False, use_reloader=False, threaded=True)
 
 
 if __name__ == "__main__":

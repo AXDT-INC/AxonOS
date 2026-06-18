@@ -18,6 +18,12 @@ logger = logging.getLogger(__name__)
 
 _SESSION_TABLE = "axgt_sessions"
 
+# Namespace key for the per-wallet claim advisory lock (pg_advisory_xact_lock's
+# two-int form). Serializes concurrent claims for one wallet so the UI's racing
+# claims (vnc.html + ui.js) can't both pass the "no active session" check and
+# spawn duplicate containers — a leaked container + a spurious failure response.
+_CLAIM_ADVISORY_LOCK_NAMESPACE = 0x4158  # "AX"
+
 _pg_init_done = False
 _pg_init_lock = Lock()
 
@@ -997,6 +1003,17 @@ def try_claim_session(
                 conn.commit()
                 _cleanup_after_stale_maintenance(ended, paused_credit, paused_ended)
 
+            # Serialize concurrent claims for the same wallet. The UI fires two
+            # claims that race (vnc.html + ui.js); without this both can read
+            # "no active session", INSERT, and spawn duplicate containers — one
+            # leaks and one branch can surface a spurious failure. Taken AFTER
+            # the stale-expiry commit above (which would otherwise release it)
+            # and held through the INSERT+commit below; auto-releases on commit.
+            cur.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s), %s)",
+                (wallet, _CLAIM_ADVISORY_LOCK_NAMESPACE),
+            )
+
             active_rows = _get_active_rows(cur)
             paused_rows = _get_paused_rows(cur, now)
             reserved_rows = active_rows + paused_rows
@@ -1145,6 +1162,19 @@ def try_claim_session(
                     finally:
                         conn2.close()
                 if not spawned:
+                    # Confirmed failure (the launcher's verify poll also found no
+                    # running container). Reap any half-created container by its
+                    # deterministic name so a partial spawn can't leak a GPU/ports
+                    # and later starve real claims ("No GPUs available").
+                    try:
+                        _import_session_launcher().stop_session(
+                            session_id=session_id, container_id=None
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "try_claim_session: cleanup after failed spawn of session %s failed: %s",
+                            session_id, exc,
+                        )
                     return {
                         "granted": False,
                         "allocation_status": "failed",

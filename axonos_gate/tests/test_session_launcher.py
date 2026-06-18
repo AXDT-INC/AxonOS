@@ -193,6 +193,75 @@ class SessionLauncherTests(unittest.TestCase):
         
         self.assertNotIn("-v", cmd)
 
+    def _http_env(self) -> None:
+        os.environ["AXGT_USER_CONTAINER_ENABLED"] = "true"
+        os.environ["AXGT_SESSION_LAUNCHER_MODE"] = "http"
+        os.environ["AXGT_SESSION_LAUNCHER_URL"] = "http://launcher:8090"
+        # Keep verify polling instant in tests.
+        os.environ["AXGT_SESSION_LAUNCH_VERIFY_INTERVAL_SECONDS"] = "0"
+        os.environ["AXGT_SESSION_LAUNCH_VERIFY_ATTEMPTS"] = "3"
+
+    def test_launch_via_http_timeout_but_container_running(self) -> None:
+        """A /launch timeout must NOT fail the spawn if the container is up."""
+        self._http_env()
+        import session_launcher
+
+        def fake_http(method, url, payload, timeout_s=None):
+            if url.endswith("/launch"):
+                return 0, {}, "timed out"  # client-side timeout
+            if url.endswith("/list-containers"):
+                return 200, {"ok": True, "containers": [
+                    {"name": "axgt-session-42", "short_id": "abc123def456"}
+                ]}, None
+            raise AssertionError("unexpected url " + url)
+
+        with patch.object(session_launcher, "_http_json", side_effect=fake_http):
+            ok, cid, err = session_launcher.launch_session(
+                session_id=42, wallet="0xabc", profile="small", gpu_ids=[0]
+            )
+        self.assertTrue(ok)
+        self.assertEqual(cid, "abc123def456")
+        self.assertIsNone(err)
+
+    def test_launch_via_http_timeout_and_container_absent(self) -> None:
+        """A /launch timeout with no running container is a real failure."""
+        self._http_env()
+        import session_launcher
+
+        def fake_http(method, url, payload, timeout_s=None):
+            if url.endswith("/launch"):
+                return 0, {}, "timed out"
+            if url.endswith("/list-containers"):
+                return 200, {"ok": True, "containers": []}, None
+            raise AssertionError("unexpected url " + url)
+
+        with patch.object(session_launcher, "_http_json", side_effect=fake_http):
+            ok, cid, err = session_launcher.launch_session(
+                session_id=42, wallet="0xabc", profile="small", gpu_ids=[0]
+            )
+        self.assertFalse(ok)
+        self.assertIsNone(cid)
+        self.assertEqual(err, "timed out")
+
+    def test_launch_via_http_clean_success_skips_verify(self) -> None:
+        self._http_env()
+        import session_launcher
+        calls = []
+
+        def fake_http(method, url, payload, timeout_s=None):
+            calls.append(url)
+            if url.endswith("/launch"):
+                return 200, {"ok": True, "container_id": "live123"}, None
+            raise AssertionError("verify should not run on clean success")
+
+        with patch.object(session_launcher, "_http_json", side_effect=fake_http):
+            ok, cid, err = session_launcher.launch_session(
+                session_id=7, wallet="0xabc", profile="small", gpu_ids=[0]
+            )
+        self.assertTrue(ok)
+        self.assertEqual(cid, "live123")
+        self.assertTrue(all(u.endswith("/launch") for u in calls))
+
     @patch("subprocess.check_output")
     def test_get_volume_size_kb(self, mock_check_output: MagicMock) -> None:
         mock_check_output.return_value = "102400\t/volume-data"
