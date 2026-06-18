@@ -4143,6 +4143,68 @@ Copyright (C) 2019 The noVNC Authors
             }
         }
 
+        // Conservative preflight: before a Launch / Resume / Claim we re-read the account
+        // the provider currently EXPOSES to this site and require it to still equal
+        // window.verifiedWalletAddress. accountsChanged is the primary signal but may not
+        // have fired (provider doesn't emit, bound to a different object, etc.), so this is
+        // a cheap belt-and-suspenders check at the moment it matters.
+        //
+        // IMPORTANT SCOPE: this only sees what the wallet exposes via eth_accounts /
+        // eth_requestAccounts. Selecting an account the user has NOT connected to this site
+        // (e.g. switching MetaMask's dropdown to an unconnected account) is invisible to the
+        // page by the wallet's own design — eth_accounts keeps returning the connected
+        // account and no event fires. We do not and cannot detect that case here.
+        //
+        // Written against the generic EIP-1193 interface (request()/eth_accounts) — no
+        // MetaMask-only behavior. Returns Promise<boolean>: true = exposed account still
+        // matches (proceed); false = empty/invalid/different — session torn down, identity
+        // cleared, caller MUST abort. requestPermission:true => user-initiated Launch/Resume
+        // (eth_requestAccounts, may prompt); false => passive check (eth_accounts).
+        window.axonosEnsureWalletSessionCurrent = function (opts) {
+            var requestPermission = !!(opts && opts.requestPermission);
+            var verified = (window.verifiedWalletAddress || '').trim();
+
+            // No verified identity: nothing stale to reconcile (the not-verified path in
+            // UI.connect already routes to the credentials/sign-in dialog).
+            if (!verified) {
+                return Promise.resolve(true);
+            }
+
+            // Same resolution order the rest of the page uses: the provider the user
+            // connected with, then the page-selected provider, then the injected default.
+            var eth = resolveEthereumProvider(window.__axonosSelectedProvider);
+            if (!eth || typeof eth.request !== 'function') {
+                // Verified, but the provider is gone (extension disabled / removed):
+                // treat as no exposed account — block and require reconnect.
+                teardownSessionForWalletChange();
+                clearWalletIdentityAndUi();
+                return Promise.resolve(false);
+            }
+
+            var method = requestPermission ? 'eth_requestAccounts' : 'eth_accounts';
+            return eth.request({ method: method }).then(function (accounts) {
+                var current = (Array.isArray(accounts) && accounts[0])
+                    ? String(accounts[0]).trim() : '';
+                var valid = /^0x[a-fA-F0-9]{40}$/.test(current);
+                if (!current || !valid || current.toLowerCase() !== verified.toLowerCase()) {
+                    teardownSessionForWalletChange();
+                    clearWalletIdentityAndUi();
+                    return false;
+                }
+                return true;
+            }).catch(function () {
+                // Provider error or user-dismissed prompt: we cannot confirm the exposed
+                // account still matches, so the user-initiated path must not proceed under
+                // the stale identity. A passive check error is treated conservatively (no
+                // teardown) so a transient hiccup can't kill a valid live session.
+                if (requestPermission) {
+                    teardownSessionForWalletChange();
+                    clearWalletIdentityAndUi();
+                }
+                return false;
+            });
+        };
+
         // accountsChanged fires on the SPECIFIC provider the user connected with —
         // which, with EIP-6963 / multiple injected wallets, is frequently NOT the same
         // object as window.ethereum. Binding only to window.ethereum at load misses the

@@ -2831,12 +2831,50 @@ const UI = {
             });
         };
 
-        if (typeof window.axonosRefreshPausedResumeStatus === 'function') {
-            window.axonosRefreshPausedResumeStatus()
-                .catch(() => null)
-                .finally(runSessionClaim);
+        // Conservative wallet preflight before claim/WebRTC. UI.connect is the single
+        // choke point that fresh Launch (button click) and Resume (tryConnectAfterClaim ->
+        // button click; axonosResumeDesktopConnectIfPaused) both pass through, so verifying
+        // the exposed provider account here covers Launch / Resume / Claim. On mismatch the
+        // preflight tears down + clears identity and returns false; we abort so claim/WebRTC
+        // never run under a stale account.
+        const proceedAfterPreflight = () => {
+            if (typeof window.axonosRefreshPausedResumeStatus === 'function') {
+                window.axonosRefreshPausedResumeStatus()
+                    .catch(() => null)
+                    .finally(runSessionClaim);
+            } else {
+                runSessionClaim();
+            }
+        };
+
+        if (typeof window.axonosEnsureWalletSessionCurrent === 'function') {
+            window.axonosEnsureWalletSessionCurrent({ requestPermission: true })
+                .then((ok) => {
+                    if (!ok) {
+                        if (typeof window.axonosHideConnectionLoader === 'function') {
+                            window.axonosHideConnectionLoader(true);
+                        } else if (typeof window.axonosSetLaunchBusy === 'function') {
+                            window.axonosSetLaunchBusy(false);
+                        }
+                        UI.updateVisualState('disconnected');
+                        UI.showStatus(_('Wallet account changed. Reconnect and sign in to continue.'), 'warn');
+                        UI.credentials({ detail: { types: ['password'] } });
+                        return;
+                    }
+                    proceedAfterPreflight();
+                })
+                .catch(() => {
+                    // Preflight infrastructure error: fail safe (block).
+                    if (typeof window.axonosHideConnectionLoader === 'function') {
+                        window.axonosHideConnectionLoader(true);
+                    } else if (typeof window.axonosSetLaunchBusy === 'function') {
+                        window.axonosSetLaunchBusy(false);
+                    }
+                    UI.updateVisualState('disconnected');
+                    UI.credentials({ detail: { types: ['password'] } });
+                });
         } else {
-            runSessionClaim();
+            proceedAfterPreflight();
         }
     },
 
