@@ -583,12 +583,13 @@ COPY novnc-theme/icon.png /usr/share/novnc/icon.png
 COPY novnc-theme/images/linux.svg /usr/share/novnc/app/images/linux.svg
 COPY novnc-theme/telemetry.html /usr/share/novnc/
 
-# Install AXGT Gate
-COPY axonos_gate/ /axonos_gate/
+# Install AXGT Gate dependencies. Copy ONLY the manifest here so that editing gate
+# code (COPY'd last, near the end of this Dockerfile) does not invalidate this layer
+# or the heavy CUDA/PyTorch/apt layers below it — only the final cheap layer rebuilds.
+COPY axonos_gate/requirements.txt /axonos_gate/requirements.txt
 RUN /usr/bin/python3 -m pip install -r /axonos_gate/requirements.txt
 # Later pip layers may upgrade to NumPy 2.x; re-pin so apt/system matplotlib + Spyder stay compatible.
 RUN pip install --no-cache-dir 'numpy>=1.24.0,<2' matplotlib
-RUN chmod +x /axonos_gate/*.py
 
 # AXGT / gate configuration is provided via environment variables at runtime.
 
@@ -725,6 +726,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 COPY pulse-default.pa /etc/pulse/axonos-default.pa
 COPY pulse-client.conf /etc/pulse/client.conf
+
+# AXGT Gate application code — COPY'd LAST so editing gate .py rebuilds only this
+# cheap layer (deps were installed earlier from requirements.txt; the heavy
+# CUDA/PyTorch/apt layers above stay cached). Keep in sync with the
+# axonos_gate/requirements.txt copy earlier in this Dockerfile.
+COPY axonos_gate/ /axonos_gate/
+RUN chmod +x /axonos_gate/*.py
 
 # Start services
 CMD ["/startup.sh"]

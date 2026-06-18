@@ -465,7 +465,7 @@ def build_payment_requirements(minutes_wanted: float = 0.0) -> Dict[str, Any]:
         "scheme": _X402_SCHEME,
         "network": _usdc_network(),
         "maxAmountRequired": str(amount),
-        "resource": os.getenv("X402_RESOURCE") or "/api/x402/access",
+        "resource": _resource_url(),
         "description": "AxonOS desktop session minutes",
         "mimeType": "application/json",
         "payTo": revenue,
@@ -506,8 +506,17 @@ def _caip2_network() -> str:
 
 
 def _resource_url() -> str:
-    """Absolute resource URL for the v2 resource object (falls back to a relative path)."""
+    """
+    Absolute resource URL used in both bodies. The Coinbase x402 SDK validates
+    `resource` as a URL, so this must be absolute. Prefer X402_RESOURCE_URL /
+    AXGT_PUBLIC_BASE_URL; else fall back to the first configured CORS origin so we
+    still emit a valid absolute URL; only then a bare path.
+    """
     base = (os.getenv("X402_RESOURCE_URL") or os.getenv("AXGT_PUBLIC_BASE_URL") or "").strip().rstrip("/")
+    if not base:
+        cors = (os.getenv("AXGT_CORS_ORIGINS") or "").split(",")[0].strip().rstrip("/")
+        if cors and cors != "*":
+            base = cors
     path = os.getenv("X402_RESOURCE") or "/api/x402/access"
     return (base + path) if base else path
 
@@ -554,6 +563,33 @@ def encode_payment_required_header(minutes_wanted: float = 0.0, error: Optional[
     """Base64-encode the v2 PaymentRequired for the X-PAYMENT-REQUIRED response header."""
     import base64 as _b64, json as _json
     return _b64.b64encode(_json.dumps(payment_required_v2(minutes_wanted, error)).encode()).decode()
+
+
+def resolve_x402_body_version(explicit: Optional[str] = None) -> int:
+    """
+    Pick the x402 version for the 402 *body*. Defaults to v1 — VERIFIED (against
+    x402-fetch 0.6.6) to be the shape the Coinbase x402 SDK actually parses from
+    the body `accepts`: `maxAmountRequired`, a network NAME ("base-sepolia"), and
+    string `resource`/`description`/`mimeType`. The CAIP-2 `amount`/resource-object
+    "v2" body is rejected by that SDK, so it is opt-in only via an explicit
+    '2'/'v2' (query ?x402_version=2 or header X-X402-Version).
+    """
+    if explicit is not None:
+        s = str(explicit).strip().lower()
+        if s in ("1", "v1"):
+            return 1
+        if s in ("2", "v2"):
+            return 2
+    return 1
+
+
+def payment_required_for_version(
+    version: int, minutes_wanted: float = 0.0, error: Optional[str] = None
+) -> Dict[str, Any]:
+    """Return the 402 JSON body for the requested x402 version (1 or 2)."""
+    if int(version or 0) == 2:
+        return payment_required_v2(minutes_wanted, error)
+    return payment_required_body(minutes_wanted, error)
 
 
 def discovery_document() -> Dict[str, Any]:

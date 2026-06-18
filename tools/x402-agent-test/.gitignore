@@ -1,0 +1,4 @@
+# Secrets + build artifacts — never commit
+agent-wallet*.txt
+node_modules/
+package-lock.json

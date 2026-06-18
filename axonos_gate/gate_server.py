@@ -68,6 +68,8 @@ try:
         verify_usdc_deposit,
         verify_usdc_deposit_is_pending,
         payment_required_body,
+        payment_required_for_version,
+        resolve_x402_body_version,
         settle_x402_payment,
         discovery_document,
         wallet_from_x_payment,
@@ -78,6 +80,8 @@ except ImportError:
             verify_usdc_deposit,
             verify_usdc_deposit_is_pending,
             payment_required_body,
+            payment_required_for_version,
+            resolve_x402_body_version,
             settle_x402_payment,
             discovery_document,
             wallet_from_x_payment,
@@ -86,6 +90,8 @@ except ImportError:
         verify_usdc_deposit = None
         verify_usdc_deposit_is_pending = None
         payment_required_body = None
+        payment_required_for_version = None
+        resolve_x402_body_version = None
         settle_x402_payment = None
         discovery_document = None
         wallet_from_x_payment = None
@@ -601,15 +607,12 @@ def api_x402_access():
         status = get_wallet_access_status(wallet_address)
         if status.get('verified') and status.get('remaining_minutes', 0) > 0:
             return jsonify({"access": True, "remaining_minutes": status.get('remaining_minutes')})
-    # v1 body (back-compat) + v2 X-PAYMENT-REQUIRED header (generic agents).
-    body = payment_required_body(minutes_wanted=minutes_wanted, error="Payment required for access")
-    resp = jsonify(body)
-    resp.status_code = 402
-    return _attach_x402_v2_header(resp, minutes_wanted, "Payment required for access")
+    # Version-negotiated body (v1 default) + v2 PAYMENT-REQUIRED header — covers JS + Python x402 SDKs.
+    return _x402_payment_required(minutes_wanted, "Payment required for access")
 
 
 def _attach_x402_v2_header(resp, minutes_wanted=0.0, error=None):
-    """Add the x402 v2 X-PAYMENT-REQUIRED header to a 402 (alongside the v1 body)."""
+    """Add the x402 v2 X-PAYMENT-REQUIRED header to a 402 (alongside the JSON body)."""
     try:
         from x402_verifier import encode_payment_required_header, PAYMENT_REQUIRED_HEADER
     except ImportError:
@@ -622,6 +625,25 @@ def _attach_x402_v2_header(resp, minutes_wanted=0.0, error=None):
     except Exception as exc:
         logger.debug("x402 v2 header encode failed: %s", exc)
     return resp
+
+
+def _x402_payment_required(minutes_wanted=0.0, error=None):
+    """
+    Build a 402 response: version-negotiated JSON body (v1 by default — the shape
+    the Coinbase x402-fetch JS SDK reads from the body, incl. `resource` as a URL;
+    ?x402_version=2 opts into the CAIP-2 body) PLUS the v2 PAYMENT-REQUIRED header
+    (which the Python x402 SDK reads). Serves both SDK families at once.
+    """
+    if payment_required_for_version is None or resolve_x402_body_version is None:
+        body = payment_required_body(error=error) if payment_required_body else {"error": error or "Payment required"}
+        resp = jsonify(body)
+        resp.status_code = 402
+        return _attach_x402_v2_header(resp, minutes_wanted, error)
+    explicit = request.args.get('x402_version') or request.headers.get('X-X402-Version')
+    version = resolve_x402_body_version(explicit)
+    resp = jsonify(payment_required_for_version(version, minutes_wanted, error))
+    resp.status_code = 402
+    return _attach_x402_v2_header(resp, minutes_wanted, error)
 
 
 @app.route('/api/x402/settle', methods=['POST', 'OPTIONS'])
@@ -738,9 +760,7 @@ def api_x402_session():
         if not (_st.get("verified") and _st.get("remaining_minutes", 0) > 0):
             if payment_required_body is None:
                 return jsonify({"granted": False, "error": "Payment required"}), 402
-            resp = jsonify(payment_required_body(error="Payment required: include an X-PAYMENT header or pre-fund the wallet"))
-            resp.status_code = 402
-            return resp
+            return _x402_payment_required(0.0, "Payment required: include an X-PAYMENT header or pre-fund the wallet")
         try:
             auth_token, auth_ttl = _issue_gate_auth_token(wallet_address)
         except Exception as ex:
