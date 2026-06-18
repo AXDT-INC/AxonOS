@@ -2499,6 +2499,20 @@ const UI = {
                 'warn'
             );
         }
+
+        // A wallet switch defers opening the wallet dialog + starting the new connect/verify
+        // flow until the old desktop has fully returned home — otherwise the disconnect's
+        // updateVisualState() (above) closes the wallet dialog out from under it. Run it now,
+        // once, after the home view is settled.
+        if (typeof window.axonosPendingWalletSwitch === 'function') {
+            const runWalletSwitch = window.axonosPendingWalletSwitch;
+            window.axonosPendingWalletSwitch = null;
+            try {
+                runWalletSwitch();
+            } catch (err) {
+                Log.Warn("AxonOS pending wallet switch failed: " + err);
+            }
+        }
     },
 
     /** Server ended or released the session (heartbeat while detached or idle). */

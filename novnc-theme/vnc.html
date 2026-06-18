@@ -1024,12 +1024,35 @@ Copyright (C) 2019 The noVNC Authors
         title="Live billing status for this desktop session">
         <div class="axonos-session-hud__row"><span class="axonos-session-hud__label">Connected Wallet:</span>
             <span id="axonos_session_hud_wallet" class="axonos-session-hud__value">—</span>
+            <button type="button" id="axonos_session_hud_manage" class="axonos-session-hud__manage"
+                aria-haspopup="dialog" aria-expanded="false"
+                title="Manage the wallet for this desktop session">Manage</button>
         </div>
         <div class="axonos-session-hud__row"><span class="axonos-session-hud__label">Active Billing Rate:</span>
             <span id="axonos_session_hud_rate" class="axonos-session-hud__value">—</span>
         </div>
         <div class="axonos-session-hud__row"><span class="axonos-session-hud__label">Remaining Credit Time:</span>
             <span id="axonos_session_hud_remaining" class="axonos-session-hud__value">—</span>
+        </div>
+        <!-- Wallet-management popover — hidden until "Manage" is clicked. Destructive
+             actions live here behind explicit confirmations, not on the main HUD row. -->
+        <div id="axonos_session_hud_wallet_menu" class="axonos-hud-wallet-menu axonos-hud-wallet-menu--hidden"
+            role="dialog" aria-hidden="true" aria-label="Wallet management">
+            <div class="axonos-hud-wallet-menu__addr">
+                <span class="axonos-hud-wallet-menu__addr-label">Wallet</span>
+                <span id="axonos_session_hud_wallet_menu_addr" class="axonos-hud-wallet-menu__addr-value">—</span>
+            </div>
+            <p class="axonos-hud-wallet-menu__hint">Use AxonOS wallet controls to change the wallet for this
+                desktop session. Changing only the wallet-extension dropdown may not update the wallet exposed to
+                AxonOS.</p>
+            <div class="axonos-hud-wallet-menu__actions">
+                <button type="button" id="axonos_session_hud_switch_wallet"
+                    class="axonos-session-hud__btn">Switch Wallet</button>
+                <button type="button" id="axonos_session_hud_disconnect_wallet"
+                    class="axonos-session-hud__btn axonos-session-hud__btn--danger">Sign out wallet</button>
+                <button type="button" id="axonos_session_hud_wallet_menu_cancel"
+                    class="axonos-session-hud__btn">Cancel</button>
+            </div>
         </div>
     </div>
     <div class="axonos-footer-banner"
@@ -2697,6 +2720,25 @@ Copyright (C) 2019 The noVNC Authors
             if (!eth || typeof eth.request !== 'function') {
                 throw new Error('No wallet provider detected');
             }
+            // Switch-wallet path only: actively re-prompt the wallet's account selector so
+            // the user can pick a different account. eth_requestAccounts alone returns the
+            // already-connected account silently on a connected dapp, which is why a plain
+            // switch never showed a chooser. wallet_requestPermissions (EIP-2255) is the
+            // standard, cross-wallet way to re-open that selector — distinct from the passive
+            // wallet_getPermissions detection read we deliberately avoid. One-shot flag so
+            // the normal Connect flow is unaffected.
+            if (window.axonosForceAccountReselect) {
+                window.axonosForceAccountReselect = false;
+                try {
+                    await eth.request({ method: 'wallet_requestPermissions', params: [{ eth_accounts: {} }] });
+                } catch (permErr) {
+                    // User dismissed the selector → abort the switch (stay disconnected/cleared).
+                    if (permErr && (permErr.code === 4001 || /reject|denied/i.test(String(permErr.message || '')))) {
+                        throw permErr;
+                    }
+                    // Method not supported by this wallet → fall back to eth_requestAccounts below.
+                }
+            }
             var accounts = await eth.request({ method: 'eth_requestAccounts' });
             if (!Array.isArray(accounts) || accounts.length === 0) {
                 throw new Error('No wallet account available');
@@ -4093,19 +4135,21 @@ Copyright (C) 2019 The noVNC Authors
             setWalletUIState('axonos_wallet_state_disconnected');
         }
 
-        function teardownSessionForWalletChange() {
-            // A WebRTC desktop can be live OR mid-negotiation ("Connecting display").
-            // The noVNC connected flags are not reliably set in either WebRTC phase,
-            // so detect the WebRTC peer / teardown directly in addition to the noVNC
-            // liveness signals. window.axonosWebRtcPc is set early in negotiation (as
-            // soon as the peer is created), so it also covers the negotiating phase.
+        // True when a remote desktop is on screen OR mid-negotiation ("Connecting
+        // display"). The noVNC connected flags aren't reliably set during either WebRTC
+        // phase, so we also detect the WebRTC peer / teardown directly. axonosWebRtcPc is
+        // set early in negotiation (as soon as the peer is created), so it covers that too.
+        function axonosDesktopSessionLive() {
             var novncLive = (typeof UI !== 'undefined' && UI.connected &&
                 typeof UI._axgtSessionDesktopActive === 'function' && UI._axgtSessionDesktopActive()) ||
                 document.documentElement.classList.contains("noVNC_connected");
             var webrtcLive = !!window.axonosWebRtcPc ||
                 typeof window.axonosWebRtcTeardown === 'function';
+            return novncLive || webrtcLive;
+        }
 
-            if (!novncLive && !webrtcLive) {
+        function teardownSessionForWalletChange() {
+            if (!axonosDesktopSessionLive()) {
                 return;
             }
 
@@ -4129,25 +4173,61 @@ Copyright (C) 2019 The noVNC Authors
             }
         }
 
+        // Wallet identity is now managed EXPLICITLY via the HUD (Manage → Switch Wallet /
+        // Sign out wallet), so an extension dropdown change must NOT tear down a live,
+        // paid-for desktop. The old auto-teardown was both disruptive (an idle account
+        // switch — or MetaMask auto-lock — would nuke a running session) and unavoidably
+        // over-broad: switching to an account that isn't connected to this site makes the
+        // wallet emit [], which is indistinguishable from a real disconnect, so it fired
+        // even on the very dropdown case we want to leave alone. We therefore only observe
+        // here. Correctness is enforced where it actually matters by
+        // axonosEnsureWalletSessionCurrent() — the Launch/Resume/Claim preflight — which
+        // re-checks the exposed account against the verified identity at the moment a
+        // billing action is attempted and tears down + blocks on any mismatch. Billing is
+        // server-side against the session owner, so a dropdown change can neither transfer
+        // ownership nor dodge billing while the desktop keeps running.
         function onWalletAccountsChanged(accounts) {
             var newAccount = (Array.isArray(accounts) && accounts[0]) ? String(accounts[0]).trim().toLowerCase() : '';
             var oldAccount = (window.verifiedWalletAddress || '').trim().toLowerCase();
-            console.log('[AxonOS] accountsChanged fired:', { accounts: accounts, newAccount: newAccount, oldAccount: oldAccount, willTeardown: (!newAccount) || (oldAccount && newAccount !== oldAccount) });
+            console.log('[AxonOS] accountsChanged fired (no auto-teardown; preflight governs):', { accounts: accounts, newAccount: newAccount, oldAccount: oldAccount });
 
-            if (!newAccount) {
-                teardownSessionForWalletChange();
-                clearWalletIdentityAndUi();
-            } else if (oldAccount && newAccount !== oldAccount) {
-                teardownSessionForWalletChange();
-                clearWalletIdentityAndUi();
+            // If the wallet now exposes a DIFFERENT valid account than the one we verified
+            // while a desktop is live, the user has connected a new wallet to AxonOS. Rather
+            // than tear down silently (old behavior) or ignore it, route this through the
+            // exact same confirmed flow as the HUD's Switch Wallet button: prompt, and on
+            // confirm end the current desktop and verify the newly connected account. On
+            // cancel we do nothing here — the Launch/Resume/Claim preflight still gates the
+            // mismatch. Gated to live sessions so it can't interfere with the normal
+            // connect/verify flow (which runs only when no desktop is up), and guarded
+            // against duplicate prompts from rapid repeat events.
+            var validNew = /^0x[a-f0-9]{40}$/.test(newAccount);
+            if (oldAccount && validNew && newAccount !== oldAccount &&
+                axonosDesktopSessionLive() && !window.axonosWalletSwitchInProgress) {
+                window.axonosWalletSwitchInProgress = true;
+                axonosConfirmWalletAction(
+                    'Switch to the newly connected wallet?',
+                    'Switching wallet will end the current desktop connection and require the new wallet to sign in.',
+                    'Switch Wallet'
+                ).then(function (ok) {
+                    window.axonosWalletSwitchInProgress = false;
+                    if (ok) {
+                        // The new account is already exposed (the user just connected it),
+                        // so verify it directly — no need to re-open the account selector.
+                        window.axonosBeginWalletSwitch({
+                            useExposedAccount: true,
+                            provider: selectedEthereumProvider
+                        });
+                    }
+                });
             }
         }
 
-        // Conservative preflight: before a Launch / Resume / Claim we re-read the account
+        // AUTHORITATIVE preflight: before a Launch / Resume / Claim we re-read the account
         // the provider currently EXPOSES to this site and require it to still equal
-        // window.verifiedWalletAddress. accountsChanged is the primary signal but may not
-        // have fired (provider doesn't emit, bound to a different object, etc.), so this is
-        // a cheap belt-and-suspenders check at the moment it matters.
+        // window.verifiedWalletAddress. Since accountsChanged no longer tears down a live
+        // session (identity is HUD-managed — see onWalletAccountsChanged above), this check
+        // is the sole gate that prevents a billing action from running under a mismatched or
+        // absent account; it must stay strict.
         //
         // IMPORTANT SCOPE: this only sees what the wallet exposes via eth_accounts /
         // eth_requestAccounts. Selecting an account the user has NOT connected to this site
@@ -4204,6 +4284,182 @@ Copyright (C) 2019 The noVNC Authors
                 return false;
             });
         };
+
+        // HUD wallet controls — let the user change or fully drop the wallet for this
+        // desktop session from inside AxonOS, instead of relying on the wallet
+        // extension's dropdown (which may not change the account exposed to this site;
+        // see axonosEnsureWalletSessionCurrent above). Both reuse the existing teardown,
+        // clear, and verification primitives — no billing/auth/preflight logic changes.
+
+        // Disconnect: tear down any live/negotiating desktop, release server-side
+        // ownership (teardownSessionForWalletChange → UI.disconnect, default path), clear
+        // wallet identity, and return to the pre-launch state. We set inhibitReconnect
+        // eagerly too, so even if no session was live nothing can auto-reconnect; a later
+        // user-initiated Launch resets it. We do NOT call provider disconnect APIs.
+        window.axonosDisconnectWalletSession = function () {
+            if (typeof UI !== 'undefined') {
+                UI.inhibitReconnect = true;
+            }
+            teardownSessionForWalletChange();
+            clearWalletIdentityAndUi();
+        };
+
+        // Switch: do the exact same local teardown/clear FIRST — the old session must be
+        // gone before the new wallet is verified — then open the wallet dialog and run the
+        // existing connect + challenge/sign verification flow (onConnectWalletClick →
+        // requestConnectedWallet → runVerify) for whatever account the provider now exposes.
+        // If the user cancels selection/signature, onConnectWalletClick lands on a
+        // rejected/cleared state; the old wallet session is not revived and the desktop is
+        // not auto-launched (only the existing connect flow decides that).
+        window.axonosBeginWalletSwitch = function (opts) {
+            opts = opts || {};
+            // Capture liveness BEFORE teardown: if a desktop was up, its teardown is async
+            // and we must defer the new connect flow until it returns home (see below). This
+            // matches exactly when teardownSessionForWalletChange() calls UI.disconnect().
+            var wasLive = axonosDesktopSessionLive();
+            window.axonosDisconnectWalletSession();
+            // Forget the prior wallet so the dialog-open auto-reconnect observer (which
+            // re-verifies axonos_last_wallet) can't race a stale-account verification
+            // against the explicit connect flow below. runVerify re-stores it on success.
+            try { localStorage.removeItem('axonos_last_wallet'); } catch (e) { }
+            // One-shot: tell the very next connect to actively re-prompt the wallet's
+            // account selector (wallet_requestPermissions) instead of silently reusing the
+            // already-connected account. Consumed in requestConnectedWallet(). Skipped when
+            // useExposedAccount is set (the new account is already connected/exposed — e.g.
+            // the user just connected it — so we verify it directly without re-prompting).
+            if (!opts.useExposedAccount) {
+                window.axonosForceAccountReselect = true;
+            }
+
+            // Open the wallet/recharge dialog and start the new connect + challenge/sign
+            // verification flow for the new wallet.
+            var startConnect = function () {
+                var dlg = document.getElementById('noVNC_credentials_dlg');
+                if (dlg) {
+                    dlg.classList.add('noVNC_open');
+                }
+                onConnectWalletClick(opts.provider || undefined);
+            };
+
+            // No live desktop → nothing async is tearing down, so start immediately.
+            if (!wasLive) {
+                startConnect();
+                return;
+            }
+            // Live desktop → the teardown is async and ends by returning to the home view,
+            // whose updateVisualState() closes the credentials dialog. Opening it now would
+            // get stomped (user lands on home, the half-finished connect races and crashes).
+            // Defer until UI._axonosReturnToHomeAfterDisconnect fires this hook (the normal,
+            // deterministic completion of the teardown). The timer is only a last-resort
+            // fallback for a disconnect path that never reaches return-home — long enough to
+            // sit well past any normal teardown so it can't fire early and get stomped by a
+            // late return-home; the hook nulls the pending first whenever it runs.
+            window.axonosPendingWalletSwitch = startConnect;
+            setTimeout(function () {
+                if (window.axonosPendingWalletSwitch === startConnect) {
+                    window.axonosPendingWalletSwitch = null;
+                    startConnect();
+                }
+            }, 6000);
+        };
+
+        // Wire the HUD wallet-management controls during normal init. The destructive
+        // actions (Switch / Sign out) are tucked behind the "Manage" popover and each
+        // gated by the existing confirmation modal (UI.showConfirm) before they call the
+        // already-wired teardown/switch handlers. Everything is null-guarded so missing
+        // markup can never break page startup.
+        var hudManageBtn = document.getElementById('axonos_session_hud_manage');
+        var hudWalletMenu = document.getElementById('axonos_session_hud_wallet_menu');
+        var hudWalletMenuAddr = document.getElementById('axonos_session_hud_wallet_menu_addr');
+        var hudWalletMenuCancel = document.getElementById('axonos_session_hud_wallet_menu_cancel');
+        var hudSwitchWalletBtn = document.getElementById('axonos_session_hud_switch_wallet');
+        var hudDisconnectWalletBtn = document.getElementById('axonos_session_hud_disconnect_wallet');
+
+        function axonosFormatWalletShort(addr) {
+            addr = (addr || '').trim();
+            return addr.length >= 12 ? (addr.slice(0, 6) + '…' + addr.slice(-4)) : (addr || '—');
+        }
+
+        function axonosCloseWalletMenu() {
+            if (!hudWalletMenu) return;
+            hudWalletMenu.classList.add('axonos-hud-wallet-menu--hidden');
+            hudWalletMenu.setAttribute('aria-hidden', 'true');
+            if (hudManageBtn) hudManageBtn.setAttribute('aria-expanded', 'false');
+            document.removeEventListener('click', axonosWalletMenuOutsideClick, true);
+            document.removeEventListener('keydown', axonosWalletMenuEscClose, true);
+        }
+
+        function axonosWalletMenuOutsideClick(e) {
+            if (!hudWalletMenu || hudWalletMenu.classList.contains('axonos-hud-wallet-menu--hidden')) return;
+            if (hudWalletMenu.contains(e.target) || (hudManageBtn && hudManageBtn.contains(e.target))) return;
+            axonosCloseWalletMenu();
+        }
+
+        function axonosWalletMenuEscClose(e) {
+            if (e.key === 'Escape') axonosCloseWalletMenu();
+        }
+
+        function axonosOpenWalletMenu() {
+            if (!hudWalletMenu) return;
+            if (hudWalletMenuAddr) {
+                hudWalletMenuAddr.textContent = axonosFormatWalletShort(window.verifiedWalletAddress);
+            }
+            hudWalletMenu.classList.remove('axonos-hud-wallet-menu--hidden');
+            hudWalletMenu.setAttribute('aria-hidden', 'false');
+            if (hudManageBtn) hudManageBtn.setAttribute('aria-expanded', 'true');
+            // Defer binding the dismiss listeners so the opening click doesn't immediately close it.
+            setTimeout(function () {
+                document.addEventListener('click', axonosWalletMenuOutsideClick, true);
+                document.addEventListener('keydown', axonosWalletMenuEscClose, true);
+            }, 0);
+        }
+
+        if (hudManageBtn) {
+            hudManageBtn.addEventListener('click', function () {
+                if (hudWalletMenu && hudWalletMenu.classList.contains('axonos-hud-wallet-menu--hidden')) {
+                    axonosOpenWalletMenu();
+                } else {
+                    axonosCloseWalletMenu();
+                }
+            });
+        }
+        if (hudWalletMenuCancel) {
+            hudWalletMenuCancel.addEventListener('click', axonosCloseWalletMenu);
+        }
+
+        // Reuse the existing confirmation modal (UI.showConfirm) before either destructive
+        // action; fall back to window.confirm if the modal/UI isn't available yet.
+        function axonosConfirmWalletAction(title, message, confirmText) {
+            if (typeof UI !== 'undefined' && typeof UI.showConfirm === 'function') {
+                return UI.showConfirm(title, message, { confirmText: confirmText, confirmType: 'danger' });
+            }
+            return Promise.resolve(window.confirm(title + '\n\n' + message));
+        }
+
+        if (hudSwitchWalletBtn) {
+            hudSwitchWalletBtn.addEventListener('click', function () {
+                axonosCloseWalletMenu();
+                axonosConfirmWalletAction(
+                    'Switch wallet?',
+                    'Switching wallet will end the current desktop connection and require the new wallet to sign in.',
+                    'Switch Wallet'
+                ).then(function (ok) {
+                    if (ok) window.axonosBeginWalletSwitch();
+                });
+            });
+        }
+        if (hudDisconnectWalletBtn) {
+            hudDisconnectWalletBtn.addEventListener('click', function () {
+                axonosCloseWalletMenu();
+                axonosConfirmWalletAction(
+                    'Sign out wallet?',
+                    'Signing out will end the current desktop connection and clear this wallet session.',
+                    'Sign out'
+                ).then(function (ok) {
+                    if (ok) window.axonosDisconnectWalletSession();
+                });
+            });
+        }
 
         // accountsChanged fires on the SPECIFIC provider the user connected with —
         // which, with EIP-6963 / multiple injected wallets, is frequently NOT the same
