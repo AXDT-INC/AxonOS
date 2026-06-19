@@ -655,14 +655,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends libxtst6 ffmpeg
 # The Capture SDK archive is not committed; place NVIDIA_Capture_SDK_7_1_9.tgz
 # under vendor/ before building to enable WEBRTC_CAPTURE_BACKEND=nvfbc.
 COPY tools/nvfbc_nvenc_streamer.c /tmp/nvfbc_nvenc_streamer.c
-COPY vendor/NVIDIA_Capture_SDK_7_1_9.tgz /tmp/NVIDIA_Capture_SDK_7_1_9.tgz
-RUN mkdir -p /tmp/nvfbc-sdk && \
-    tar -xzf /tmp/NVIDIA_Capture_SDK_7_1_9.tgz -C /tmp/nvfbc-sdk && \
-    gcc -O2 -Wall \
-        -I/tmp/nvfbc-sdk/Capture_Linux_v7.1.9/NvFBC/inc \
-        /tmp/nvfbc_nvenc_streamer.c -lGL -lX11 -ldl \
-        -o /usr/local/bin/nvfbc_nvenc_streamer && \
-    rm -rf /tmp/nvfbc-sdk /tmp/NVIDIA_Capture_SDK_7_1_9.tgz /tmp/nvfbc_nvenc_streamer.c
+COPY vendor/.gitkeep vendor/NVIDIA_Capture_SDK_7_1_9.tgz* /tmp/
+RUN if [ -f /tmp/NVIDIA_Capture_SDK_7_1_9.tgz ]; then \
+        mkdir -p /tmp/nvfbc-sdk && \
+        tar -xzf /tmp/NVIDIA_Capture_SDK_7_1_9.tgz -C /tmp/nvfbc-sdk && \
+        gcc -O2 -Wall \
+            -I/tmp/nvfbc-sdk/Capture_Linux_v7.1.9/NvFBC/inc \
+            /tmp/nvfbc_nvenc_streamer.c -lGL -lX11 -ldl \
+            -o /usr/local/bin/nvfbc_nvenc_streamer && \
+        rm -rf /tmp/nvfbc-sdk /tmp/NVIDIA_Capture_SDK_7_1_9.tgz; \
+    else \
+        echo "NVIDIA Capture SDK not found. Skipping optional NvFBC build."; \
+    fi && \
+    rm -f /tmp/nvfbc_nvenc_streamer.c /tmp/.gitkeep
 
 # ---------------------------------------------------------------------------
 # Environment templates (kept as late layers so the heavy scientific builds

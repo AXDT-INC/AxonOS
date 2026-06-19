@@ -38,7 +38,8 @@ dist/
 *.deb
 *.dmg
 *.exe
-vendor/
+vendor/*
+!vendor/.gitkeep
 
 # PyInstaller
 *.manifest
