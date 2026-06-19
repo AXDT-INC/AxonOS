@@ -26,8 +26,118 @@
 - [x] **websockify (6080) parity with gate**: `verify-wallet` issues `auth_token` when signed but 0 prepaid; `/api/config` includes revenue wallet + deposit policy; `POST /api/auth/verify-deposit` on 6080 (fixes tunnel-on-6080 “Could not complete sign-in” + missing top-up UI)
 - [x] Queue join: `deposit_ledger` import + unique index migration on `axgt_queue` (fixes ON CONFLICT / Internal error); user-facing reason + vnc copy without raw "Internal error"
 - [x] Queue overlay: unified styled Join / Leave buttons (gold border, dark gradient, hover/disabled) — `axonos-theme.css`
-- [x] Leave queue + Launch: clear stale `UI.rfb` / retry path (`ui.js` connect) + `axonosResetDesktopGateForRetry()` after leave — fixes 1006 / “Failed to connect” loop
+- [x] Post session-expiry relaunch: reset stale queue/WebRTC gate state on Launch; route claim-denied to recharge/resume instead of deprecated queue overlay (`ui.js`, `vnc.html`)
+- [x] Deposit verify success: teardown stale WebRTC + auto-resume paused session after top-up (`vnc.html` `axonosDepositVerifiedSuccess`)
+- [x] WebRTC UI: defer `Connected (WebRTC)` and billing poll until ICE connected/completed (`axonos-webrtc.js`)
 - [x] **Launch must `POST /api/session/claim` before WebSocket** — gate rejects WS if not session owner (was 1006 after leave queue + Launch); `axonosOnSessionClaimDenied` → queue overlay (`ui.js` + `vnc.html`)
 - [x] noVNC landing + wallet dialog: network environment banner from `/api/config` `axgt_chain_id` (mainnet vs testnet); operator notes in `vnc.html` + `env.example`
 - [x] ETH deposit feature flag: `AXGT_ENABLE_ETH_DEPOSITS` gates backend crediting + `/api/config` and hides ETH top-up controls in wallet UI (`deposit_verifier.py`, `axgt_verifier.py`, `gate_server.py`, `websockify_gate.py`, `vnc.html`)
 - [ ] Phase 4: End-to-end runtime test checklist
+- [ ] Phase 5: Public beta concurrency (exclusive whole-GPU)
+  - [x] Feature-gated multi-session scheduler in `session_manager.py`
+  - [x] Profile-aware queue (`small=1`, `medium=2`, `large=4`, `max=8`)
+  - [x] GPU-weighted heartbeat billing (prepaid minutes × assigned GPU count)
+  - [x] API payload support for `requested_profile` in claim/join
+  - [x] Frontend profile selector + queue/allocation status messaging
+  - [x] Mode B launcher adapter (`session_launcher.py`) with `http`/`docker_cli`/`noop`
+  - [x] Host launcher service (`session_launcher_service.py`) + deployment doc
+  - [x] Compose-managed launcher service (`axonos-launcher`) for one-command ops
+  - [ ] Runtime validation with real concurrent wallets + GPU inventory
+    - [ ] Queue dedupe smoke (`ed68d69`): two-wallet contention covering 30 s throttle, in-flight guard, fast path, network-error retry, profile carry-through (Small/Medium/Large)
+- [x] Branch sync (main → public-beta, 2026-05-09):
+  - [x] Cherry-pick `327131b` — harden noVNC wallet provider detection (TronLink/injected proxy guard)
+  - [x] Cherry-pick `e7160f2` — preserve verified session when credentials dialog reopens
+  - [x] Port `ae08db9` queue auto-join dedupe into public-beta's profile-aware claim-denied path (adapted in `ed68d69`, not cherry-picked, due to multi-session architecture introduced by `f75b634`)
+  - [x] **Skip** `6b8d77e` (AXGT CTA testnet faucet flow) — intentionally not ported; functional duplicate of `34b49a3` already on public-beta with different variable names (`getAxgtHref`/`getAxgtLabel` vs `axgtCtaUrl`/`axgtCtaLabel`). Both implement env-driven mainnet-vs-testnet CTA from `AXGT_CHAIN_ID`; mainnet deployments will render Uniswap automatically.
+- [x] **Tokenomics upgrade — ETH-first + AXGT discount tiers (2026-05-09)**:
+  - [x] New `axonos_gate/discount.py` with tier config (env JSON / file / compact), on-chain `balanceOf`, RPC-failure-safe defaults
+  - [x] `deposit_verifier.py` ETH path: server-side AXGT balance re-check + discount-adjusted min and credit rate; AXGT direct deposits gated behind `AXGT_ENABLE_AXGT_DEPOSITS` (default false)
+  - [x] `/api/config` exposes `axgt_discount_tiers`, `axgt_direct_deposits_enabled`; new `GET /api/discount/quote` on both gate (8889) and websockify (6080) backends
+  - [x] vnc.html: AXGT discount tier card (base ETH / wallet AXGT balance / tier / discount % / final ETH); ETH-only by default; copy switched to "Pay with ETH, save with AXGT"
+  - [x] vnc.html: remove "Discounted" min button; live `/api/discount/quote?base_eth=` preview + pay hint on ETH input (pay-what-you-type model)
+  - [x] Tests: 28-case `test_discount.py` covering all tier boundaries, RPC failure fallback, env overrides, and end-to-end ETH+AXGT verifier paths; existing deposit/ledger/access tests still pass
+  - [x] Docs: rewrote `docs/TOKENOMICS.md` for ETH-first + tier system + deployment/testing checklist; updated `env.example` with tier-config knobs
+
+- [ ] **WebRTC desktop streaming (2026)** — implementation landed; runtime validation on full GPU stack pending
+  - [x] `axonos_gate/webrtc/` — config, Postgres signaling store, metrics logging, REST handlers
+  - [x] Gate + websockify: `/api/webrtc/*` (session, offer, status, ice, metrics, close) + agent endpoints; `/api/config` exposes WebRTC flags
+  - [x] `webrtc_agent_main.py` — aiortc + mss capture + supervisord `webrtc-agent` program
+  - [x] Frontend `novnc-theme/app/webrtc/axonos-webrtc.js` + `ui.js` try-before-RFB; disconnect tears down WebRTC
+  - [x] `docs/WEBRTC.md`, `env.example`, `docker-compose.yml` env wiring + launcher passthrough for session containers
+  - [x] `axonos_gate/tests/test_webrtc_config.py` (unittest)
+  - [ ] Compose E2E: negotiate WebRTC, verify video + input + fallback + unauthorized signaling denial
+  - [x] WebRTC billing poll regression (`ff3171d`): tighten wallet-status credit-exhausted check (ignore 401/400), restart poll on Launch when session active, keep poll alive after queue leave on active WebRTC
+  - [x] Credit exhaustion: pause session + preserve container for resume after top-up (`AXGT_SESSION_PRESERVE_ON_CREDIT_EXHAUST`, default true)
+  - [x] Deposit verify success: show credited time as desktop minutes for selected GPU profile (`axonosFormatDesktopTimeLabel` in `vnc.html`)
+  - [x] Resume workflow UI: hide GPU picker, show saved-session panel, claim uses paused profile/GPUs (not new selection)
+  - [x] **GPU-accelerated WebRTC capture/encode (NVENC)** — `WEBRTC_CAPTURE_BACKEND=auto|nvenc|mss`; FFmpeg x11grab → h264_nvenc → aiortc H.264 passthrough; MSS/VP8 fallback
+    - [x] Add `ffmpeg` to image; runtime probe for `h264_nvenc` + `libnvidia-encode`
+    - [x] `axonos_gate/webrtc/capture.py` + env: `WEBRTC_CAPTURE_BITRATE`, `WEBRTC_CAPTURE_NVENC_PRESET`
+    - [ ] Validate delivered FPS / scroll sharpness via client metrics on real GPU stack
+    - [x] **Black screen fix (2026-05)**: NVENC sent H.264 but SDP negotiated VP8 — `prefer_h264_for_pc()` + browser `setCodecPreferences(H264)` before offer/answer
+    - [ ] Longer term: PipeWire/DMA-BUF screencast for zero-copy GPU capture (requires desktop stack changes)
+    - [ ] **NVENC runtime**: ensure session containers get `NVIDIA_DRIVER_CAPABILITIES` including `video` (required for `libnvidia-encode` / `h264_nvenc`); Dockerfile sets this at end of image build
+  - [x] **Desktop audio over WebRTC (2026-06-11)** — PulseAudio null sink `axonos_out` (`pulse-default.pa`, supervisord `pulseaudio` program) + ffmpeg pulse capture of `axonos_out.monitor` → Opus track on the same peer connection (`capture.py` `open_audio_capture`); browser `recvonly` audio transceiver + gesture unmute (`axonos-webrtc.js`); live-verified on clu1 (inbound `audio/opus` 48 kHz stereo over direct srflx pair)
+  - [x] **Microphone input (browser → desktop) (2026-06-13)** — operator gate `WEBRTC_MIC_ENABLED` (off by default) + per-user opt-in mic toggle (`getUserMedia` → `replaceTrack` on a `sendrecv` audio transceiver, no renegotiation); virtual mic via `axonos_mic` null-sink + `module-remap-source` → `axonos_microphone` default source (`pulse-default.pa`); agent `pc.on("track")` → `pump_inbound_audio_to_pulse` decodes/resamples Opus → `pacat` into the sink (`capture.py`), task torn down with the session; `webrtc_mic_enabled` exposed via `/api/config` (`config.py`); unit tests in `test_webrtc_capture.py` + `test_webrtc_config.py`
+    - [x] Runtime validation on 8x v100 cluster (2026-06-13): clean speech recorded in Audacity from `axonos_microphone`. Required three fixes beyond the first cut: (1) async `pacat` subprocess + `await drain()` — a blocking pipe write was starving the aiortc event loop and dropping the session every 2-3s; (2) pin the Pulse null sinks to 48 kHz (`pulse-default.pa`) — daemon default 44.1 kHz forced continuous live resampling/drift; (3) extract PCM via `frame.to_ndarray().tobytes()` not `bytes(plane)` — the latter included FFmpeg buffer-alignment padding (3968 vs 3840 bytes/frame), garbling every frame. Also: forward `WEBRTC_MIC_ENABLED`/`WEBRTC_AUDIO_*` in `AXGT_HOST_SESSION_ENV_PASSTHROUGH` (docker-compose) or the session agent never sees the flag; mic toggle repositioned left of the session HUD.
+  - [ ] **noVNC fallback audio — measure before building (likely never)**: count `webrtc_fallback_novnc` log lines vs total sessions first; if fallback is rare (<~5%), skip. The better fix for fallback users is WebRTC reachability — add `turns:`/TCP (ideally on 443) to coturn so UDP-blocked clients keep WebRTC (audio + video) instead of falling back. Building actual fallback audio means a parallel stack (per-session ffmpeg pulse → Opus/WebM → authed `websockify_gate.py` WebSocket → MediaSource/AudioContext playback, Kasm-style) — only justified if fallback usage proves common *after* TURN-TCP lands. Mic on fallback: out of scope permanently (mic rides the WebRTC `sendrecv` transceiver only)
+
+- [ ] **Docker build — WhiteSur GTK theme step fails (2026-05)**
+  - `docker compose build` fails at Dockerfile ~491: `WhiteSur-gtk-theme` `install.sh --silent-mode -c Dark` exits before themes land
+  - Likely fixes to try: pin theme tag (e.g. `2024.09.02`), use `-c dark`, add `imagemagick`/`gawk` to that RUN, relax `grep -i white` verification
+  - Workaround for now: build from cached image / skip layer until investigated
+  - Related: duplicate `ENV NVIDIA_DRIVER_CAPABILITIES` lines in Dockerfile (early without `video`, late with `video` — late wins); consolidate when touching Dockerfile again
+
+- [x] **Sidebar session controls — Detach vs End session (2026-05)**
+  - **Product model**
+    - [x] **End session** (power button): confirm → `POST /api/session/release` + viewer teardown
+    - [x] **Detach** (sidebar chain icon): confirm → `skipRelease` + home panel, session stays **`active`**
+    - [x] **Tab/window close**: `pagehide` + `fetch` keepalive release (F5/Ctrl+R skips via `sessionStorage`)
+  - **Proposal 1 — Power button → End session**
+    - [x] Removed `#noVNC_power` panel; single-click `UI.endSession()` → `UI.disconnect()`
+    - [x] Renamed control copy to **End session**
+    - [x] **Restart desktop services** moved to Settings → Advanced (`POST /api/session/restart`)
+  - **Proposal 2 — Disconnect → Detach**
+    - [x] `UI.detach()` + `window.axonosSessionDetached`; billing poll via `_axgtSessionBillingActive()`
+    - [x] Ticker + wallet hints updated in `vnc.html`
+  - **Tab close → release**
+    - [x] `addAxonosSessionLifecycleHandlers()` in `ui.js`
+    - [x] Reload detection (F5 / Ctrl+R / beforeunload)
+  - **Audit**
+    - [x] `_axgtUsageOverlayExitToHome()` uses `skipRelease` (paused session preserved)
+    - [x] Credit exhaustion + deposit/resume `skipRelease` paths unchanged
+  - [ ] Manual test checklist: Detach → home → heartbeats → relaunch; End session → container gone; tab close → release; credit pause/resume unaffected
+- [x] **Launch button dead after Detach / End / server expiry (2026-05)**
+  - [x] `cancelAxonOSWebRTCNegotiation()` aborts in-flight signaling (no stale timeout banners on home)
+  - [x] Reset client state on disconnect, detach home, and heartbeat `No active session`
+  - [x] `_axgtSessionDesktopActive()` requires live RFB/WebRTC media (not teardown fn alone)
+  - [x] Connection loader on Launch; errors cleared via `axonosPrepareDesktopLaunch`
+- [x] **Environment variables reference** — `docs/ENVIRONMENT_VARIABLES.md` (full codebase audit vs `env.example`)
+
+- [ ] **Structural cleanups from the template-launch debugging hunt (2026-06-10)** — either would have prevented most of it
+  - [ ] Consolidate the two `/api/session/claim` client implementations (`vnc.html` inline `claimSession()` and `ui.js` `_axonosFetchSessionClaim()`) into one shared function — the inline one spawned sessions without `requested_template` while the `ui.js` one was repeatedly fixed in vain
+  - [ ] Gate should send `Cache-Control: no-cache` for `vnc.html` — browsers heuristically cache documents served with only `Last-Modified`, so deployed fixes (including inline JS) silently never reached the browser
+
+- [x] **USDC + x402 payment rail + dynamic USD pricing + agent SSH (2026-06-16)** — Base Sepolia
+  - [x] USDC tx-hash rail (`x402_verifier.py` `verify_usdc_deposit`) + `POST /api/auth/verify-usdc-deposit`; self-verified on Base, same revenue EOA, credits the shared ledger
+  - [x] **Verify the ERC-20 Transfer event log, not `tx.from`/`tx.to`** — smart-account/delegated payments (EIP-7702, MetaMask Smart Accounts, "Redeem Delegation") submit via a relayer, so `tx.from` is the relayer. The original sender check wrongly rejected valid payments
+  - [x] x402 protocol: `GET /api/x402/access` (402 + terms), `POST /api/x402/settle` (EIP-3009 self-settlement, needs `X402_SETTLEMENT_PRIVATE_KEY` = funded Base hot wallet); EIP-712 domain probe warns on `USDC_EIP712_NAME` mismatch (Base Sepolia name() is "USDC", not "USD Coin")
+  - [x] `deposit_router.py` — `POST /api/auth/verify-deposit-auto` tries both rails server-side (verified > already-credited > pending > fail precedence); avoids polling the wrong rail while a tx is briefly unconfirmed
+  - [x] Dynamic USD pricing `price_oracle.py` — CoinGecko free API (ETH `ethereum`, AXGT `axondao-governance-token-2`), Postgres-cached, lazy-polled ~8x/day, last-known + 24h staleness fallback; opt-in `AXGT_DYNAMIC_PRICING`. ETH/AXGT charged at live USD value (`AXGT_USD_PER_HOUR`, $1/hr default); USDC fixed
+  - [x] **Model B for AXGT**: paying IN AXGT = live USD value + flat `AXGT_USD_BONUS_PERCENT` (25%) bonus, NO holder tier. Holder tiers still apply to ETH/USDC. `/api/discount/quote?currency=eth|usdc|axgt`
+  - [x] Frontend: segmented USDC | ETH | AXGT toggle (default USDC, remembers choice), per-rail discount/rate panels with live quotes, auto-detecting "Credit deposit", model-accurate marquee/subheading copy
+  - [x] **Agent-native one-shot**: `POST /api/x402/session` — pay (X-PAYMENT) AND claim an SSH session in one call; the EIP-3009 payment signature is the auth (no browser wallet sign-in). Returns `ssh_host`/`ssh_port`/`remaining_minutes`/`auth_token`. 402 + terms when unfunded
+  - [x] `GET /.well-known/x402` discovery descriptor (capabilities, pricing, endpoints, session lifecycle); SSH only — desktop intentionally not advertised to agents
+  - [x] All routes/config added to BOTH `gate_server.py` (:8889) and `websockify_gate.py` (:6080, browser path). Chains by design: AXGT+ETH on Ethereum L1, USDC+x402 on Base L2 (same revenue EOA; UI notes the network switch)
+  - [x] Tests: x402 EIP-712 fixtures + router precedence + ABI-decode (146 passing); baked via `docker compose --build` (image == git == running)
+  - [x] **Heartbeat for headless / SSH-only sessions (2026-06-16)** — browser-less sessions (human SSH-toggle + agent SSH) had NO heartbeat driver (only novnc ui.js sends them), so they were reaped after AXGT_HEARTBEAT_TIMEOUT_SECONDS (~120s) and barely billed. Confirmed live (session 142 ended at ~100s with ~57min paid left). Fix: `/api/session/heartbeat` now also accepts the per-session `files_key` (X-AXGT-Session-Key header) via `validate_session_files_key`, and `session_heartbeat_daemon.py` (supervisord `heartbeat-daemon`) sends heartbeats from inside headless containers (idles when AXGT_DESKTOP_ENABLED=true). Gate-side proven: files_key heartbeat authenticates, resets last_heartbeat, bills correctly; wrong/cross-wallet keys → 401. **Needs session-image rebuild** to ship the daemon + supervisord.conf into containers.
+  - [x] **SSH billing hard cap + self-release (Vast-aligned, 2026-06-16)** — the daemon keeps headless sessions alive with no "user left" signal, and `expires_at` SLIDES on every heartbeat (idle timeout, not a cap), so an abandoned SSH session would drain the whole prepaid balance. Fix (no activity-guessing, so a live headless job is never falsely killed): new non-sliding `hard_expires_at` column set at SSH claim to `now + min(affordable minutes, AXGT_SSH_MAX_SESSION_MINUTES ceiling)`; reaper ends the session when `hard_expires_at <= now`. Proven: hard cap does NOT slide on heartbeat (expires_at does). Also: `/api/session/release` now accepts the per-session files_key (X-AXGT-Session-Key) so an agent/headless user can self-release (the explicit "stop") — proven, wrong key → 401. Desktop unaffected (no hard_expires_at; browser presence bounds it).
+  - [ ] **GUI desktop for agents (computer-use bridge)** — DEFERRED. SSH is agent-usable (text I/O); the XFCE/WebRTC desktop is a pixel stream and needs a screenshot surface + synthetic input API (click/type/key via xdotool, hooking into the WebRTC agent's input layer) + optional a11y tree. Only worth it for GUI-only scientific tools with no headless mode. Lead with SSH; add the desktop bridge if/when GUI-only agent workloads demand it
+
+- [x] **False "Could not start session / Failed to start user container / timed out" while the container actually spawns (2026-06-18)** — root cause: in `AXGT_SESSION_LAUNCHER_MODE=http`, the gate→launcher `/launch` call (`session_launcher.py` `_http_json`) defaulted to a **10s** timeout, but the launcher's `/launch` runs `docker run -d --gpus … --shm-size 32g` synchronously. Cold image cache / nvidia-runtime init / daemon contention push `docker run` past 10s → `urllib` raises `"timed out"` → `_launch_via_http` returns failure → `try_claim_session` marks the row `ended`/`failed` and returns "Failed to start user container" + `container_error: "timed out"`, *while the launcher's `docker run` finishes a moment later and `axgt-session-N` is live*. Hard-refresh/reconnect and `docker compose up -d --build` "fixed" it only by re-claiming with a warm image cache (<10s).
+  - [x] **Verify-before-fail** (keystone): on an inconclusive `/launch` (timeout/transient), poll the launcher's `/list-containers` (`_verify_container_started_via_http`, default 5×2s); if the session container is up, treat as success and return its id instead of false-failing
+  - [x] Raise default launch HTTP timeout 10s → **90s** (`AXGT_SESSION_LAUNCHER_TIMEOUT_SECONDS`); `_http_json` now takes an optional per-call timeout (verify uses 5s) and supports body-less GET
+  - [x] Launcher Flask `app.run(..., threaded=True)` so a slow `/launch` and the volume-prune/enumerate `docker run`s don't head-of-line block concurrent launches
+  - [x] Reap orphan container by deterministic name on **confirmed** spawn failure (`try_claim_session`) so a partial spawn can't leak a GPU/ports and later starve claims ("No GPUs available")
+  - [x] Per-wallet `pg_advisory_xact_lock` at claim time — kills the double-spawn race where the UI's two racing claims (vnc.html + ui.js) both pass "no active session" and spawn duplicates (one leaks, one branch can false-fail)
+  - [x] Tests: timeout-but-running → success, timeout-and-absent → real failure, clean-success-skips-verify (149 passing). **Needs gate rebuild** (`docker compose up -d --build axonos-gate axonos-launcher`) to ship; new env knobs documented in `env.example`

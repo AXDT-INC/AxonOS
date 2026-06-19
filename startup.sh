@@ -62,6 +62,108 @@ sleep 3
 echo "Checking IPFS status..."
 su - aXonian -c 'ipfs id' || echo "IPFS still starting up..."
 
+# Per-session desktops (axgt-session-*): base axonos is gate-only — no Xorg on GPU 0.
+# Session runtimes set AXGT_SESSION_ID; respect explicit overrides if already set.
+if [ -n "${AXGT_SESSION_ID:-}" ]; then
+    if [ -z "${AXGT_DESKTOP_ENABLED:-}" ]; then
+        export AXGT_DESKTOP_ENABLED=true
+    fi
+    if [ -z "${WEBRTC_AGENT_ENABLED:-}" ]; then
+        export WEBRTC_AGENT_ENABLED=true
+    fi
+elif [ -z "${AXGT_SESSION_ID:-}" ]; then
+    _uc=$(echo "${AXGT_USER_CONTAINER_ENABLED:-}" | tr '[:upper:]' '[:lower:]')
+    if [ "${_uc}" = "true" ] || [ "${_uc}" = "1" ] || [ "${_uc}" = "yes" ]; then
+        if [ -z "${AXGT_DESKTOP_ENABLED:-}" ]; then
+            export AXGT_DESKTOP_ENABLED=false
+        fi
+        if [ -z "${WEBRTC_AGENT_ENABLED:-}" ]; then
+            export WEBRTC_AGENT_ENABLED=false
+        fi
+    else
+        if [ -z "${AXGT_DESKTOP_ENABLED:-}" ]; then
+            export AXGT_DESKTOP_ENABLED=true
+        fi
+        if [ -z "${WEBRTC_AGENT_ENABLED:-}" ]; then
+            export WEBRTC_AGENT_ENABLED=true
+        fi
+    fi
+fi
+
+# Persist the selected environment template so the desktop session can align its
+# hero app with the user's choice. XFCE is started by supervisord with a fixed
+# environment= subset and does NOT inherit Docker ENV (see supervisord.conf), so
+# the autostart launcher reads this file instead of AXONOS_SELECTED_TEMPLATE.
+mkdir -p /home/aXonian/.config/axonos
+if [ -n "${AXONOS_SELECTED_TEMPLATE:-}" ]; then
+    printf '%s\n' "${AXONOS_SELECTED_TEMPLATE}" > /home/aXonian/.config/axonos/selected_template
+else
+    rm -f /home/aXonian/.config/axonos/selected_template 2>/dev/null || true
+fi
+chown -R aXonian:aXonian /home/aXonian/.config/axonos
+
+# Direct-SSH session setup (AXGT_SSH_ENABLED=true): the landing-page SSH toggle
+# launches a headless session (no X desktop / WebRTC) reachable only via sshd.
+# Configure pubkey auth + host keys here, before supervisord starts sshd. The
+# public key arriving in AXGT_SSH_PUBKEY was already validated gate-side
+# (single line, known key type) so it is safe to write verbatim.
+_ssh_on=$(echo "${AXGT_SSH_ENABLED:-}" | tr '[:upper:]' '[:lower:]')
+if [ "${_ssh_on}" = "true" ] || [ "${_ssh_on}" = "1" ] || [ "${_ssh_on}" = "yes" ]; then
+    echo "AXGT_SSH_ENABLED: configuring direct SSH access for aXonian..."
+
+    # Researcher's authorized key (single key; latest claim wins).
+    install -d -m 700 -o aXonian -g aXonian /home/aXonian/.ssh
+    if [ -n "${AXGT_SSH_PUBKEY:-}" ]; then
+        printf '%s\n' "${AXGT_SSH_PUBKEY}" > /home/aXonian/.ssh/authorized_keys
+        chmod 600 /home/aXonian/.ssh/authorized_keys
+        chown aXonian:aXonian /home/aXonian/.ssh/authorized_keys
+    else
+        echo "WARNING: AXGT_SSH_ENABLED set but AXGT_SSH_PUBKEY empty; no key installed."
+    fi
+
+    # Persist host keys under the (per-wallet) home volume so a returning wallet
+    # keeps a stable fingerprint — no known_hosts churn between sessions. Kept
+    # root:600 so the unprivileged login user cannot read the host private keys.
+    HOSTKEY_DIR=/home/aXonian/.config/axonos/ssh
+    install -d -m 700 -o root -g root "$HOSTKEY_DIR"
+    [ -f "$HOSTKEY_DIR/ssh_host_ed25519_key" ] || ssh-keygen -q -t ed25519 -N '' -f "$HOSTKEY_DIR/ssh_host_ed25519_key"
+    [ -f "$HOSTKEY_DIR/ssh_host_rsa_key" ] || ssh-keygen -q -t rsa -b 4096 -N '' -f "$HOSTKEY_DIR/ssh_host_rsa_key"
+    cp -f "$HOSTKEY_DIR"/ssh_host_*_key /etc/ssh/ 2>/dev/null || true
+    cp -f "$HOSTKEY_DIR"/ssh_host_*_key.pub /etc/ssh/ 2>/dev/null || true
+    chmod 600 /etc/ssh/ssh_host_*_key 2>/dev/null || true
+    chmod 644 /etc/ssh/ssh_host_*_key.pub 2>/dev/null || true
+
+    # Hardened drop-in. The Ubuntu sshd_config reads sshd_config.d/*.conf via an
+    # Include at the TOP of the file, so these directives win over later defaults
+    # (sshd honours the first occurrence of each keyword). Ensure that Include is
+    # present in case the base image lacks it.
+    mkdir -p /etc/ssh/sshd_config.d
+    if ! grep -q 'sshd_config.d/\*.conf' /etc/ssh/sshd_config 2>/dev/null; then
+        printf 'Include /etc/ssh/sshd_config.d/*.conf\n%s' "$(cat /etc/ssh/sshd_config 2>/dev/null)" > /etc/ssh/sshd_config.axtmp \
+            && mv /etc/ssh/sshd_config.axtmp /etc/ssh/sshd_config
+    fi
+    cat > /etc/ssh/sshd_config.d/axonos.conf <<'SSHD'
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+PubkeyAuthentication yes
+AllowUsers aXonian
+X11Forwarding no
+PrintMotd no
+MaxAuthTries 3
+MaxStartups 10:30:60
+ClientAliveInterval 120
+ClientAliveCountMax 5
+SSHD
+
+    # aXonian needs a login shell and a non-locked (but unusable) password so PAM
+    # account checks permit pubkey login; '*' blocks password auth without the
+    # locked-account ('!') state that pam_unix can reject.
+    usermod -s /bin/bash aXonian 2>/dev/null || true
+    usermod -p '*' aXonian 2>/dev/null || true
+fi
+
 # Start supervisord
 /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf &
 
@@ -231,21 +333,24 @@ EOF
 # Make the script executable
 chmod +x /tmp/setup_x.sh
 
-# Switch to aXonian user and run the script
-su - aXonian -c '/tmp/setup_x.sh'
-
-# Apply theme/wallpaper after XFCE is fully up (avoids race; runs same logic as post_deploy_theme.sh)
-( sleep 35; /usr/local/bin/post_deploy_theme.sh ) &
-
-echo "== Xorg log =="; ls -l /var/log/Xorg.0.log || true
-test -f /var/log/Xorg.0.log && tail -n 200 /var/log/Xorg.0.log || true
-echo "== try start-xorg manually =="; /usr/local/bin/start-xorg-nvidia.sh
-
-ls -l /tmp/.X11-unix/X0 /tmp/.X0-lock || true
-ps -ef | grep -E "Xorg" || true
-
-su - aXonian -c "DISPLAY=:0 XAUTHORITY=/home/aXonian/.Xauthority xset q" || true
-su - aXonian -c "DISPLAY=:0 XAUTHORITY=/home/aXonian/.Xauthority vglrun glxinfo | head -20" || true
+# Gate-only base (AXGT_DESKTOP_ENABLED=false): skip XFCE/VNC setup — desktops run in axgt-session-*.
+if [ "${AXGT_DESKTOP_ENABLED:-true}" != "false" ]; then
+    su - aXonian -c '/tmp/setup_x.sh'
+    ( sleep 35; /usr/local/bin/post_deploy_theme.sh ) &
+    # Auto-launch the selected template's hero app once the desktop is up. Driven
+    # from here (not XDG autostart) because ~/.config/autostart is on the persistent
+    # home volume and would shadow any baked-in entry. The launcher reads the
+    # template id from the file written above, self-gates if none is set, and
+    # waits for X + xfce4-panel itself (no fixed delay needed here).
+    ( su - aXonian -c 'DISPLAY=:0 XAUTHORITY=/home/aXonian/.Xauthority /usr/local/bin/apply_session_template.sh' ) &
+    echo "== Xorg log =="; ls -l /var/log/Xorg.0.log 2>/dev/null || true
+    test -f /var/log/Xorg.0.log && tail -n 80 /var/log/Xorg.0.log || true
+    ls -l /tmp/.X11-unix/X0 /tmp/.X0-lock 2>/dev/null || true
+    ps -ef | grep -E "[X]org" || true
+    su - aXonian -c "DISPLAY=:0 XAUTHORITY=/home/aXonian/.Xauthority xset q" || true
+else
+    echo "AXGT_DESKTOP_ENABLED=false: gate-only container (no local X desktop)."
+fi
 
 # Keep the container running
 tail -f /dev/null

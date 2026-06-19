@@ -22,85 +22,575 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-/* AxonOS Theme for noVNC */
-/* Transforms the default noVNC UI into a scientific computing environment theme */
+/* AxonOS Theme for noVNC — AxonDAO Official Branding */
+/* Deep navy background, BrutalType typeface, AxonDAO cyan/violet/warm accent system */
 
-/* 
- * AxonOS Color Palette:
- * Primary: #2E8B57 (Sea Green) - Scientific/research green
- * Secondary: #4682B4 (Steel Blue) - Data visualization blue  
- * Accent: #FFD700 (Gold) - Highlight color for important elements
- * Dark: #1C1C1C (Dark Gray) - Background
- * Light: #F5F5F5 (Off White) - Text on dark backgrounds
+/*
+ * AxonDAO Design Tokens (applied via CSS custom properties in :root):
+ * --cyan:    #4ec3d4  — primary accent (teal/cyan)
+ * --violet:  #9d6fd9  — secondary accent (purple)
+ * --warm:    #e8a85a  — tertiary accent (orange/warm)
+ * --green:   #7be0c8  — success / mint
+ * --coral:   #f2607a  — error / danger
+ * --bg-0:    #07101a  — primary background (darkest)
+ * --ink:     #e8edf4  — primary text
+ * Font: BrutalType (woff2, 200–900) · Orbitron kept for monospace data labels
  */
 
+/* BrutalType — AxonDAO official typeface (ExtraLight/Light/Bold/ExtraBold/Black) */
+@font-face {
+  font-family: "Brutal";
+  font-style: normal;
+  font-weight: 200;
+  font-display: swap;
+  src: url("../fonts/BrutalType-ExtraLight.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Brutal";
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url("../fonts/BrutalType-Light.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Brutal";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../fonts/BrutalType-Bold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Brutal";
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url("../fonts/BrutalType-ExtraBold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Brutal";
+  font-style: normal;
+  font-weight: 900;
+  font-display: swap;
+  src: url("../fonts/BrutalType-Black.woff2") format("woff2");
+}
+
+/* Orbitron — subset woff2 (Google Fonts v35 latin); kept as monospace data/label font */
+@font-face {
+  font-family: "Orbitron";
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url("../fonts/orbitron-v35-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
+    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 :root {
-  --axonos-primary: #2E8B57;
-  --axonos-secondary: #4682B4;
-  --axonos-accent: #FFD700;
-  --axonos-dark: #1C1C1C;
-  --axonos-light: #F5F5F5;
-  --axonos-hover: #32CD32;
-  --axonos-shadow: rgba(46, 139, 87, 0.3);
+  /* ── AxonDAO official design tokens ── */
+  --bg-0: #07101a;
+  --bg-1: #0a1424;
+  --bg-2: #0c1a2e;
+  --panel-2: #0f2238;
+  --ink: #e8edf4;
+  --ink-dim: rgba(200, 220, 235, .92);
+  --ink-mute: rgba(170, 210, 225, .62);
+  --ink-faint: rgba(170, 210, 225, .40);
+  --cyan: #4ec3d4;
+  --violet: #9d6fd9;
+  --warm: #e8a85a;
+  --pink: #e87fa4;
+  --coral: #f2607a;
+  --green: #7be0c8;
+  --mint: #4ec3d4;
+  --mint-soft: #6fd4e2;
+  --orange: #e8a85a;
+  --violet-fg: #b3a3eb;
+  --violet-bg: rgba(120, 100, 200, 0.16);
+  --rule: rgba(140, 200, 220, .07);
+  --rule-strong: rgba(140, 200, 220, .16);
+  --hair: rgba(140, 200, 220, .07);
+  --hair-2: rgba(140, 200, 220, .16);
+  --hair-mint: rgba(78, 195, 212, 0.35);
+  --font-body: 'Brutal', -apple-system, system-ui, sans-serif;
+  --font-display: 'Brutal', -apple-system, system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* ── AxonOS operational aliases (map to AxonDAO tokens) ── */
+  --axonos-primary: #4ec3d4;
+  --axonos-secondary: #9d6fd9;
+  --axonos-accent: #4ec3d4;
+  --axonos-warm: #e8a85a;
+  --axonos-dark: #07101a;
+  --axonos-dark-2: #0a1424;
+  --axonos-dark-3: #0c1a2e;
+  --axonos-light: #e8edf4;
+  --axonos-hover: #7be0c8;
+  --axonos-shadow: rgba(78, 195, 212, 0.25);
+
+  /* ── Layout ── */
+  --axonos-prereq-ticker-strip-h: 44px;
+  --axonos-prereq-ticker-sidebar-clear: calc(env(safe-area-inset-left, 0px) + 50px);
+  --axonos-prereq-ticker-strip-pad-start: calc(env(safe-area-inset-left, 0px) + max(11px, 0.62rem));
+  --axonos-prereq-ticker-body-pad-top: calc(env(safe-area-inset-top, 0px) + var(--axonos-prereq-ticker-strip-h));
+}
+
+/* Prerequisites ticker — fixed left label + scrolling details */
+.axonos-prerequisites-ticker {
+  display: none;
+  box-sizing: border-box;
+  position: fixed;
+  top: env(safe-area-inset-top, 0px);
+  left: 0;
+  right: 0;
+  height: var(--axonos-prereq-ticker-strip-h);
+  z-index: 60;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  overflow: hidden;
+  justify-content: flex-start;
+  padding-left: var(--axonos-prereq-ticker-strip-pad-start);
+  padding-right: 10px;
+  background: rgba(7, 16, 26, 0.97);
+  border-bottom: 1px solid var(--hair-mint);
+  box-shadow:
+    0 4px 22px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+html:not(.noVNC_connected) .axonos-prerequisites-ticker {
+  display: flex;
+}
+
+html.noVNC_connected .axonos-prerequisites-ticker {
+  display: none !important;
+}
+
+.axonos-prerequisites-ticker__kick {
+  box-sizing: border-box;
+  margin: 0;
+  flex: 0 0 clamp(10.5rem, 19.25vw, 13.5rem);
+  width: clamp(10.5rem, 19.25vw, 13.5rem);
+  padding: 0 0.42rem 0 0;
+  border-right: 1px solid rgba(78, 195, 212, 0.28);
+  font-family: 'Brutal', "Orbitron", system-ui, sans-serif;
+  font-size: clamp(0.738rem, 0.63vw + 0.486rem, 0.954rem);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+}
+
+.axonos-prerequisites-ticker__kick-inner {
+  display: inline-block;
+  width: 100%;
+  white-space: nowrap;
+  font: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.96);
+  text-align: justify;
+  text-align-last: justify;
+  text-justify: inter-word;
+}
+
+/* Stretch last line so inter-word justification applies to a single line */
+.axonos-prerequisites-ticker__kick-inner::after {
+  content: "";
+  display: inline-block;
+  width: 100%;
+  height: 0;
+}
+
+.axonos-prerequisites-ticker__marquee-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+.axonos-prerequisites-ticker__mask {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  -webkit-mask-image: linear-gradient(90deg,
+      transparent,
+      #000 0.65rem,
+      #000 calc(100% - 1.15rem),
+      transparent);
+  mask-image: linear-gradient(90deg,
+      transparent,
+      #000 0.65rem,
+      #000 calc(100% - 1.15rem),
+      transparent);
+}
+
+.axonos-prerequisites-ticker__track {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  width: max-content;
+  animation: axonos-prerequisite-ticker-scroll 75s linear infinite;
+  will-change: transform;
+}
+
+.axonos-prerequisites-ticker__seg {
+  display: inline-flex;
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+  padding-right: 2.75rem;
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--ink-dim);
+  letter-spacing: 0.015em;
+  white-space: nowrap;
+}
+
+.axonos-prerequisites-ticker__bullet {
+  color: rgba(136, 169, 212, 0.55);
+  font-weight: 300;
+}
+
+.axonos-prerequisites-ticker__chunk strong {
+  margin: 0 0.12em;
+}
+
+.axonos-prerequisites-ticker__chunk a {
+  color: var(--axonos-accent);
+  text-decoration: none;
+}
+
+.axonos-prerequisites-ticker__chunk a:hover {
+  text-decoration: underline;
+}
+
+@keyframes axonos-prerequisite-ticker-scroll {
+  0% {
+    transform: translateX(0);
+  }
+
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .axonos-prerequisites-ticker__track {
+    animation: none;
+    justify-content: center;
+    flex-wrap: wrap;
+    width: 100%;
+    max-width: 100%;
+    white-space: normal;
+    row-gap: 4px;
+  }
+
+  .axonos-prerequisites-ticker__marquee-wrap .axonos-prerequisites-ticker__mask {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+
+  .axonos-prerequisites-ticker__seg {
+    flex-wrap: wrap;
+    white-space: normal;
+    justify-content: center;
+    text-align: center;
+    padding-right: 0;
+    max-width: 100%;
+  }
+
+  .axonos-prerequisites-ticker__seg[data-ticker-mirror="1"] {
+    display: none;
+  }
+
+  .axonos-particles,
+  .axonos-dna-animation::before,
+  .axonos-dna-animation::after,
+  .axonos-main-title,
+  .axonos-highlight,
+  #noVNC_connect_button,
+  html:not(.noVNC_connected) body::before,
+  html:not(.noVNC_connected) body::after {
+    animation: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .axonos-prerequisites-ticker__kick {
+    flex-basis: clamp(9.25rem, 54vw, 11.85rem);
+    width: clamp(9.25rem, 54vw, 11.85rem);
+    font-size: clamp(0.576rem, 2.16vw + 0.432rem, 0.738rem);
+    letter-spacing: 0.04em;
+    padding-right: 0.38rem;
+  }
+}
+
+/* Landing scrollbars — themed; WebKit thumbs hidden until the scrollbar groove is hovered */
+html:not(.noVNC_connected) {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  overflow-y: auto !important;
+  transition: scrollbar-color 0.3s ease;
+}
+
+html:not(.noVNC_connected).axonos-scrolling {
+  scrollbar-color: rgba(78, 195, 212, 0.45) transparent;
+}
+
+html:not(.noVNC_connected)::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+html:not(.noVNC_connected)::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+html:not(.noVNC_connected)::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+html:not(.noVNC_connected)::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 5px;
+}
+
+html:not(.noVNC_connected).axonos-scrolling::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg,
+      rgba(78, 195, 212, 0.5) 0%,
+      rgba(157, 111, 217, 0.35) 100%);
+}
+
+html:not(.noVNC_connected)::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg,
+      rgba(78, 195, 212, 0.82) 0%,
+      rgba(157, 111, 217, 0.52) 100%) !important;
+}
+
+html:not(.noVNC_connected)::-webkit-scrollbar-thumb:active {
+  background: linear-gradient(180deg,
+      rgba(78, 195, 212, 0.95) 0%,
+      rgba(157, 111, 217, 0.72) 100%) !important;
+}
+
+html:not(.noVNC_connected).axonos-scrolling::-webkit-scrollbar-track {
+  background: rgba(7, 16, 26, 0.15);
+}
+
+html:not(.noVNC_connected) #noVNC_connect_dlg {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.3s ease;
+}
+
+html:not(.noVNC_connected).axonos-scrolling #noVNC_connect_dlg {
+  scrollbar-color: rgba(78, 195, 212, 0.45) transparent;
+}
+
+html:not(.noVNC_connected) #noVNC_connect_dlg::-webkit-scrollbar {
+  width: 8px;
+}
+
+html:not(.noVNC_connected) #noVNC_connect_dlg::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+html:not(.noVNC_connected) #noVNC_connect_dlg::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 4px;
+}
+
+html:not(.noVNC_connected).axonos-scrolling #noVNC_connect_dlg::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg,
+      rgba(78, 195, 212, 0.5) 0%,
+      rgba(157, 111, 217, 0.35) 100%);
+}
+
+html:not(.noVNC_connected) #noVNC_connect_dlg::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg,
+      rgba(78, 195, 212, 0.82) 0%,
+      rgba(157, 111, 217, 0.52) 100%) !important;
+}
+
+html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg) {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.3s ease;
+}
+
+html:not(.noVNC_connected).axonos-scrolling .noVNC_center:has(#noVNC_connect_dlg) {
+  scrollbar-color: rgba(78, 195, 212, 0.4) transparent;
+}
+
+html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg)::-webkit-scrollbar {
+  width: 8px;
+}
+
+html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg)::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg)::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 4px;
+  transition: background-color 0.3s ease;
+}
+
+html:not(.noVNC_connected).axonos-scrolling .noVNC_center:has(#noVNC_connect_dlg)::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg,
+      rgba(78, 195, 212, 0.5) 0%,
+      rgba(157, 111, 217, 0.35) 100%);
+}
+
+html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg)::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg,
+      rgba(78, 195, 212, 0.8) 0%,
+      rgba(157, 111, 217, 0.65) 100%) !important;
+}
+
+@media (hover: none) {
+  html:not(.noVNC_connected) {
+    scrollbar-color: rgba(78, 195, 212, 0.3) rgba(7, 16, 26, 0.2);
+  }
+
+  html:not(.noVNC_connected)::-webkit-scrollbar-thumb {
+    background-color: rgba(78, 195, 212, 0.3);
+  }
+
+  html:not(.noVNC_connected) #noVNC_connect_dlg {
+    scrollbar-color: rgba(78, 195, 212, 0.32) rgba(7, 16, 26, 0.22);
+  }
+
+  html:not(.noVNC_connected) #noVNC_connect_dlg::-webkit-scrollbar-thumb {
+    background-color: rgba(78, 195, 212, 0.34);
+  }
+
+  html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg) {
+    scrollbar-color: rgba(78, 195, 212, 0.32) rgba(7, 16, 26, 0.22);
+  }
+
+  html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg)::-webkit-scrollbar-thumb {
+    background-color: rgba(78, 195, 212, 0.34);
+  }
+}
+
+@media (max-width: 480px) {
+  .axonos-prerequisites-ticker__seg {
+    font-size: 0.71rem;
+  }
 }
 
 /* Space Background - Only when not connected */
 html:not(.noVNC_connected) body {
-  background: 
-    radial-gradient(ellipse at bottom, #1B2735 0%, #090A0F 100%),
-    radial-gradient(circle at 20% 20%, rgba(120, 119, 198, 0.3) 0%, transparent 50%),
-    radial-gradient(circle at 80% 80%, rgba(255, 119, 198, 0.2) 0%, transparent 50%),
-    radial-gradient(circle at 40% 40%, rgba(120, 219, 255, 0.15) 0%, transparent 50%) !important;
+  /* border-box keeps min-height + padding-top within one viewport (avoids phantom footer scrollbar). */
+  box-sizing: border-box;
+  margin: 0;
+  padding-top: var(--axonos-prereq-ticker-body-pad-top);
+  font-family: var(--font-body);
+  color: var(--ink);
+  /* AxonDAO ambient background — deep navy + subtle cyan/violet radial glows */
+  background:
+    radial-gradient(ellipse 900px 700px at 85% 18%, rgba(78, 195, 212, .10), transparent 60%),
+    radial-gradient(ellipse 1000px 800px at 12% 82%, rgba(157, 111, 217, .10), transparent 65%),
+    linear-gradient(180deg, #060e1a 0%, #050a14 55%, #03070d 100%) !important;
   overflow-x: hidden;
+  overflow-y: visible !important;
   position: relative;
   min-height: 100vh;
 }
 
-/* Normal background when connected */
+html:not(.noVNC_connected) body::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-image:
+    linear-gradient(rgba(78, 195, 212, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(78, 195, 212, 0.018) 1px, transparent 1px);
+  background-size: 45px 45px;
+  background-position: center;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Normal background when connected — lock viewport to avoid edge scrollbars
+   (slight overflow from video/canvas vs 100% width/height made body scrollable). */
+html.noVNC_connected {
+  height: 100%;
+  overflow: hidden;
+}
+
 html.noVNC_connected body {
-  background: var(--axonos-dark) !important;
-  overflow: auto;
+  background: var(--bg-0) !important;
+  margin: 0;
+  padding-top: 0 !important;
+  height: 100%;
+  overflow: hidden;
 }
 
 /* Container background - transparent during login, normal when connected */
 html:not(.noVNC_connected) #noVNC_container {
+  display: none !important;
   background: transparent !important;
   border-bottom-right-radius: 20px !important;
 }
 
 html.noVNC_connected #noVNC_container {
-  background-color: var(--axonos-dark) !important;
+  display: block !important;
+  background-color: var(--bg-0) !important;
   border-bottom-right-radius: 20px !important;
+  overflow: hidden !important;
+  box-sizing: border-box;
 }
 
 /* Control bar styling */
 #noVNC_control_bar {
-  background: linear-gradient(180deg, #0f4f63 0%, #2d2f6f 100%) !important;
-  border: 2px solid rgba(104, 120, 196, 0.68);
-  box-shadow: 0 6px 22px rgba(42, 58, 122, 0.42) !important;
+  background: linear-gradient(180deg, rgba(10, 20, 36, .98) 0%, rgba(7, 16, 26, .98) 100%) !important;
+  border: 1px solid var(--hair-mint);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(78, 195, 212, .08) !important;
 }
 
 #noVNC_control_bar.noVNC_open {
-  box-shadow: 0 10px 28px rgba(54, 74, 148, 0.5) !important;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(78, 195, 212, .12) !important;
 }
 
 /* Control bar handle */
 #noVNC_control_bar_handle {
-  background: linear-gradient(180deg, #166a82 0%, #3f428f 100%) !important;
-  border: 1px solid rgba(128, 141, 212, 0.72);
-  box-shadow: 0 4px 14px rgba(52, 73, 152, 0.45) !important;
+  background: linear-gradient(180deg, rgba(12, 26, 46, .98) 0%, rgba(9, 18, 32, .98) 100%) !important;
+  border: 1px solid var(--rule-strong);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4) !important;
 }
 
 #noVNC_control_bar_handle:hover {
-  background: linear-gradient(180deg, #1f7d98 0%, #5359ad 100%) !important;
+  background: linear-gradient(180deg, rgba(20, 38, 64, .98) 0%, rgba(14, 26, 48, .98) 100%) !important;
+  border-color: var(--hair-mint) !important;
 }
 
 /* Panel headings */
 .noVNC_panel .noVNC_heading {
-  background: linear-gradient(135deg, var(--axonos-primary), var(--axonos-secondary)) !important;
-  color: var(--axonos-light) !important;
-  border: 1px solid var(--axonos-accent);
-  text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+  background: linear-gradient(135deg, rgba(78, 195, 212, .14), rgba(157, 111, 217, .10)) !important;
+  color: var(--ink) !important;
+  border: 1px solid var(--hair-mint) !important;
+  border-radius: 8px;
+  font-family: var(--font-body);
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
 /* Connect button */
@@ -124,16 +614,16 @@ html.noVNC_connected #noVNC_container {
 
 /* Panels */
 .noVNC_panel {
-  background-color: rgba(28, 28, 28, 0.95) !important;
-  border: 2px solid var(--axonos-primary);
-  border-radius: 10px;
-  box-shadow: 0 8px 25px var(--axonos-shadow);
+  background-color: rgba(10, 20, 36, 0.96) !important;
+  border: 1px solid var(--rule-strong) !important;
+  border-radius: 14px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(78, 195, 212, .06);
 }
 
 /* Logo customization */
 .noVNC_logo {
   color: var(--axonos-accent) !important;
-  text-shadow: 2px 2px 4px rgba(0,0,0,0.7);
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.7);
   font-weight: bold;
 }
 
@@ -142,7 +632,9 @@ html.noVNC_connected #noVNC_container {
 }
 
 /* Input fields */
-input[type="text"], input[type="password"], select {
+input[type="text"],
+input[type="password"],
+select {
   background-color: var(--axonos-dark) !important;
   border: 2px solid var(--axonos-secondary) !important;
   color: var(--axonos-light) !important;
@@ -150,7 +642,9 @@ input[type="text"], input[type="password"], select {
   padding: 8px;
 }
 
-input[type="text"]:focus, input[type="password"]:focus, select:focus {
+input[type="text"]:focus,
+input[type="password"]:focus,
+select:focus {
   border-color: var(--axonos-accent) !important;
   box-shadow: 0 0 10px var(--axonos-shadow);
 }
@@ -158,45 +652,60 @@ input[type="text"]:focus, input[type="password"]:focus, select:focus {
 /* Custom AxonOS branding elements */
 /* Hide branding when connected */
 html.noVNC_connected .axonos-branding,
-html.noVNC_connected .axonos-version {
+html.noVNC_connected .axonos-version,
+html.noVNC_connected .axonos-footer-banner {
   display: none !important;
 }
 
 .axonos-branding {
-  position: absolute;
-  bottom: 10px;
-  right: 15px;
-  color: var(--axonos-accent);
-  font-size: 12px;
-  opacity: 0.8;
-  font-family: "Orbitron", monospace;
+  position: fixed;
+  bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  right: calc(14px + env(safe-area-inset-right, 0px));
+  color: var(--cyan);
+  font-size: 11px;
+  opacity: 0.85;
+  font-family: var(--font-mono);
+  letter-spacing: 0.08em;
+  z-index: 55;
+  pointer-events: none;
 }
 
-.axonos-version {
-  position: absolute;
-  top: 10px;
-  right: 15px;
-  color: var(--axonos-light);
+html:not(.noVNC_connected) .axonos-version {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + var(--axonos-prereq-ticker-strip-h) + 6px);
+  right: calc(14px + env(safe-area-inset-right, 0px));
+  left: auto;
+  bottom: auto;
+  z-index: 55;
+  pointer-events: none;
+  color: var(--ink-mute);
   font-size: 10px;
-  opacity: 0.6;
-  font-family: "Orbitron", monospace;
+  opacity: 0.72;
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
 }
 
-/* Animation for scientific feel */
+/* Pulse animation for connect button — opacity-only, GPU-composited (box-shadow forces CPU repaint) */
 @keyframes pulse {
-  0% { box-shadow: 0 0 0 0 var(--axonos-shadow); }
-  70% { box-shadow: 0 0 0 10px rgba(46, 139, 87, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(46, 139, 87, 0); }
+
+  0%,
+  100% {
+    opacity: 0.88;
+  }
+
+  50% {
+    opacity: 1;
+  }
 }
 
 #noVNC_connect_button {
-  animation: pulse 2s infinite;
+  animation: pulse 2s ease-in-out infinite;
 }
 
 /* Force AxonOS logo styling */
 .noVNC_logo {
   color: var(--axonos-accent) !important;
-  text-shadow: 2px 2px 4px rgba(0,0,0,0.7) !important;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.7) !important;
   font-weight: bold !important;
   font-size: 24px !important;
   text-align: center !important;
@@ -211,7 +720,7 @@ html.noVNC_connected .axonos-version {
 #noVNC_connect_dlg .noVNC_logo {
   font-size: 48px !important;
   margin-bottom: 20px !important;
-  
+
   letter-spacing: 2px !important;
 }
 
@@ -238,7 +747,7 @@ input[type="password"] {
 input[type="password"]:focus {
   border-color: var(--axonos-accent) !important;
   box-shadow: 0 0 10px var(--axonos-shadow);
-  background-color: #2C2C2C !important;
+  background-color: rgba(12, 24, 44, 0.96) !important;
 }
 
 /* Ensure password dots are visible */
@@ -253,406 +762,661 @@ input[type="password"]::placeholder {
 /* AXGT Wallet Gate Styles */
 /* Wallet dialog styling (in credentials dialog) */
 .axonos-wallet-dialog-header {
-    text-align: center;
-    margin-bottom: 20px;
+  text-align: center;
+  margin-bottom: 20px;
 }
 
 .axonos-wallet-dialog-header h2 {
-    color: var(--axonos-accent);
-    font-size: 1.5em;
-    margin-bottom: 10px;
-    font-family: 'Orbitron', sans-serif;
+  color: var(--cyan);
+  font-size: 1.5em;
+  margin-bottom: 10px;
+  font-family: var(--font-body);
+  font-weight: 800;
 }
 
 .axonos-wallet-dialog-header .axonos-wallet-description {
-    color: var(--axonos-light);
-    font-size: 0.9em;
-    margin-bottom: 10px;
-    word-spacing: 0.25em;
+  color: var(--axonos-light);
+  font-size: 0.9em;
+  margin-bottom: 10px;
+  word-spacing: 0.25em;
 }
+
 .axonos-wallet-dialog-header .axonos-wallet-description strong {
-    margin: 0 0.15em;
+  margin: 0 0.15em;
 }
 
 .axonos-wallet-dialog-header .axonos-wallet-contract {
-    color: var(--axonos-light);
-    font-size: 0.8em;
-    margin-top: 10px;
+  color: var(--axonos-light);
+  font-size: 0.8em;
+  margin-top: 10px;
 }
 
 .axonos-wallet-dialog-header .axonos-wallet-contract code {
-    background: rgba(46, 139, 87, 0.2);
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-family: 'Courier New', monospace;
-    color: var(--axonos-accent);
+  background: rgba(78, 195, 212, .12);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  color: var(--cyan);
 }
 
 #noVNC_wallet_block {
-    margin: 20px 0;
+  margin: 20px 0;
 }
 
 #noVNC_wallet_block label {
-    display: block;
-    color: var(--axonos-light);
-    margin-bottom: 8px;
-    font-weight: 500;
+  display: block;
+  color: var(--axonos-light);
+  margin-bottom: 8px;
+  font-weight: 500;
 }
 
 #noVNC_wallet_input {
-    width: 100%;
-    padding: 12px;
-    background: var(--axonos-dark);
-    color: var(--axonos-light);
-    border: 2px solid var(--axonos-secondary);
-    border-radius: 5px;
-    font-family: 'Courier New', monospace;
-    font-size: 0.9em;
-    box-sizing: border-box;
+  width: 100%;
+  padding: 12px;
+  background: var(--axonos-dark);
+  color: var(--axonos-light);
+  border: 2px solid var(--axonos-secondary);
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  box-sizing: border-box;
 }
 
 #noVNC_wallet_input:focus {
-    outline: none;
-    border-color: var(--axonos-primary);
-    box-shadow: 0 0 10px var(--axonos-shadow);
+  outline: none;
+  border-color: var(--axonos-primary);
+  box-shadow: 0 0 10px var(--axonos-shadow);
 }
 
 .axonos-wallet-gate {
-    background: rgba(28, 28, 28, 0.95);
-    border: 2px solid var(--axonos-primary);
-    border-radius: 10px;
-    padding: 20px;
-    margin: 20px 0;
-    box-shadow: 0 8px 25px var(--axonos-shadow);
+  background: rgba(10, 20, 36, 0.96);
+  border: 1px solid var(--rule-strong);
+  border-radius: 14px;
+  padding: 20px;
+  margin: 20px 0;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .4), 0 0 0 1px rgba(78, 195, 212, .06);
 }
 
 .axonos-wallet-header h2 {
-    color: var(--axonos-accent);
-    margin: 0 0 10px 0;
-    font-size: 24px;
+  color: var(--axonos-accent);
+  margin: 0 0 10px 0;
+  font-size: 24px;
 }
 
 .axonos-wallet-description {
-    color: var(--axonos-light);
-    margin: 10px 0;
+  color: var(--axonos-light);
+  margin: 10px 0;
 }
 
 .axonos-wallet-contract {
-    color: var(--axonos-light);
-    font-size: 12px;
-    margin: 10px 0;
+  color: var(--axonos-light);
+  font-size: 12px;
+  margin: 10px 0;
 }
 
 .axonos-wallet-contract code {
-    background: rgba(0, 0, 0, 0.3);
-    padding: 2px 6px;
-    border-radius: 3px;
-    font-family: monospace;
-    color: var(--axonos-accent);
+  background: rgba(0, 0, 0, 0.3);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: monospace;
+  color: var(--axonos-accent);
 }
 
 .axonos-wallet-input-section {
-    margin: 20px 0;
+  margin: 20px 0;
 }
 
 .axonos-wallet-input-section label {
-    display: block;
-    color: var(--axonos-light);
-    margin-bottom: 8px;
-    font-weight: bold;
+  display: block;
+  color: var(--axonos-light);
+  margin-bottom: 8px;
+  font-weight: bold;
 }
 
 .axonos-wallet-input {
-    width: 100%;
-    max-width: 500px;
-    background-color: var(--axonos-dark);
-    border: 2px solid var(--axonos-secondary);
-    color: var(--axonos-light);
-    border-radius: 5px;
-    padding: 10px;
-    font-family: monospace;
-    font-size: 14px;
-    margin-bottom: 10px;
+  width: 100%;
+  max-width: 500px;
+  background-color: var(--axonos-dark);
+  border: 2px solid var(--axonos-secondary);
+  color: var(--axonos-light);
+  border-radius: 5px;
+  padding: 10px;
+  font-family: monospace;
+  font-size: 14px;
+  margin-bottom: 10px;
 }
 
 .axonos-wallet-input:focus {
-    border-color: var(--axonos-accent);
-    box-shadow: 0 0 10px var(--axonos-shadow);
-    outline: none;
+  border-color: var(--axonos-accent);
+  box-shadow: 0 0 10px var(--axonos-shadow);
+  outline: none;
 }
 
 .axonos-verify-btn {
-    background: linear-gradient(135deg, var(--axonos-primary), var(--axonos-secondary));
-    border: 2px solid var(--axonos-accent);
-    color: var(--axonos-light);
-    padding: 10px 20px;
-    border-radius: 5px;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: bold;
-    transition: all 0.3s;
+  background: rgba(78, 195, 212, .10);
+  border: 1px solid var(--hair-mint);
+  color: var(--cyan);
+  -webkit-text-fill-color: var(--cyan);
+  padding: 10px 20px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: var(--font-body);
+  transition: all 0.2s;
 }
 
 .axonos-verify-btn:hover:not(:disabled) {
-    background: linear-gradient(135deg, var(--axonos-hover), var(--axonos-primary));
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px var(--axonos-shadow);
+  background: rgba(78, 195, 212, .18);
+  border-color: var(--cyan);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(78, 195, 212, .2);
 }
 
 .axonos-verify-btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .axonos-wallet-status {
-    margin-top: 15px;
-    padding: 10px;
-    border-radius: 5px;
-    font-weight: bold;
+  margin-top: 15px;
+  padding: 10px;
+  border-radius: 5px;
+  font-weight: bold;
 }
 
 .axonos-wallet-status.verified {
-    background: rgba(46, 139, 87, 0.2);
-    border: 2px solid #2e8b57;
-    color: #90ee90;
+  background: rgba(123, 224, 200, .15);
+  border: 1px solid rgba(123, 224, 200, .4);
+  color: var(--green);
+  border-radius: 8px;
 }
 
 .axonos-wallet-status.not-verified,
 .axonos-wallet-status.error {
-    background: rgba(220, 20, 60, 0.2);
-    border: 2px solid #dc143c;
-    color: #ff6b6b;
+  background: rgba(242, 96, 122, .12);
+  border: 1px solid rgba(242, 96, 122, .4);
+  color: var(--coral);
+  border-radius: 8px;
 }
 
 .axonos-wallet-status.verifying {
-    background: rgba(255, 215, 0, 0.2);
-    border: 2px solid #ffd700;
-    color: #ffd700;
+  background: rgba(232, 168, 90, .12);
+  border: 1px solid rgba(232, 168, 90, .4);
+  color: var(--warm);
+  border-radius: 8px;
 }
 
 /* AXGT usage overlay (during VNC session: warning or locked) */
+/* Session countdown — inline in the footer, left of "Built with ♥ by AxonDAO" */
+.axonos-session-timer {
+  display: inline;
+}
+
+.axonos-session-timer--hidden {
+  display: none;
+}
+
+.axonos-session-timer__label {
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.axonos-session-timer__value {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: rgba(120, 230, 180, 0.95);
+}
+
+/* Amber under the warning threshold */
+.axonos-session-timer--warning .axonos-session-timer__value {
+  color: rgba(232, 168, 90, 0.98);
+}
+
+/* Red + pulse in the final minute */
+.axonos-session-timer--critical .axonos-session-timer__value {
+  color: rgba(242, 96, 122, 0.98);
+  animation: axonos-session-timer-pulse 1s ease-in-out infinite;
+}
+
+@keyframes axonos-session-timer-pulse {
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .axonos-session-timer--critical .axonos-session-timer__value {
+    animation: none;
+  }
+}
+
+/* Session billing HUD — fixed to the bottom-right corner of the remote desktop view.
+   pointer-events: none so it never swallows clicks meant for the desktop below. */
+.axonos-session-hud {
+  position: fixed;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  right: calc(12px + env(safe-area-inset-right, 0px));
+  z-index: 56;
+  padding: 8px 12px;
+  background: rgba(10, 20, 36, 0.82);
+  border: 1px solid var(--hair-mint);
+  border-radius: 8px;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.7;
+  letter-spacing: 0.04em;
+  color: var(--ink-mute);
+  text-align: left;
+  pointer-events: none;
+  user-select: none;
+}
+
+.axonos-session-hud--hidden {
+  display: none !important;
+}
+
+.axonos-session-hud__label {
+  opacity: 0.72;
+}
+
+.axonos-session-hud__value {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: rgba(120, 230, 180, 0.95);
+}
+
+/* Mirror the footer countdown's warning/critical colors on the remaining-time line */
+.axonos-session-hud--warning #axonos_session_hud_remaining {
+  color: rgba(232, 168, 90, 0.98);
+}
+
+.axonos-session-hud--critical #axonos_session_hud_remaining {
+  color: rgba(242, 96, 122, 0.98);
+}
+
+/* Compact "Manage" affordance on the wallet row. The HUD itself is
+   pointer-events:none, so re-enable pointer events on anything interactive. */
+.axonos-session-hud__manage {
+  margin-left: 8px;
+  padding: 1px 7px;
+  vertical-align: baseline;
+  font-family: inherit;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--ink-mute);
+  background: rgba(78, 195, 212, 0.10);
+  border: 1px solid var(--hair-mint);
+  border-radius: 5px;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.axonos-session-hud__manage:hover {
+  background: rgba(78, 195, 212, 0.22);
+  color: rgba(120, 230, 180, 0.95);
+}
+
+/* Wallet-management popover, anchored just above the HUD. */
+.axonos-hud-wallet-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  width: 250px;
+  padding: 10px 12px;
+  background: rgba(8, 16, 30, 0.97);
+  border: 1px solid var(--hair-mint);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+  text-align: left;
+}
+
+.axonos-hud-wallet-menu--hidden {
+  display: none !important;
+}
+
+.axonos-hud-wallet-menu__addr {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.axonos-hud-wallet-menu__addr-label {
+  opacity: 0.72;
+}
+
+.axonos-hud-wallet-menu__addr-value {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: rgba(120, 230, 180, 0.95);
+}
+
+.axonos-hud-wallet-menu__hint {
+  margin: 0 0 10px;
+  font-size: 10px;
+  line-height: 1.5;
+  opacity: 0.7;
+}
+
+.axonos-hud-wallet-menu__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.axonos-hud-wallet-menu__actions .axonos-session-hud__btn {
+  width: 100%;
+}
+
+.axonos-session-hud__btn {
+  flex: 1 1 auto;
+  padding: 3px 8px;
+  font-family: inherit;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--ink-mute);
+  background: rgba(78, 195, 212, 0.12);
+  border: 1px solid var(--hair-mint);
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.axonos-session-hud__btn:hover {
+  background: rgba(78, 195, 212, 0.22);
+  color: rgba(120, 230, 180, 0.95);
+}
+
+.axonos-session-hud__btn--danger:hover {
+  background: rgba(242, 96, 122, 0.18);
+  color: rgba(242, 96, 122, 0.98);
+}
+
 .axonos-usage-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 10000;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.75);
-    pointer-events: auto;
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.75);
+  pointer-events: auto;
 }
+
 .axonos-usage-overlay--hidden {
-    display: none !important;
+  display: none !important;
 }
+
 .axonos-usage-overlay__panel {
-    max-width: 420px;
-    padding: 24px;
-    border-radius: 8px;
-    text-align: center;
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+  max-width: 420px;
+  padding: 24px;
+  border-radius: 8px;
+  text-align: center;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
 }
+
 .axonos-usage-overlay--warning .axonos-usage-overlay__panel {
-    background: rgba(30, 30, 30, 0.98);
-    border: 2px solid var(--axonos-accent);
-    color: var(--axonos-light);
+  background: rgba(10, 20, 36, 0.98);
+  border: 1px solid var(--hair-mint);
+  color: var(--ink);
+  box-shadow: 0 0 30px rgba(78, 195, 212, .15), 0 20px 60px rgba(0, 0, 0, .6);
 }
+
 .axonos-usage-overlay--locked .axonos-usage-overlay__panel {
-    background: rgba(30, 30, 30, 0.98);
-    border: 2px solid #dc143c;
-    color: var(--axonos-light);
+  background: rgba(10, 20, 36, 0.98);
+  border: 1px solid rgba(242, 96, 122, .45);
+  color: var(--ink);
+  box-shadow: 0 0 30px rgba(242, 96, 122, .12), 0 20px 60px rgba(0, 0, 0, .6);
 }
+
 .axonos-usage-overlay__message {
-    margin: 0 0 20px 0;
-    font-size: 1rem;
-    line-height: 1.5;
+  margin: 0 0 20px 0;
+  font-size: 1rem;
+  line-height: 1.5;
 }
+
+.axonos-usage-overlay__actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
 .axonos-usage-overlay__btn {
-    margin-top: 8px;
+  margin: 0;
+  min-width: 9rem;
+}
+
+.axonos-usage-overlay__btn--exit {
+  color: var(--coral) !important;
+  -webkit-text-fill-color: var(--coral) !important;
+  background: rgba(242, 96, 122, .08) !important;
+  border: 1px solid rgba(242, 96, 122, .45) !important;
+  box-shadow: none;
+  border-radius: 999px !important;
+}
+
+.axonos-usage-overlay__btn--exit:hover:not(:disabled) {
+  border-color: var(--coral) !important;
+  background: rgba(242, 96, 122, .15) !important;
 }
 
 /* Prerequisites on connect panel (what you need to sign in) */
 .axonos-prerequisites {
-    max-width: 480px;
-    margin: 0 auto 20px auto;
-    padding: 14px 18px;
-    background: rgba(28, 28, 28, 0.6);
-    border: 1px solid rgba(70, 130, 180, 0.4);
-    border-radius: 8px;
-    text-align: left;
-    font-size: 0.9rem;
-    line-height: 1.5;
-    color: var(--axonos-light);
+  max-width: 480px;
+  margin: 0 auto 20px auto;
+  padding: 14px 18px;
+  background: rgba(78, 195, 212, .04);
+  border: 1px solid var(--rule-strong);
+  border-radius: 12px;
+  text-align: left;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--ink-dim);
 }
+
 .axonos-prerequisites__title {
-    margin: 0 0 8px 0;
-    font-weight: 600;
-    font-size: 0.95rem;
+  margin: 0 0 8px 0;
+  font-weight: 600;
+  font-size: 0.95rem;
 }
+
 .axonos-prerequisites__list {
-    margin: 0;
-    padding-left: 1.2em;
+  margin: 0;
+  padding-left: 1.2em;
 }
+
 .axonos-prerequisites__list li {
-    margin: 6px 0;
-    word-spacing: 0.25em;
+  margin: 6px 0;
+  word-spacing: 0.25em;
 }
+
 .axonos-prerequisites__list strong,
 .axonos-prerequisites__list a {
-    margin: 0 0.15em;
+  margin: 0 0.15em;
 }
+
 .axonos-prerequisites__list a {
-    color: var(--axonos-accent);
-    text-decoration: none;
+  color: var(--axonos-accent);
+  text-decoration: none;
 }
+
 .axonos-prerequisites__list a:hover {
-    text-decoration: underline;
+  text-decoration: underline;
 }
 
 /* Prerequisites in wallet verification dialog */
 .axonos-wallet-prereqs {
-    margin: 14px 0;
-    padding: 12px 14px;
-    background: rgba(0, 0, 0, 0.25);
-    border-radius: 6px;
-    color: #F5F5F5;
-    border-left: 3px solid var(--axonos-accent);
+  margin: 14px 0;
+  padding: 12px 14px;
+  background: rgba(78, 195, 212, .05);
+  border-radius: 8px;
+  color: var(--ink-dim);
+  border-left: 3px solid var(--cyan);
 }
+
 .axonos-wallet-prereqs__title {
-    margin: 0 0 8px 0;
-    font-weight: 600;
-    font-size: 0.9rem;
-    color: #F5F5F5;
+  margin: 0 0 8px 0;
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--ink);
 }
+
 .axonos-wallet-prereqs__list {
-    margin: 0;
-    padding-left: 1.2em;
-    font-size: 0.9rem;
-    line-height: 1.5;
-    color: #F5F5F5;
+  margin: 0;
+  padding-left: 1.2em;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--ink-dim);
 }
+
 .axonos-wallet-prereqs__list li {
-    margin: 4px 0;
-    word-spacing: 0.25em;
-    color: #F5F5F5;
+  margin: 4px 0;
+  word-spacing: 0.25em;
+  color: var(--ink-dim);
 }
+
 .axonos-wallet-prereqs__list strong {
-    margin: 0 0.15em;
+  margin: 0 0.15em;
 }
+
 .axonos-wallet-prereqs__list a {
-    color: var(--axonos-accent);
-    text-decoration: none;
+  color: var(--axonos-accent);
+  text-decoration: none;
 }
+
 .axonos-wallet-prereqs__list a:hover {
-    text-decoration: underline;
+  text-decoration: underline;
 }
 
 /* AXGT queue overlay (desktop in use, wait or join queue) */
 .axonos-queue-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 10001;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.8);
-    pointer-events: auto;
+  position: fixed;
+  inset: 0;
+  z-index: 10001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.8);
+  pointer-events: auto;
 }
+
 .axonos-queue-overlay--hidden {
-    display: none !important;
+  display: none !important;
 }
+
 .axonos-queue-overlay__panel {
-    max-width: 420px;
-    padding: 24px;
-    border-radius: 8px;
-    text-align: center;
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
-    background: rgba(30, 30, 30, 0.98);
-    border: 2px solid var(--axonos-accent);
-    color: var(--axonos-light);
+  max-width: 420px;
+  padding: 24px;
+  border-radius: 20px;
+  text-align: center;
+  background: rgba(10, 20, 36, 0.98);
+  border: 1px solid var(--hair-mint);
+  color: var(--ink);
+  box-shadow: 0 0 30px rgba(78, 195, 212, .12), 0 20px 60px rgba(0, 0, 0, .6), inset 0 1px 0 rgba(255, 255, 255, .04);
 }
+
 .axonos-queue-overlay__title {
-    margin: 0 0 12px 0;
-    font-size: 1.25rem;
-    font-weight: 600;
+  margin: 0 0 12px 0;
+  font-size: 1.25rem;
+  font-weight: 600;
 }
+
 .axonos-queue-overlay__message {
-    margin: 0 0 16px 0;
-    font-size: 1rem;
-    line-height: 1.5;
-    opacity: 0.95;
-    white-space: pre-line;
+  margin: 0 0 16px 0;
+  font-size: 1rem;
+  line-height: 1.5;
+  opacity: 0.95;
+  white-space: pre-line;
 }
+
 .axonos-queue-overlay__row {
-    margin: 8px 0;
-    font-size: 0.95rem;
+  margin: 8px 0;
+  font-size: 0.95rem;
 }
+
 .axonos-queue-overlay__row strong {
-    color: var(--axonos-accent);
+  color: var(--cyan);
 }
+
 .axonos-queue-overlay__actions {
-    margin-top: 20px;
-    display: flex;
-    gap: 12px;
-    justify-content: center;
-    flex-wrap: wrap;
+  margin-top: 20px;
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
 }
 
 /* Queue actions: match modal gold frame, readable on dark (Join + Leave use the same chrome) */
 .axonos-queue-overlay__btn {
-    margin: 0;
-    min-width: 11rem;
-    padding: 12px 22px !important;
-    font-size: 0.95rem !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.04em;
-    text-transform: none;
-    border-radius: 8px !important;
-    cursor: pointer;
-    color: var(--axonos-light) !important;
-    background: linear-gradient(145deg, rgba(46, 139, 87, 0.35) 0%, rgba(28, 28, 28, 0.95) 45%, #141414 100%) !important;
-    border: 2px solid var(--axonos-accent) !important;
-    box-shadow:
-        0 0 0 1px rgba(255, 215, 0, 0.15),
-        0 4px 14px rgba(0, 0, 0, 0.45),
-        inset 0 1px 0 rgba(255, 255, 255, 0.06);
-    transition:
-        transform 0.15s ease,
-        box-shadow 0.15s ease,
-        border-color 0.15s ease,
-        filter 0.15s ease;
+  margin: 0;
+  min-width: 11rem;
+  padding: 12px 22px !important;
+  font-size: 0.95rem !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  border-radius: 8px !important;
+  cursor: pointer;
+  color: var(--ink) !important;
+  -webkit-text-fill-color: var(--ink) !important;
+  background: rgba(78, 195, 212, .08) !important;
+  border: 1px solid var(--hair-mint) !important;
+  border-radius: 999px !important;
+  font-family: var(--font-body) !important;
+  box-shadow:
+    0 0 0 1px rgba(78, 195, 212, .08),
+    0 4px 14px rgba(0, 0, 0, .4),
+    inset 0 1px 0 rgba(255, 255, 255, .04);
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease,
+    border-color 0.15s ease,
+    filter 0.15s ease;
 }
 
 .axonos-queue-overlay__btn:hover:not(:disabled) {
-    border-color: #ffe066 !important;
-    box-shadow:
-        0 0 0 1px rgba(255, 215, 0, 0.35),
-        0 6px 20px rgba(255, 215, 0, 0.12),
-        0 8px 24px rgba(0, 0, 0, 0.5),
-        inset 0 1px 0 rgba(255, 255, 255, 0.1);
-    transform: translateY(-1px);
-    filter: brightness(1.05);
+  border-color: var(--cyan) !important;
+  box-shadow:
+    0 0 0 1px rgba(78, 195, 212, .25),
+    0 6px 20px rgba(78, 195, 212, .12),
+    0 8px 24px rgba(0, 0, 0, .45),
+    inset 0 1px 0 rgba(255, 255, 255, .06);
+  transform: translateY(-1px);
+  filter: brightness(1.05);
 }
 
 .axonos-queue-overlay__btn:active:not(:disabled) {
-    transform: translateY(0);
-    box-shadow:
-        0 2px 8px rgba(0, 0, 0, 0.4),
-        inset 0 2px 6px rgba(0, 0, 0, 0.35);
+  transform: translateY(0);
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.4),
+    inset 0 2px 6px rgba(0, 0, 0, 0.35);
 }
 
 .axonos-queue-overlay__btn:focus-visible {
-    outline: 2px solid var(--axonos-accent);
-    outline-offset: 3px;
+  outline: 2px solid var(--cyan);
+  outline-offset: 3px;
 }
 
 .axonos-queue-overlay__btn:disabled {
-    cursor: not-allowed !important;
-    opacity: 0.72;
-    filter: grayscale(0.15);
-    transform: none;
-    box-shadow:
-        0 2px 8px rgba(0, 0, 0, 0.35),
-        inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  cursor: not-allowed !important;
+  opacity: 0.72;
+  filter: grayscale(0.15);
+  transform: none;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 /* Fix all credential form inputs */
@@ -668,7 +1432,7 @@ input[type="password"]::placeholder {
 #noVNC_credentials_dlg input:focus {
   border-color: var(--axonos-accent) !important;
   box-shadow: 0 0 10px var(--axonos-shadow) !important;
-  background-color: #2C2C2C !important;
+  background-color: rgba(12, 24, 44, 0.96) !important;
   outline: none !important;
 }
 
@@ -698,12 +1462,11 @@ input[type="password"]::placeholder {
   flex-wrap: wrap;
 }
 
-/* Lock label color: generic `button` rules elsewhere in the page (e.g. noVNC/base CSS) can
-   override our gradient buttons; !important keeps copy readable on the purple background. */
+/* Lock label color — override noVNC base.css button text color */
 .axonos-connect-wallet-btn,
 .axonos-connect-wallet-btn:visited {
-  color: #f8fafc !important;
-  -webkit-text-fill-color: #f8fafc !important;
+  color: var(--cyan) !important;
+  -webkit-text-fill-color: var(--cyan) !important;
 }
 
 .axonos-connect-wallet-btn {
@@ -712,36 +1475,40 @@ input[type="password"]::placeholder {
   justify-content: center;
   gap: 8px;
   padding: 12px 24px !important;
-  font-size: 1rem !important;
+  font-size: 0.9rem !important;
   font-weight: 600 !important;
   white-space: nowrap;
-  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 50%, #4338ca 100%) !important;
-  border: 2px solid rgba(255, 255, 255, 0.2) !important;
-  border-radius: 10px !important;
+  font-family: var(--font-body) !important;
+  letter-spacing: 0.04em;
+  background: rgba(78, 195, 212, .10) !important;
+  border: 1px solid var(--hair-mint) !important;
+  border-radius: 999px !important;
   cursor: pointer !important;
-  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4) !important;
-  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease !important;
+  color: var(--cyan) !important;
+  -webkit-text-fill-color: var(--cyan) !important;
+  box-shadow: none !important;
+  transition: background .2s, border-color .2s, transform .2s, box-shadow .2s !important;
 }
 
 .axonos-connect-wallet-btn::before {
   content: "";
   display: inline-block;
-  width: 20px;
-  height: 20px;
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23F5F5F5' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='5' width='20' height='14' rx='2'/%3E%3Cpath d='M2 10h20'/%3E%3Cpath d='M16 14h.01'/%3E%3C/svg%3E") center/contain no-repeat;
+  width: 18px;
+  height: 18px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234ec3d4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='5' width='20' height='14' rx='2'/%3E%3Cpath d='M2 10h20'/%3E%3Cpath d='M16 14h.01'/%3E%3C/svg%3E") center/contain no-repeat;
   flex-shrink: 0;
 }
 
 .axonos-connect-wallet-btn:hover {
   transform: translateY(-2px) !important;
-  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5) !important;
-  border-color: rgba(255, 255, 255, 0.35) !important;
-  background: linear-gradient(135deg, #818cf8 0%, #6366f1 50%, #4f46e5 100%) !important;
+  background: rgba(78, 195, 212, .18) !important;
+  border-color: var(--cyan) !important;
+  box-shadow: 0 6px 22px rgba(78, 195, 212, .22) !important;
 }
 
 .axonos-connect-wallet-btn:active {
   transform: translateY(0) !important;
-  box-shadow: 0 2px 10px rgba(99, 102, 241, 0.4) !important;
+  box-shadow: none !important;
 }
 
 .axonos-connected-wallet-hint {
@@ -762,14 +1529,14 @@ input[type="password"]::placeholder {
   padding: 8px !important;
   font-family: monospace !important;
   font-size: 14px !important;
-  box-shadow: inset 0 1px 3px rgba(0,0,0,0.3) !important;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3) !important;
 }
 
 #noVNC_password_input:focus {
-  background-color: #2C2C2C !important;
-  background: #2C2C2C !important;
+  background-color: rgba(12, 24, 44, 0.96) !important;
+  background: rgba(12, 24, 44, 0.96) !important;
   border-color: var(--axonos-accent) !important;
-  box-shadow: 0 0 10px var(--axonos-shadow), inset 0 1px 3px rgba(0,0,0,0.3) !important;
+  box-shadow: 0 0 10px var(--axonos-shadow), inset 0 1px 3px rgba(0, 0, 0, 0.3) !important;
   outline: none !important;
 }
 
@@ -791,15 +1558,23 @@ input[type="password"]#noVNC_password_input {
 
 /* Ensure all credentials dialog inputs are dark */
 #noVNC_credentials_dlg {
-  background-color: rgba(28, 28, 28, 0.95) !important;
-  border: 2px solid var(--axonos-primary) !important;
-  border-radius: 10px !important;
+  background-color: rgba(10, 20, 36, 0.97) !important;
+  border: 1px solid var(--rule-strong) !important;
+  border-radius: 20px !important;
   position: fixed;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
   margin: 0;
   max-width: min(600px, 90vw);
+}
+
+#noVNC_credentials_dlg:has(#axonos_wallet_state_insufficient:not(.axonos-wallet-state--hidden)) {
+  max-width: min(860px, 92vw);
+}
+
+#noVNC_credentials_dlg:has(#axonos_wallet_state_insufficient:not(.axonos-wallet-state--hidden)) #axonos_wallet_state_insufficient {
+  padding-bottom: 0;
 }
 
 #noVNC_credentials_dlg label {
@@ -811,21 +1586,48 @@ input[type="password"]#noVNC_password_input {
 .axonos-wallet-card {
   padding: 24px !important;
 }
+
+.axonos-wallet-close-btn {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+  z-index: 10;
+}
+
+.axonos-wallet-close-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+}
+
 .axonos-wallet-card__title {
   text-align: center;
   margin-bottom: 12px;
 }
+
 .axonos-wallet-card__title h2 {
-  color: var(--axonos-accent);
+  color: var(--ink);
   font-size: 1.35rem;
   margin: 0 0 6px 0;
-  font-family: 'Orbitron', sans-serif;
+  font-family: var(--font-body);
+  font-weight: 800;
+  letter-spacing: -0.01em;
 }
+
 .axonos-wallet-card__hints {
   color: rgba(255, 255, 255, 0.75);
   font-size: 0.85rem;
   margin: 0;
 }
+
 .axonos-wallet-card__hints-session {
   display: block;
   margin-top: 10px;
@@ -835,6 +1637,7 @@ input[type="password"]#noVNC_password_input {
   line-height: 1.4;
   color: rgba(255, 255, 255, 0.65);
 }
+
 .axonos-wallet-card__contract {
   display: flex;
   align-items: center;
@@ -846,64 +1649,91 @@ input[type="password"]#noVNC_password_input {
   border-radius: 8px;
   font-size: 0.85rem;
 }
+
 .axonos-wallet-card__contract-label {
-  color: var(--axonos-accent);
+  color: var(--cyan);
   font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
+
 .axonos-wallet-card__contract code {
   font-family: ui-monospace, monospace;
   color: var(--axonos-light);
   background: none;
   padding: 0;
 }
+
 .axonos-contract-copy-btn {
   padding: 4px 10px !important;
-  font-size: 0.8rem !important;
-  background: var(--axonos-secondary) !important;
-  color: var(--axonos-light) !important;
-  border: 1px solid var(--axonos-accent) !important;
-  border-radius: 6px !important;
+  font-size: 0.78rem !important;
+  background: rgba(78, 195, 212, .10) !important;
+  color: var(--cyan) !important;
+  border: 1px solid var(--hair-mint) !important;
+  border-radius: 999px !important;
   cursor: pointer !important;
+  font-family: var(--font-mono) !important;
+  letter-spacing: 0.06em !important;
+  transition: background .15s, border-color .15s !important;
 }
+
 .axonos-contract-copy-btn:hover {
-  background: var(--axonos-primary) !important;
+  background: rgba(78, 195, 212, .18) !important;
+  border-color: var(--cyan) !important;
 }
+
 .axonos-contract-etherscan {
-  color: var(--axonos-accent);
+  color: var(--cyan);
   text-decoration: none;
   margin-left: auto;
+  font-size: 0.82rem;
+  opacity: 0.85;
+  transition: opacity .15s;
 }
+
 .axonos-contract-etherscan:hover {
   text-decoration: underline;
+  opacity: 1;
 }
+
 .axonos-wallet-card__status {
   min-height: 140px;
 }
+
 .axonos-wallet-state {
   text-align: center;
   padding: 12px 0;
 }
+
 .axonos-wallet-state--hidden {
   display: none !important;
 }
+
 .axonos-wallet-state__help,
 .axonos-wallet-state__msg {
   color: var(--axonos-light);
   margin: 0 0 14px 0;
   font-size: 0.95rem;
 }
+
 .axonos-wallet-state__spinner {
   width: 32px;
   height: 32px;
   margin: 0 auto 12px;
-  border: 3px solid rgba(255, 255, 255, 0.2);
-  border-top-color: var(--axonos-accent);
+  border: 3px solid rgba(78, 195, 212, .18);
+  border-top-color: var(--cyan);
   border-radius: 50%;
   animation: axonos-spin 0.8s linear infinite;
 }
+
 @keyframes axonos-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
+
 .axonos-wallet-state__icon {
   width: 40px;
   height: 40px;
@@ -911,10 +1741,12 @@ input[type="password"]#noVNC_password_input {
   border-radius: 50%;
   flex-shrink: 0;
 }
+
 .axonos-wallet-state__icon--success {
   background: rgba(34, 197, 94, 0.25);
   border: 2px solid #22c55e;
 }
+
 .axonos-wallet-state__icon--success::after {
   content: "";
   display: block;
@@ -925,10 +1757,12 @@ input[type="password"]#noVNC_password_input {
   border-bottom: 2px solid #22c55e;
   transform: rotate(-45deg);
 }
+
 .axonos-wallet-state__icon--warning {
   background: rgba(234, 179, 8, 0.25);
   border: 2px solid #eab308;
 }
+
 .axonos-wallet-state__icon--warning::after {
   content: "!";
   display: block;
@@ -938,35 +1772,95 @@ input[type="password"]#noVNC_password_input {
   color: #eab308;
   font-size: 1.2rem;
 }
+
 .axonos-wallet-state__title {
   font-weight: 600;
   color: var(--axonos-light);
   margin: 0 0 6px 0;
   font-size: 1rem;
 }
+
 .axonos-wallet-state__address {
   font-family: ui-monospace, monospace;
   font-size: 0.9rem;
   color: rgba(255, 255, 255, 0.85);
   margin: 0 0 4px 0;
 }
+
 .axonos-wallet-state__balance {
   font-size: 0.9rem;
   color: rgba(255, 255, 255, 0.75);
   margin: 0 0 14px 0;
 }
+
 .axonos-wallet-picker-list {
   display: flex;
   flex-direction: column;
   gap: 10px;
   margin-top: 12px;
 }
+
 .axonos-wallet-picker-list .axonos-connect-wallet-btn {
   width: 100%;
+  max-width: 280px;
+  margin-left: auto;
+  margin-right: auto;
   justify-content: center;
 }
+
 .axonos-wallet-state__back {
   margin: 14px 0 0 0;
+}
+
+/* AXGT discount tier card — Gradio-safe light text on dark panel */
+.axonos-discount-panel {
+  color: rgba(255, 255, 255, 0.92) !important;
+  -webkit-text-fill-color: rgba(255, 255, 255, 0.92) !important;
+}
+
+.axonos-discount-panel strong {
+  color: rgba(255, 255, 255, 0.95) !important;
+  -webkit-text-fill-color: rgba(255, 255, 255, 0.95) !important;
+}
+
+.axonos-discount-panel #axonos_discount_percent {
+  color: #7adf8a !important;
+  -webkit-text-fill-color: #7adf8a !important;
+}
+
+.axonos-discount-panel #axonos_discount_min_eth {
+  color: #ffd166 !important;
+  -webkit-text-fill-color: #ffd166 !important;
+}
+
+.axonos-discount-preview {
+  border-top: 1px dashed rgba(255, 255, 255, 0.18);
+  padding-top: 0.35rem;
+}
+
+.axonos-discount-panel #axonos_discount_preview_minutes {
+  color: #7adf8a !important;
+  -webkit-text-fill-color: #7adf8a !important;
+}
+
+.axonos-pay-eth-hint {
+  margin: 0.25rem auto 0;
+  max-width: 28rem;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  min-height: 1.1rem;
+  opacity: 0.88;
+  text-align: center;
+}
+
+.axonos-pay-eth-hint--ok {
+  color: #7adf8a !important;
+  -webkit-text-fill-color: #7adf8a !important;
+}
+
+.axonos-pay-eth-hint--error {
+  color: #f08080 !important;
+  -webkit-text-fill-color: #f08080 !important;
 }
 
 /* Prepaid deposit rows: label + amount + [Min | Send] stays aligned; Gradio-safe text color */
@@ -978,9 +1872,11 @@ input[type="password"]#noVNC_password_input {
   margin-bottom: 0.45rem;
   width: 100%;
 }
+
 .axonos-pay-deposit-row:last-child {
   margin-bottom: 0;
 }
+
 .axonos-pay-row-label {
   flex: 0 0 2.75rem;
   font-size: 0.85em;
@@ -989,6 +1885,7 @@ input[type="password"]#noVNC_password_input {
   -webkit-text-fill-color: #f5f5f5 !important;
   text-align: left;
 }
+
 .axonos-pay-amount-input {
   flex: 1 1 5.5rem;
   min-width: 4.5rem;
@@ -1002,6 +1899,7 @@ input[type="password"]#noVNC_password_input {
   -webkit-text-fill-color: #f5f5f5 !important;
   font-size: 0.88rem;
 }
+
 .axonos-pay-deposit-actions {
   display: inline-flex;
   flex-direction: row;
@@ -1010,18 +1908,21 @@ input[type="password"]#noVNC_password_input {
   align-items: center;
   flex-shrink: 0;
 }
+
 .axonos-pay-min-btn {
   margin: 0 !important;
   padding: 0.35rem 0.55rem !important;
   font-size: 0.8rem !important;
   opacity: 0.95;
 }
+
 .axonos-pay-send-btn {
   margin: 0 !important;
   padding: 0.4rem 0.7rem !important;
   font-size: 0.8rem !important;
   opacity: 0.98;
 }
+
 .axonos-wallet-picker-back {
   background: none;
   border: none;
@@ -1031,65 +1932,81 @@ input[type="password"]#noVNC_password_input {
   text-decoration: underline;
   padding: 0;
 }
+
 .axonos-wallet-picker-back:hover {
   color: #fff;
 }
+
 .axonos-continue-btn {
   display: inline-block;
   padding: 12px 28px !important;
-  font-size: 1rem !important;
+  font-size: 0.9rem !important;
   font-weight: 600 !important;
-  color: #fff !important;
-  background: linear-gradient(135deg, #16a34a 0%, #15803d 100%) !important;
-  border: 2px solid rgba(255, 255, 255, 0.2) !important;
-  border-radius: 10px !important;
+  color: var(--green) !important;
+  -webkit-text-fill-color: var(--green) !important;
+  background: rgba(123, 224, 200, .12) !important;
+  border: 1px solid rgba(123, 224, 200, .35) !important;
+  border-radius: 999px !important;
   cursor: pointer !important;
-  transition: transform 0.15s ease, box-shadow 0.15s ease !important;
+  font-family: var(--font-body) !important;
+  transition: transform 0.15s ease, background .15s, border-color .15s !important;
 }
+
 .axonos-continue-btn:hover {
   transform: translateY(-1px) !important;
-  box-shadow: 0 4px 14px rgba(34, 197, 94, 0.4) !important;
+  background: rgba(123, 224, 200, .20) !important;
+  border-color: var(--green) !important;
 }
+
 .axonos-get-axgt-btn,
 .axonos-install-metamask-btn {
   display: inline-block;
   padding: 10px 20px !important;
-  font-size: 0.95rem !important;
+  font-size: 0.88rem !important;
   font-weight: 600 !important;
-  color: var(--axonos-light) !important;
-  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%) !important;
-  border: 2px solid rgba(255, 255, 255, 0.2) !important;
-  border-radius: 8px !important;
+  color: var(--violet-fg) !important;
+  -webkit-text-fill-color: var(--violet-fg) !important;
+  background: var(--violet-bg) !important;
+  border: 1px solid rgba(169, 139, 255, .30) !important;
+  border-radius: 999px !important;
   text-decoration: none !important;
   cursor: pointer !important;
-  transition: transform 0.15s ease !important;
+  font-family: var(--font-body) !important;
+  transition: transform 0.15s ease, background .15s !important;
 }
+
 .axonos-get-axgt-btn:hover,
 .axonos-install-metamask-btn:hover {
   transform: translateY(-1px) !important;
+  background: rgba(120, 100, 200, .25) !important;
 }
+
 .axonos-switch-network-btn {
   display: inline-block;
   padding: 10px 20px !important;
-  font-size: 0.95rem !important;
+  font-size: 0.88rem !important;
   font-weight: 600 !important;
-  color: var(--axonos-light) !important;
-  background: linear-gradient(135deg, #ea580c 0%, #c2410c 100%) !important;
-  border: 2px solid rgba(255, 255, 255, 0.2) !important;
-  border-radius: 8px !important;
+  color: var(--warm) !important;
+  -webkit-text-fill-color: var(--warm) !important;
+  background: rgba(232, 168, 90, .12) !important;
+  border: 1px solid rgba(232, 168, 90, .35) !important;
+  border-radius: 999px !important;
   cursor: pointer !important;
-  transition: transform 0.15s ease !important;
+  font-family: var(--font-body) !important;
+  transition: transform 0.15s ease, background .15s !important;
 }
+
 .axonos-switch-network-btn:hover {
   transform: translateY(-1px) !important;
+  background: rgba(232, 168, 90, .20) !important;
 }
 
 /* Settings panel dark theme styling */
 #noVNC_settings {
-  background-color: rgba(28, 28, 28, 0.95) !important;
-  border: 2px solid var(--axonos-primary) !important;
-  border-radius: 10px !important;
-  box-shadow: 0 8px 25px var(--axonos-shadow) !important;
+  background-color: rgba(10, 20, 36, 0.97) !important;
+  border: 1px solid var(--rule-strong) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(78, 195, 212, .06) !important;
 }
 
 /* Settings panel inputs */
@@ -1097,35 +2014,35 @@ input[type="password"]#noVNC_password_input {
 #noVNC_settings input[type="number"],
 #noVNC_settings input[type="range"],
 #noVNC_settings select {
-  background-color: var(--axonos-dark) !important;
-  border: 2px solid var(--axonos-secondary) !important;
-  color: var(--axonos-light) !important;
-  border-radius: 5px !important;
+  background-color: rgba(7, 16, 26, 0.92) !important;
+  border: 1px solid var(--rule-strong) !important;
+  color: var(--ink) !important;
+  border-radius: 8px !important;
   padding: 6px 8px !important;
   margin: 2px 0 !important;
-  font-family: monospace !important;
+  font-family: var(--font-mono) !important;
 }
 
 #noVNC_settings input[type="text"]:focus,
 #noVNC_settings input[type="number"]:focus,
 #noVNC_settings select:focus {
-  border-color: var(--axonos-accent) !important;
-  box-shadow: 0 0 8px var(--axonos-shadow) !important;
-  background-color: #2C2C2C !important;
+  border-color: var(--cyan) !important;
+  box-shadow: 0 0 0 2px rgba(78, 195, 212, .15) !important;
+  background-color: rgba(10, 20, 36, 0.96) !important;
   outline: none !important;
 }
 
 /* Range sliders */
 #noVNC_settings input[type="range"] {
-  background: var(--axonos-dark) !important;
-  border: 1px solid var(--axonos-secondary) !important;
-  border-radius: 5px !important;
+  background: rgba(7, 16, 26, 0.92) !important;
+  border: 1px solid var(--rule) !important;
+  border-radius: 999px !important;
   height: 8px !important;
 }
 
 #noVNC_settings input[type="range"]::-webkit-slider-thumb {
-  background: var(--axonos-accent) !important;
-  border: 2px solid var(--axonos-primary) !important;
+  background: var(--cyan) !important;
+  border: 2px solid rgba(78, 195, 212, .5) !important;
   border-radius: 50% !important;
   cursor: pointer !important;
   height: 18px !important;
@@ -1133,8 +2050,8 @@ input[type="password"]#noVNC_password_input {
 }
 
 #noVNC_settings input[type="range"]::-moz-range-thumb {
-  background: var(--axonos-accent) !important;
-  border: 2px solid var(--axonos-primary) !important;
+  background: var(--cyan) !important;
+  border: 2px solid rgba(78, 195, 212, .5) !important;
   border-radius: 50% !important;
   cursor: pointer !important;
   height: 18px !important;
@@ -1143,7 +2060,7 @@ input[type="password"]#noVNC_password_input {
 
 /* Checkboxes */
 #noVNC_settings input[type="checkbox"] {
-  accent-color: var(--axonos-accent) !important;
+  accent-color: var(--cyan) !important;
   transform: scale(1.2) !important;
   margin-right: 8px !important;
 }
@@ -1157,34 +2074,40 @@ input[type="password"]#noVNC_password_input {
 
 /* Settings headings */
 #noVNC_settings .noVNC_heading {
-  background: linear-gradient(135deg, var(--axonos-primary), var(--axonos-secondary)) !important;
-  color: var(--axonos-light) !important;
-  border: 1px solid var(--axonos-accent) !important;
-  text-shadow: 1px 1px 2px rgba(0,0,0,0.5) !important;
-  border-radius: 5px !important;
+  background: linear-gradient(135deg, rgba(78, 195, 212, .12), rgba(157, 111, 217, .08)) !important;
+  color: var(--ink) !important;
+  border: 1px solid var(--hair-mint) !important;
+  border-radius: 8px !important;
   padding: 8px !important;
   margin-bottom: 10px !important;
+  font-family: var(--font-body) !important;
+  font-weight: 700 !important;
 }
 
 /* Expander sections */
 #noVNC_settings .noVNC_expander {
-  background-color: var(--axonos-secondary) !important;
-  color: var(--axonos-light) !important;
-  border: 1px solid var(--axonos-primary) !important;
-  border-radius: 5px !important;
+  background-color: rgba(78, 195, 212, .08) !important;
+  color: var(--cyan) !important;
+  border: 1px solid var(--hair-mint) !important;
+  border-radius: 8px !important;
   padding: 6px 10px !important;
   cursor: pointer !important;
-  font-weight: bold !important;
+  font-weight: 600 !important;
+  font-family: var(--font-mono) !important;
+  letter-spacing: 0.06em !important;
 }
 
 #noVNC_settings .noVNC_expander:hover {
-  background-color: var(--axonos-hover) !important;
+  background-color: rgba(78, 195, 212, .14) !important;
+  border-color: var(--cyan) !important;
 }
 
 /* Version info */
 #noVNC_settings .noVNC_version {
-  color: var(--axonos-accent) !important;
-  font-weight: bold !important;
+  color: var(--ink-mute) !important;
+  font-weight: 400 !important;
+  font-family: var(--font-mono) !important;
+  font-size: 0.82rem !important;
 }
 
 /* Specific input field targeting */
@@ -1235,7 +2158,7 @@ select#noVNC_setting_reconnect_delay:focus,
 select#noVNC_setting_logging:focus {
   border-color: var(--axonos-accent) !important;
   box-shadow: 0 0 8px var(--axonos-shadow) !important;
-  background-color: #2C2C2C !important;
+  background-color: rgba(12, 24, 44, 0.96) !important;
   outline: none !important;
 }
 
@@ -1263,7 +2186,7 @@ select#noVNC_setting_logging option {
 
 /* Add custom dropdown arrow */
 #noVNC_settings select {
-  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23FFD700' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6,9 12,15 18,9'%3e%3c/polyline%3e%3c/svg%3e") !important;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234ec3d4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6,9 12,15 18,9'%3e%3c/polyline%3e%3c/svg%3e") !important;
   background-repeat: no-repeat !important;
   background-position: right 8px center !important;
   background-size: 16px !important;
@@ -1294,17 +2217,17 @@ input#noVNC_setting_path {
   padding: 6px 8px !important;
   font-family: monospace !important;
   font-size: 14px !important;
-  box-shadow: inset 0 1px 3px rgba(0,0,0,0.3) !important;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3) !important;
 }
 
 input#noVNC_setting_repeaterID:focus,
 input#noVNC_setting_host:focus,
 input#noVNC_setting_port:focus,
 input#noVNC_setting_path:focus {
-  background-color: #2C2C2C !important;
-  background: #2C2C2C !important;
+  background-color: rgba(12, 24, 44, 0.96) !important;
+  background: rgba(12, 24, 44, 0.96) !important;
   border-color: var(--axonos-accent) !important;
-  box-shadow: 0 0 8px var(--axonos-shadow), inset 0 1px 3px rgba(0,0,0,0.3) !important;
+  box-shadow: 0 0 8px var(--axonos-shadow), inset 0 1px 3px rgba(0, 0, 0, 0.3) !important;
   outline: none !important;
 }
 
@@ -1328,8 +2251,8 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 /* Force all WebSocket section inputs */
-.noVNC_expander + * input[type="text"],
-.noVNC_expander + * input[type="number"] {
+.noVNC_expander+* input[type="text"],
+.noVNC_expander+* input[type="number"] {
   background-color: var(--axonos-dark) !important;
   background: var(--axonos-dark) !important;
   color: var(--axonos-light) !important;
@@ -1383,6 +2306,14 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   order: 3 !important;
 }
 
+.axonos-clipboard-panel__help {
+  margin: 0.35rem 0 0.55rem;
+  font-size: 0.82em;
+  line-height: 1.35;
+  color: var(--axonos-light);
+  opacity: 0.85;
+}
+
 /* Adjust control bar width for better icon spacing */
 #noVNC_control_bar {
   min-width: 60px !important;
@@ -1412,35 +2343,30 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   margin-bottom: 8px !important;
 }
 
-/* Power panel: single restart action UX polish */
-#noVNC_power {
-  min-width: 260px !important;
-  padding-bottom: 12px !important;
-}
-
-#noVNC_power .noVNC_heading {
-  margin-bottom: 10px !important;
-}
-
+/* Restart desktop services (settings panel) */
 #noVNC_restart_session_button {
   display: block !important;
-  width: calc(100% - 20px) !important;
-  margin: 0 10px 2px 10px !important;
-  padding: 10px 12px !important;
-  border: 1px solid var(--axonos-secondary) !important;
-  border-radius: 8px !important;
-  background: linear-gradient(135deg, rgba(46, 139, 87, 0.25), rgba(70, 130, 180, 0.25)) !important;
-  color: var(--axonos-light) !important;
-  font-size: 14px !important;
+  width: calc(100% - 8px) !important;
+  margin: 4px 0 !important;
+  padding: 8px 10px !important;
+  border: 1px solid var(--rule-strong) !important;
+  border-radius: 999px !important;
+  background: rgba(78, 195, 212, .08) !important;
+  color: var(--cyan) !important;
+  -webkit-text-fill-color: var(--cyan) !important;
+  font-size: 12px !important;
   font-weight: 600 !important;
   text-align: center !important;
   cursor: pointer !important;
-  transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.2s ease !important;
+  font-family: var(--font-mono) !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease !important;
 }
 
 #noVNC_restart_session_button:hover {
-  border-color: var(--axonos-accent) !important;
-  background: linear-gradient(135deg, rgba(50, 205, 50, 0.28), rgba(70, 130, 180, 0.35)) !important;
+  border-color: var(--cyan) !important;
+  background: rgba(78, 195, 212, .15) !important;
   transform: translateY(-1px);
 }
 
@@ -1457,44 +2383,43 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   text-align: center;
   margin-bottom: 30px;
   padding: 30px 20px;
-  background: linear-gradient(135deg, rgba(46, 139, 87, 0.15), rgba(70, 130, 180, 0.15));
+  background: linear-gradient(135deg, rgba(78, 195, 212, .11) 0%, rgba(157, 111, 217, .09) 100%);
   border-radius: 20px;
   overflow: hidden;
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--rule-strong);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(78, 195, 212, .06);
 }
 
 .axonos-main-title {
   font-size: 4rem !important;
   font-weight: 900 !important;
-  color: var(--axonos-light) !important;
-  text-shadow: 
-    0 0 30px var(--axonos-primary), 
-    0 0 60px var(--axonos-primary),
-    2px 2px 8px rgba(0,0,0,0.8) !important;
+  color: var(--ink) !important;
+  text-shadow:
+    0 0 30px rgba(78, 195, 212, .45),
+    0 0 60px rgba(78, 195, 212, .20),
+    2px 2px 8px rgba(0, 0, 0, 0.8) !important;
   margin: 0 0 15px 0 !important;
-  font-family: "Orbitron", "Arial", sans-serif !important;
+  font-family: 'Brutal', "Orbitron", "Arial", sans-serif !important;
   letter-spacing: 4px;
   animation: title-glow 3s ease-in-out infinite alternate;
 }
 
 .axonos-highlight {
   color: var(--axonos-accent) !important;
-  text-shadow: 
+  text-shadow:
     0 0 40px var(--axonos-accent),
     0 0 80px var(--axonos-accent) !important;
   animation: accent-pulse 2s ease-in-out infinite alternate;
 }
 
 .axonos-tagline {
-  font-size: 1.2rem;
-  color: var(--axonos-secondary);
+  font-size: 1.1rem;
+  color: var(--ink-mute);
   font-weight: 300;
   margin: 0 0 15px 0;
   text-transform: uppercase;
-  letter-spacing: 2px;
-  font-family: "Orbitron", monospace;
+  letter-spacing: 0.18em;
+  font-family: var(--font-mono);
   min-height: 1.6em;
 }
 
@@ -1502,13 +2427,14 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 .axonos-network-banner {
   font-size: 0.82rem;
   font-weight: 500;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.08em;
   margin: 0 auto 12px;
   max-width: 36rem;
   padding: 0.45rem 0.75rem;
   border-radius: 999px;
   line-height: 1.35;
-  font-family: "Orbitron", system-ui, sans-serif;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
 }
 
 .axonos-network-banner--hidden {
@@ -1517,22 +2443,22 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 .axonos-network-banner--mainnet {
-  color: rgba(180, 255, 210, 0.92);
-  background: rgba(46, 139, 87, 0.2);
-  border: 1px solid rgba(100, 200, 140, 0.35);
+  color: var(--green);
+  background: rgba(123, 224, 200, .12);
+  border: 1px solid rgba(123, 224, 200, .35);
 }
 
 .axonos-network-banner--testnet {
-  color: rgba(255, 220, 160, 0.98);
-  background: rgba(180, 100, 20, 0.25);
-  border: 1px solid rgba(255, 180, 80, 0.45);
-  box-shadow: 0 0 20px rgba(255, 160, 60, 0.12);
+  color: var(--warm);
+  background: rgba(232, 168, 90, .12);
+  border: 1px solid rgba(232, 168, 90, .40);
+  box-shadow: 0 0 18px rgba(232, 168, 90, .10);
 }
 
 .axonos-network-banner--other {
-  color: rgba(255, 200, 160, 0.95);
-  background: rgba(120, 60, 30, 0.3);
-  border: 1px solid rgba(255, 140, 80, 0.4);
+  color: var(--pink);
+  background: rgba(232, 127, 164, .12);
+  border: 1px solid rgba(232, 127, 164, .35);
 }
 
 .axonos-wallet-network-line {
@@ -1547,15 +2473,15 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 .axonos-wallet-network-line--mainnet {
-  color: rgba(160, 220, 180, 0.95);
+  color: var(--green);
 }
 
 .axonos-wallet-network-line--testnet {
-  color: rgba(255, 200, 120, 0.98);
+  color: var(--warm);
 }
 
 .axonos-wallet-network-line--other {
-  color: rgba(255, 180, 130, 0.95);
+  color: var(--pink);
 }
 
 /* Particle Animation Background */
@@ -1565,23 +2491,35 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   left: 0;
   right: 0;
   bottom: 0;
-  background-image: 
-    radial-gradient(2px 2px at 20px 30px, var(--axonos-accent), transparent),
-    radial-gradient(2px 2px at 40px 70px, var(--axonos-primary), transparent),
-    radial-gradient(1px 1px at 90px 40px, var(--axonos-secondary), transparent),
-    radial-gradient(1px 1px at 130px 80px, var(--axonos-accent), transparent),
-    radial-gradient(2px 2px at 160px 30px, var(--axonos-primary), transparent);
+  background-image:
+    radial-gradient(2px 2px at 20px 30px, var(--cyan), transparent),
+    radial-gradient(2px 2px at 40px 70px, var(--violet), transparent),
+    radial-gradient(1px 1px at 90px 40px, var(--warm), transparent),
+    radial-gradient(1px 1px at 130px 80px, var(--green), transparent),
+    radial-gradient(2px 2px at 160px 30px, var(--coral), transparent);
   background-size: 200px 100px;
   animation: particles-float 20s infinite linear;
-  opacity: 0.3;
+  opacity: 0.28;
   pointer-events: none;
+  will-change: transform;
 }
 
 @keyframes particles-float {
-  0% { transform: translateX(0) translateY(0); }
-  33% { transform: translateX(-20px) translateY(-10px); }
-  66% { transform: translateX(20px) translateY(10px); }
-  100% { transform: translateX(0) translateY(0); }
+  0% {
+    transform: translateX(0) translateY(0);
+  }
+
+  33% {
+    transform: translateX(-20px) translateY(-10px);
+  }
+
+  66% {
+    transform: translateX(20px) translateY(10px);
+  }
+
+  100% {
+    transform: translateX(0) translateY(0);
+  }
 }
 
 /* DNA Animation */
@@ -1600,8 +2538,9 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   position: absolute;
   width: 2px;
   height: 100%;
-  background: linear-gradient(to bottom, var(--axonos-accent) 0%, transparent 50%, var(--axonos-accent) 100%);
+  background: linear-gradient(to bottom, var(--cyan) 0%, transparent 50%, var(--cyan) 100%);
   animation: dna-twist 3s infinite ease-in-out;
+  will-change: transform;
 }
 
 .axonos-dna-animation::before {
@@ -1615,8 +2554,15 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 @keyframes dna-twist {
-  0%, 100% { transform: scaleX(1) rotateY(0deg); }
-  50% { transform: scaleX(0.3) rotateY(180deg); }
+
+  0%,
+  100% {
+    transform: scaleX(1) rotateY(0deg);
+  }
+
+  50% {
+    transform: scaleX(0.3) rotateY(180deg);
+  }
 }
 
 /* Mission Section */
@@ -1624,9 +2570,9 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   text-align: center;
   margin: 25px 0;
   padding: 20px;
-  background: rgba(94, 129, 172, 0.08);
-  border: 1px solid rgba(136, 169, 212, 0.25);
-  border-radius: 10px;
+  background: rgba(78, 195, 212, .05);
+  border: 1px solid var(--rule-strong);
+  border-radius: 14px;
 }
 
 .axonos-mission-text {
@@ -1636,101 +2582,233 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   font-weight: 500;
   word-spacing: 0.25em;
 }
+
 .axonos-mission-text strong {
   margin: 0 0.15em;
 }
 
 .axonos-subtitle {
   font-size: 0.95rem;
-  color: var(--axonos-secondary);
+  color: var(--ink-mute);
   margin: 0;
   font-style: italic;
+  font-weight: 300;
   opacity: 0.9;
 }
 
-/* Connect wrapper: tooltip shown on hover */
+/* Connect wrapper: profile + launch (prerequisites headline is the fixed header ticker) */
 .axonos-connect-wrapper {
   position: relative;
   display: flex;
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--rule-strong);
+  border-radius: 16px;
+  background: rgba(8, 16, 28, 0.55);
+  padding: 1.5rem 1.25rem;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(78, 195, 212, 0.06);
+  backdrop-filter: blur(10px);
+  margin-top: 1.5rem;
 }
 
-.axonos-prerequisites-tooltip {
-  position: absolute;
-  left: 50%;
-  bottom: calc(100% - 42px);
-  transform: translateX(-50%);
-  margin-bottom: 0;
-  width: min(92vw, 460px);
-  max-width: 460px;
-  min-width: 0;
-  padding: 14px 18px;
-  background: rgba(28, 28, 28, 0.98);
-  border: 1px solid rgba(70, 130, 180, 0.5);
-  border-radius: 8px;
-  text-align: left;
-  font-size: 0.9rem;
-  line-height: 1.5;
-  color: var(--axonos-light);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-  z-index: 50;
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transition: opacity 0.2s ease, visibility 0.2s ease;
+.axonos-resume-panel {
+  max-width: min(100%, 480px);
+  width: 100%;
+  margin: 0.35rem 0 0.85rem;
+  padding: 0.85rem 1.15rem;
+  box-sizing: border-box;
+  text-align: center;
+  background: linear-gradient(135deg, rgba(78, 195, 212, .10) 0%, rgba(12, 26, 46, 0.55) 100%);
+  border: 1px solid var(--hair-mint);
+  border-radius: 14px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 8px 28px rgba(0, 0, 0, 0.28);
 }
 
-.axonos-connect-wrapper:hover .axonos-prerequisites-tooltip {
-  opacity: 1;
-  visibility: visible;
-  pointer-events: auto;
+.axonos-resume-panel--hidden {
+  display: none !important;
 }
 
-.axonos-prerequisites-tooltip .axonos-prerequisites__title {
-  margin: 0 0 8px 0;
+.axonos-resume-panel__title {
+  margin: 0 0 0.45rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
   font-weight: 600;
-  font-size: 0.95rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--green);
 }
 
-.axonos-prerequisites-tooltip .axonos-prerequisites__list {
+.axonos-resume-panel__detail,
+.axonos-resume-panel__ttl {
+  margin: 0.25rem 0 0;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  color: var(--axonos-light);
+  opacity: 0.92;
+}
+
+.axonos-resume-panel__ttl {
+  font-size: 0.82rem;
+  opacity: 0.75;
+}
+
+/* GPU profile row — glass strip + readable label (avoids dark-on-dark inherit bugs) */
+.axonos-profile-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem 1rem;
+  margin: 0.35rem 0 0.85rem;
+  max-width: min(100%, 440px);
+  width: 100%;
+  padding: 0.62rem 1.15rem;
+  box-sizing: border-box;
+  background: linear-gradient(135deg,
+      rgba(78, 195, 212, .08) 0%,
+      rgba(10, 20, 36, 0.55) 100%);
+  border: 1px solid var(--rule-strong);
+  border-radius: 14px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 8px 28px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(8px);
+}
+
+.axonos-profile-picker__label {
   margin: 0;
-  padding-left: 1.2em;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  text-shadow: 0 0 14px rgba(78, 195, 212, .3), 0 1px 2px rgba(0, 0, 0, 0.85);
+  opacity: 0.98;
+  flex: 0 0 auto;
 }
 
-.axonos-prerequisites-tooltip .axonos-prerequisites__list li {
-  margin: 6px 0;
-  word-spacing: 0.25em;
+.axonos-profile-picker__select {
+  flex: 1 1 auto;
+  min-width: min(100%, 230px);
+  max-width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  color-scheme: dark;
+  font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+  font-size: 0.95rem;
+  font-weight: 500;
+  padding: 0.5rem 2.35rem 0.5rem 0.85rem;
+  border-radius: 10px;
+  cursor: pointer;
+  color: var(--axonos-light) !important;
+  background-color: rgba(12, 18, 28, 0.92) !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%234ec3d4' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 0.65rem center !important;
+  border: 1px solid var(--hair-mint) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 4px 14px rgba(0, 0, 0, 0.35) !important;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.15s ease;
 }
 
-.axonos-prerequisites-tooltip .axonos-prerequisites__list strong,
-.axonos-prerequisites-tooltip .axonos-prerequisites__list a {
-  margin: 0 0.15em;
+.axonos-profile-picker__select:hover {
+  border-color: var(--cyan) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 4px 18px rgba(42, 68, 120, 0.4) !important;
 }
 
-.axonos-prerequisites-tooltip .axonos-prerequisites__list a {
-  color: var(--axonos-accent);
-  text-decoration: none;
+.axonos-profile-picker__select:focus {
+  outline: none !important;
+  border-color: var(--cyan) !important;
+  box-shadow:
+    0 0 0 2px rgba(78, 195, 212, .25),
+    0 0 18px rgba(78, 195, 212, .18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
 }
 
-.axonos-prerequisites-tooltip .axonos-prerequisites__list a:hover {
-  text-decoration: underline;
+.axonos-profile-picker__select:focus-visible {
+  outline: 2px solid var(--axonos-accent);
+  outline-offset: 2px;
 }
+
+/* Option list chrome (best-effort; native menu is OS-controlled) */
+.axonos-profile-picker__hint {
+  margin: 0.45rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  color: rgba(245, 245, 245, 0.78);
+  text-align: center;
+  max-width: 28rem;
+}
+
+.axonos-profile-picker__select option {
+  background: #141a24;
+  color: var(--axonos-light);
+  font-weight: 500;
+  padding: 0.35rem;
+}
+
+@media (max-width: 420px) {
+  .axonos-profile-picker {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .axonos-profile-picker__select {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+.axonos-connect-wrapper--busy>#noVNC_connect_button {
+  opacity: 0.72;
+  pointer-events: none;
+  cursor: wait;
+}
+
+.axonos-connect-wrapper--busy .axonos-profile-picker__select {
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+.axonos-detached-session-mode .axonos-profile-picker__select:disabled {
+  opacity: 1;
+  cursor: not-allowed;
+  border-color: rgba(100, 180, 140, 0.45);
+}
+
+.axonos-connect-wrapper>#noVNC_connect_button {
+  width: 100%;
+  max-width: 480px;
+  box-sizing: border-box;
+}
+
+
 
 /* Enhanced Connect Button */
 .axonos-enhanced-connect {
-  background: linear-gradient(135deg, #1c5a6d 0%, #34397f 100%) !important;
-  border: none !important;
+  background: linear-gradient(135deg, rgba(10, 24, 44, 0.96) 0%, rgba(7, 16, 26, 0.96) 100%) !important;
+  border: 1px solid var(--hair-mint) !important;
   border-radius: 20px !important;
   padding: 18px !important;
   margin: 24px 0 !important;
   cursor: pointer !important;
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  transition: all 0.35s cubic-bezier(.2, .7, .2, 1) !important;
   position: relative;
   overflow: hidden;
-  box-shadow: 
-    0 12px 40px rgba(42, 68, 120, 0.42),
-    0 4px 16px rgba(0, 0, 0, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+  box-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(78, 195, 212, .08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
   backdrop-filter: blur(10px);
 }
 
@@ -1741,8 +2819,8 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   left: -100%;
   width: 100%;
   height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-  transition: left 0.5s;
+  background: linear-gradient(120deg, transparent 0%, rgba(78, 195, 212, 0.12) 50%, transparent 100%);
+  transition: left 0.55s cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
 .axonos-enhanced-connect:hover::before {
@@ -1750,13 +2828,14 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 .axonos-enhanced-connect:hover {
-  background: linear-gradient(135deg, #0f2a4d 0%, #1a3b6b 100%) !important;
-  transform: translateY(-5px) scale(1.03) !important;
-  box-shadow: 
-    0 20px 60px rgba(20, 44, 84, 0.58),
-    0 0 80px rgba(54, 96, 168, 0.2),
+  background: linear-gradient(135deg, rgba(14, 30, 54, 0.98) 0%, rgba(10, 22, 40, 0.98) 100%) !important;
+  border-color: var(--cyan) !important;
+  transform: translateY(-4px) scale(1.015) !important;
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.55),
+    0 0 30px rgba(78, 195, 212, .15),
     0 8px 32px rgba(0, 0, 0, 0.4),
-    inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
+    inset 0 1px 0 rgba(255, 255, 255, 0.10) !important;
 }
 
 .axonos-connect-content {
@@ -1786,23 +2865,31 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 @keyframes rocket-pulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.1); }
+
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.1);
+  }
 }
 
 .axonos-connect-text {
   font-size: 1.2rem !important;
-  font-weight: 700 !important;
-  color: var(--axonos-light) !important;
-  text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
-  font-family: "Orbitron", sans-serif;
-  letter-spacing: 1px;
+  font-weight: 800 !important;
+  color: var(--ink) !important;
+  text-shadow: 0 0 20px rgba(78, 195, 212, .3), 2px 2px 4px rgba(0, 0, 0, 0.8);
+  font-family: var(--font-body);
+  letter-spacing: 0.02em;
 }
 
 .axonos-connect-subtext {
-  font-size: 0.8rem;
-  color: rgba(245, 245, 245, 0.8);
+  font-size: 0.82rem;
+  color: var(--ink-mute);
   font-weight: 300;
+  letter-spacing: 0.01em;
 }
 
 /* Feature Highlights */
@@ -1811,8 +2898,8 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   justify-content: space-around;
   margin: 25px 0;
   padding: 20px 0;
-  border-top: 1px solid rgba(70, 130, 180, 0.3);
-  border-bottom: 1px solid rgba(70, 130, 180, 0.3);
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
 }
 
 .axonos-feature {
@@ -1835,36 +2922,39 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 .axonos-feature-text {
-  font-size: 0.85rem;
-  color: var(--axonos-light);
-  font-weight: 500;
+  font-size: 0.8rem;
+  color: var(--ink-mute);
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 1px;
+  letter-spacing: 0.12em;
+  font-family: var(--font-mono);
 }
 
 /* Scientific Quote */
 .axonos-quote {
   text-align: center;
-  margin: 25px 0;
+  margin: 25px 0 3.5rem;
   padding: 20px;
-  background: linear-gradient(135deg, rgba(255, 215, 0, 0.05), rgba(70, 130, 180, 0.05));
-  border-left: 4px solid var(--axonos-accent);
+  background: rgba(78, 195, 212, .04);
+  border-left: 3px solid var(--cyan);
   border-radius: 8px;
   font-style: italic;
 }
 
 .axonos-quote p {
-  color: var(--axonos-light);
+  color: var(--ink-dim);
   font-size: 1.05rem;
   margin: 0 0 10px 0;
   font-weight: 300;
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
 .axonos-quote cite {
-  color: var(--axonos-accent);
-  font-size: 0.9rem;
-  font-weight: 500;
+  color: var(--cyan);
+  font-size: 0.88rem;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
 }
 
 /* Override upstream .noVNC_center flex centering: use align-items:stretch +
@@ -1872,27 +2962,218 @@ input#noVNC_setting_path:-webkit-autofill:focus {
    exceeds the viewport height (typewriter anim, network banner, etc.). */
 .noVNC_center:has(#noVNC_connect_dlg) {
   align-items: stretch;
-  overflow-y: auto;
+  overflow-y: visible !important;
   padding: 20px;
+  /* Upstream sets pointer-events:none on .noVNC_center (auto on children) so the
+     transparent area passes clicks to the VNC canvas. But on the landing page this
+     fixed center IS the scroll container, so wheel events over empty gaps fell
+     through to <body> (which can't scroll) — scrolling only worked over cards.
+     The canvas is display:none until connected, so re-enabling events here is safe. */
+  pointer-events: auto;
 }
 
 /* Connect Dialog Container Enhancement */
 #noVNC_connect_dlg {
-  background: linear-gradient(145deg, rgba(18, 24, 34, 0.92), rgba(12, 18, 28, 0.9)) !important;
+  background: transparent !important;
   border: none !important;
-  border-radius: 24px !important;
-  padding: 40px !important;
-  box-shadow: 
-    0 22px 70px rgba(0, 0, 0, 0.55),
-    0 0 0 1px rgba(160, 185, 220, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
-  backdrop-filter: blur(10px);
+  box-shadow: none !important;
+  backdrop-filter: none !important;
   max-width: 600px;
-  max-height: calc(100vh - 40px);
-  overflow-y: auto;
+  max-height: none !important;
+  overflow: visible !important;
   margin: auto;
   position: relative;
   z-index: 10;
+  padding: 0 !important;
+}
+
+html:not(.noVNC_connected) #noVNC_connect_dlg {
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+/* Desktop landscape landing: hero + CTA columns, full-width features/quote below */
+@media (min-width: 993px) {
+  html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg) {
+    overflow-x: hidden;
+    padding-left: calc(20px + var(--axonos-prereq-ticker-sidebar-clear));
+    position: relative;
+    z-index: 2;
+  }
+
+  #noVNC_connect_dlg {
+    display: grid;
+    grid-template-columns: minmax(0, 1.7fr) minmax(320px, 420px);
+    column-gap: 2.5rem;
+    row-gap: 1.5rem;
+    max-width: min(1680px, 96vw);
+    align-items: stretch;
+    align-content: start;
+    align-self: start;
+    margin: 40px auto !important;
+    padding: 32px 20px !important;
+    box-sizing: border-box;
+    overflow-x: hidden;
+    overflow-y: visible !important;
+    overflow: visible !important;
+    max-height: none !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+  }
+
+  html:not(.noVNC_connected) #noVNC_connect_dlg {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  /* Grid children shrink instead of forcing horizontal overflow */
+  #noVNC_connect_dlg>* {
+    min-width: 0;
+  }
+
+  #noVNC_connect_dlg>.axonos-mobile-notice {
+    grid-column: 1 / -1;
+  }
+
+  #noVNC_connect_dlg>.axonos-vision-header {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    margin-bottom: 0.5rem;
+    padding: 24px 20px;
+    background: linear-gradient(180deg, rgba(78, 195, 212, 0.08) 0%, rgba(157, 111, 217, 0.04) 100%);
+    border: 1px solid var(--rule-strong);
+    border-radius: 16px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    overflow: hidden;
+  }
+
+  /* Keep helix inside hero; avoids crowding the CTA gutter */
+  #noVNC_connect_dlg .axonos-dna-animation {
+    right: 18px;
+    left: auto;
+    top: 18px;
+    opacity: 0.35;
+    transform: scale(0.92);
+    transform-origin: top right;
+  }
+
+  #noVNC_connect_dlg .axonos-main-title {
+    font-size: 3.15rem !important;
+    letter-spacing: 3px;
+  }
+
+  #noVNC_connect_dlg .axonos-tagline {
+    font-size: 1.05rem;
+  }
+
+  #noVNC_connect_dlg>.axonos-hero-panel {
+    grid-column: 1;
+    grid-row: 2;
+    align-self: stretch;
+  }
+
+  #noVNC_connect_dlg>.axonos-connect-wrapper {
+    grid-column: 2;
+    grid-row: 2;
+    align-self: stretch;
+    justify-self: stretch;
+    box-sizing: border-box;
+    overflow-x: hidden;
+    padding: 1.5rem 1.25rem;
+    margin-left: 0;
+    margin-top: 0;
+    border: 1px solid var(--rule-strong);
+    border-radius: 16px;
+    background: rgba(8, 16, 28, 0.55);
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 1.25rem;
+  }
+
+  #noVNC_connect_dlg>.axonos-quote {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    margin: 1rem 0 3.5rem;
+    padding: 12px;
+    text-align: center;
+    border: none;
+    background: transparent;
+  }
+
+  #noVNC_connect_dlg>.axonos-quote p {
+    margin-bottom: 8px;
+  }
+
+  /* Specs Overview Panel */
+  .axonos-specs-panel {
+    background: rgba(6, 12, 22, 0.45);
+    border: 1px solid rgba(140, 200, 220, 0.08);
+    border-radius: 12px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .axonos-spec-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .axonos-spec-icon {
+    font-size: 1.1rem;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(78, 195, 212, 0.06);
+    border-radius: 6px;
+    border: 1px solid rgba(78, 195, 212, 0.12);
+  }
+
+  .axonos-spec-details {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.3;
+  }
+
+  .axonos-spec-name {
+    font-family: var(--font-body);
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--axonos-light);
+  }
+
+  .axonos-spec-desc {
+    font-family: var(--font-body);
+    font-size: 0.72rem;
+    color: var(--ink-mute);
+  }
+
+  /* Full width of launch column without exceeding parent */
+  .axonos-connect-wrapper>#noVNC_connect_button {
+    max-width: none;
+  }
+
+  .axonos-connect-wrapper .axonos-enhanced-connect {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+  }
+
+  #noVNC_connect_dlg .axonos-enhanced-connect:hover {
+    transform: translateY(-4px) scale(1.02) !important;
+  }
+
+  /* Picker stretches in the narrower column */
+  .axonos-profile-picker {
+    max-width: none;
+    margin-top: 0;
+  }
 }
 
 /* Mobile notice: hidden on desktop, shown on small viewports */
@@ -1903,8 +3184,8 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 .axonos-mobile-notice__title {
   margin: 0 0 0.5em;
   font-size: 1rem;
-  font-weight: 600;
-  color: var(--axonos-accent);
+  font-weight: 700;
+  color: var(--cyan);
 }
 
 .axonos-mobile-notice__text {
@@ -1922,21 +3203,111 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   opacity: 0.9;
 }
 
+.axonos-fallback-card {
+  position: relative;
+}
+
+.axonos-fallback-dismiss {
+  position: absolute;
+  top: -0.5rem;
+  right: -0.5rem;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: var(--axonos-light);
+  border-radius: 50%;
+  width: 2rem;
+  height: 2rem;
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.axonos-fallback-dismiss:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Cancel (×) button in top-right corner of the connection loader */
+.axonos-loader-cancel {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  background: transparent;
+  border: 1px solid rgba(140, 200, 220, 0.2);
+  color: rgba(140, 200, 220, 0.5);
+  border-radius: 50%;
+  width: 1.75rem;
+  height: 1.75rem;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.axonos-loader-cancel:hover {
+  color: rgba(140, 200, 220, 0.9);
+  border-color: rgba(140, 200, 220, 0.5);
+  background: rgba(140, 200, 220, 0.08);
+}
+
+/* Timeout message shown after 90 s of waiting */
+.axonos-loader-timeout-msg {
+  margin-top: 1rem;
+  font-size: 0.78rem;
+  color: rgba(232, 168, 90, 0.85);
+  text-align: center;
+}
+
+.axonos-loader-timeout-msg a {
+  color: var(--cyan);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 /* Responsive: show mobile notice (992px = tablets + phones) */
 @media (max-width: 992px) {
   .axonos-mobile-notice {
     display: block;
     margin-bottom: 1.25rem;
     padding: 1rem 1.25rem;
-    background: rgba(46, 139, 87, 0.15);
-    border: 1px solid var(--axonos-secondary);
+    background: rgba(78, 195, 212, .07);
+    border: 1px solid var(--hair-mint);
     border-radius: 8px;
     text-align: center;
   }
-  #noVNC_connect_dlg {
-    max-height: calc(100vh - 6rem);
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
+
+  html:not(.noVNC_connected) {
+    height: auto !important;
+  }
+
+  html:not(.noVNC_connected) body {
+    height: auto !important;
+    touch-action: auto !important;
+  }
+
+  html:not(.noVNC_connected) .noVNC_center:has(.noVNC_open),
+  html:not(.noVNC_connected) .noVNC_center.noVNC_open {
+    position: relative !important;
+    height: auto !important;
+  }
+
+  #noVNC_credentials_dlg {
+    position: relative !important;
+    top: auto !important;
+    left: auto !important;
+    transform: none !important;
+    margin: 20px auto !important;
+  }
+
+  html:not(.noVNC_connected) #noVNC_connect_dlg {
+    max-height: none !important;
+    overflow: visible !important;
   }
 }
 
@@ -1948,18 +3319,18 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   .axonos-main-title {
     font-size: 2.5rem !important;
   }
-  
+
   .axonos-features {
     flex-direction: column;
     gap: 15px;
   }
-  
+
   .axonos-feature {
     padding: 15px;
   }
-  
+
   #noVNC_connect_dlg {
-    padding: 25px !important;
+    padding: 0 !important;
     margin: 10px;
   }
 }
@@ -1969,9 +3340,17 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   animation: loading-glow 2s infinite ease-in-out;
 }
 
+/* opacity-only: GPU-composited (box-shadow animation forces CPU repaint) */
 @keyframes loading-glow {
-  0%, 100% { box-shadow: 0 22px 70px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(160, 185, 220, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.08); }
-  50% { box-shadow: 0 26px 82px rgba(0, 0, 0, 0.62), 0 0 0 1px rgba(190, 215, 255, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
+
+  0%,
+  100% {
+    opacity: 0.88;
+  }
+
+  50% {
+    opacity: 1;
+  }
 }
 
 /* AxonOS Connection Loading Animation */
@@ -1985,14 +3364,15 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.9);
+  background: rgba(10, 20, 36, 0.97);
   border-radius: 20px;
   padding: 40px;
-  border: 2px solid var(--axonos-primary);
-  box-shadow: 
-    0 0 50px rgba(46, 139, 87, 0.4),
-    inset 0 0 30px rgba(46, 139, 87, 0.1);
-  backdrop-filter: blur(10px);
+  border: 1px solid var(--hair-mint);
+  box-shadow:
+    0 0 40px rgba(78, 195, 212, .18),
+    0 20px 60px rgba(0, 0, 0, .6),
+    inset 0 1px 0 rgba(255, 255, 255, .04);
+  backdrop-filter: blur(14px);
 }
 
 .axonos-connection-loader.active {
@@ -2005,18 +3385,54 @@ input#noVNC_setting_path:-webkit-autofill:focus {
     opacity: 0;
     transform: translate(-50%, -50%) scale(0.8);
   }
+
   to {
     opacity: 1;
     transform: translate(-50%, -50%) scale(1);
   }
 }
 
-/* Circular Loading Spinner */
+/* Connection loader: rotating rings behind a non-rotating breathing X (matches landing connect icon). */
+.axonos-loader-visual {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  margin-bottom: 20px;
+}
+
+.axonos-loader-visual .axonos-spinner {
+  margin-bottom: 0;
+  /* Keep the ring's outer box at exactly 80px (borders inside) so its center
+     coincides with the X overlay centered in the 80px .axonos-loader-visual. */
+  box-sizing: border-box;
+}
+
+.axonos-loader-x-wrap {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  line-height: 0;
+}
+
+.axonos-loader-x-img {
+  width: 44px;
+  height: 44px;
+  object-fit: contain;
+  animation: rocket-pulse 2s infinite ease-in-out;
+}
+
+/* Circular loading rings (rotate; center logo is layered above in markup) */
 .axonos-spinner {
   width: 80px;
   height: 80px;
-  border: 4px solid rgba(46, 139, 87, 0.2);
-  border-top: 4px solid var(--axonos-primary);
+  border: 4px solid rgba(78, 195, 212, .15);
+  border-top: 4px solid var(--cyan);
   border-radius: 50%;
   animation: axonos-spin 1s linear infinite;
   position: relative;
@@ -2031,67 +3447,76 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   right: -4px;
   bottom: -4px;
   border: 2px solid transparent;
-  border-top: 2px solid var(--axonos-accent);
+  border-top: 2px solid var(--violet);
   border-radius: 50%;
   animation: axonos-spin-reverse 0.8s linear infinite;
 }
 
-.axonos-spinner::after {
-  content: '🚀';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  font-size: 24px;
-  animation: rocket-bounce 2s ease-in-out infinite;
-}
-
-@keyframes axonos-spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
 @keyframes axonos-spin-reverse {
-  0% { transform: rotate(360deg); }
-  100% { transform: rotate(0deg); }
-}
+  0% {
+    transform: rotate(360deg);
+  }
 
-@keyframes rocket-bounce {
-  0%, 100% { transform: translate(-50%, -50%) scale(1); }
-  50% { transform: translate(-50%, -50%) scale(1.1); }
+  100% {
+    transform: rotate(0deg);
+  }
 }
 
 /* Loading Text */
 .axonos-loading-text {
-  color: var(--axonos-light);
-  font-family: "Orbitron", monospace;
+  color: var(--ink);
+  font-family: var(--font-body);
   font-size: 18px;
-  font-weight: 600;
+  font-weight: 800;
   text-align: center;
   margin-bottom: 10px;
-  text-shadow: 0 0 10px var(--axonos-primary);
+  text-shadow: 0 0 14px rgba(78, 195, 212, .45);
   animation: text-pulse 2s ease-in-out infinite;
+  letter-spacing: -0.01em;
 }
 
 .axonos-loading-subtext {
-  color: var(--axonos-accent);
-  font-family: "Orbitron", monospace;
-  font-size: 12px;
+  color: var(--ink-mute);
+  font-family: var(--font-mono);
+  font-size: 11px;
   text-align: center;
   opacity: 0.8;
-  animation: dots-animation 1.5s ease-in-out infinite;
+  letter-spacing: 0.06em;
 }
 
 @keyframes text-pulse {
-  0%, 100% { opacity: 0.8; }
-  50% { opacity: 1; }
+
+  0%,
+  100% {
+    opacity: 0.8;
+  }
+
+  50% {
+    opacity: 1;
+  }
 }
 
 @keyframes dots-animation {
-  0%, 20% { content: 'Establishing connection'; }
-  25%, 45% { content: 'Establishing connection.'; }
-  50%, 70% { content: 'Establishing connection..'; }
-  75%, 95% { content: 'Establishing connection...'; }
+
+  0%,
+  20% {
+    content: 'Establishing connection';
+  }
+
+  25%,
+  45% {
+    content: 'Establishing connection.';
+  }
+
+  50%,
+  70% {
+    content: 'Establishing connection..';
+  }
+
+  75%,
+  95% {
+    content: 'Establishing connection...';
+  }
 }
 
 /* Progress Ring Animation */
@@ -2103,32 +3528,22 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   bottom: -10px;
   border: 3px solid transparent;
   border-radius: 50%;
-  border-top: 3px solid var(--axonos-secondary);
+  border-top: 3px solid var(--violet);
   animation: progress-ring 3s ease-in-out infinite;
 }
 
+/* transform-only: removed border-top-color changes which force CPU repaints */
 @keyframes progress-ring {
-  0% { 
+  from {
     transform: rotate(0deg);
-    border-top-color: var(--axonos-secondary);
   }
-  25% { 
-    border-top-color: var(--axonos-primary);
-  }
-  50% { 
-    transform: rotate(180deg);
-    border-top-color: var(--axonos-accent);
-  }
-  75% { 
-    border-top-color: var(--axonos-primary);
-  }
-  100% { 
+
+  to {
     transform: rotate(360deg);
-    border-top-color: var(--axonos-secondary);
   }
 }
 
-/* Animated Stars Background - Only when not connected */
+/* AxonDAO subtle grid overlay — Only when not connected */
 html:not(.noVNC_connected) body::before {
   content: '';
   position: fixed;
@@ -2136,56 +3551,30 @@ html:not(.noVNC_connected) body::before {
   left: 0;
   right: 0;
   bottom: 0;
-  background-image: 
-    radial-gradient(3px 3px at 20px 30px, #fff, transparent),
-    radial-gradient(2px 2px at 40px 70px, #fff, transparent),
-    radial-gradient(2px 2px at 90px 40px, #fff, transparent),
-    radial-gradient(3px 3px at 130px 80px, #fff, transparent),
-    radial-gradient(2px 2px at 160px 30px, #fff, transparent),
-    radial-gradient(1px 1px at 200px 120px, #fff, transparent),
-    radial-gradient(3px 3px at 240px 60px, #fff, transparent),
-    radial-gradient(2px 2px at 280px 100px, #fff, transparent),
-    radial-gradient(2px 2px at 320px 40px, #fff, transparent),
-    radial-gradient(1px 1px at 360px 140px, #fff, transparent),
-    radial-gradient(2px 2px at 50px 150px, #fff, transparent),
-    radial-gradient(3px 3px at 300px 180px, #fff, transparent),
-    radial-gradient(1px 1px at 180px 200px, #fff, transparent),
-    radial-gradient(2px 2px at 380px 90px, #fff, transparent);
-  background-size: 400px 250px;
-  animation: stars-move 25s linear infinite;
+  background-image:
+    linear-gradient(rgba(140, 200, 220, .025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(140, 200, 220, .025) 1px, transparent 1px);
+  background-size: 78px 78px;
+  -webkit-mask-image: radial-gradient(ellipse 95% 75% at 50% 25%, #000, transparent 95%);
+  mask-image: radial-gradient(ellipse 95% 75% at 50% 25%, #000, transparent 95%);
+  animation: grid-drift 28s ease-in-out infinite;
   pointer-events: none;
   z-index: 1;
-  opacity: 0.8;
+  opacity: 0.85;
+  will-change: transform;
 }
 
-@keyframes stars-move {
-  from { transform: translateX(0); }
-  to { transform: translateX(-400px); }
-}
+/* Pure-transform keyframes — opacity removed so only compositor properties animate */
+@keyframes grid-drift {
 
-/* Twinkling Stars Layer - Only when not connected */
-html:not(.noVNC_connected) #noVNC_container::before {
-  content: '';
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-image: 
-    radial-gradient(1px 1px at 50px 50px, #fff, transparent),
-    radial-gradient(1px 1px at 150px 150px, #fff, transparent),
-    radial-gradient(1px 1px at 250px 100px, #fff, transparent),
-    radial-gradient(1px 1px at 350px 200px, #fff, transparent),
-    radial-gradient(1px 1px at 450px 50px, #fff, transparent);
-  background-size: 500px 300px;
-  animation: twinkle 3s ease-in-out infinite alternate;
-  pointer-events: none;
-  z-index: -2;
-}
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
 
-@keyframes twinkle {
-  0% { opacity: 0.3; }
-  100% { opacity: 1; }
+  50% {
+    transform: translate(6px, 4px);
+  }
 }
 
 /* Fade in up animation */
@@ -2194,6 +3583,7 @@ html:not(.noVNC_connected) #noVNC_container::before {
     opacity: 0;
     transform: translateY(20px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -2205,7 +3595,7 @@ html:not(.noVNC_connected) #noVNC_container::before {
   opacity: 0;
 }
 
-/* Animated Planets and Space Objects - Only when not connected */
+/* AxonDAO ambient dot-scatter overlay — Only when not connected */
 html:not(.noVNC_connected) body::after {
   content: '';
   position: fixed;
@@ -2213,77 +3603,57 @@ html:not(.noVNC_connected) body::after {
   left: 0;
   right: 0;
   bottom: 0;
-  background-image: 
-    radial-gradient(circle at 15% 20%, rgba(255, 100, 100, 0.3) 0%, transparent 8%),
-    radial-gradient(circle at 85% 80%, rgba(100, 150, 255, 0.3) 0%, transparent 12%),
-    radial-gradient(circle at 70% 30%, rgba(255, 200, 100, 0.2) 0%, transparent 6%),
-    radial-gradient(circle at 30% 70%, rgba(150, 255, 150, 0.2) 0%, transparent 10%),
-    radial-gradient(circle at 90% 10%, rgba(255, 150, 255, 0.2) 0%, transparent 4%);
-  background-size: 800px 600px;
-  animation: planets-orbit 60s infinite linear;
+  background-image:
+    radial-gradient(circle at 50% 50%, rgba(180, 200, 240, 0.30) 0.6px, transparent 1.2px);
+  background-size: 220px 220px;
+  animation: dot-float 28s ease-in-out infinite;
   pointer-events: none;
   z-index: -4;
+  opacity: 0.45;
+  will-change: transform;
 }
 
-@keyframes planets-orbit {
-  0% { transform: translate(0, 0) rotate(0deg); }
-  25% { transform: translate(-20px, -10px) rotate(90deg); }
-  50% { transform: translate(-10px, 20px) rotate(180deg); }
-  75% { transform: translate(20px, 10px) rotate(270deg); }
-  100% { transform: translate(0, 0) rotate(360deg); }
+/* Pure-transform keyframes — opacity removed so only compositor properties animate */
+@keyframes dot-float {
+
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+
+  50% {
+    transform: translate(5px, -4px);
+  }
 }
 
-/* New title glow animation */
+/* Title glow animation — AxonDAO cyan (opacity-only: GPU-composited, avoids text-shadow repaint) */
 @keyframes title-glow {
-  0% { 
-    text-shadow: 
-      0 0 30px var(--axonos-primary), 
-      0 0 60px var(--axonos-primary),
-      2px 2px 8px rgba(0,0,0,0.8);
+  0% {
+    opacity: 0.82;
   }
-  100% { 
-    text-shadow: 
-      0 0 50px var(--axonos-primary), 
-      0 0 100px var(--axonos-primary),
-      2px 2px 8px rgba(0,0,0,0.8);
+
+  100% {
+    opacity: 1;
   }
 }
 
-/* Accent pulse animation */
+/* Accent pulse animation — AxonDAO cyan (opacity-only: GPU-composited) */
 @keyframes accent-pulse {
-  0% { 
-    text-shadow: 
-      0 0 40px var(--axonos-accent),
-      0 0 80px var(--axonos-accent);
+  0% {
+    opacity: 0.65;
   }
-  100% { 
-    text-shadow: 
-      0 0 60px var(--axonos-accent),
-      0 0 120px var(--axonos-accent);
+
+  100% {
+    opacity: 1;
   }
 }
 
 /* Enhanced feature hover effects */
 .axonos-feature:hover .axonos-feature-icon {
   transform: scale(1.2) rotate(5deg);
-  filter: drop-shadow(0 0 15px var(--axonos-primary)) brightness(1.2);
+  filter: drop-shadow(0 0 12px rgba(78, 195, 212, .55)) brightness(1.2);
 }
 
-/* Improved connect button shimmer */
-.axonos-enhanced-connect::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
-  transition: left 0.6s ease;
-}
-
-.axonos-enhanced-connect:hover::before {
-  left: 100%;
-}
 
 /* Enhanced connect button active state */
 .axonos-enhanced-connect:active {
@@ -2291,27 +3661,14 @@ html:not(.noVNC_connected) body::after {
   transition: all 0.1s ease !important;
 }
 
-/* Space Elements - Only when not connected */
-html:not(.noVNC_connected) .space-elements {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  pointer-events: none;
-  z-index: 2;
-}
-
-/* Hide space elements when connected */
-html.noVNC_connected .space-elements {
-  display: none;
-}
-
-.rocket, .spaceship, .planet, .comet, .satellite {
-  position: absolute;
-  font-size: 2.5rem;
-  filter: drop-shadow(0 0 15px rgba(255, 255, 255, 0.8));
-  z-index: 3;
+/* Space elements — not part of AxonDAO branding; suppress entirely */
+.space-elements,
+.rocket,
+.spaceship,
+.planet,
+.comet,
+.satellite {
+  display: none !important;
 }
 
 /* Rocket Animations */
@@ -2329,15 +3686,31 @@ html.noVNC_connected .space-elements {
 }
 
 @keyframes rocket-fly-1 {
-  0% { transform: translateX(0) translateY(0) rotate(15deg); }
-  50% { transform: translateX(50vw) translateY(-10vh) rotate(15deg); }
-  100% { transform: translateX(110vw) translateY(-20vh) rotate(15deg); }
+  0% {
+    transform: translateX(0) translateY(0) rotate(15deg);
+  }
+
+  50% {
+    transform: translateX(50vw) translateY(-10vh) rotate(15deg);
+  }
+
+  100% {
+    transform: translateX(110vw) translateY(-20vh) rotate(15deg);
+  }
 }
 
 @keyframes rocket-fly-2 {
-  0% { transform: translateX(0) translateY(0) rotate(135deg); }
-  50% { transform: translateX(-50vw) translateY(10vh) rotate(135deg); }
-  100% { transform: translateX(-110vw) translateY(20vh) rotate(135deg); }
+  0% {
+    transform: translateX(0) translateY(0) rotate(135deg);
+  }
+
+  50% {
+    transform: translateX(-50vw) translateY(10vh) rotate(135deg);
+  }
+
+  100% {
+    transform: translateX(-110vw) translateY(20vh) rotate(135deg);
+  }
 }
 
 /* Spaceship Animations */
@@ -2355,19 +3728,47 @@ html.noVNC_connected .space-elements {
 }
 
 @keyframes spaceship-cruise-1 {
-  0% { transform: translateX(0) translateY(0) rotate(0deg); }
-  25% { transform: translateX(30vw) translateY(-5vh) rotate(10deg); }
-  50% { transform: translateX(60vw) translateY(5vh) rotate(-5deg); }
-  75% { transform: translateX(90vw) translateY(-3vh) rotate(5deg); }
-  100% { transform: translateX(120vw) translateY(0) rotate(0deg); }
+  0% {
+    transform: translateX(0) translateY(0) rotate(0deg);
+  }
+
+  25% {
+    transform: translateX(30vw) translateY(-5vh) rotate(10deg);
+  }
+
+  50% {
+    transform: translateX(60vw) translateY(5vh) rotate(-5deg);
+  }
+
+  75% {
+    transform: translateX(90vw) translateY(-3vh) rotate(5deg);
+  }
+
+  100% {
+    transform: translateX(120vw) translateY(0) rotate(0deg);
+  }
 }
 
 @keyframes spaceship-cruise-2 {
-  0% { transform: translateX(0) translateY(0) rotate(180deg); }
-  25% { transform: translateX(-30vw) translateY(5vh) rotate(170deg); }
-  50% { transform: translateX(-60vw) translateY(-5vh) rotate(185deg); }
-  75% { transform: translateX(-90vw) translateY(3vh) rotate(175deg); }
-  100% { transform: translateX(-120vw) translateY(0) rotate(180deg); }
+  0% {
+    transform: translateX(0) translateY(0) rotate(180deg);
+  }
+
+  25% {
+    transform: translateX(-30vw) translateY(5vh) rotate(170deg);
+  }
+
+  50% {
+    transform: translateX(-60vw) translateY(-5vh) rotate(185deg);
+  }
+
+  75% {
+    transform: translateX(-90vw) translateY(3vh) rotate(175deg);
+  }
+
+  100% {
+    transform: translateX(-120vw) translateY(0) rotate(180deg);
+  }
 }
 
 /* Planet Animations */
@@ -2385,13 +3786,27 @@ html.noVNC_connected .space-elements {
 }
 
 @keyframes planet-float-1 {
-  0%, 100% { transform: translateY(0) rotate(0deg); }
-  50% { transform: translateY(-20px) rotate(180deg); }
+
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+
+  50% {
+    transform: translateY(-20px) rotate(180deg);
+  }
 }
 
 @keyframes planet-float-2 {
-  0%, 100% { transform: translateY(0) rotate(0deg); }
-  50% { transform: translateY(20px) rotate(-180deg); }
+
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+
+  50% {
+    transform: translateY(20px) rotate(-180deg);
+  }
 }
 
 /* Comet Animation */
@@ -2403,14 +3818,21 @@ html.noVNC_connected .space-elements {
 }
 
 @keyframes comet-streak {
-  0% { 
-    transform: translateX(0) translateY(0) rotate(-30deg); 
+  0% {
+    transform: translateX(0) translateY(0) rotate(-30deg);
     opacity: 0;
   }
-  10% { opacity: 1; }
-  90% { opacity: 1; }
-  100% { 
-    transform: translateX(120vw) translateY(80vh) rotate(-30deg); 
+
+  10% {
+    opacity: 1;
+  }
+
+  90% {
+    opacity: 1;
+  }
+
+  100% {
+    transform: translateX(120vw) translateY(80vh) rotate(-30deg);
     opacity: 0;
   }
 }
@@ -2423,6 +3845,1257 @@ html.noVNC_connected .space-elements {
 }
 
 @keyframes satellite-orbit {
-  0% { transform: rotate(0deg) translateX(100px) rotate(0deg); }
-  100% { transform: rotate(360deg) translateX(100px) rotate(-360deg); }
+  0% {
+    transform: rotate(0deg) translateX(100px) rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg) translateX(100px) rotate(-360deg);
+  }
+}
+
+/* ==========================================================================
+   🧬 Science Templates Interface & Tabs Layout
+   ========================================================================== */
+
+/* Hero & Tabs Panel Layout */
+.axonos-hero-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--rule-strong);
+  border-radius: 16px;
+  background: rgba(8, 16, 28, 0.55);
+  padding: 1.5rem 1.25rem;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(78, 195, 212, 0.06);
+  backdrop-filter: blur(10px);
+}
+
+#noVNC_connect_dlg>.axonos-hero-panel {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+/* Tabs Navigation */
+.axonos-tabs-nav {
+  display: flex;
+  gap: 8px;
+  margin: 1.5rem 0 1rem;
+  border-bottom: 1px solid var(--rule-strong);
+  padding-bottom: 2px;
+}
+
+.axonos-tab-btn {
+  background: rgba(10, 20, 36, 0.4);
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  color: var(--ink-mute);
+  padding: 10px 18px;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  position: relative;
+  top: 1px;
+}
+
+.axonos-tab-btn:hover {
+  color: var(--axonos-light);
+  background: rgba(78, 195, 212, 0.05);
+}
+
+.axonos-tab-btn.active {
+  color: var(--cyan);
+  background: rgba(12, 26, 46, 0.65);
+  border-color: var(--rule-strong);
+  border-bottom: 1px solid var(--bg-1);
+  box-shadow: 0 -4px 12px rgba(78, 195, 212, 0.05);
+}
+
+.axonos-tab-btn.active::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--cyan);
+  border-radius: 8px 8px 0 0;
+  box-shadow: 0 0 8px var(--cyan);
+}
+
+/* Tab Panels Content */
+.axonos-tabs-content {
+  flex: 1;
+}
+
+.axonos-tab-pane {
+  display: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.axonos-tab-pane.active {
+  display: block;
+  opacity: 1;
+}
+
+/* Templates Controls (Search & Filter) */
+.axonos-templates-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 1.25rem;
+}
+
+@media (min-width: 600px) {
+  .axonos-templates-controls {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+}
+
+.axonos-search-wrap {
+  flex: 1;
+  max-width: 100%;
+}
+
+@media (min-width: 600px) {
+  .axonos-search-wrap {
+    max-width: 300px;
+  }
+}
+
+.axonos-templates-search-input {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--rule-strong);
+  background: rgba(12, 18, 28, 0.85);
+  color: var(--axonos-light);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3);
+  transition: all 0.25s ease;
+  box-sizing: border-box;
+}
+
+.axonos-templates-search-input:focus {
+  outline: none;
+  border-color: var(--cyan);
+  box-shadow: 0 0 10px rgba(78, 195, 212, 0.15), inset 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.axonos-filter-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.axonos-filter-pill {
+  background: rgba(12, 26, 46, 0.4);
+  border: 1px solid var(--rule-strong);
+  color: var(--ink-mute);
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  font-family: var(--font-body);
+}
+
+.axonos-filter-pill:hover {
+  color: var(--axonos-light);
+  border-color: rgba(78, 195, 212, 0.4);
+}
+
+.axonos-filter-pill.active {
+  color: var(--bg-0);
+  background: var(--cyan);
+  border-color: var(--cyan);
+  font-weight: 700;
+  box-shadow: 0 0 10px rgba(78, 195, 212, 0.3);
+}
+
+/* Templates Grid */
+.axonos-templates-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  max-height: 480px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+@media (min-width: 768px) {
+  .axonos-templates-grid {
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  }
+}
+
+/* Scrollbar for Grid */
+.axonos-templates-grid::-webkit-scrollbar {
+  width: 6px;
+}
+
+.axonos-templates-grid::-webkit-scrollbar-track {
+  background: rgba(12, 18, 28, 0.3);
+  border-radius: 4px;
+}
+
+.axonos-templates-grid::-webkit-scrollbar-thumb {
+  background: var(--rule-strong);
+  border-radius: 4px;
+}
+
+.axonos-templates-grid::-webkit-scrollbar-thumb:hover {
+  background: var(--cyan);
+}
+
+/* Template Card */
+.axonos-template-card {
+  background: linear-gradient(135deg, rgba(10, 24, 44, 0.75) 0%, rgba(12, 26, 46, 0.5) 100%);
+  border: 1px solid var(--rule-strong);
+  border-radius: 14px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(.2, .8, .2, 1);
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+}
+
+.axonos-template-card:hover {
+  border-color: rgba(78, 195, 212, 0.4);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(78, 195, 212, 0.08);
+}
+
+.axonos-template-card.selected {
+  border-color: var(--cyan);
+  background: linear-gradient(135deg, rgba(78, 195, 212, 0.07) 0%, rgba(10, 24, 44, 0.8) 100%);
+  box-shadow: 0 0 16px rgba(78, 195, 212, 0.15), inset 0 0 0 1px rgba(78, 195, 212, 0.15);
+}
+
+.axonos-template-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.axonos-template-icon-wrap {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(78, 195, 212, 0.08);
+  border-radius: 10px;
+  border: 1px solid rgba(78, 195, 212, 0.15);
+  transition: all 0.25s ease;
+}
+
+.axonos-template-card:hover .axonos-template-icon-wrap,
+.axonos-template-card.selected .axonos-template-icon-wrap {
+  background: rgba(78, 195, 212, 0.14);
+  border-color: var(--cyan);
+  box-shadow: 0 0 10px rgba(78, 195, 212, 0.2);
+}
+
+.axonos-template-icon-wrap svg {
+  width: 22px;
+  height: 22px;
+}
+
+.axonos-template-meta {
+  display: flex;
+  gap: 4px;
+}
+
+.axonos-template-tag {
+  background: rgba(12, 26, 46, 0.6);
+  border: 1px solid var(--rule-strong);
+  color: var(--ink-mute);
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+}
+
+.axonos-template-card.selected .axonos-template-tag {
+  border-color: rgba(78, 195, 212, 0.2);
+  color: var(--cyan);
+}
+
+.axonos-template-title {
+  margin: 4px 0 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--axonos-light);
+  font-family: var(--font-body);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.axonos-template-desc {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--ink-mute);
+  font-weight: 300;
+  flex: 1;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.axonos-template-image-info {
+  background: rgba(6, 12, 22, 0.65);
+  border: 1px solid rgba(140, 200, 220, 0.05);
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin-top: 4px;
+}
+
+.axonos-template-image-info code {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--violet-fg);
+  word-break: break-all;
+}
+
+.axonos-template-card.selected .axonos-template-image-info {
+  border-color: rgba(78, 195, 212, 0.12);
+}
+
+.axonos-template-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+  align-items: center;
+}
+
+.axonos-template-btn {
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: var(--font-body);
+  box-sizing: border-box;
+}
+
+.axonos-template-btn.select-btn {
+  flex: 1;
+  background: rgba(78, 195, 212, 0.08);
+  border: 1px solid var(--hair-mint);
+  color: var(--cyan);
+}
+
+.axonos-template-btn.select-btn:hover {
+  background: var(--cyan);
+  border-color: var(--cyan);
+  color: var(--bg-0);
+  box-shadow: 0 0 12px rgba(78, 195, 212, 0.3);
+}
+
+.axonos-template-card.selected .axonos-template-btn.select-btn {
+  background: var(--cyan);
+  border-color: var(--cyan);
+  color: var(--bg-0);
+}
+
+.axonos-template-btn.info-btn {
+  background: rgba(10, 20, 36, 0.6);
+  border: 1px solid var(--rule-strong);
+  color: var(--ink-mute);
+}
+
+.axonos-template-btn.info-btn:hover {
+  border-color: var(--axonos-light);
+  color: var(--axonos-light);
+}
+
+/* Selected Template Banner (Right Column Connect Panel) */
+.axonos-selected-template-banner {
+  background: linear-gradient(135deg, rgba(78, 195, 212, 0.08) 0%, rgba(10, 24, 44, 0.5) 100%);
+  border: 1px solid var(--hair-mint);
+  border-radius: 14px;
+  padding: 12px 16px;
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  backdrop-filter: blur(8px);
+}
+
+.axonos-selected-template-label {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  opacity: 0.9;
+}
+
+.axonos-selected-template-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.axonos-selected-template-icon {
+  font-size: 1.1rem;
+}
+
+.axonos-selected-template-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.axonos-selected-template-title {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: var(--axonos-light);
+  font-family: var(--font-body);
+}
+
+/* Modern Details Modal */
+.axonos-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.axonos-modal.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.axonos-modal-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(3, 8, 15, 0.85);
+  backdrop-filter: blur(8px);
+}
+
+.axonos-modal-content {
+  background: linear-gradient(145deg, #0c1a2e, #07101a);
+  border: 1px solid var(--rule-strong);
+  border-radius: 20px;
+  width: 90%;
+  max-width: 580px;
+  max-height: 85vh;
+  overflow-y: auto;
+  position: relative;
+  z-index: 10002;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.8), 0 0 40px rgba(78, 195, 212, 0.15);
+  padding: 30px;
+  box-sizing: border-box;
+  transform: scale(0.9);
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.axonos-modal.active .axonos-modal-content {
+  transform: scale(1);
+}
+
+.axonos-modal-close {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--rule-strong);
+  color: var(--ink-mute);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  font-size: 1.4rem;
+  line-height: 30px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.axonos-modal-close:hover {
+  background: rgba(242, 96, 122, 0.12);
+  border-color: var(--coral);
+  color: var(--coral);
+  box-shadow: 0 0 10px rgba(242, 96, 122, 0.3);
+}
+
+/* Modal Body elements */
+.axonos-m-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 15px;
+}
+
+.axonos-m-icon-box {
+  width: 44px;
+  height: 44px;
+  background: rgba(78, 195, 212, 0.1);
+  border: 1px solid var(--hair-mint);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.axonos-m-icon-box svg {
+  width: 26px;
+  height: 26px;
+}
+
+.axonos-m-title {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--axonos-light);
+  font-family: var(--font-body);
+}
+
+.axonos-m-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+
+.axonos-m-desc {
+  font-size: 0.92rem;
+  line-height: 1.6;
+  color: var(--ink-dim);
+  margin-bottom: 25px;
+}
+
+.axonos-m-section {
+  margin-bottom: 22px;
+}
+
+.axonos-m-section-title {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--cyan);
+  margin: 0 0 8px 0;
+  border-bottom: 1px dashed rgba(78, 195, 212, 0.2);
+  padding-bottom: 4px;
+}
+
+.axonos-m-image-box {
+  background: rgba(6, 12, 22, 0.8);
+  border: 1px solid var(--rule-strong);
+  border-radius: 10px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.axonos-m-image-box code {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--violet-fg);
+}
+
+.axonos-m-copy-btn {
+  background: rgba(78, 195, 212, 0.1);
+  border: 1px solid var(--hair-mint);
+  color: var(--cyan);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: var(--font-body);
+  transition: all 0.2s ease;
+}
+
+.axonos-m-copy-btn:hover {
+  background: var(--cyan);
+  color: var(--bg-0);
+}
+
+.axonos-m-pkgs-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.axonos-m-pkg-badge {
+  background: rgba(78, 195, 212, 0.04);
+  border: 1px solid var(--rule-strong);
+  color: var(--axonos-light);
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-family: var(--font-body);
+}
+
+.axonos-m-command-box {
+  background: #03080f;
+  border: 1px solid var(--rule-strong);
+  border-radius: 10px;
+  padding: 12px 16px;
+  position: relative;
+}
+
+.axonos-m-command-box pre {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--green);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+@media (min-width: 993px) {
+  .axonos-templates-grid {
+    max-height: 520px;
+  }
+}
+
+@media (min-width: 1200px) {
+  .axonos-templates-grid {
+    max-height: 580px;
+  }
+}
+
+/* ==============================================================
+ * File transfer panel (left deck)
+ * ------------------------------------------------------------ */
+
+.axonos-files-panel {
+  width: min(420px, calc(100vw - 90px));
+}
+
+.axonos-files-panel__help {
+  font-size: 0.78rem;
+  color: var(--axonos-light);
+  opacity: 0.75;
+  margin: 4px 0 8px;
+}
+
+.axonos-files-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.axonos-files-toolbar__btn {
+  background: var(--axonos-dark-3);
+  color: var(--axonos-light);
+  border: 1px solid var(--axonos-shadow);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.axonos-files-toolbar__btn:hover:not(:disabled) {
+  border-color: var(--axonos-primary);
+  color: var(--axonos-primary);
+}
+
+.axonos-files-toolbar__btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.axonos-files-toolbar__path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--axonos-primary);
+}
+
+.axonos-files-drop {
+  border: 1px dashed var(--axonos-shadow);
+  border-radius: 8px;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--axonos-dark-2);
+}
+
+.axonos-files-drop--over {
+  border-color: var(--axonos-primary);
+  background: var(--axonos-dark-3);
+}
+
+.axonos-files-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+}
+
+.axonos-files-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+}
+
+.axonos-files-entry:hover {
+  background: var(--axonos-dark-3);
+}
+
+.axonos-files-entry__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--axonos-light);
+}
+
+.axonos-files-entry--dir .axonos-files-entry__name {
+  cursor: pointer;
+  color: var(--axonos-primary);
+}
+
+.axonos-files-entry__size {
+  font-size: 0.72rem;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+.axonos-files-entry__dl {
+  background: none;
+  border: 1px solid var(--axonos-shadow);
+  border-radius: 6px;
+  color: var(--axonos-primary);
+  cursor: pointer;
+  padding: 1px 7px;
+}
+
+.axonos-files-entry__dl:hover {
+  border-color: var(--axonos-primary);
+}
+
+.axonos-files-empty {
+  padding: 14px 8px;
+  text-align: center;
+  font-size: 0.78rem;
+  opacity: 0.6;
+}
+
+.axonos-files-upload-btn {
+  margin-top: 8px;
+  width: 100%;
+  float: none;
+}
+
+.axonos-files-transfers {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.axonos-transfer {
+  background: var(--axonos-dark-2);
+  border: 1px solid var(--axonos-shadow);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.axonos-transfer__name {
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--axonos-light);
+}
+
+.axonos-transfer__bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--axonos-dark-3);
+  margin: 5px 0;
+  overflow: hidden;
+}
+
+.axonos-transfer__fill {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--axonos-primary), var(--axonos-hover));
+  transition: width 0.3s ease;
+}
+
+.axonos-transfer__meta {
+  font-size: 0.72rem;
+  opacity: 0.75;
+}
+
+.axonos-transfer__controls {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.axonos-transfer__btn {
+  background: none;
+  border: 1px solid var(--axonos-shadow);
+  border-radius: 6px;
+  color: var(--axonos-light);
+  font-size: 0.72rem;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+
+.axonos-transfer__btn:hover {
+  border-color: var(--axonos-primary);
+  color: var(--axonos-primary);
+}
+
+.axonos-files-status {
+  margin-top: 6px;
+  font-size: 0.72rem;
+  color: var(--axonos-light);
+  opacity: 0.7;
+  min-height: 1em;
+}
+
+.axonos-files-status--error {
+  color: #e87a7a;
+  opacity: 1;
+}
+
+/* ---------------------------------------------------------------------------
+ * WebRTC control surface
+ * On the WebRTC path the desktop is a <video> element with data-channel input,
+ * so RFB-only controls (viewport drag, on-screen modifier keys, RFB encoding/
+ * transport/cursor settings) do nothing. They make sense ONLY during a classic
+ * noVNC/RFB session, so hide them on the landing page (not connected) and on
+ * the WebRTC path; they reappear for an RFB fallback session. The #id selector
+ * raises specificity to beat the deck's
+ * `#noVNC_control_bar .noVNC_button { display:block !important }`. */
+html:not(.noVNC_connected) #noVNC_control_bar .axonos-rfb-only,
+html.axonos-webrtc-active #noVNC_control_bar .axonos-rfb-only {
+  display: none !important;
+}
+
+/* The control deck is session-only: hide the whole bar on the landing page
+ * (no active session) so desktop controls don't appear before connect. It
+ * returns once a session is connected (noVNC_connected set for both WebRTC and
+ * RFB). */
+html:not(.noVNC_connected) #noVNC_control_bar_anchor {
+  display: none !important;
+}
+
+/* Microphone button — uses .noVNC_button for an exact box match with its deck
+ * neighbours; we only add the live dot, icon sizing, and state colours. The
+ * #id display rules beat the deck's `display:block !important`. */
+#noVNC_control_bar .axonos-mic-button {
+  display: none !important;
+  position: relative;
+}
+
+#noVNC_control_bar .axonos-mic-button.is-available {
+  display: block !important;
+}
+
+.axonos-mic-button {
+  /* Strip native <button> chrome so it resolves to the same transparent box as
+   * its <input type="image"> neighbours (otherwise the UA paints a white/grey
+   * background and its own sizing). */
+  -webkit-appearance: none;
+  appearance: none;
+  /* <button> defaults to border-box, but the deck's inputs are content-box, so
+   * the shared `width/height:32px` became total (→ 22px content) instead of the
+   * 42px box the peers get. Match them. */
+  box-sizing: content-box !important;
+  background: transparent;
+  color: var(--ink-mute);
+  cursor: pointer;
+}
+
+.axonos-mic-button svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.axonos-mic-button:hover {
+  color: #fff;
+}
+
+.axonos-mic-button.is-pending {
+  opacity: 0.6;
+}
+
+.axonos-mic-button.is-denied {
+  color: #e0a3c0 !important;
+  border-color: rgba(224, 163, 192, 0.5) !important;
+}
+
+.axonos-mic-button.is-live {
+  color: #fff !important;
+  background: rgba(200, 42, 42, 0.92) !important;
+  border-color: #ff5a5a !important;
+}
+
+/* Live "recording" dot on the button. */
+.axonos-mic-button__dot {
+  display: none;
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff3b3b;
+  box-shadow: 0 0 5px #ff3b3b;
+}
+
+.axonos-mic-button.is-live .axonos-mic-button__dot {
+  display: block;
+}
+
+/* Restart button: base noVNC gives .noVNC_submit `float: right`, which (with the
+ * theme's full-width pill) drops it out of flow and lets Logging overlap it.
+ * The deck pill is block + full width, so it must not float. */
+#noVNC_restart_session_button {
+  float: none !important;
+}
+
+/* Persistent live indicator: a small fixed red dot that stays visible even when
+ * the control bar is collapsed, since the mic streams to a remote desktop and
+ * its active state must always be glanceable. */
+html.axonos-mic-live::after {
+  content: '';
+  position: fixed;
+  left: 10px;
+  bottom: 10px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ff3b3b;
+  box-shadow: 0 0 8px #ff3b3b;
+  z-index: 100;
+  pointer-events: none;
+}
+
+/* ── Direct SSH access toggle + connect card ───────────────────────────── */
+.axonos-ssh-toggle {
+  margin: 12px 0 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 10px;
+  background: var(--bg-1);
+}
+
+.axonos-ssh-toggle__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.axonos-ssh-toggle__input {
+  margin-top: 3px;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--cyan);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.axonos-ssh-toggle__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.axonos-ssh-toggle__title {
+  font-weight: 600;
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+
+.axonos-ssh-toggle__desc {
+  color: var(--ink-mute);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.axonos-ssh-key {
+  margin-top: 12px;
+}
+
+.axonos-ssh-key--hidden {
+  display: none;
+}
+
+.axonos-ssh-key__label {
+  display: block;
+  color: var(--ink-dim);
+  font-size: 0.8rem;
+  margin-bottom: 6px;
+}
+
+.axonos-ssh-key__input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 64px;
+  padding: 8px 10px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 8px;
+  background: var(--bg-0);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.axonos-ssh-key__input:focus {
+  outline: none;
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 2px rgba(78, 195, 212, 0.18);
+}
+
+.axonos-ssh-key__hint {
+  color: var(--ink-mute);
+  font-size: 0.75rem;
+  margin: 6px 0 0;
+  line-height: 1.35;
+}
+
+.axonos-ssh-card {
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid var(--hair-mint);
+  border-radius: 12px;
+  background: var(--bg-1);
+  box-shadow: 0 0 14px rgba(78, 195, 212, 0.12);
+}
+
+.axonos-ssh-card--hidden {
+  display: none;
+}
+
+.axonos-ssh-card__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.axonos-ssh-card__icon {
+  font-size: 1.1rem;
+}
+
+.axonos-ssh-card__title {
+  font-weight: 700;
+  color: var(--cyan);
+  font-size: 1rem;
+}
+
+.axonos-ssh-card__label {
+  color: var(--ink-dim);
+  font-size: 0.8rem;
+  margin: 0 0 6px;
+}
+
+.axonos-ssh-card__cmd-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.axonos-ssh-card__cmd {
+  flex: 1 1 auto;
+  padding: 9px 11px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 8px;
+  background: var(--bg-0);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  word-break: break-all;
+  user-select: all;
+}
+
+.axonos-ssh-card__copy,
+.axonos-ssh-card__end {
+  cursor: pointer;
+  border-radius: 8px;
+  border: 1px solid var(--rule-strong);
+  background: var(--bg-2);
+  color: var(--ink);
+  font-size: 0.8rem;
+  padding: 0 14px;
+}
+
+.axonos-ssh-card__copy:hover,
+.axonos-ssh-card__end:hover {
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
+
+.axonos-ssh-card__ttl {
+  color: var(--ink-mute);
+  font-size: 0.78rem;
+  margin: 10px 0 0;
+}
+
+.axonos-ssh-card__note {
+  color: var(--warm);
+  font-size: 0.76rem;
+  margin: 6px 0 12px;
+  line-height: 1.35;
+}
+
+.axonos-ssh-card__end {
+  width: 100%;
+  padding: 9px 0;
+}
+
+/* Custom Confirmation Modals aligned with AxonOS Theme */
+.axonos-confirm-content {
+  max-width: 440px !important;
+  border: 1px solid rgba(78, 195, 212, 0.22) !important;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7), 0 0 40px rgba(78, 195, 212, 0.12) !important;
+  padding: 28px !important;
+}
+
+.axonos-confirm-title {
+  font-size: 1.3rem !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.01em !important;
+  color: var(--ink) !important;
+  margin: 0 0 14px 0 !important;
+  line-height: 1.25 !important;
+}
+
+.axonos-confirm-body {
+  font-size: 0.9rem !important;
+  line-height: 1.55 !important;
+  color: var(--ink-dim) !important;
+  margin-bottom: 24px !important;
+  white-space: pre-wrap !important;
+}
+
+.axonos-confirm-footer {
+  display: flex !important;
+  justify-content: flex-end !important;
+  gap: 12px !important;
+}
+
+.axonos-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
+  padding: 10px 20px !important;
+  font-size: 0.9rem !important;
+  font-weight: 600 !important;
+  white-space: nowrap !important;
+  font-family: var(--font-body) !important;
+  letter-spacing: 0.04em !important;
+  border-radius: 999px !important;
+  cursor: pointer !important;
+  box-shadow: none !important;
+  transition: background .2s, border-color .2s, transform .2s, box-shadow .2s !important;
+}
+
+.axonos-btn--primary {
+  background: rgba(78, 195, 212, 0.1) !important;
+  border: 1px solid var(--hair-mint) !important;
+  color: var(--cyan) !important;
+  -webkit-text-fill-color: var(--cyan) !important;
+}
+
+.axonos-btn--primary:hover {
+  transform: translateY(-2px) !important;
+  background: rgba(78, 195, 212, 0.18) !important;
+  border-color: var(--cyan) !important;
+  box-shadow: 0 6px 22px rgba(78, 195, 212, 0.22) !important;
+}
+
+.axonos-btn--primary:active {
+  transform: translateY(0) !important;
+  box-shadow: none !important;
+}
+
+.axonos-btn--danger {
+  background: rgba(242, 96, 122, 0.1) !important;
+  border: 1px solid rgba(242, 96, 122, 0.35) !important;
+  color: var(--coral) !important;
+  -webkit-text-fill-color: var(--coral) !important;
+}
+
+.axonos-btn--danger:hover {
+  transform: translateY(-2px) !important;
+  background: rgba(242, 96, 122, 0.18) !important;
+  border-color: var(--coral) !important;
+  box-shadow: 0 6px 22px rgba(242, 96, 122, 0.22) !important;
+}
+
+.axonos-btn--danger:active {
+  transform: translateY(0) !important;
+  box-shadow: none !important;
+}
+
+.axonos-btn--secondary {
+  background: rgba(170, 210, 225, 0.06) !important;
+  border: 1px solid var(--rule-strong) !important;
+  color: var(--ink-mute) !important;
+  -webkit-text-fill-color: var(--ink-mute) !important;
+}
+
+.axonos-btn--secondary:hover {
+  transform: translateY(-2px) !important;
+  background: rgba(170, 210, 225, 0.12) !important;
+  border-color: var(--ink-mute) !important;
+}
+
+.axonos-btn--secondary:active {
+  transform: translateY(0) !important;
 }

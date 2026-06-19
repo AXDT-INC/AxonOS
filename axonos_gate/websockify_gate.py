@@ -17,7 +17,12 @@ from threading import Lock
 from urllib.parse import parse_qs, urlparse
 
 # Local security helpers (same directory)
-from security_utils import cors_origin_for_request, get_rate_limiter_from_env, parse_cors_allowlist
+from security_utils import (
+    SimpleRateLimiter,
+    cors_origin_for_request,
+    get_rate_limiter_from_env,
+    parse_cors_allowlist,
+)
 
 # Add system Python path for Ubuntu 22.04 packages (websockify) FIRST
 if '/usr/lib/python3/dist-packages' not in sys.path:
@@ -51,6 +56,7 @@ try:
         get_credit_policy,
         get_wallet_access_status,
         mask_wallet_address,
+        validate_ssh_public_key,
         validate_wallet_address,
         verify_signed_challenge,
     )
@@ -63,6 +69,7 @@ except ImportError:
             get_credit_policy,
             get_wallet_access_status,
             mask_wallet_address,
+            validate_ssh_public_key,
             validate_wallet_address,
             verify_signed_challenge,
         )
@@ -71,24 +78,65 @@ except ImportError:
         sys.exit(1)
 
 try:
-    from deposit_verifier import verify_deposit
+    from deposit_verifier import verify_deposit, verify_deposit_is_pending
 except ImportError:
     try:
-        from axonos_gate.deposit_verifier import verify_deposit
+        from axonos_gate.deposit_verifier import verify_deposit, verify_deposit_is_pending
     except ImportError:
         verify_deposit = None
+        verify_deposit_is_pending = None
+
+try:
+    from x402_verifier import (
+        verify_usdc_deposit,
+        verify_usdc_deposit_is_pending,
+        payment_required_body,
+        payment_required_for_version,
+        resolve_x402_body_version,
+        settle_x402_payment,
+        discovery_document,
+        wallet_from_x_payment,
+    )
+except ImportError:
+    try:
+        from axonos_gate.x402_verifier import (
+            verify_usdc_deposit,
+            verify_usdc_deposit_is_pending,
+            payment_required_body,
+            payment_required_for_version,
+            resolve_x402_body_version,
+            settle_x402_payment,
+            discovery_document,
+            wallet_from_x_payment,
+        )
+    except ImportError:
+        verify_usdc_deposit = None
+        verify_usdc_deposit_is_pending = None
+        payment_required_body = None
+        payment_required_for_version = None
+        resolve_x402_body_version = None
+        settle_x402_payment = None
+        discovery_document = None
+        wallet_from_x_payment = None
+
+try:
+    from deposit_router import verify_deposit_auto
+except ImportError:
+    try:
+        from axonos_gate.deposit_router import verify_deposit_auto
+    except ImportError:
+        verify_deposit_auto = None
 
 try:
     from session_manager import (
         get_active_session,
         heartbeat as session_heartbeat,
         is_session_owner,
-        join_queue,
-        leave_queue,
         release_session,
         restart_desktop_session,
         session_status,
         try_claim_session,
+        validate_session_files_key,
     )
     _session_mgr_available = True
 except ImportError:
@@ -97,16 +145,35 @@ except ImportError:
             get_active_session,
             heartbeat as session_heartbeat,
             is_session_owner,
-            join_queue,
-            leave_queue,
             release_session,
             restart_desktop_session,
             session_status,
             try_claim_session,
+            validate_session_files_key,
         )
         _session_mgr_available = True
     except ImportError:
         _session_mgr_available = False
+        validate_session_files_key = None
+
+try:
+    from webrtc import config as webrtc_config
+    from webrtc import service as webrtc_service
+except ImportError:
+    try:
+        from axonos_gate.webrtc import config as webrtc_config
+        from axonos_gate.webrtc import service as webrtc_service
+    except ImportError:
+        webrtc_config = None
+        webrtc_service = None
+
+try:
+    import file_transfer as _file_transfer
+except ImportError:
+    try:
+        from axonos_gate import file_transfer as _file_transfer
+    except ImportError:
+        _file_transfer = None
 
 logging.basicConfig(
     level=logging.INFO,
@@ -116,6 +183,21 @@ logger = logging.getLogger(__name__)
 
 _allow_any, _allowlist = parse_cors_allowlist(os.getenv("AXGT_CORS_ORIGINS"))
 _rate_limiter = get_rate_limiter_from_env()
+
+_webrtc_sig_ws = None
+
+
+def _webrtc_ws_rate_allow(wallet_key: str, headers, client_ip: str) -> bool:
+    global _webrtc_sig_ws
+    if webrtc_config is None:
+        return True
+    n = webrtc_config.rate_limit_per_minute()
+    if n <= 0:
+        return True
+    if _webrtc_sig_ws is None:
+        _webrtc_sig_ws = SimpleRateLimiter(limit=n, window_seconds=60)
+    ip = (headers.get("X-Forwarded-For") or client_ip or "unknown").split(",")[0].strip()
+    return _webrtc_sig_ws.allow(f"{ip}|{wallet_key or '_'}")
 
 
 _auth_lock = Lock()
@@ -139,6 +221,120 @@ def _auth_pg_get_connection():
     except Exception as e:
         logger.warning("Postgres auth token DB connect failed: %s", e)
         return None
+
+
+_gpu_cache = {"gpus": [], "ts": 0}
+_gpu_cache_lock = Lock()
+
+def _poll_gpus():
+    import subprocess as _sp, time as _t
+    while True:
+        try:
+            res = _sp.run(
+                ["nvidia-smi",
+                 "--query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=30
+            )
+            gpus = []
+            for line in res.stdout.strip().split("\n"):
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) < 7:
+                    continue
+                def _f(v):
+                    try: return float(v)
+                    except: return None
+                gpus.append({
+                    "index": int(parts[0]),
+                    "name": parts[1],
+                    "utilization_pct": _f(parts[2]),
+                    "memory_used_mb": _f(parts[3]),
+                    "memory_total_mb": _f(parts[4]),
+                    "temperature_c": _f(parts[5]),
+                    "power_draw_w": _f(parts[6]),
+                })
+            with _gpu_cache_lock:
+                _gpu_cache["gpus"] = gpus
+                _gpu_cache["ts"] = _t.time()
+        except Exception as exc:
+            logger.warning("GPU poller: %s", exc)
+        _t.sleep(10)
+
+import threading as _threading
+_threading.Thread(target=_poll_gpus, daemon=True).start()
+
+
+def _telemetry_query(query, params=None):
+    conn = _auth_pg_get_connection()
+    if not conn:
+        return None, "Database unavailable"
+    try:
+        with conn.cursor() as cur:
+            cur.execute(query, params or ())
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+        return rows, None
+    except Exception as exc:
+        logger.warning("Telemetry query failed: %s", exc)
+        return None, str(exc)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _telemetry_summary():
+    rows, e = _telemetry_query("""
+        SELECT COUNT(*) AS total_sessions,
+               COUNT(DISTINCT wallet_address) AS unique_wallets,
+               COUNT(CASE WHEN allocation_status='failed' THEN 1 END) AS failed_allocations,
+               COUNT(CASE WHEN status='active' THEN 1 END) AS active_sessions,
+               COALESCE(ROUND(SUM(last_heartbeat - started_at)::numeric / 60, 2), 0) AS total_wall_minutes,
+               COALESCE(MIN(started_at), 0) AS first_session_ts,
+               COALESCE(MAX(started_at), 0) AS last_session_ts
+        FROM axgt_sessions
+    """)
+    if e:
+        return None, e
+    s = rows[0]
+    dep, _ = _telemetry_query("""
+        SELECT COALESCE(SUM(credited_minutes_total), 0) AS total_credited,
+               COALESCE(SUM(consumed_minutes_total), 0) AS total_consumed,
+               COALESCE(SUM(remaining_minutes), 0) AS total_remaining
+        FROM axgt_deposits
+    """)
+    d = (dep or [{}])[0]
+    wr, _ = _telemetry_query("""
+        SELECT COUNT(*) AS total,
+               COUNT(CASE WHEN state='closed' THEN 1 END) AS closed,
+               COUNT(CASE WHEN state='failed' THEN 1 END) AS failed,
+               COUNT(CASE WHEN answer_sdp IS NOT NULL THEN 1 END) AS answered
+        FROM axgt_webrtc_signaling
+    """)
+    w = (wr or [{}])[0]
+    return {
+        "sessions": {
+            "total": int(s.get("total_sessions") or 0),
+            "unique_wallets": int(s.get("unique_wallets") or 0),
+            "failed_allocations": int(s.get("failed_allocations") or 0),
+            "active": int(s.get("active_sessions") or 0),
+            "total_wall_minutes": float(s.get("total_wall_minutes") or 0),
+            "first_session_ts": float(s.get("first_session_ts") or 0),
+            "last_session_ts": float(s.get("last_session_ts") or 0),
+        },
+        "deposits": {
+            "total_credited_minutes": float(d.get("total_credited") or 0),
+            "total_consumed_minutes": float(d.get("total_consumed") or 0),
+            "total_remaining_minutes": float(d.get("total_remaining") or 0),
+        },
+        "webrtc": {
+            "total": int(w.get("total") or 0),
+            "closed": int(w.get("closed") or 0),
+            "failed": int(w.get("failed") or 0),
+            "answered": int(w.get("answered") or 0),
+        },
+    }, None
 
 
 def _auth_pg_ensure_table(conn) -> None:
@@ -249,6 +445,35 @@ def _clear_auth_cookie() -> str:
         f"{name}=; Path=/; HttpOnly; SameSite=Lax; "
         f"{secure_flag}Max-Age=0"
     )
+
+
+def _x402_v2_headers(minutes_wanted: float = 0.0, error: str = None) -> dict:
+    """X-PAYMENT-REQUIRED (x402 v2) header for a 402, alongside the v1 body."""
+    try:
+        from x402_verifier import encode_payment_required_header, PAYMENT_REQUIRED_HEADER
+    except ImportError:
+        try:
+            from axonos_gate.x402_verifier import encode_payment_required_header, PAYMENT_REQUIRED_HEADER
+        except ImportError:
+            return None
+    try:
+        return {PAYMENT_REQUIRED_HEADER: encode_payment_required_header(minutes_wanted, error)}
+    except Exception:
+        return None
+
+
+def _x402_402_body(explicit_version=None, minutes_wanted: float = 0.0, error: str = None) -> dict:
+    """
+    Version-negotiated 402 body: v1 by default (the shape the Coinbase x402-fetch
+    JS SDK parses from the body, incl. `resource` as a URL), or v2 when the client
+    passes x402_version=2. The v2 PAYMENT-REQUIRED header (for the Python x402 SDK)
+    is sent separately.
+    """
+    if payment_required_for_version is None or resolve_x402_body_version is None:
+        if payment_required_body is None:
+            return {"error": error or "Payment required"}
+        return payment_required_body(minutes_wanted=minutes_wanted, error=error)
+    return payment_required_for_version(resolve_x402_body_version(explicit_version), minutes_wanted, error)
 
 
 def _issue_auth_token(wallet_address: str) -> tuple[str, int]:
@@ -489,11 +714,41 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
     - Gate WebSocket upgrades using wallet + short-lived auth token
     """
 
-    def _send_json(self, status_code: int, payload: dict, set_cookie: str | None = None):
+    # Track whether the current response is a cacheable static asset (HTML/JS/CSS)
+    # so end_headers() can inject Cache-Control: no-cache. Without this the browser
+    # (and upstream proxies) serve stale vnc.html / app JS after a deploy, so client
+    # fixes appear not to take effect. JS/CSS get no-cache too, not just HTML.
+    _response_no_cache: bool = False
+
+    def send_header(self, keyword, value):
+        if keyword.lower() == 'content-type':
+            ct = str(value).lower()
+            if ('text/html' in ct or 'javascript' in ct or 'text/css' in ct):
+                self._response_no_cache = True
+        super().send_header(keyword, value)
+
+    def end_headers(self):
+        if getattr(self, '_response_no_cache', False):
+            super().send_header('Cache-Control', 'no-cache, must-revalidate')
+            super().send_header('Pragma', 'no-cache')
+            self._response_no_cache = False
+        super().end_headers()
+
+    def _send_json(
+        self,
+        status_code: int,
+        payload: dict,
+        set_cookie: str | None = None,
+        no_cache: bool = False,
+        extra_headers: dict | None = None,
+    ):
         body = json.dumps(payload).encode('utf-8')
         self.send_response(status_code)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Content-Length', str(len(body)))
+        if no_cache:
+            self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, private')
+            self.send_header('Pragma', 'no-cache')
         # CORS: default is same-origin (no wildcard). For unusual deployments set AXGT_CORS_ORIGINS.
         origin = cors_origin_for_request(
             self.headers.get("Origin"),
@@ -506,12 +761,17 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             self.send_header('Vary', 'Origin')
             self.send_header(
                 'Access-Control-Allow-Headers',
-                'Content-Type, X-Wallet-Address, X-AXGT-Auth-Token'
+                'Content-Type, X-Wallet-Address, X-AXGT-Auth-Token, X-PAYMENT, PAYMENT-SIGNATURE'
             )
             self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
             self.send_header('Access-Control-Allow-Credentials', 'true')
+            # Let browser-based x402 clients read the payment headers.
+            self.send_header('Access-Control-Expose-Headers', 'PAYMENT-REQUIRED, PAYMENT-RESPONSE, X-PAYMENT-REQUIRED, X-PAYMENT-RESPONSE')
         if set_cookie:
             self.send_header('Set-Cookie', set_cookie)
+        if extra_headers:
+            for hk, hv in extra_headers.items():
+                self.send_header(hk, hv)
         self.end_headers()
         self.wfile.write(body)
 
@@ -520,7 +780,10 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             self.path.startswith('/api/auth/')
             or self.path.startswith('/api/config')
             or self.path.startswith('/api/session/')
-            or self.path.startswith('/api/queue/')
+            or self.path.startswith('/api/webrtc/')
+            or self.path.startswith('/api/public/')
+            or self.path.startswith('/api/files/')
+            or self.path.startswith('/api/x402/')
         ):
             self.send_response(200)
             origin = cors_origin_for_request(
@@ -534,9 +797,9 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 self.send_header('Vary', 'Origin')
                 self.send_header(
                     'Access-Control-Allow-Headers',
-                    'Content-Type, X-Wallet-Address, X-AXGT-Auth-Token'
+                    'Content-Type, X-Wallet-Address, X-AXGT-Auth-Token, X-PAYMENT, Range, If-Range'
                 )
-                self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+                self.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS')
                 self.send_header('Access-Control-Allow-Credentials', 'true')
             self.send_header('Content-Length', '0')
             self.end_headers()
@@ -544,7 +807,87 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         return super().do_OPTIONS()
 
     def do_GET(self):
-        if self.path.startswith('/api/config'):
+        from urllib.parse import urlparse as _up_cfg
+
+        if _up_cfg(self.path).path in ('/telemetry', '/telemetry/'):
+            try:
+                with open('/usr/share/novnc/telemetry.html', 'rb') as f:
+                    body = f.read()
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except Exception as exc:
+                self.send_error(500, str(exc))
+            return
+
+        if _up_cfg(self.path).path.startswith('/api/files/'):
+            return self._handle_files_request('GET')
+
+        if _up_cfg(self.path).path == '/.well-known/x402':
+            if discovery_document is None:
+                return self._send_json(503, {"error": "x402 unavailable"})
+            return self._send_json(200, discovery_document())
+
+        if _up_cfg(self.path).path == '/api/x402/access':
+            # Canonical x402 resource endpoint (works with generic x402 clients):
+            #   GET (no X-PAYMENT)   -> 200 if funded else 402 + terms
+            #   GET (with X-PAYMENT) -> settle inline, then 200 + access
+            if payment_required_body is None:
+                return self._send_json(503, {"error": "x402 unavailable"})
+            from urllib.parse import parse_qs as _pq
+            _q = _pq(_up_cfg(self.path).query)
+            try:
+                minutes_wanted = float(_q.get('minutes', ['0'])[0] or 0)
+            except (ValueError, TypeError):
+                minutes_wanted = 0.0
+            x_payment = self.headers.get('X-PAYMENT') or self.headers.get('PAYMENT-SIGNATURE') or ''
+            if x_payment and settle_x402_payment is not None:
+                wallet_address = (
+                    (wallet_from_x_payment(x_payment) if wallet_from_x_payment else None)
+                    or (_q.get('wallet_address', [''])[0] or '').strip()
+                    or (self.headers.get('X-Wallet-Address') or '').strip()
+                )
+                if not wallet_address or not validate_wallet_address(wallet_address):
+                    return self._send_json(400, {"error": "Could not determine paying wallet from X-PAYMENT"})
+                result = settle_x402_payment(authenticated_wallet=wallet_address, x_payment_header=x_payment)
+                if result.get("verified") or verify_usdc_deposit_is_pending(result):
+                    status = get_wallet_access_status(wallet_address)
+                    out = {
+                        "access": bool(status.get('verified') and status.get('remaining_minutes', 0) > 0),
+                        "remaining_minutes": status.get('remaining_minutes'),
+                        "payment": {
+                            "verified": result.get("verified"),
+                            "credited_minutes": result.get("credited_minutes"),
+                            "settlement_tx_hash": result.get("settlement_tx_hash"),
+                        },
+                    }
+                    extra_headers = None
+                    if result.get("settlement_tx_hash"):
+                        import base64 as _b64, json as _json
+                        _pr = _b64.b64encode(_json.dumps({
+                            "success": True, "txHash": result["settlement_tx_hash"],
+                            "network": result.get("deposit_currency", "USDC"),
+                        }).encode()).decode()
+                        extra_headers = {'X-PAYMENT-RESPONSE': _pr, 'PAYMENT-RESPONSE': _pr}
+                    return self._send_json(200, out, extra_headers=extra_headers)
+                return self._send_json(402, {"error": result.get("error") or "Payment failed", "payment": result},
+                                       extra_headers=_x402_v2_headers(minutes_wanted, result.get("error") or "Payment failed"))
+            wallet_address = (
+                (_q.get('wallet_address', [''])[0] or '').strip()
+                or (self.headers.get('X-Wallet-Address') or '').strip()
+            )
+            if wallet_address and validate_wallet_address(wallet_address):
+                status = get_wallet_access_status(wallet_address)
+                if status.get('verified') and status.get('remaining_minutes', 0) > 0:
+                    return self._send_json(200, {"access": True, "remaining_minutes": status.get('remaining_minutes')})
+            # Version-negotiated body (v1 default) + v2 PAYMENT-REQUIRED header — covers JS + Python x402 SDKs.
+            _xv = (_q.get('x402_version', [''])[0] or '').strip() or self.headers.get('X-X402-Version')
+            return self._send_json(402, _x402_402_body(_xv, minutes_wanted, "Payment required for access"),
+                extra_headers=_x402_v2_headers(minutes_wanted, "Payment required for access"))
+
+        if _up_cfg(self.path).path == '/api/config':
             policy = get_credit_policy()
             _dec_raw = (os.getenv("AXGT_TOKEN_DECIMALS") or "").strip()
             try:
@@ -552,6 +895,19 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 axgt_token_decimals = max(0, min(255, _td))
             except ValueError:
                 axgt_token_decimals = 18
+
+            _cost_raw = (os.getenv("AXGT_PERSISTENT_STORAGE_GB_HOUR_COST_MINUTES") or "").strip()
+            try:
+                storage_cost = float(_cost_raw) if _cost_raw else 0.05
+            except ValueError:
+                storage_cost = 0.05
+
+            _limit_raw = (os.getenv("AXGT_PERSISTENT_STORAGE_MIN_BALANCE_LIMIT_MINUTES") or "").strip()
+            try:
+                min_balance_limit = float(_limit_raw) if _limit_raw else -1440.0
+            except ValueError:
+                min_balance_limit = -1440.0
+
             payload = {
                 "axgt_contract_address": (os.getenv("AXGT_CONTRACT_ADDRESS") or "").strip() or None,
                 "axgt_chain_id": (os.getenv("AXGT_CHAIN_ID") or "").strip() or None,
@@ -565,8 +921,167 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 "axgt_warning_threshold_minutes": policy.get("warning_threshold_minutes"),
                 "min_axgt_deposit_minutes": policy.get("min_axgt_deposit_minutes"),
                 "min_eth_deposit_minutes": policy.get("min_eth_deposit_minutes"),
+                "axgt_direct_deposits_enabled": policy.get("axgt_direct_deposits_enabled"),
+                "usdc_deposits_enabled": policy.get("usdc_deposits_enabled"),
+                "axgt_bonus_percent": policy.get("axgt_bonus_percent"),
+                "dynamic_pricing_enabled": policy.get("dynamic_pricing_enabled"),
+                "usd_per_hour": policy.get("usd_per_hour"),
+                "usdc_contract_address": (os.getenv("USDC_CONTRACT_ADDRESS") or "").strip() or None,
+                "usdc_chain_id": (os.getenv("USDC_CHAIN_ID") or "8453").strip() or None,
+                "usdc_network": (os.getenv("USDC_NETWORK") or "base").strip() or None,
+                "usdc_min_deposit": policy.get("usdc_min_deposit"),
+                "usdc_credit_per_usdc_minutes": policy.get("usdc_credit_per_usdc_minutes"),
+                "min_usdc_deposit_minutes": policy.get("min_usdc_deposit_minutes"),
+                "axgt_discount_tiers": policy.get("axgt_discount_tiers", []),
+                "multi_session_enabled": (os.getenv("AXGT_MULTI_SESSION_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")),
+                "gpu_profiles_enabled": (os.getenv("AXGT_GPU_PROFILES_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")),
+                "gpu_profiles": {"small": 1, "medium": 2, "large": 4, "max": 8},
+                "gpu_weighted_billing_enabled": policy.get("gpu_weighted_billing_enabled", False),
+                "persistent_storage_enabled": (os.getenv("AXGT_PERSISTENT_STORAGE_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")),
+                "persistent_storage_gb_hour_cost_minutes": storage_cost,
+                "persistent_storage_min_balance_limit_minutes": min_balance_limit,
             }
+            if webrtc_config is not None:
+                payload.update(webrtc_config.public_config())
+            else:
+                payload.update(
+                    {
+                        "webrtc_enabled": False,
+                        "webrtc_fallback_enabled": True,
+                    }
+                )
             return self._send_json(200, payload)
+
+        if self.path.startswith('/api/discount/quote'):
+            from urllib.parse import urlparse, parse_qs
+            qs = parse_qs(urlparse(self.path).query)
+            wallet_address = ''
+            if 'wallet_address' in qs and qs['wallet_address']:
+                wallet_address = (qs['wallet_address'][0] or '').strip()
+            if not wallet_address:
+                wallet_address = (self.headers.get('X-Wallet-Address') or '').strip()
+            if not wallet_address:
+                return self._send_json(400, {'ok': False, 'error': 'wallet_address is required'})
+            if not validate_wallet_address(wallet_address):
+                return self._send_json(400, {'ok': False, 'error': 'Invalid wallet address format.'})
+            try:
+                try:
+                    from . import discount as _disc
+                except ImportError:
+                    try:
+                        from axonos_gate import discount as _disc
+                    except ImportError:
+                        import discount as _disc  # type: ignore[no-redef]
+            except ImportError:
+                return self._send_json(503, {'ok': False, 'error': 'Discount module unavailable'})
+            policy = get_credit_policy()
+            from decimal import Decimal as _D, InvalidOperation as _IO
+            # currency: 'eth' (default) or 'usdc'. AXGT tier/discount is identical
+            # across currencies; only denomination and credit rate differ.
+            currency = (qs.get('currency', ['eth'])[0] or 'eth').strip().lower()
+            if currency not in ('eth', 'usdc', 'axgt'):
+                return self._send_json(400, {'ok': False, 'error': 'Invalid currency (eth|usdc|axgt)'})
+            base_raw = (qs.get('base_amount', [''])[0] or qs.get('base_eth', [''])[0] or '').strip()
+            if currency == 'usdc':
+                default_base = str(policy.get('usdc_min_deposit') or '1')
+                rate = _D(str(policy.get('usdc_credit_per_usdc_minutes') or 60))
+            elif currency == 'axgt':
+                default_base = str(policy.get('min_deposit') or '100')
+                rate = _D(str(policy.get('credit_per_100_axgt_minutes') or 60)) / _D('100')
+            else:
+                default_base = str(policy.get('eth_min_deposit') or '0.0005')
+                rate = _D(str(policy.get('eth_credit_per_eth_minutes') or 120000))
+            if base_raw:
+                try:
+                    base_amount = _D(base_raw)
+                    if base_amount <= 0:
+                        raise _IO("base_amount must be positive")
+                except (_IO, ValueError):
+                    return self._send_json(400, {'ok': False, 'error': 'Invalid base_amount value'})
+            else:
+                try:
+                    base_amount = _D(default_base)
+                except (_IO, ValueError):
+                    base_amount = _D('1') if currency == 'usdc' else _D('0.0005')
+            bal = _disc.fetch_axgt_balance(wallet_address)
+            floor_axgt = bal.floor_axgt() if bal.ok else 0
+            tier = _disc.resolve_tier(floor_axgt) if bal.ok else _disc.resolve_tier(0)
+            if currency == 'axgt':
+                # Model B: no holder tier on the AXGT rail — flat +bonus (+ live price).
+                try:
+                    from . import price_oracle as _po
+                except ImportError:
+                    try:
+                        from axonos_gate import price_oracle as _po
+                    except ImportError:
+                        try:
+                            import price_oracle as _po
+                        except ImportError:
+                            _po = None
+                discount_pct_for_quote = 0.0
+                final_amount = base_amount
+                est = None
+                if _po is not None and _po.oracle_enabled():
+                    est = _po.minutes_for_axgt(base_amount)
+                if est is None:
+                    bonus = _D(str(_po.axgt_bonus_pct())) if _po is not None else _D('25')
+                    est = float(base_amount * rate * (_D('1') + bonus / _D('100')))
+                estimated_minutes = est
+            else:
+                discount_pct_for_quote = tier.discount_percent if bal.ok else 0.0
+                final_amount = _disc.apply_discount(base_amount, discount_pct_for_quote)
+                base_minutes = None
+                if currency == 'eth':
+                    try:
+                        from . import price_oracle as _po2
+                    except ImportError:
+                        try:
+                            from axonos_gate import price_oracle as _po2
+                        except ImportError:
+                            try:
+                                import price_oracle as _po2
+                            except ImportError:
+                                _po2 = None
+                    if _po2 is not None and _po2.oracle_enabled():
+                        m = _po2.minutes_for_eth(base_amount)
+                        if m is not None:
+                            base_minutes = _D(str(m))
+                if base_minutes is None:
+                    base_minutes = base_amount * rate
+                if discount_pct_for_quote >= 100:
+                    estimated_minutes = float(base_minutes)
+                else:
+                    estimated_minutes = float(base_minutes / (_D('1') - _D(str(discount_pct_for_quote)) / _D('100')))
+            _quote = {
+                'ok': True,
+                'wallet_address': wallet_address,
+                'currency': currency,
+                'base_amount': format(base_amount.normalize(), 'f') if base_amount > 0 else '0',
+                'final_amount': format(final_amount.normalize(), 'f') if final_amount > 0 else '0',
+                'discount_percent': discount_pct_for_quote,
+                'tier_index': tier.index,
+                'tier_label': tier.label,
+                'tier_min_axgt': tier.min_axgt,
+                'axgt_balance': format(bal.balance_axgt.normalize(), 'f') if bal.ok and bal.balance_axgt > 0 else '0',
+                'axgt_balance_floor': floor_axgt,
+                'balance_check_ok': bal.ok,
+                'balance_check_error': bal.error if not bal.ok else None,
+                'tiers': _disc.public_tiers(),
+                'estimated_minutes': round(estimated_minutes, 2),
+            }
+            if currency == 'eth':
+                _quote['base_eth'] = _quote['base_amount']
+                _quote['final_eth'] = _quote['final_amount']
+                _quote['eth_credit_per_eth_minutes'] = float(policy.get('eth_credit_per_eth_minutes') or 120000)
+            elif currency == 'axgt':
+                _quote['base_axgt'] = _quote['base_amount']
+                _quote['final_axgt'] = _quote['final_amount']
+                _quote['credit_per_100_axgt_minutes'] = float(policy.get('credit_per_100_axgt_minutes') or 60)
+            else:
+                _quote['base_usdc'] = _quote['base_amount']
+                _quote['final_usdc'] = _quote['final_amount']
+                _quote['usdc_credit_per_usdc_minutes'] = float(policy.get('usdc_credit_per_usdc_minutes') or 60)
+            return self._send_json(200, _quote)
 
         if self.path.startswith('/api/auth/challenge'):
             wallet_address = _extract_wallet_from_path_and_headers(self.path, self.headers)
@@ -635,11 +1150,203 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             status['auth_token_expires_in_seconds'] = remaining
             return self._send_json(200, status)
 
+        from urllib.parse import parse_qs, urlparse
+
+        pu = urlparse(self.path)
+        ponly = pu.path
+
+        if webrtc_service and ponly.startswith('/api/webrtc/config'):
+            st, pl = webrtc_service.handle_config_public()
+            return self._send_json(st, pl)
+
+        if webrtc_service and ponly.startswith('/api/webrtc/status'):
+            qs = parse_qs(pu.query)
+            sid = (qs.get('session_id') or [''])[0].strip()
+            wallet = (qs.get('wallet_address') or [''])[0].strip() or (self.headers.get('X-Wallet-Address') or '').strip()
+            if not sid or not wallet or not validate_wallet_address(wallet):
+                return self._send_json(400, {'ok': False, 'error': 'session_id and wallet_address required'})
+            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+            if not auth_token or not _is_auth_token_valid(auth_token, wallet):
+                return self._send_json(401, {'ok': False, 'error': 'Valid auth token required'})
+            wn = wallet.lower()
+            st, pl = webrtc_service.handle_get_status(sid, wn, True)
+            return self._send_json(st, pl, no_cache=True)
+
+        if webrtc_service and ponly.startswith('/api/webrtc/agent/next'):
+            key = (self.headers.get('X-AxonOS-WebRTC-Agent-Key') or '').strip()
+            st, pl = webrtc_service.handle_agent_next(key)
+            if st == 204:
+                self.send_response(204)
+                origin = cors_origin_for_request(
+                    self.headers.get("Origin"),
+                    self.headers.get("Host"),
+                    _allow_any,
+                    _allowlist,
+                )
+                if origin:
+                    self.send_header('Access-Control-Allow-Origin', origin)
+                    self.send_header('Vary', 'Origin')
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+                return
+            return self._send_json(st, pl)
+
+        if webrtc_service and ponly.startswith('/api/webrtc/agent/row'):
+            key = (self.headers.get('X-AxonOS-WebRTC-Agent-Key') or '').strip()
+            qs = parse_qs(pu.query)
+            sid = (qs.get('session_id') or [''])[0].strip()
+            st, pl = webrtc_service.handle_agent_row(key, sid)
+            return self._send_json(st, pl)
+
         # ---- Session / Queue read endpoints ----
         if _session_mgr_available and self.path.startswith('/api/session/status'):
             wallet_address = _extract_wallet_from_path_and_headers(self.path, self.headers)
             result = session_status(wallet_address)
             return self._send_json(200, result)
+
+        # ---- Public telemetry (no auth required) ----
+        if pu.path == '/api/public/telemetry/summary':
+            data, err = _telemetry_summary()
+            if err:
+                return self._send_json(500, {"error": err})
+            return self._send_json(200, data)
+
+        if pu.path == '/api/public/telemetry/sessions':
+            qs = parse_qs(pu.query)
+            limit = min(1000, max(1, int((qs.get('limit') or ['300'])[0])))
+            rows, err = _telemetry_query("""
+                SELECT id, wallet_address, requested_profile, gpu_ids,
+                       allocation_status, status, started_at, last_heartbeat,
+                       ROUND(((last_heartbeat - started_at) / 60)::numeric, 2) AS duration_minutes
+                FROM axgt_sessions ORDER BY started_at DESC LIMIT %s
+            """, (limit,))
+            if err:
+                return self._send_json(500, {"error": err})
+            for r in rows:
+                r["id"] = int(r["id"])
+                r["duration_minutes"] = float(r.get("duration_minutes") or 0)
+                for k in ("started_at", "last_heartbeat"):
+                    r[k] = float(r.get(k) or 0)
+            return self._send_json(200, {"sessions": rows, "count": len(rows)})
+
+        if pu.path == '/api/public/telemetry/wallets':
+            rows, err = _telemetry_query("""
+                SELECT s.wallet_address,
+                       COUNT(*) AS total_sessions,
+                       COUNT(CASE WHEN s.allocation_status='failed' THEN 1 END) AS failed_sessions,
+                       COUNT(CASE WHEN s.requested_profile='max' THEN 1 END) AS max_sessions,
+                       COUNT(CASE WHEN s.requested_profile='small' THEN 1 END) AS small_sessions,
+                       ROUND(SUM((s.last_heartbeat - s.started_at) / 60)::numeric, 2) AS total_wall_minutes,
+                       COALESCE(MIN(s.started_at), 0) AS first_session_ts,
+                       COALESCE(MAX(s.started_at), 0) AS last_session_ts,
+                       COALESCE(d.credited_minutes_total, 0) AS credited_minutes,
+                       COALESCE(d.consumed_minutes_total, 0) AS consumed_minutes,
+                       COALESCE(d.remaining_minutes, 0) AS remaining_minutes
+                FROM axgt_sessions s
+                LEFT JOIN axgt_deposits d ON d.wallet_address = s.wallet_address
+                GROUP BY s.wallet_address, d.credited_minutes_total, d.consumed_minutes_total, d.remaining_minutes
+                ORDER BY total_sessions DESC
+            """)
+            if err:
+                return self._send_json(500, {"error": err})
+            for r in rows:
+                for k in ("first_session_ts", "last_session_ts"):
+                    r[k] = float(r.get(k) or 0)
+                for k in ("total_wall_minutes", "credited_minutes", "consumed_minutes", "remaining_minutes"):
+                    r[k] = float(r.get(k) or 0)
+                for k in ("total_sessions", "failed_sessions", "max_sessions", "small_sessions"):
+                    r[k] = int(r.get(k) or 0)
+            return self._send_json(200, {"wallets": rows})
+
+        if pu.path == '/api/public/telemetry/events':
+            qs = parse_qs(pu.query)
+            limit = min(500, max(1, int((qs.get('limit') or ['100'])[0])))
+            rows, err = _telemetry_query("""
+                SELECT id, wallet_address, event_type,
+                       ROUND(minutes_delta::numeric, 4) AS minutes_delta,
+                       ROUND(balance_after_minutes::numeric, 2) AS balance_after_minutes,
+                       reference_session_id, notes, created_at
+                FROM axgt_ledger ORDER BY id DESC LIMIT %s
+            """, (limit,))
+            if err:
+                return self._send_json(500, {"error": err})
+            for r in rows:
+                r["id"] = int(r["id"])
+                r["created_at"] = float(r.get("created_at") or 0)
+                for k in ("minutes_delta", "balance_after_minutes"):
+                    r[k] = float(r.get(k) or 0)
+            return self._send_json(200, {"events": rows, "count": len(rows)})
+
+        if pu.path == '/api/public/telemetry/live':
+            import time as _t, urllib.request as _ur
+            now = _t.time()
+
+            # Active sessions with heartbeat staleness
+            sess_rows, _ = _telemetry_query("""
+                SELECT id, wallet_address, requested_profile, gpu_ids, container_id,
+                       started_at, last_heartbeat, expires_at,
+                       ROUND(((last_heartbeat - started_at) / 60)::numeric, 2) AS duration_minutes
+                FROM axgt_sessions WHERE status = 'active'
+                ORDER BY started_at DESC
+            """)
+            live_sessions = []
+            for r in (sess_rows or []):
+                r["id"] = int(r["id"])
+                r["duration_minutes"] = float(r.get("duration_minutes") or 0)
+                for k in ("started_at", "last_heartbeat", "expires_at"):
+                    r[k] = float(r.get(k) or 0)
+                r["heartbeat_age_seconds"] = round(now - r["last_heartbeat"], 1) if r["last_heartbeat"] else None
+                r["expires_in_seconds"] = round(r["expires_at"] - now, 1) if r["expires_at"] else None
+                live_sessions.append(r)
+
+            # GPU stats from background cache (updated every 10s)
+            with _gpu_cache_lock:
+                gpus = list(_gpu_cache["gpus"])
+                gpu_cache_age = round(now - _gpu_cache["ts"], 1) if _gpu_cache["ts"] else None
+
+            # Running session containers from launcher
+            containers = []
+            try:
+                launcher_url = (os.getenv("AXGT_SESSION_LAUNCHER_URL") or "").rstrip("/")
+                launcher_token = os.getenv("AXGT_SESSION_LAUNCHER_TOKEN") or ""
+                if launcher_url and launcher_token:
+                    req = _ur.Request(
+                        launcher_url + "/list-containers",
+                        headers={"Authorization": "Bearer " + launcher_token}
+                    )
+                    with _ur.urlopen(req, timeout=5) as resp:
+                        containers = json.loads(resp.read()).get("containers", [])
+            except Exception as exc:
+                logger.warning("launcher list-containers failed: %s", exc)
+
+            return self._send_json(200, {
+                "timestamp": now,
+                "active_sessions": live_sessions,
+                "gpus": gpus,
+                "gpu_cache_age_seconds": gpu_cache_age,
+                "containers": containers,
+            })
+
+        if pu.path == '/api/public/telemetry/webrtc':
+            rows, err = _telemetry_query("""
+                SELECT wallet_address, state,
+                       offer_sdp IS NOT NULL AS has_offer,
+                       answer_sdp IS NOT NULL AS has_answer,
+                       last_error, created_at, updated_at,
+                       ROUND((updated_at - created_at)::numeric, 1) AS duration_seconds
+                FROM axgt_webrtc_signaling ORDER BY created_at DESC LIMIT 200
+            """)
+            if err:
+                return self._send_json(500, {"error": err})
+            for r in rows:
+                for k in ("created_at", "updated_at"):
+                    r[k] = float(r.get(k) or 0)
+                r["duration_seconds"] = float(r.get("duration_seconds") or 0)
+            brows, _ = _telemetry_query("""
+                SELECT state, COUNT(*) AS count FROM axgt_webrtc_signaling GROUP BY state
+            """)
+            breakdown = {r["state"]: int(r["count"]) for r in (brows or [])}
+            return self._send_json(200, {"sessions": rows, "count": len(rows), "breakdown": breakdown})
 
         return super().do_GET()
 
@@ -654,17 +1361,185 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         except Exception:
             return {}
 
+    def _handle_files_request(self, method: str):
+        """Authenticated streaming proxy for /api/files/* to the wallet's desktop file agent."""
+        if _file_transfer is None or not _file_transfer.files_enabled():
+            self.close_connection = True
+            return self._send_json(503, {'ok': False, 'error': 'File transfer unavailable'})
+        pu = urlparse(self.path)
+        suffix = pu.path[len('/api/files/'):]
+        route = _file_transfer.ROUTES.get(suffix)
+        if not route or route[0] != method:
+            self.close_connection = True
+            return self._send_json(404, {'ok': False, 'error': 'Unknown file route'})
+
+        wallet = _extract_wallet_from_path_and_headers(self.path, self.headers)
+        if not wallet or not validate_wallet_address(wallet):
+            self.close_connection = True
+            return self._send_json(403, {'ok': False, 'error': 'Valid wallet address required'})
+        auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+        if not auth_token or not _is_auth_token_valid(auth_token, wallet):
+            self.close_connection = True
+            return self._send_json(403, {'ok': False, 'error': 'Invalid or expired auth token'})
+        status = get_wallet_access_status(wallet, consume_usage=False)
+        if not status.get('verified'):
+            self.close_connection = True
+            return self._send_json(403, {'ok': False, 'error': status.get('reason') or 'Access denied'})
+
+        target, err = _file_transfer.resolve_target_for_wallet(wallet.strip().lower())
+        if err:
+            self.close_connection = True
+            return self._send_json(409, {'ok': False, 'error': err})
+
+        agent_path = _file_transfer.build_agent_url(suffix, pu.query)
+        try:
+            content_length = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            content_length = 0
+        try:
+            status_code, resp_headers, body_iter = _file_transfer.proxy_to_agent(
+                target,
+                method,
+                agent_path,
+                self.headers,
+                content_length=content_length,
+                body_read=self.rfile.read if method == 'PUT' else None,
+            )
+        except Exception as exc:
+            logger.warning("files proxy failed for %s: %s", mask_wallet_address(wallet), exc)
+            self.close_connection = True
+            return self._send_json(502, {'ok': False, 'error': 'Desktop file agent unreachable'})
+
+        self.send_response(status_code)
+        for name, value in resp_headers:
+            self.send_header(name, value)
+        self.end_headers()
+        try:
+            for chunk in body_iter:
+                self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            # Browser paused/aborted; Range requests let it resume on a new connection.
+            self.close_connection = True
+
+    def do_PUT(self):
+        if urlparse(self.path).path.startswith('/api/files/'):
+            return self._handle_files_request('PUT')
+        self.send_error(405, "Method Not Allowed")
+
     def do_POST(self):
+        from urllib.parse import urlparse
+
+        pu = urlparse(self.path)
+        ponly = pu.path
+        client_ip = self.client_address[0] if getattr(self, "client_address", None) else "unknown"
+
+        if ponly.startswith('/api/files/'):
+            return self._handle_files_request('POST')
+
+        if webrtc_service and ponly.startswith("/api/webrtc/"):
+            data = self._read_json_body()
+
+            if ponly == "/api/webrtc/session":
+                wallet = (data.get("wallet_address") or "").strip()
+                if not wallet or not validate_wallet_address(wallet):
+                    return self._send_json(400, {"ok": False, "error": "Valid wallet_address required"})
+                auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+                if not auth_token or not _is_auth_token_valid(auth_token, wallet):
+                    return self._send_json(401, {"ok": False, "error": "Valid auth token required"})
+                wn = wallet.lower()
+                if not _webrtc_ws_rate_allow(wn, self.headers, client_ip):
+                    return self._send_json(429, {"ok": False, "error": "Rate limit exceeded"})
+                owner = _session_mgr_available and is_session_owner(wn)
+                st, pl = webrtc_service.handle_create_session(wn, True, owner)
+                return self._send_json(st, pl)
+
+            if ponly == "/api/webrtc/offer":
+                wallet = (data.get("wallet_address") or "").strip()
+                sid = (data.get("session_id") or "").strip()
+                if not wallet or not validate_wallet_address(wallet):
+                    return self._send_json(400, {"ok": False, "error": "Valid wallet_address required"})
+                auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+                if not auth_token or not _is_auth_token_valid(auth_token, wallet):
+                    return self._send_json(401, {"ok": False, "error": "Valid auth token required"})
+                wn = wallet.lower()
+                if not _webrtc_ws_rate_allow(wn, self.headers, client_ip):
+                    return self._send_json(429, {"ok": False, "error": "Rate limit exceeded"})
+                owner = _session_mgr_available and is_session_owner(wn)
+                st, pl = webrtc_service.handle_post_offer(sid, wn, True, owner, data)
+                return self._send_json(st, pl)
+
+            if ponly == "/api/webrtc/ice":
+                wallet = (data.get("wallet_address") or "").strip()
+                sid = (data.get("session_id") or "").strip()
+                if not wallet or not validate_wallet_address(wallet) or not sid:
+                    return self._send_json(400, {"ok": False, "error": "wallet_address and session_id required"})
+                auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+                if not auth_token or not _is_auth_token_valid(auth_token, wallet):
+                    return self._send_json(401, {"ok": False, "error": "Valid auth token required"})
+                wn = wallet.lower()
+                if not _webrtc_ws_rate_allow(wn, self.headers, client_ip):
+                    return self._send_json(429, {"ok": False, "error": "Rate limit exceeded"})
+                st, pl = webrtc_service.handle_post_client_ice(sid, wn, True, data)
+                return self._send_json(st, pl)
+
+            if ponly == "/api/webrtc/metrics":
+                wallet = (data.get("wallet_address") or "").strip()
+                sid = (data.get("session_id") or "").strip()
+                if not wallet or not validate_wallet_address(wallet) or not sid:
+                    return self._send_json(400, {"ok": False, "error": "wallet_address and session_id required"})
+                auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+                if not auth_token or not _is_auth_token_valid(auth_token, wallet):
+                    return self._send_json(401, {"ok": False, "error": "Valid auth token required"})
+                st, pl = webrtc_service.handle_post_client_metrics(sid, wallet.lower(), True, data)
+                return self._send_json(st, pl)
+
+            if ponly == "/api/webrtc/close":
+                wallet = (data.get("wallet_address") or "").strip()
+                sid = (data.get("session_id") or "").strip()
+                if not wallet or not validate_wallet_address(wallet) or not sid:
+                    return self._send_json(400, {"ok": False, "error": "wallet_address and session_id required"})
+                auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+                if not auth_token or not _is_auth_token_valid(auth_token, wallet):
+                    return self._send_json(401, {"ok": False, "error": "Valid auth token required"})
+                st, pl = webrtc_service.handle_close(sid, wallet.lower(), True)
+                return self._send_json(st, pl)
+
+            if ponly == "/api/webrtc/agent/answer":
+                key = (self.headers.get("X-AxonOS-WebRTC-Agent-Key") or "").strip()
+                st, pl = webrtc_service.handle_agent_answer(key, data)
+                return self._send_json(st, pl)
+
+            if ponly == "/api/webrtc/agent/fail":
+                key = (self.headers.get("X-AxonOS-WebRTC-Agent-Key") or "").strip()
+                st, pl = webrtc_service.handle_agent_fail(key, data)
+                return self._send_json(st, pl)
+
+            return self._send_json(404, {"ok": False, "error": "Unknown WebRTC path"})
+
         # ---- Session / Queue write endpoints ----
         if _session_mgr_available and self.path.startswith('/api/session/claim'):
             data = self._read_json_body()
             wallet_address = (data.get('wallet_address') or '').strip()
+            requested_profile = (data.get('requested_profile') or '').strip() or None
+            requested_template = (data.get('requested_template') or '').strip() or None
+            requested_ssh = bool(data.get('requested_ssh'))
+            ssh_pubkey = None
+            if requested_ssh:
+                ssh_pubkey = validate_ssh_public_key(data.get('ssh_pubkey'))
+                if not ssh_pubkey:
+                    return self._send_json(400, {'granted': False, 'error': 'A valid SSH public key is required for SSH access'})
             if not wallet_address or not validate_wallet_address(wallet_address):
                 return self._send_json(400, {'granted': False, 'error': 'Valid wallet_address required'})
             auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
             if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
                 return self._send_json(401, {'granted': False, 'error': 'Valid auth token required'})
-            result = try_claim_session(wallet_address)
+            result = try_claim_session(
+                wallet_address,
+                requested_profile=requested_profile,
+                requested_template=requested_template,
+                requested_ssh=requested_ssh,
+                ssh_pubkey=ssh_pubkey,
+            )
             return self._send_json(200, result)
 
         if _session_mgr_available and self.path.startswith('/api/session/heartbeat'):
@@ -672,6 +1547,10 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             wallet_address = (data.get('wallet_address') or '').strip()
             if not wallet_address or not validate_wallet_address(wallet_address):
                 return self._send_json(400, {'ok': False, 'error': 'Valid wallet_address required'})
+            # Auth: wallet token (browser) OR per-session files_key (headless/SSH daemon).
+            session_key = (self.headers.get('X-AXGT-Session-Key') or data.get('session_key') or '').strip()
+            if session_key and validate_session_files_key and validate_session_files_key(wallet_address, session_key):
+                return self._send_json(200, session_heartbeat(wallet_address))
             auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
             if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
                 return self._send_json(401, {'ok': False, 'error': 'Valid auth token required'})
@@ -683,9 +1562,12 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             wallet_address = (data.get('wallet_address') or '').strip()
             if not wallet_address or not validate_wallet_address(wallet_address):
                 return self._send_json(400, {'released': False, 'error': 'Valid wallet_address required'})
-            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
-            if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
-                return self._send_json(401, {'released': False, 'error': 'Valid auth token required'})
+            # Auth: wallet token OR per-session files_key (headless/SSH self-release).
+            session_key = (self.headers.get('X-AXGT-Session-Key') or data.get('session_key') or '').strip()
+            if not (session_key and validate_session_files_key and validate_session_files_key(wallet_address, session_key)):
+                auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+                if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
+                    return self._send_json(401, {'released': False, 'error': 'Valid auth token required'})
             result = release_session(wallet_address)
             return self._send_json(200, result)
 
@@ -698,28 +1580,6 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
                 return self._send_json(401, {'restarted': False, 'error': 'Valid auth token required'})
             result = restart_desktop_session(wallet_address)
-            return self._send_json(200, result)
-
-        if _session_mgr_available and self.path.startswith('/api/queue/join'):
-            data = self._read_json_body()
-            wallet_address = (data.get('wallet_address') or '').strip()
-            if not wallet_address or not validate_wallet_address(wallet_address):
-                return self._send_json(400, {'joined': False, 'error': 'Valid wallet_address required'})
-            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
-            if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
-                return self._send_json(401, {'joined': False, 'error': 'Valid auth token required'})
-            result = join_queue(wallet_address)
-            return self._send_json(200, result)
-
-        if _session_mgr_available and self.path.startswith('/api/queue/leave'):
-            data = self._read_json_body()
-            wallet_address = (data.get('wallet_address') or '').strip()
-            if not wallet_address or not validate_wallet_address(wallet_address):
-                return self._send_json(400, {'left': False, 'error': 'Valid wallet_address required'})
-            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
-            if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
-                return self._send_json(401, {'left': False, 'error': 'Valid auth token required'})
-            result = leave_queue(wallet_address)
             return self._send_json(200, result)
 
         if self.path.startswith('/api/auth/verify-deposit'):
@@ -742,9 +1602,171 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                     401, {"verified": False, "error": "Valid auth token required"}
                 )
             result = verify_deposit(authenticated_wallet=wallet_address, tx_hash=tx_hash)
-            if result.get("verified"):
+            if result.get("verified") or verify_deposit_is_pending(result):
                 return self._send_json(200, result)
             return self._send_json(400, result)
+
+        if self.path.startswith('/api/auth/verify-usdc-deposit'):
+            if verify_usdc_deposit is None:
+                return self._send_json(
+                    503, {"verified": False, "error": "USDC deposit verification unavailable"}
+                )
+            data = self._read_json_body()
+            wallet_address = (data.get("wallet_address") or "").strip()
+            tx_hash = (data.get("tx_hash") or "").strip()
+            if not wallet_address or not validate_wallet_address(wallet_address):
+                return self._send_json(
+                    400, {"verified": False, "error": "Valid wallet_address required"}
+                )
+            if not tx_hash:
+                return self._send_json(400, {"verified": False, "error": "tx_hash required"})
+            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+            if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
+                return self._send_json(
+                    401, {"verified": False, "error": "Valid auth token required"}
+                )
+            result = verify_usdc_deposit(authenticated_wallet=wallet_address, tx_hash=tx_hash)
+            if result.get("verified") or verify_usdc_deposit_is_pending(result):
+                return self._send_json(200, result)
+            return self._send_json(400, result)
+
+        if self.path.startswith('/api/auth/verify-deposit-auto'):
+            if verify_deposit_auto is None:
+                return self._send_json(
+                    503, {"verified": False, "error": "Deposit verification unavailable"}
+                )
+            data = self._read_json_body()
+            wallet_address = (data.get("wallet_address") or "").strip()
+            tx_hash = (data.get("tx_hash") or "").strip()
+            if not wallet_address or not validate_wallet_address(wallet_address):
+                return self._send_json(
+                    400, {"verified": False, "error": "Valid wallet_address required"}
+                )
+            if not tx_hash:
+                return self._send_json(400, {"verified": False, "error": "tx_hash required"})
+            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+            if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
+                return self._send_json(
+                    401, {"verified": False, "error": "Valid auth token required"}
+                )
+            result, is_pending = verify_deposit_auto(
+                authenticated_wallet=wallet_address,
+                tx_hash=tx_hash,
+                verify_eth=verify_deposit,
+                eth_is_pending=verify_deposit_is_pending,
+                verify_usdc=verify_usdc_deposit,
+                usdc_is_pending=verify_usdc_deposit_is_pending,
+            )
+            if result.get("verified") or is_pending:
+                return self._send_json(200, result)
+            return self._send_json(400, result)
+
+        if self.path.startswith('/api/x402/settle'):
+            if settle_x402_payment is None:
+                return self._send_json(
+                    503, {"verified": False, "error": "x402 settlement unavailable"}
+                )
+            x_payment = self.headers.get('X-PAYMENT') or self.headers.get('PAYMENT-SIGNATURE') or ''
+            if not x_payment:
+                if payment_required_body is not None:
+                    return self._send_json(402, payment_required_body(error="X-PAYMENT header required"))
+                return self._send_json(402, {"verified": False, "error": "X-PAYMENT header required"})
+            data = self._read_json_body() or {}
+            wallet_address = (
+                data.get("wallet_address") or self.headers.get('X-Wallet-Address') or ''
+            ).strip()
+            if not wallet_address or not validate_wallet_address(wallet_address):
+                return self._send_json(
+                    400, {"verified": False, "error": "Valid wallet_address required"}
+                )
+            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+            if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
+                return self._send_json(
+                    401, {"verified": False, "error": "Valid auth token required"}
+                )
+            result = settle_x402_payment(authenticated_wallet=wallet_address, x_payment_header=x_payment)
+            extra_headers = None
+            if result.get("settlement_tx_hash"):
+                import base64 as _b64
+                import json as _json
+                extra_headers = {
+                    'X-PAYMENT-RESPONSE': _b64.b64encode(_json.dumps({
+                        "success": True,
+                        "txHash": result["settlement_tx_hash"],
+                        "network": result.get("deposit_currency", "USDC"),
+                    }).encode()).decode()
+                }
+            if result.get("verified") or verify_usdc_deposit_is_pending(result):
+                return self._send_json(200, result, extra_headers=extra_headers)
+            return self._send_json(400, result)
+
+        if self.path.startswith('/api/x402/session'):
+            # One-shot agent loop: pay via x402 (if needed) + claim an SSH session.
+            # The EIP-3009 payment signature is the authorization — no prior
+            # browser wallet sign-in required. SSH is the agent-usable session type.
+            if not _session_mgr_available:
+                return self._send_json(503, {"granted": False, "error": "Session manager unavailable"})
+            data = self._read_json_body() or {}
+            wallet_address = (data.get("wallet_address") or self.headers.get('X-Wallet-Address') or '').strip()
+            if not wallet_address or not validate_wallet_address(wallet_address):
+                return self._send_json(400, {"granted": False, "error": "Valid wallet_address required"})
+            ssh_pubkey = validate_ssh_public_key(data.get('ssh_pubkey'))
+            if not ssh_pubkey:
+                return self._send_json(400, {"granted": False, "error": "A valid ssh_pubkey is required for an agent SSH session"})
+            requested_profile = (data.get("requested_profile") or '').strip() or None
+            x_payment = self.headers.get('X-PAYMENT') or self.headers.get('PAYMENT-SIGNATURE') or ''
+            settle_result = None
+            auth_token = None
+            auth_ttl = None
+            if x_payment:
+                if settle_x402_payment is None:
+                    return self._send_json(503, {"granted": False, "error": "x402 settlement unavailable"})
+                settle_result = settle_x402_payment(authenticated_wallet=wallet_address, x_payment_header=x_payment)
+                if not (settle_result.get("verified") or verify_usdc_deposit_is_pending(settle_result)):
+                    return self._send_json(400, {"granted": False, "error": settle_result.get("error") or "Payment failed", "payment": settle_result})
+                try:
+                    auth_token, auth_ttl = _issue_auth_token(wallet_address)
+                except Exception as ex:
+                    logger.warning("x402/session token issue failed: %s", ex)
+            else:
+                _st = get_wallet_access_status(wallet_address, consume_usage=False)
+                if not (_st.get("verified") and _st.get("remaining_minutes", 0) > 0):
+                    if payment_required_body is None:
+                        return self._send_json(402, {"granted": False, "error": "Payment required"})
+                    _xv = (str(data.get('x402_version') or '').strip() or self.headers.get('X-X402-Version'))
+                    _err = "Payment required: include an X-PAYMENT header or pre-fund the wallet"
+                    return self._send_json(402, _x402_402_body(_xv, 0.0, _err),
+                                           extra_headers=_x402_v2_headers(0.0, _err))
+                try:
+                    auth_token, auth_ttl = _issue_auth_token(wallet_address)
+                except Exception as ex:
+                    logger.warning("x402/session token issue failed: %s", ex)
+            claim = try_claim_session(
+                wallet_address,
+                requested_profile=requested_profile,
+                requested_ssh=True,
+                ssh_pubkey=ssh_pubkey,
+            )
+            out = dict(claim)
+            if settle_result is not None:
+                out["payment"] = {
+                    "verified": settle_result.get("verified"),
+                    "credited_minutes": settle_result.get("credited_minutes"),
+                    "settlement_tx_hash": settle_result.get("settlement_tx_hash"),
+                }
+            if auth_token:
+                out["auth_token"] = auth_token
+                out["auth_token_expires_in_seconds"] = auth_ttl
+            extra_headers = None
+            if settle_result and settle_result.get("settlement_tx_hash"):
+                import base64 as _b64
+                import json as _json
+                extra_headers = {'X-PAYMENT-RESPONSE': _b64.b64encode(_json.dumps({
+                    "success": True,
+                    "txHash": settle_result["settlement_tx_hash"],
+                    "network": settle_result.get("deposit_currency", "USDC"),
+                }).encode()).decode()}
+            return self._send_json(200 if claim.get("granted") else 409, out, extra_headers=extra_headers)
 
         if not self.path.startswith('/api/auth/verify-wallet'):
             return self.send_error(404, "Not Found")

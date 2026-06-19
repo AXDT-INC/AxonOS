@@ -40,11 +40,13 @@ Section "Device"
   Identifier "Device0"
   Driver "nvidia"
   VendorName "NVIDIA Corporation"
- Option "PrimaryGPU" "true"
+  # Multi-GPU hosts: Xorg still enumerates all Tesla PCI devices; probing can SIGSEGV with Docker.
+  Option "ProbeAllGpus" "false"
   Option "AllowEmptyInitialConfiguration"
   # For headless Tesla GPUs, force a display output so Xorg can start.
   Option "ConnectedMonitor" "DFP-0"
-  Option "AllowIndirectGLXProtocol" "1"
+  # Do not enable indirect GLX: it loads a second GLX stack and triggers
+  # "Another vendor is already registered for screen 0" then Xorg SIGSEGV (NVIDIA + GLVND).
   Option "HardDPMS" "false"
 EndSection
 
@@ -56,6 +58,5 @@ Section "Screen"
   SubSection "Display"
     Depth 24
   EndSubSection
-  Option "AllowIndirectGLXProtocol" "1"
   Option "MetaModes" "1920x1080"
 EndSection

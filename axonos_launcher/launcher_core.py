@@ -259,7 +259,7 @@ RUN git clone https://github.com/cellmodeller/CellModeller.git && \\
     cd /opt/CellModeller && pip install -e . && \\
     mkdir /opt/data && \\
     chown -R $USER:$USER /opt/data && \\
-    echo '[Desktop Entry]\\nName=CellModeller\\nExec=bash -c "cd /opt && /usr/bin/python3 CellModeller/Scripts/CellModellerGUI.py"\\nIcon=applications-science\\nType=Application\\nTerminal=true\\nCategories=Science;' \\
+    echo '[Desktop Entry]\\nName=CellModeller\\nExec=bash -c "/usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py"\\nIcon=applications-science\\nType=Application\\nTerminal=true\\nCategories=Science;' \\
     > /usr/share/applications/cellmodeller.desktop && \\
     chmod 644 /usr/share/applications/cellmodeller.desktop && \\
     update-desktop-database /usr/share/applications''',
@@ -273,7 +273,7 @@ RUN git clone https://github.com/cellmodeller/CellModeller.git && \\
         # Configuration
         self.app_selections = {app_id: app_info.get('enabled', False) 
                               for app_id, app_info in self.get_all_applications().items()}
-        self.ollama_models = ['command-r7b', 'granite3.2-vision']
+        self.ollama_models = ['gemma4:31b', 'granite3.2-vision']
         self.username = 'aXonian'
         self.password = 'axonpassword'
         self.gpu_enabled = False
@@ -358,7 +358,7 @@ RUN git clone https://github.com/cellmodeller/CellModeller.git && \\
             for app_id in self.custom_applications.keys()
         )
         
-        default_models = self.ollama_models == ['command-r7b', 'granite3.2-vision']
+        default_models = self.ollama_models == ['gemma4:31b', 'granite3.2-vision']
         default_user = self.username == 'aXonian'
         default_password = self.password == 'axonpassword'
         default_cuda_archs = self.gmx_cuda_archs == '70;75;86;89'
@@ -425,7 +425,7 @@ RUN git clone https://github.com/cellmodeller/CellModeller.git && \\
     cd /opt/CellModeller && pip install -e . && \\
     mkdir /opt/data && \\
     chown -R $USER:$USER /opt/data && \\
-    echo '[Desktop Entry]\\nName=CellModeller\\nExec=bash -c "cd /opt && /usr/bin/python3 CellModeller/Scripts/CellModellerGUI.py"\\nIcon=applications-science\\nType=Application\\nTerminal=true\\nCategories=Science;' \\
+    echo '[Desktop Entry]\\nName=CellModeller\\nExec=bash -c "/usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py"\\nIcon=applications-science\\nType=Application\\nTerminal=true\\nCategories=Science;' \\
     > /usr/share/applications/cellmodeller.desktop && \\
     chmod 644 /usr/share/applications/cellmodeller.desktop && \\
     update-desktop-database /usr/share/applications''')

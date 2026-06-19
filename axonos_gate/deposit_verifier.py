@@ -34,6 +34,57 @@ def _eth_deposits_enabled() -> bool:
     return raw in ("1", "true", "yes", "on")
 
 
+def _axgt_direct_deposits_enabled() -> bool:
+    """Direct AXGT-as-payment deposits.
+
+    Default: ``False`` for the ETH-first tokenomics model. AXGT is used for
+    holder discounts only; users pay in ETH. Operators can opt in to legacy
+    behavior with ``AXGT_ENABLE_AXGT_DEPOSITS=true`` for backward compatibility.
+    """
+    raw = (os.getenv("AXGT_ENABLE_AXGT_DEPOSITS") or "").strip().lower()
+    if not raw:
+        return False
+    return raw in ("1", "true", "yes", "on")
+
+
+def _import_discount():
+    """Import the discount module across both flat and packaged sys.path layouts."""
+    try:
+        from . import discount as _disc
+        return _disc
+    except ImportError:
+        pass
+    try:
+        from axonos_gate import discount as _disc
+        return _disc
+    except ImportError:
+        pass
+    try:
+        import discount as _disc
+        return _disc
+    except ImportError:
+        return None
+
+
+def _import_price_oracle():
+    """Import the price oracle across flat and packaged sys.path layouts."""
+    try:
+        from . import price_oracle as _po
+        return _po
+    except ImportError:
+        pass
+    try:
+        from axonos_gate import price_oracle as _po
+        return _po
+    except ImportError:
+        pass
+    try:
+        import price_oracle as _po
+        return _po
+    except ImportError:
+        return None
+
+
 def _rpc(url: str, method: str, params: List[Any]) -> Optional[Any]:
     payload = {"jsonrpc": "2.0", "method": method, "params": params, "id": 1}
     try:
@@ -72,6 +123,34 @@ def _min_confirmations() -> int:
     return DEFAULT_MIN_CONFIRMATIONS
 
 
+def verify_deposit_is_pending(result: Dict[str, Any]) -> bool:
+    """True when verify_deposit returned a pollable wait state (HTTP 200, not an error)."""
+    return result.get("pending") is True
+
+
+def _pending_result(
+    wallet: str,
+    tx_hash: str,
+    message: str,
+    *,
+    confirmations: Optional[int] = None,
+    required: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Not verified yet; client should poll until verified or a hard error."""
+    out: Dict[str, Any] = {
+        "verified": False,
+        "pending": True,
+        "wallet_address": wallet,
+        "tx_hash": tx_hash,
+        "error": message,
+    }
+    if confirmations is not None:
+        out["confirmations"] = confirmations
+    if required is not None:
+        out["required"] = required
+    return out
+
+
 def _min_deposit() -> Decimal:
     raw = (os.getenv("AXGT_MIN_DEPOSIT") or "").strip()
     if not raw:
@@ -103,6 +182,19 @@ def _credit_per_100_minutes() -> float:
     except ValueError:
         pass
     return float(DEFAULT_CREDIT_PER_100_AXGT_MINUTES)
+
+
+def _axgt_bonus_pct_fixed() -> Decimal:
+    """AXGT payment bonus % (Model B) for the fixed-rate fallback path."""
+    raw = (os.getenv("AXGT_USD_BONUS_PERCENT") or "").strip()
+    if raw:
+        try:
+            v = Decimal(raw)
+            if v >= 0:
+                return v
+        except Exception:
+            pass
+    return Decimal("25")
 
 
 def _min_eth_deposit() -> Decimal:
@@ -252,14 +344,27 @@ def verify_deposit(
 
     # Fetch transaction
     tx_obj = _rpc(rpc_url, "eth_getTransactionByHash", [tx])
+    min_conf = _min_confirmations()
     if not tx_obj:
         # No ledger row: client may poll immediately after broadcast (tx not indexed yet).
-        return fail("Transaction not found yet — wait a few seconds if you just submitted.")
+        return _pending_result(
+            wallet,
+            tx_hash,
+            "Transaction not found yet — wait a few seconds if you just submitted.",
+            confirmations=0,
+            required=min_conf,
+        )
 
     # Fetch receipt (None while pending)
     receipt = _rpc(rpc_url, "eth_getTransactionReceipt", [tx])
     if not receipt:
-        return fail("Transaction pending — waiting for inclusion in a block.")
+        return _pending_result(
+            wallet,
+            tx_hash,
+            "Transaction pending — waiting for inclusion in a block.",
+            confirmations=0,
+            required=min_conf,
+        )
 
     status = receipt.get("status")
     if status is None:
@@ -293,10 +398,15 @@ def verify_deposit(
         deposit_ledger.record_verification_reject(wallet, notes="Invalid latest block")
         return fail("Invalid latest block")
     confirmations = latest - block_number + 1
-    min_conf = _min_confirmations()
     if confirmations < min_conf:
         # No ledger row: UI polls until min confirmations (avoids audit spam).
-        return fail(f"Insufficient confirmations (have {confirmations}, need {min_conf})")
+        return _pending_result(
+            wallet,
+            tx_hash,
+            f"Insufficient confirmations (have {confirmations}, need {min_conf})",
+            confirmations=confirmations,
+            required=min_conf,
+        )
 
     to_addr = (tx_obj.get("to") or "").strip().lower()
     if not to_addr:
@@ -318,37 +428,108 @@ def verify_deposit(
                 deposit_ledger.record_verification_reject(wallet, notes="ETH deposits disabled by AXGT_ENABLE_ETH_DEPOSITS")
                 return fail("ETH deposits are currently disabled")
             eth_amount = Decimal(value_wei) / Decimal(10 ** 18)
-            min_eth = _min_eth_deposit()
-            if eth_amount >= min_eth:
-                credit_per_eth = _eth_credit_per_eth_minutes()
-                credited_minutes = float(eth_amount * Decimal(str(credit_per_eth)))
-                ok, remaining, err = deposit_ledger.credit_eth_deposit(
-                    wallet,
-                    eth_amount,
-                    credited_minutes,
-                    tx,
-                    block_number,
-                )
-                if not ok:
-                    return fail(err or "Failed to credit ETH deposit")
-                return {
-                    "verified": True,
-                    "wallet_address": wallet,
-                    "tx_hash": tx,
-                    "deposit_currency": "ETH",
-                    "eth_amount": str(eth_amount),
-                    "axgt_amount": None,
-                    "credited_minutes": round(credited_minutes, 2),
-                    "remaining_minutes": round(remaining, 2),
-                    "confirmations": confirmations,
-                }
-            deposit_ledger.record_verification_reject(
-                wallet,
-                notes=f"ETH amount {eth_amount} below minimum {min_eth}",
-            )
-            return fail(f"ETH deposit below minimum ({min_eth} ETH)")
+            base_min_eth = _min_eth_deposit()
 
-    # AXGT: transaction must be to AXGT contract (transfer call)
+            # Re-check on-chain AXGT balance and resolve tier server-side. Client
+            # cannot manipulate the discount: if RPC fails, we default safely to
+            # no discount (user paid full price; their discount simply isn't
+            # applied — they aren't blocked).
+            disc_mod = _import_discount()
+            tier_info: Dict[str, Any] = {
+                "tier_index": 0,
+                "tier_label": "Tier 0",
+                "discount_percent": 0.0,
+                "axgt_balance_axgt": "0",
+                "balance_check_ok": False,
+            }
+            discount_pct = Decimal("0")
+            if disc_mod is not None:
+                try:
+                    bal = disc_mod.fetch_axgt_balance(wallet)
+                    floor_axgt = bal.floor_axgt() if bal.ok else 0
+                    tier = disc_mod.resolve_tier(floor_axgt)
+                    tier_info = {
+                        "tier_index": tier.index,
+                        "tier_label": tier.label,
+                        "tier_min_axgt": tier.min_axgt,
+                        "discount_percent": tier.discount_percent if bal.ok else 0.0,
+                        "axgt_balance_axgt": format(bal.balance_axgt.normalize(), "f") if bal.ok and bal.balance_axgt > 0 else "0",
+                        "balance_check_ok": bal.ok,
+                        "balance_check_error": bal.error if not bal.ok else None,
+                    }
+                    if bal.ok:
+                        discount_pct = Decimal(str(tier.discount_percent)) / Decimal("100")
+                except Exception as exc:  # noqa: BLE001 — never block payment on tier lookup
+                    logger.warning("Discount tier lookup failed for %s: %s", wallet, exc)
+                    tier_info["balance_check_error"] = "Tier lookup failed"
+
+            min_eth = (base_min_eth * (Decimal("1") - discount_pct)).quantize(Decimal("0.000000000000000001"))
+            if min_eth <= 0:
+                min_eth = Decimal("0.000000000000000001")
+            if eth_amount < min_eth:
+                deposit_ledger.record_verification_reject(
+                    wallet,
+                    notes=(
+                        f"ETH amount {eth_amount} below tier-adjusted minimum {min_eth} "
+                        f"(base {base_min_eth}, discount {tier_info.get('discount_percent', 0)}%)"
+                    ),
+                )
+                return fail(
+                    f"ETH deposit below minimum ({min_eth} ETH after AXGT discount; base {base_min_eth} ETH)"
+                )
+
+            # Base minutes: live USD-equivalent pricing when the oracle is enabled
+            # and a fresh price is available; otherwise the fixed ETH rate.
+            base_minutes = None
+            _oracle = _import_price_oracle()
+            if _oracle is not None and _oracle.oracle_enabled():
+                m = _oracle.minutes_for_eth(eth_amount)
+                if m is not None:
+                    base_minutes = Decimal(str(m))
+            if base_minutes is None:
+                base_minutes = eth_amount * Decimal(str(_eth_credit_per_eth_minutes()))
+            # AXGT-holder discount still applies on the ETH rail: a d discount means
+            # the same ETH buys 1/(1-d) more minutes.
+            if discount_pct >= 1:
+                credited_minutes = float(base_minutes)
+            else:
+                credited_minutes = float(base_minutes / (Decimal("1") - discount_pct))
+            ok, remaining, err = deposit_ledger.credit_eth_deposit(
+                wallet,
+                eth_amount,
+                credited_minutes,
+                tx,
+                block_number,
+            )
+            if not ok:
+                return fail(err or "Failed to credit ETH deposit")
+            return {
+                "verified": True,
+                "wallet_address": wallet,
+                "tx_hash": tx,
+                "deposit_currency": "ETH",
+                "eth_amount": str(eth_amount),
+                "axgt_amount": None,
+                "base_eth_min": str(base_min_eth),
+                "applied_min_eth": str(min_eth),
+                "tier": tier_info,
+                "credited_minutes": round(credited_minutes, 2),
+                "remaining_minutes": round(remaining, 2),
+                "confirmations": confirmations,
+            }
+
+    # AXGT direct deposit path (legacy / opt-in only). New ETH-first tokenomics
+    # treats AXGT as a discount asset, not a payment token.
+    if not _axgt_direct_deposits_enabled():
+        deposit_ledger.record_verification_reject(
+            wallet,
+            notes="AXGT direct deposits disabled (ETH-first tokenomics)",
+        )
+        return fail(
+            "Direct AXGT payments are disabled. Pay in ETH to the revenue wallet — "
+            "your AXGT holdings automatically apply a discount on the ETH amount."
+        )
+
     if not contract:
         deposit_ledger.record_verification_reject(wallet, notes="AXGT contract not configured")
         return fail("AXGT deposit requires AXGT_CONTRACT_ADDRESS")
@@ -375,9 +556,27 @@ def verify_deposit(
         )
         return fail(f"Deposit amount below minimum ({min_dep} AXGT)")
 
-    # Credit: (axgt_amount / 100) * credit_per_100
-    credit_per_100 = _credit_per_100_minutes()
-    credited_minutes = float(axgt_amount / Decimal("100") * Decimal(str(credit_per_100)))
+    # Model B: paying in AXGT is simply the best deal — a flat USD-equivalent rate
+    # PLUS a fixed bonus (default +25%), with NO holder-tier discount on the AXGT
+    # rail. AXGT's two utilities are kept distinct: holding AXGT discounts ETH/USDC
+    # payments (tiers, elsewhere); paying IN AXGT gets the bonus rate here.
+    #
+    # When dynamic pricing is enabled, minutes are priced off AXGT's live USD value
+    # (so the user pays the USD-equivalent); otherwise the fixed per-100 rate.
+    bonus_pct = Decimal("0")
+    credited_minutes = None
+    _oracle = _import_price_oracle()
+    if _oracle is not None and _oracle.oracle_enabled():
+        m = _oracle.minutes_for_axgt(axgt_amount)  # already includes the bonus
+        if m is not None:
+            credited_minutes = float(m)
+            bonus_pct = _oracle.axgt_bonus_pct()
+    if credited_minutes is None:
+        # Fixed-rate fallback: (axgt_amount/100)*credit_per_100, then apply bonus.
+        credit_per_100 = _credit_per_100_minutes()
+        bonus_pct = _axgt_bonus_pct_fixed()
+        base = axgt_amount / Decimal("100") * Decimal(str(credit_per_100))
+        credited_minutes = float(base * (Decimal("1") + bonus_pct / Decimal("100")))
 
     ok, remaining, err = deposit_ledger.credit_deposit(
         wallet,
@@ -396,6 +595,7 @@ def verify_deposit(
         "deposit_currency": "AXGT",
         "axgt_amount": str(axgt_amount),
         "eth_amount": None,
+        "axgt_bonus_percent": float(bonus_pct),
         "credited_minutes": round(credited_minutes, 2),
         "remaining_minutes": round(remaining, 2),
         "confirmations": confirmations,

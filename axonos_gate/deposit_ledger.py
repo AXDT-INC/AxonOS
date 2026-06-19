@@ -416,6 +416,83 @@ def credit_eth_deposit(
         conn.close()
 
 
+def credit_usdc_deposit(
+    wallet_address: str,
+    usdc_amount: Decimal,
+    credited_minutes: float,
+    tx_hash: str,
+    block_number: int,
+) -> Tuple[bool, Optional[float], Optional[str]]:
+    """
+    Credit minutes from a verified USDC (x402 rail) deposit (replay-safe).
+    Does not update deposited_amount_axgt. Returns (success, remaining_minutes_after, error).
+    """
+    wallet = (wallet_address or "").strip().lower()
+    tx_hash_norm = (tx_hash or "").strip().lower()
+    if not wallet or not tx_hash_norm:
+        return False, None, "Invalid wallet or tx_hash"
+    if not init_once():
+        return False, None, "Ledger DB unavailable"
+    conn = _get_connection()
+    if not conn:
+        return False, None, "Ledger DB unavailable"
+    try:
+        now = time.time()
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""INSERT INTO {_VERIFIED_TABLE}
+                    (tx_hash, wallet_address, sender_wallet, recipient_wallet,
+                     axgt_amount, credited_minutes, block_number, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                (
+                    tx_hash_norm,
+                    wallet,
+                    wallet,
+                    _revenue_wallet().lower() if _revenue_wallet() else "",
+                    Decimal("0"),
+                    credited_minutes,
+                    block_number,
+                    now,
+                ),
+            )
+            cur.execute(
+                f"""INSERT INTO {_DEPOSITS_TABLE}
+                    (wallet_address, deposited_amount_axgt, credited_minutes_total,
+                     consumed_minutes_total, remaining_minutes, last_billed_at, created_at, updated_at)
+                    VALUES (%s, 0, %s, 0, %s, NULL, %s, %s)
+                    ON CONFLICT (wallet_address) DO UPDATE SET
+                    credited_minutes_total = {_DEPOSITS_TABLE}.credited_minutes_total + EXCLUDED.credited_minutes_total,
+                    remaining_minutes = {_DEPOSITS_TABLE}.remaining_minutes + EXCLUDED.remaining_minutes,
+                    updated_at = EXCLUDED.updated_at""",
+                (wallet, credited_minutes, credited_minutes, now, now),
+            )
+            cur.execute(
+                f"SELECT remaining_minutes FROM {_DEPOSITS_TABLE} WHERE wallet_address = %s",
+                (wallet,),
+            )
+            row = cur.fetchone()
+            remaining = float(row[0]) if row else 0.0
+            _ledger_write(
+                cur,
+                wallet,
+                "deposit_credit",
+                credited_minutes,
+                Decimal("0"),
+                remaining,
+                reference_tx_hash=tx_hash_norm,
+                notes=f"USDC deposit {usdc_amount}",
+                created_by="x402_verifier",
+            )
+        conn.commit()
+        return True, remaining, None
+    except Exception as exc:
+        conn.rollback()
+        logger.warning("credit_usdc_deposit failed: %s", exc)
+        return False, None, str(exc)
+    finally:
+        conn.close()
+
+
 def deduct_usage(
     wallet_address: str,
     minutes_delta: float,

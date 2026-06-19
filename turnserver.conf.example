@@ -1,0 +1,8 @@
+listening-port=3478
+min-port=40500
+max-port=41000
+realm=axonos.local
+fingerprint
+lt-cred-mech
+external-ip=<YOUR_PUBLIC_IP>
+user=<USERNAME>:<PASSWORD>

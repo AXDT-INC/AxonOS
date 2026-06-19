@@ -48,7 +48,7 @@ python3 axonos_launcher/main.py
    - Configure Ollama AI models (one per line)
    - Set username and VNC password
    - Enable/disable GPU support for deployment
-   - Default models: command-r7b, granite3.2-vision
+   - Default models: gemma4:31b, granite3.2-vision
 
 4. **Build & Deploy Tab**
    - Set custom Docker image tag

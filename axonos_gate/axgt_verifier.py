@@ -68,6 +68,79 @@ def validate_wallet_address(address: str) -> bool:
     return bool(re.match(r"^0x[a-fA-F0-9]{40}$", address))
 
 
+# OpenSSH public-key types we accept for the direct-SSH session template.
+_SSH_KEY_TYPES = {
+    "ssh-ed25519",
+    "ssh-rsa",
+    "ecdsa-sha2-nistp256",
+    "ecdsa-sha2-nistp384",
+    "ecdsa-sha2-nistp521",
+    "sk-ssh-ed25519@openssh.com",
+    "sk-ecdsa-sha2-nistp256@openssh.com",
+}
+_SSH_KEY_MAX_LEN = 16384  # generous upper bound; RSA-4096 keys are ~720 chars
+
+
+def validate_ssh_public_key(raw: Optional[str]) -> Optional[str]:
+    """Validate a single OpenSSH public key and return its normalized form.
+
+    Returns the sanitized ``"<type> <base64> [comment]"`` string when valid, or
+    ``None`` otherwise. The result is injected (via ``docker run -e``) into the
+    session container, which writes it verbatim to ``authorized_keys`` — so this
+    rejects anything that could smuggle a second key line or authorized_keys
+    options: multi-line input, leading option fields, control characters, and
+    bodies whose embedded algorithm name does not match the declared type.
+    """
+    if not raw:
+        return None
+    key = raw.strip()
+    # Single physical line only — no embedded newlines / CR / NUL / other control chars.
+    if len(key) > _SSH_KEY_MAX_LEN:
+        return None
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in key):
+        return None
+
+    parts = key.split()
+    # Exactly: <type> <base64> with an optional free-form comment. A leading
+    # options field (no space => unsplittable from type) is rejected because the
+    # first field must be a known key type.
+    if len(parts) < 2 or len(parts) > 3:
+        return None
+    key_type, body = parts[0], parts[1]
+    if key_type not in _SSH_KEY_TYPES:
+        return None
+
+    # The base64 body encodes a length-prefixed algorithm name that must match
+    # the declared type. This is the check that makes the value non-spoofable.
+    import base64
+    import struct
+
+    try:
+        blob = base64.b64decode(body, validate=True)
+    except (ValueError, _binascii_error()):
+        return None
+    if len(blob) < 4:
+        return None
+    name_len = struct.unpack(">I", blob[:4])[0]
+    if name_len <= 0 or name_len > 64 or 4 + name_len > len(blob):
+        return None
+    try:
+        embedded_type = blob[4 : 4 + name_len].decode("ascii")
+    except UnicodeDecodeError:
+        return None
+    if embedded_type != key_type:
+        return None
+
+    comment = parts[2] if len(parts) == 3 else ""
+    return f"{key_type} {body} {comment}".strip()
+
+
+def _binascii_error():
+    import binascii
+
+    return binascii.Error
+
+
 def _challenge_ttl_seconds() -> int:
     raw = (os.getenv("AXGT_CHALLENGE_TTL_SECONDS") or "").strip()
     if not raw:
@@ -523,12 +596,82 @@ def _min_eth_deposit_credit_minutes() -> float:
     return float(eth * rate)
 
 
+def _axgt_direct_deposits_enabled_flag() -> bool:
+    """Direct AXGT-as-payment deposits — opt-in for legacy compatibility only.
+
+    ETH-first tokenomics (the default) uses AXGT for *holder discounts* on ETH
+    payments and disables direct AXGT payment deposits.
+    """
+    raw = (os.getenv("AXGT_ENABLE_AXGT_DEPOSITS") or "").strip().lower()
+    if not raw:
+        return False
+    return raw in ("1", "true", "yes", "on")
+
+
+def _usd_per_hour_display() -> float:
+    raw = (os.getenv("AXGT_USD_PER_HOUR") or "").strip()
+    if raw:
+        try:
+            v = float(raw)
+            if v > 0:
+                return v
+        except ValueError:
+            pass
+    return 1.0
+
+
+def _axgt_bonus_percent_display() -> float:
+    raw = (os.getenv("AXGT_USD_BONUS_PERCENT") or "").strip()
+    if raw:
+        try:
+            v = float(raw)
+            if v >= 0:
+                return v
+        except ValueError:
+            pass
+    return 25.0
+
+
 def get_credit_policy() -> Dict[str, Any]:
-    """Deposit-credit policy: min deposit (AXGT/ETH), credit rates, warning threshold."""
+    """Deposit-credit policy: min deposit (AXGT/ETH), credit rates, warning threshold, discount tiers."""
     eth_enabled = eth_deposits_enabled()
     eth_min = _get_eth_min_deposit_display()
     eth_rate = _get_eth_credit_per_eth_minutes()
     eth_min_minutes = round(_min_eth_deposit_credit_minutes(), 4) if eth_enabled else None
+    axgt_direct = _axgt_direct_deposits_enabled_flag()
+    discount_tiers: Any = []
+    try:
+        try:
+            from . import discount as _disc
+        except ImportError:
+            try:
+                from axonos_gate import discount as _disc
+            except ImportError:
+                import discount as _disc  # type: ignore[no-redef]
+        discount_tiers = _disc.public_tiers()
+    except Exception as exc:  # noqa: BLE001 — non-fatal: tiers are optional in policy
+        logger.warning("Failed to load discount tiers for credit policy: %s", exc)
+        discount_tiers = []
+    usdc_enabled = (os.getenv("AXGT_ENABLE_USDC_DEPOSITS") or "").strip().lower() not in ("0", "false", "no", "off")
+    usdc_min = (os.getenv("USDC_MIN_DEPOSIT") or "").strip() or "1"
+    try:
+        usdc_rate = float((os.getenv("USDC_CREDIT_PER_USDC_MINUTES") or "").strip() or 60.0)
+        if usdc_rate <= 0:
+            usdc_rate = 60.0
+    except ValueError:
+        usdc_rate = 60.0
+    usdc_min_minutes = None
+    if usdc_enabled:
+        try:
+            usdc_min_minutes = round(float(Decimal(usdc_min) * Decimal(str(usdc_rate))), 4)
+        except (InvalidOperation, ValueError, TypeError):
+            usdc_min_minutes = None
+    gpu_profiles_enabled = (
+        os.getenv("AXGT_GPU_PROFILES_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
+    )
+    gpu_weighted_billing = gpu_profiles_enabled and (
+        os.getenv("AXGT_GPU_WEIGHTED_BILLING", "").strip().lower() not in ("0", "false", "no", "off")
+    )
     return {
         "min_deposit": _get_min_deposit_display(),
         "credit_per_100_axgt_minutes": _get_credit_per_100_axgt_minutes(),
@@ -538,6 +681,17 @@ def get_credit_policy() -> Dict[str, Any]:
         "warning_threshold_minutes": _get_warning_threshold_minutes(),
         "min_axgt_deposit_minutes": round(_min_axgt_deposit_credit_minutes(), 4),
         "min_eth_deposit_minutes": eth_min_minutes,
+        "axgt_direct_deposits_enabled": axgt_direct,
+        "usdc_deposits_enabled": usdc_enabled,
+        "axgt_bonus_percent": _axgt_bonus_percent_display(),
+        "dynamic_pricing_enabled": (os.getenv("AXGT_DYNAMIC_PRICING") or "").strip().lower() in ("1", "true", "yes", "on"),
+        "usd_per_hour": _usd_per_hour_display(),
+        "usdc_min_deposit": usdc_min,
+        "usdc_credit_per_usdc_minutes": usdc_rate,
+        "min_usdc_deposit_minutes": usdc_min_minutes,
+        "axgt_discount_tiers": discount_tiers,
+        "gpu_profiles_enabled": gpu_profiles_enabled,
+        "gpu_weighted_billing_enabled": gpu_weighted_billing,
     }
 
 
@@ -585,6 +739,7 @@ def get_wallet_access_status(wallet_address: str, consume_usage: bool = False) -
     verified = remaining > 0
     response: Dict[str, Any] = {
         "verified": verified,
+        "locked": not verified,
         "access_type": "deposit_credit" if verified else None,
         "remaining_minutes": round(remaining, 2),
         "consumed_minutes": round(consumed, 2),
@@ -605,8 +760,30 @@ def get_wallet_access_status(wallet_address: str, consume_usage: bool = False) -
             )
     elif remaining <= warning_threshold:
         response["reason"] = (
-            f"Warning: less than {warning_threshold} minutes of prepaid credit remaining."
+            f"Credits expired: Add more ETH to resume access (session expires in <2 hours)."
         )
+    try:
+        try:
+            from . import session_manager as _sm
+        except ImportError:
+            from axonos_gate import session_manager as _sm
+        billing_ctx = _sm.billing_context_for_wallet(wallet_address)
+        response.update(billing_ctx)
+        if (
+            billing_ctx.get("gpu_billing_enabled")
+            and billing_ctx.get("billing_gpu_count", 1) > 1
+            and remaining > 0
+        ):
+            count = int(billing_ctx["billing_gpu_count"])
+            wall_left = remaining / count
+            response["estimated_wall_minutes_remaining"] = round(wall_left, 2)
+            if wall_left <= warning_threshold:
+                response["reason"] = (
+                    f"Warning: about {wall_left:.1f} minute(s) of desktop time left "
+                    f"({count} GPUs, billing {count}× wall-clock)."
+                )
+    except Exception as exc:
+        logger.debug("wallet billing context unavailable: %s", exc)
     # Optional on-chain balance for UI (wallet dialog); None if RPC not configured or on error
     balance_display = _get_axgt_balance_display(wallet_address)
     if balance_display is not None:

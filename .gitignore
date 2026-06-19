@@ -38,6 +38,7 @@ dist/
 *.deb
 *.dmg
 *.exe
+vendor/
 
 # PyInstaller
 *.manifest
@@ -57,6 +58,8 @@ coverage.xml
 
 # Environments
 .env
+.env.*
+!.env.example
 .venv
 env/
 venv/
@@ -97,4 +100,7 @@ DeSciOS-Launcher-*.0-Windows/
 DeSciOS-Launcher-*.0-macOS/
 # New build artifacts
 AxonOS-Launcher-*.0-Windows/
-AxonOS-Launcher-*.0-macOS/ 
+AxonOS-Launcher-*.0-macOS/
+
+# Coturn config
+turnserver.conf 

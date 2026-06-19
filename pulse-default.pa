@@ -1,0 +1,27 @@
+#!/usr/bin/pulseaudio -nF
+# AxonOS headless PulseAudio: loaded with `pulseaudio -nF` (skips the stock
+# default.pa, so module-suspend-on-idle is never loaded and the null sink keeps
+# producing a continuous monitor stream for WebRTC capture).
+
+# Single shared unix socket. Anonymous auth is acceptable inside the container:
+# the socket is not published, and it lets the root-owned webrtc-agent capture
+# from the aXonian-owned daemon without cookie juggling.
+load-module module-native-protocol-unix socket=/tmp/axonos-pulse.sock auth-anonymous=1
+
+# Virtual output device for desktop apps; WebRTC captures axonos_out.monitor.
+# Pin 48 kHz to match WebRTC/Opus end-to-end: the daemon default is 44.1 kHz, and
+# a rate mismatch forces PulseAudio to resample the live stream continuously,
+# which drifts and adds jitter (heard badly on the mic path).
+load-module module-null-sink sink_name=axonos_out rate=48000 channels=2 sink_properties=device.description=AxonOS-Audio
+
+# Virtual microphone bridge: the WebRTC agent plays the browser's mic stream into
+# axonos_mic (via pacat); module-remap-source then presents axonos_mic.monitor as
+# a normal-looking capture device so recording apps list "AxonOS Microphone"
+# rather than a monitor. Always loaded — when no browser mic is connected the
+# source simply produces silence (correct "muted mic" behaviour).
+load-module module-null-sink sink_name=axonos_mic rate=48000 channels=2 sink_properties=device.description=AxonOS-Mic-Bridge
+load-module module-remap-source master=axonos_mic.monitor source_name=axonos_microphone source_properties=device.description=AxonOS-Microphone
+
+set-default-sink axonos_out
+# Recording apps default to the virtual mic, not the desktop-output monitor.
+set-default-source axonos_microphone

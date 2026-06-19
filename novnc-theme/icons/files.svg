@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <g fill="none" stroke="#e8edf4" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 6.5a1.5 1.5 0 0 1 1.5-1.5h4l2 2.2h8A1.5 1.5 0 0 1 20 8.7v9.3a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3 18V6.5z"/>
+    <!-- Up Arrow (Upload) -->
+    <path d="M6.5 12 8.5 10l2 2"/>
+    <path d="M8.5 10v6"/>
+    <!-- Down Arrow (Download) -->
+    <path d="M13.5 14 15.5 16l2-2"/>
+    <path d="M15.5 16v-6"/>
+  </g>
+</svg>
