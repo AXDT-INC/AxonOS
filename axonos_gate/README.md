@@ -1,6 +1,6 @@
 # AXGT Gate for AxonOS
 
-This module implements **prepaid deposit-credit billing** for AxonOS remote desktop access. Users deposit **AXGT** or **native ETH** to a revenue wallet, submit the transaction hash for verification, and receive usage minutes. Sessions consume minutes via heartbeat-based incremental billing.
+This module implements **prepaid deposit-credit billing** for AxonOS remote desktop access. Users pay with **ETH** (primary), **USDC** (fixed-$1 stablecoin rail), or **AXGT** (Model B, +bonus) to a revenue wallet, submit the transaction hash for verification, and receive usage minutes. Autonomous agents can pay via the **x402** HTTP-402 rail (gate pays gas) and provision headless SSH sessions. Sessions consume minutes via heartbeat-based incremental billing. See [`docs/TOKENOMICS.md`](../docs/TOKENOMICS.md) for the full payment model and [`docs/ENVIRONMENT_VARIABLES.md`](../docs/ENVIRONMENT_VARIABLES.md) for every config var.
 
 ## Official References
 
@@ -11,7 +11,8 @@ This module implements **prepaid deposit-credit billing** for AxonOS remote desk
 ## Overview
 
 - **Authentication**: Wallet ownership is proven via signed challenge (`personal_sign`); one-time, wallet-bound nonces.
-- **Deposit-credit**: Users deposit AXGT or native ETH to a configured **revenue wallet**. They submit the **transaction hash**; the backend verifies the tx on-chain (confirmations, contract/value, sender/recipient, amount) and credits prepaid minutes. No escrow, no oracle, no trust in client-reported amounts.
+- **Deposit-credit**: Users deposit ETH, USDC, or AXGT to a configured **revenue wallet**. They submit the **transaction hash**; the backend verifies the tx on-chain (confirmations, contract/value, sender/recipient, amount) and credits prepaid minutes — verified against the ERC-20 **Transfer event log**, not `tx.from`, so smart-account payments are safe. No escrow, no trust in client-reported amounts. (Optional dynamic USD-equivalent pricing adds a read-only, server-side CoinGecko price cache; see TOKENOMICS.)
+- **x402 rail**: Agent-native HTTP-402 payments — `GET /api/x402/access` returns the requirements, `POST /api/x402/settle` broadcasts an EIP-3009 `transferWithAuthorization` and the gate pays gas from a dedicated low-balance settlement wallet.
 - **Billing**: Active session usage is deducted **incrementally** on each session heartbeat. When remaining minutes reach zero, access is denied until the user deposits again. Unused credits persist.
 - **Persistent Storage Billing**: When offline, users are billed for persistent storage volume usage (defaults to `0.05` minutes per GB/hour). Charges accrue to the balance, allowing it to go negative (accumulating debt). Once the balance falls below a configurable negative debt threshold (default: `-1440.0` minutes / -24 hours), the persistent volume is pruned/deleted immediately to reclaim disk space.
 - **Accounting**: Postgres-backed deposit ledger and audit ledger; all balance changes are logged.
@@ -53,6 +54,19 @@ This module implements **prepaid deposit-credit billing** for AxonOS remote desk
 - `AXGT_PERSISTENT_STORAGE_CLEANUP_INTERVAL_SECONDS`: Billing sweep interval (default `3600` / 1 hour).
 - `AXGT_PERSISTENT_STORAGE_MIN_BALANCE_LIMIT_MINUTES`: Max negative credit debt allowed before volume pruning (default `-1440.0`).
 - `AXGT_PERSISTENT_STORAGE_GB_HOUR_COST_MINUTES`: Offline storage charge rate per GB/hour (default `0.05` compute minutes).
+
+### USDC / x402 (stablecoin + agent rail)
+
+- `AXGT_ENABLE_USDC_DEPOSITS`: Enable the USDC rail + UI (default `true`).
+- `USDC_RPC_URL`, `USDC_CONTRACT_ADDRESS`, `USDC_CHAIN_ID` (default `8453`), `USDC_NETWORK` (default `base`): USDC chain config — independent of `AXGT_CHAIN_ID` (Base by default).
+- `USDC_MIN_DEPOSIT` (default `1`), `USDC_CREDIT_PER_USDC_MINUTES` (default `60`), `USDC_DEPOSIT_MIN_CONFIRMATIONS` (default `6`).
+- `AXGT_ENABLE_X402_SETTLEMENT` (default `true`) and `X402_SETTLEMENT_PRIVATE_KEY`: dedicated low-balance signer that pays gas for `POST /api/x402/settle`. Unset = settle disabled (tx-hash rail still works). **Never the revenue/treasury key.**
+- `USDC_EIP712_NAME` (default `USD Coin`) / `USDC_EIP712_VERSION` (default `2`): must match the token's on-chain EIP-712 domain.
+
+### Dynamic USD-equivalent pricing (price oracle)
+
+- `AXGT_DYNAMIC_PRICING` (default `false`): credit ETH/AXGT at live USD value; USDC stays fixed at $1.
+- `AXGT_USD_PER_HOUR` (default `1.0`), `AXGT_USD_BONUS_PERCENT` (default `25`, AXGT Model-B bonus), `AXGT_COINGECKO_ID`, `PRICE_POLL_INTERVAL_SECONDS`, `PRICE_MAX_STALE_SECONDS`.
 
 ### Optional
 
@@ -102,9 +116,20 @@ Returns current deposit-credit status (no billing).
 
 Verify a deposit by transaction hash. **Requires auth token** (cookie or header). Body: `{"wallet_address": "0x...", "tx_hash": "0x..."}`. The `wallet_address` must match the authenticated session. On success: `verified`, `credited_minutes`, `remaining_minutes`, `confirmations`, etc. While the tx is indexing or confirming, returns **HTTP 200** with `verified: false`, `pending: true`, `confirmations`, `required`, and `error` (client should poll). Hard failures (wrong sender, duplicate tx, below minimum) return **HTTP 400**.
 
+### POST /api/auth/verify-usdc-deposit
+
+Verify a USDC transfer by tx hash (same shape as verify-deposit). Credits at the fixed USDC rate; no holder discount.
+
+### x402 rail
+
+- `GET /api/x402/access` — returns **HTTP 402** with payment requirements (v1 body with absolute `resource` URL + v2 `PAYMENT-REQUIRED` header, so both JS `x402-fetch` and Python `x402` SDKs work).
+- `POST /api/x402/settle` — settles an EIP-3009 `transferWithAuthorization`; the gate broadcasts and pays gas, then credits minutes.
+- `POST /api/x402/session` — pay-and-provision a headless SSH session in one call (agent flow).
+- `GET /.well-known/x402` — discovery document.
+
 ### GET /api/config
 
-Returns contract address, chain ID, revenue wallet, min deposit (AXGT and ETH), credit rates, warning threshold.
+Returns contract address, chain ID, revenue wallet, min deposit (AXGT and ETH), credit rates, warning threshold. Also exposes USDC contract/chain/network and dynamic-pricing flags when configured.
 
 ### Session and queue
 

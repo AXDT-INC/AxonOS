@@ -4,7 +4,7 @@
 
 This document describes the **ETH-first, AXGT-discount** access model for AxonOS:
 
-- **ETH** is the only direct payment currency for compute/session credits.
+- **ETH** is the primary direct payment currency for compute/session credits.
 - **AXGT** is no longer a mandatory payment token. Instead, holders of AXGT
   receive a **usage discount** on the ETH price, scaled by their on-chain
   AXGT balance.
@@ -12,6 +12,17 @@ This document describes the **ETH-first, AXGT-discount** access model for AxonOS
   payment or session is accepted.
 
 > "Pay with ETH, save with AXGT."
+
+Three additional rails sit alongside ETH and feed the **same prepaid-minutes
+ledger** (see [Additional payment rails](#additional-payment-rails)):
+
+- **USDC** — a fixed-$1 stablecoin rail (tx-hash verified, no holder tier).
+- **x402** — an agent-native HTTP-402 rail for off-the-shelf x402 clients.
+- **AXGT (Model B)** — paying *in* AXGT, credited at live USD value with a flat
+  bonus and no holder tier (the "best deal").
+
+When **dynamic USD-equivalent pricing** is enabled, ETH and AXGT credits are
+valued at their live USD price; USDC always stays fixed at $1.
 
 ## Principles
 
@@ -126,6 +137,71 @@ receives 1,200 minutes.
 
 Replay protection (`axgt_verified_deposits`) and the audit ledger
 (`axgt_ledger`) carry over from the previous deposit-credit model unchanged.
+
+---
+
+## Additional payment rails
+
+All rails below credit the **same prepaid-minutes ledger** and are subject to the
+same wallet-ownership challenge and server-side verification (no client-reported
+amounts). The ETH discount tiers above apply to **ETH and USDC only** — paying in
+AXGT uses the Model-B bonus instead.
+
+### USDC (stablecoin rail)
+
+USDC is a fixed **$1** rail, self-verified on-chain with no facilitator. USDC lands
+in the same `AXGT_REVENUE_WALLET` but **on the USDC chain (Base by default)**, which
+is independent of `AXGT_CHAIN_ID` — so the stablecoin rail can run on Base while the
+ETH/AXGT rail runs on Ethereum mainnet. Two ways to pay:
+
+1. **tx-hash rail** — the user sends a USDC transfer and submits the hash to
+   `POST /api/auth/verify-usdc-deposit`. Drives the in-page "Pay with USDC" button,
+   which appears only when `USDC_CONTRACT_ADDRESS` is configured.
+2. **x402 protocol** (below).
+
+Defaults: 1 USDC → 60 minutes (`USDC_CREDIT_PER_USDC_MINUTES`), minimum 1 USDC,
+6 confirmations. Holder discount tiers do **not** apply to USDC.
+
+### x402 (agent-native HTTP-402)
+
+For autonomous agents using an off-the-shelf x402 client. `GET /api/x402/access`
+returns **HTTP 402** with payment requirements; the client signs an EIP-3009
+`transferWithAuthorization`; `POST /api/x402/settle` broadcasts it and **the gate
+pays the gas** from a dedicated low-balance settlement wallet
+(`X402_SETTLEMENT_PRIVATE_KEY`). The verified payment credits minutes exactly like
+the USDC tx-hash rail. The agent can then provision a headless SSH session for
+fully unattended compute.
+
+> SDK interop: the gate serves both the v1 402 **body** (absolute `resource` URL,
+> for JS `x402-fetch`) and the v2 `PAYMENT-REQUIRED` **header** (for the Python
+> `x402` SDK). See [`docs/X402_AGENT_TEST.md`](X402_AGENT_TEST.md).
+
+### AXGT-as-payment (Model B)
+
+Paying directly **in AXGT** (`AXGT_ENABLE_AXGT_DEPOSITS=true`) is credited at the
+live USD value of the deposit plus a flat **`AXGT_USD_BONUS_PERCENT`** bonus
+(default +25%) and carries **no holder tier** — it is intentionally the best deal.
+When dynamic pricing is off (or the price feed is stale) it falls back to the fixed
+`AXGT_CREDIT_PER_100_AXGT_MINUTES` rate.
+
+---
+
+## Dynamic USD-equivalent pricing (price oracle)
+
+Off by default (`AXGT_DYNAMIC_PRICING`). When enabled, ETH and AXGT deposits are
+credited at their **live USD value** rather than the fixed crypto rates, so a fixed
+USD price of compute holds as token prices move. Mechanics:
+
+- Minutes are priced at **`AXGT_USD_PER_HOUR`** (default $1/hour = 60 min/$).
+- Token→USD quotes come from the **CoinGecko free API** (`AXGT_COINGECKO_ID` for
+  AXGT), polled ~8×/day (`PRICE_POLL_INTERVAL_SECONDS`) and cached **server-side**
+  in Postgres. Client-reported prices are never trusted.
+- On a feed outage the last-known price is used up to `PRICE_MAX_STALE_SECONDS`
+  (default 24 h); beyond that the system falls back to the fixed crypto rates above.
+- **USDC stays fixed at $1** regardless of this setting.
+
+This is a deliberate departure from the prior no-oracle stance; the oracle is
+read-only server-side cache and never blocks payment.
 
 ---
 
@@ -253,6 +329,14 @@ the discount applied at credit time:
 }
 ```
 
+### Additional rail endpoints
+
+- `POST /api/auth/verify-usdc-deposit` — verify a USDC transfer by tx hash (USDC rail).
+- `GET /api/x402/access` — returns HTTP 402 with payment requirements (v1 body + v2 header).
+- `POST /api/x402/settle` — settles an EIP-3009 `transferWithAuthorization` (gate pays gas).
+- `GET /.well-known/x402` — x402 discovery document.
+- `GET /api/config` additionally exposes the USDC contract/chain and dynamic-pricing flags when configured.
+
 ---
 
 ## Configuration reference
@@ -275,6 +359,16 @@ the discount applied at credit time:
 | Min block confirmations before credit  | 6           | `AXGT_DEPOSIT_MIN_CONFIRMATIONS`    |
 | Auth token TTL                         | 300 s       | `AXGT_AUTH_TOKEN_TTL_SECONDS`       |
 | Challenge TTL                          | 180 s       | `AXGT_CHALLENGE_TTL_SECONDS`        |
+| USDC rail enabled                      | true        | `AXGT_ENABLE_USDC_DEPOSITS`         |
+| USDC contract / chain                  | — / 8453    | `USDC_CONTRACT_ADDRESS` / `USDC_CHAIN_ID` |
+| Minutes per 1 USDC                     | 60          | `USDC_CREDIT_PER_USDC_MINUTES`      |
+| x402 settlement enabled                | true        | `AXGT_ENABLE_X402_SETTLEMENT`       |
+| x402 settlement signer (pays gas)      | —           | `X402_SETTLEMENT_PRIVATE_KEY`       |
+| AXGT pay-in bonus (Model B)            | +25%        | `AXGT_USD_BONUS_PERCENT`            |
+| Dynamic USD pricing                    | false       | `AXGT_DYNAMIC_PRICING`              |
+| USD price per hour                     | $1.00       | `AXGT_USD_PER_HOUR`                 |
+
+> Full variable reference: [`docs/ENVIRONMENT_VARIABLES.md`](ENVIRONMENT_VARIABLES.md).
 
 ---
 

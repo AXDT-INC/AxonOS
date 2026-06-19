@@ -90,7 +90,7 @@ With repo `docker-compose.yml`, `AXGT_CHALLENGE_DB_URL` is **auto-set** on the `
 
 ## Blockchain, deposits, and tokenomics
 
-Read by [`axonos_gate/deposit_verifier.py`](../axonos_gate/deposit_verifier.py), [`axonos_gate/axgt_verifier.py`](../axonos_gate/axgt_verifier.py), [`axonos_gate/discount.py`](../axonos_gate/discount.py), and exposed via `GET /api/config`.
+Read by [`axonos_gate/deposit_verifier.py`](../axonos_gate/deposit_verifier.py), [`axonos_gate/axgt_verifier.py`](../axonos_gate/axgt_verifier.py), [`axonos_gate/discount.py`](../axonos_gate/discount.py), [`axonos_gate/x402_verifier.py`](../axonos_gate/x402_verifier.py), [`axonos_gate/price_oracle.py`](../axonos_gate/price_oracle.py), and exposed via `GET /api/config`. See [`docs/TOKENOMICS.md`](TOKENOMICS.md) for the payment-rail model.
 
 ### Core chain config
 
@@ -110,13 +110,55 @@ Read by [`axonos_gate/deposit_verifier.py`](../axonos_gate/deposit_verifier.py),
 | `ETH_MIN_DEPOSIT` | `0.0005` | Minimum ETH per deposit (before AXGT holder discount). |
 | `ETH_CREDIT_PER_ETH_MINUTES` | `120000` | Minutes credited per 1 ETH (→ 0.0005 ETH ≈ 60 min at defaults). |
 
-### Legacy AXGT-as-payment deposits
+### AXGT-as-payment deposits (Model B)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AXGT_ENABLE_AXGT_DEPOSITS` | `false` | Opt-in direct AXGT payment rail (migration / private beta). |
+| `AXGT_ENABLE_AXGT_DEPOSITS` | `false` | Opt-in direct AXGT payment rail. Paying **in** AXGT is credited at live USD value with a flat bonus and **no** holder tier (tiers apply to ETH/USDC only). |
 | `AXGT_MIN_DEPOSIT` | `100` | Minimum AXGT when direct deposits enabled. |
-| `AXGT_CREDIT_PER_100_AXGT_MINUTES` | `60` | Minutes per 100 AXGT deposited. |
+| `AXGT_CREDIT_PER_100_AXGT_MINUTES` | `60` | Fixed-rate fallback: minutes per 100 AXGT when dynamic pricing is off or the price feed is stale. |
+| `AXGT_USD_BONUS_PERCENT` | `25` | Extra minutes (%) granted vs. the plain USD-equivalent when paying in AXGT (the "best deal" incentive). Applies only with `AXGT_DYNAMIC_PRICING=true`. |
+
+### USDC deposits (stablecoin rail)
+
+Self-verified on-chain (no facilitator) into the same deposit ledger. USDC lands in `AXGT_REVENUE_WALLET` **on the USDC chain (Base by default)**, which is independent of `AXGT_CHAIN_ID`. The in-page "Pay with USDC" button appears only when `USDC_CONTRACT_ADDRESS` is set. Read by [`axonos_gate/x402_verifier.py`](../axonos_gate/x402_verifier.py); exposed via `GET /api/config`.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AXGT_ENABLE_USDC_DEPOSITS` | `true` | Enable the USDC rail + UI. Falsy (`0/false/no/off`) disables it. |
+| `USDC_RPC_URL` | *(none)* | JSON-RPC endpoint for the USDC chain. Required for verification. |
+| `USDC_CONTRACT_ADDRESS` | *(none)* | USDC token contract. Presence gates the "Pay with USDC" UI. |
+| `USDC_CHAIN_ID` | `8453` | USDC chain ID (`8453` Base mainnet, `84532` Base Sepolia). |
+| `USDC_NETWORK` | `base` | Network label (`base`, `base-sepolia`). |
+| `USDC_MIN_DEPOSIT` | `1` | Minimum USDC per deposit. |
+| `USDC_CREDIT_PER_USDC_MINUTES` | `60` | Minutes credited per 1 USDC (fixed at $1; no holder tier). |
+| `USDC_DEPOSIT_MIN_CONFIRMATIONS` | `6` | Block confirmations before crediting a USDC transfer. |
+
+### x402 protocol settlement
+
+Agent-native HTTP-402 rail: `GET /api/x402/access` returns payment requirements, `POST /api/x402/settle` broadcasts an EIP-3009 `transferWithAuthorization` (the gate pays gas). Read by [`axonos_gate/x402_verifier.py`](../axonos_gate/x402_verifier.py).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AXGT_ENABLE_X402_SETTLEMENT` | `true` | Enable `POST /api/x402/settle`. Still requires a funded `X402_SETTLEMENT_PRIVATE_KEY`. |
+| `X402_SETTLEMENT_PRIVATE_KEY` | *(none)* | Dedicated **low-balance hot wallet** that pays gas for settlement. Must hold ETH-on-Base on mainnet. Unset = `/settle` disabled (tx-hash rail still works). **Never** use the revenue/treasury key; never log. |
+| `USDC_EIP712_NAME` | `USD Coin` | EIP-712 domain name of the USDC token. Base mainnet = `USD Coin`; Base Sepolia = `USDC`. Must match on-chain or signature recovery fails. |
+| `USDC_EIP712_VERSION` | `2` | EIP-712 domain version of the USDC token. |
+| `X402_RESOURCE` | `/api/x402/access` | Resource path advertised in the 402 challenge. |
+| `X402_RESOURCE_URL` | *(none)* | Absolute base URL for the advertised resource (the JS `x402-fetch` SDK requires an absolute `resource`). Falls back to `AXGT_PUBLIC_BASE_URL`, then the first CORS origin. |
+| `AXGT_PUBLIC_BASE_URL` | *(none)* | Public origin (e.g. `https://desktop.axonos.io`) used to build the absolute x402 resource URL. |
+
+### Dynamic USD-equivalent pricing (price oracle)
+
+When enabled, ETH and AXGT deposits credit at their **live USD value** (CoinGecko free API, cached in Postgres); USDC stays fixed at $1. On a feed outage the last-known price is used up to `PRICE_MAX_STALE_SECONDS`, after which the fixed crypto rates apply. Read by [`axonos_gate/price_oracle.py`](../axonos_gate/price_oracle.py).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AXGT_DYNAMIC_PRICING` | `false` | Enable live USD-equivalent crediting (introduces a server-side price oracle). |
+| `AXGT_USD_PER_HOUR` | `1.0` | USD price of one hour of `small` (1-GPU) desktop time → minutes per USD. |
+| `AXGT_COINGECKO_ID` | `axondao-governance-token-2` | CoinGecko coin ID for the AXGT/USD quote. |
+| `PRICE_POLL_INTERVAL_SECONDS` | `10800` | Price refresh cadence (3 h ≈ 8×/day). |
+| `PRICE_MAX_STALE_SECONDS` | `86400` | Reject cached prices older than this (then fall back to fixed rates). |
 
 ### Deposit verification tuning
 
@@ -205,6 +247,7 @@ Read primarily by [`axonos_gate/session_manager.py`](../axonos_gate/session_mana
 |----------|---------|-------------|
 | `AXGT_SESSION_MAX_MINUTES` | `60` | Idle cap — extended on each heartbeat; session ends when exceeded or heartbeat stale. |
 | `AXGT_HEARTBEAT_TIMEOUT_SECONDS` | `120` | No heartbeat → session considered stale and released. |
+| `AXGT_SSH_MAX_SESSION_MINUTES` | *(unset = affordability only)* | Hard, **non-sliding** billing ceiling (minutes) for headless/SSH sessions kept alive by the in-container heartbeat daemon. Effective cap = `min(this, affordable minutes)`. Does not affect desktop sessions. |
 | `AXGT_SESSION_COOLDOWN_SECONDS` | `0` | Seconds before same wallet can reclaim after release. |
 | `AXGT_SESSION_PAUSED_MAX_MINUTES` | `120` | Max time a credit-paused session may sit before expiry. |
 | `AXGT_SESSION_RESET_SCRIPT` | `/usr/local/bin/reset_session.sh` | Script run between users (desktop cleanup). |
@@ -226,6 +269,9 @@ Set by session launcher on `axgt-session-*` containers (not operator `.env`):
 | `AXGT_WALLET_ADDRESS` | Launcher | Claiming wallet (lowercase). |
 | `AXGT_REQUESTED_PROFILE` | Launcher | GPU profile name. |
 | `AXGT_ASSIGNED_GPU_IDS` | Launcher | Comma-separated GPU indices assigned to this session. |
+| `AXGT_SESSION_FILES_KEY` | Launcher | Per-session bearer secret for the in-container file-transfer agent (generated by the gate at claim time). |
+| `AXGT_GATE_HEARTBEAT_URL` | Launcher | Gate base URL the in-container heartbeat daemon posts to (default `http://127.0.0.1:8889`). |
+| `AXGT_HEARTBEAT_INTERVAL_SECONDS` | Launcher | Heartbeat post interval for headless/SSH sessions (default `30`). |
 
 ---
 
@@ -320,6 +366,8 @@ Configuration: [`axonos_gate/webrtc/config.py`](../axonos_gate/webrtc/config.py)
 | `WEBRTC_TURN_URLS` | *(none)* | Comma-separated `turn:` / `turns:` URLs. |
 | `WEBRTC_TURN_USERNAME` | *(none)* | TURN long-term username. |
 | `WEBRTC_TURN_CREDENTIAL` | *(none)* | TURN password (never log). |
+| `WEBRTC_PORT_RANGE` | *(none)* | Pin the agent's UDP media ports to a range, e.g. `40000-41000`, to match host firewall/NAT rules. Empty = OS-assigned ephemeral ports. |
+| `WEBRTC_PUBLIC_IP` | *(none)* | Rewrite the host candidate IP in the SDP to this public/NAT address so srflx works behind 1:1 NAT. Empty = use the locally bound address. |
 
 ### Timeouts and limits
 
@@ -356,6 +404,35 @@ Configuration: [`axonos_gate/webrtc/config.py`](../axonos_gate/webrtc/config.py)
 | `XAUTHORITY` | `/home/aXonian/.Xauthority` | X11 auth file for capture subprocesses. |
 
 Public subset exposed via `GET /api/config` and `GET /api/webrtc/config`.
+
+---
+
+## File transfer (browser ↔ desktop)
+
+Browser ↔ desktop upload/download over `/api/files/*`, proxied by the gate to an in-container agent. Read by [`axonos_gate/file_transfer.py`](../axonos_gate/file_transfer.py) (gate side) and [`axonos_gate/file_agent.py`](../axonos_gate/file_agent.py) (in-container). Per-session auth is automatic — the gate mints a key at claim time and injects `AXGT_SESSION_FILES_KEY` into the session container; no shared secret to configure.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AXGT_FILES_ENABLED` | `true` | Enable the file-transfer rail + UI. |
+| `AXGT_FILES_PORT` | `8767` | Port the in-container agent listens on. |
+| `AXGT_FILES_ROOT` | `/home/aXonian` | Storage root the agent serves (the desktop home / persistent volume). |
+| `AXGT_FILES_BIND_HOST` | `0.0.0.0` | Bind address for the in-container agent. |
+| `AXGT_FILES_KEY_FILE` | `/tmp/.axgt_files_key` | File the agent reads the per-session key from. |
+| `AXGT_FILES_MIN_FREE_BYTES` | `1073741824` | Reject uploads that would leave less than this free (default 1 GiB). |
+| `AXGT_FILES_MAX_FILE_BYTES` | `0` | Hard per-file upload cap; `0` = unlimited (storage is billed per GB-hour). |
+
+---
+
+## Direct SSH sessions
+
+Headless GPU sessions reachable only over SSH (no X desktop / WebRTC), launched from the landing-page toggle. The user pastes a public key and the gate returns an `ssh -p <port> <user>@<host>` connect-string. Each session publishes one host TCP port `42000 + (session_id % 50)` → container `:22`, so inbound TCP `42000-42049` must be open on the media-plane host. Read by [`axonos_gate/session_manager.py`](../axonos_gate/session_manager.py).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AXGT_SSH_PUBLIC_HOST` | *(empty = SSH toggle disabled)* | Public IP/host the per-session SSH ports NAT to (the **media-plane** IP, not the landing-page hostname). |
+| `AXGT_SSH_USER` | `aXonian` | Login user shown in the connect-string (must be the in-container desktop user). |
+
+See also `AXGT_SSH_MAX_SESSION_MINUTES` (hard billing cap, [Session lifecycle](#session-lifecycle)).
 
 ---
 

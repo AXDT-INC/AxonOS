@@ -21,6 +21,15 @@ AxonOS can deliver the GPU desktop over **WebRTC** (low-latency video + optional
 
 Users behind **symmetric NATs** or **strict firewalls** often need a **TURN** server reachable on UDP/TCP as configured. For production, run your own coturn (or a managed TURN) and allow the browser to reach it on the published host/ports.
 
+### Host NAT / firewall pinning
+
+On a host with **1:1 NAT** and a fixed inbound UDP range, pin the agent's media ports and advertise the public address so direct `srflx` works without forcing TURN:
+
+- **`WEBRTC_PORT_RANGE`**: e.g. `40000-41000` — restrict the agent's UDP media ports to a range your firewall/NAT forwards.
+- **`WEBRTC_PUBLIC_IP`**: rewrite the SDP host candidate to the public/NAT IP so remote peers can reach it.
+
+With both set, TURN becomes a fallback rather than the default path.
+
 ## Reverse proxies and ports
 
 - Browsers load noVNC from **`/vnc.html`** on the **websockify** port (default `6080` in compose).
