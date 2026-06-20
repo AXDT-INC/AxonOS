@@ -357,6 +357,8 @@ html:not(.noVNC_connected) {
   scrollbar-width: thin;
   scrollbar-color: rgba(78, 195, 212, 0.25) rgba(7, 16, 26, 0.1);
   overflow-y: auto !important;
+  background-color: #060e1a !important;
+  color-scheme: dark;
 }
 
 html:not(.noVNC_connected)::-webkit-scrollbar {
@@ -479,11 +481,16 @@ html:not(.noVNC_connected) body {
   padding-top: var(--axonos-prereq-ticker-body-pad-top);
   font-family: var(--font-body);
   color: var(--ink);
-  /* AxonDAO ambient background — deep navy + subtle cyan/violet radial glows */
-  background:
-    radial-gradient(ellipse 900px 700px at 85% 18%, rgba(78, 195, 212, .10), transparent 60%),
-    radial-gradient(ellipse 1000px 800px at 12% 82%, rgba(157, 111, 217, .10), transparent 65%),
+  
+  /* Fallback and background-color */
+  background-color: #060e1a !important;
+  
+  /* AxonDAO ambient background — deep navy + subtle cyan/violet radial glows (omitting redundant 'ellipse' keyword with length sizes) */
+  background-image:
+    radial-gradient(900px 700px at 85% 18%, rgba(78, 195, 212, 0.10), transparent 60%),
+    radial-gradient(1000px 800px at 12% 82%, rgba(157, 111, 217, 0.10), transparent 65%),
     linear-gradient(180deg, #060e1a 0%, #050a14 55%, #03070d 100%) !important;
+    
   overflow-x: hidden;
   overflow-y: visible !important;
   position: relative;
