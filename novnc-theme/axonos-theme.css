@@ -2975,8 +2975,11 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
 /* Desktop landscape landing: hero + CTA columns, full-width features/quote below */
 @media (min-width: 993px) {
   html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg) {
+    box-sizing: border-box;
+    width: 100%;
     overflow-x: hidden;
-    padding-left: calc(20px + var(--axonos-prereq-ticker-sidebar-clear));
+    padding-left: calc(20px + env(safe-area-inset-left, 0px));
+    padding-right: calc(20px + env(safe-area-inset-right, 0px));
     position: relative;
     z-index: 2;
   }
