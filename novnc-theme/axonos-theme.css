@@ -214,6 +214,29 @@ html.noVNC_connected .axonos-prerequisites-ticker {
   display: flex;
   align-items: center;
   height: 100%;
+  position: relative;
+}
+
+/* Fading edge overlays to mimic mask-image without CPU layout/paint overhead */
+.axonos-prerequisites-ticker__marquee-wrap::before,
+.axonos-prerequisites-ticker__marquee-wrap::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1.5rem;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.axonos-prerequisites-ticker__marquee-wrap::before {
+  left: 0;
+  background: linear-gradient(90deg, rgba(7, 16, 26, 0.97) 0%, transparent 100%);
+}
+
+.axonos-prerequisites-ticker__marquee-wrap::after {
+  right: 0;
+  background: linear-gradient(270deg, rgba(7, 16, 26, 0.97) 0%, transparent 100%);
 }
 
 .axonos-prerequisites-ticker__mask {
@@ -223,16 +246,6 @@ html.noVNC_connected .axonos-prerequisites-ticker {
   height: 100%;
   display: flex;
   align-items: center;
-  -webkit-mask-image: linear-gradient(90deg,
-      transparent,
-      #000 0.65rem,
-      #000 calc(100% - 1.15rem),
-      transparent);
-  mask-image: linear-gradient(90deg,
-      transparent,
-      #000 0.65rem,
-      #000 calc(100% - 1.15rem),
-      transparent);
 }
 
 .axonos-prerequisites-ticker__track {
@@ -280,11 +293,11 @@ html.noVNC_connected .axonos-prerequisites-ticker {
 
 @keyframes axonos-prerequisite-ticker-scroll {
   0% {
-    transform: translateX(0);
+    transform: translate3d(0, 0, 0);
   }
 
   100% {
-    transform: translateX(-50%);
+    transform: translate3d(-50%, 0, 0);
   }
 }
 
@@ -342,13 +355,8 @@ html.noVNC_connected .axonos-prerequisites-ticker {
 /* Landing scrollbars — themed; WebKit thumbs hidden until the scrollbar groove is hovered */
 html:not(.noVNC_connected) {
   scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
+  scrollbar-color: rgba(78, 195, 212, 0.25) rgba(7, 16, 26, 0.1);
   overflow-y: auto !important;
-  transition: scrollbar-color 0.3s ease;
-}
-
-html:not(.noVNC_connected).axonos-scrolling {
-  scrollbar-color: rgba(78, 195, 212, 0.45) transparent;
 }
 
 html:not(.noVNC_connected)::-webkit-scrollbar {
@@ -361,44 +369,31 @@ html:not(.noVNC_connected)::-webkit-scrollbar-corner {
 }
 
 html:not(.noVNC_connected)::-webkit-scrollbar-track {
-  background: transparent;
+  background: rgba(7, 16, 26, 0.1);
 }
 
 html:not(.noVNC_connected)::-webkit-scrollbar-thumb {
-  background-color: transparent;
-  border-radius: 5px;
-}
-
-html:not(.noVNC_connected).axonos-scrolling::-webkit-scrollbar-thumb {
   background: linear-gradient(180deg,
-      rgba(78, 195, 212, 0.5) 0%,
-      rgba(157, 111, 217, 0.35) 100%);
+      rgba(78, 195, 212, 0.25) 0%,
+      rgba(157, 111, 217, 0.18) 100%);
+  border-radius: 5px;
 }
 
 html:not(.noVNC_connected)::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(180deg,
-      rgba(78, 195, 212, 0.82) 0%,
-      rgba(157, 111, 217, 0.52) 100%) !important;
+      rgba(78, 195, 212, 0.45) 0%,
+      rgba(157, 111, 217, 0.3) 100%) !important;
 }
 
 html:not(.noVNC_connected)::-webkit-scrollbar-thumb:active {
   background: linear-gradient(180deg,
-      rgba(78, 195, 212, 0.95) 0%,
-      rgba(157, 111, 217, 0.72) 100%) !important;
-}
-
-html:not(.noVNC_connected).axonos-scrolling::-webkit-scrollbar-track {
-  background: rgba(7, 16, 26, 0.15);
+      rgba(78, 195, 212, 0.6) 0%,
+      rgba(157, 111, 217, 0.45) 100%) !important;
 }
 
 html:not(.noVNC_connected) #noVNC_connect_dlg {
   scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
-  transition: scrollbar-color 0.3s ease;
-}
-
-html:not(.noVNC_connected).axonos-scrolling #noVNC_connect_dlg {
-  scrollbar-color: rgba(78, 195, 212, 0.45) transparent;
+  scrollbar-color: rgba(78, 195, 212, 0.25) rgba(7, 16, 26, 0.1);
 }
 
 html:not(.noVNC_connected) #noVNC_connect_dlg::-webkit-scrollbar {
@@ -410,82 +405,64 @@ html:not(.noVNC_connected) #noVNC_connect_dlg::-webkit-scrollbar-track {
 }
 
 html:not(.noVNC_connected) #noVNC_connect_dlg::-webkit-scrollbar-thumb {
-  background-color: transparent;
-  border-radius: 4px;
-}
-
-html:not(.noVNC_connected).axonos-scrolling #noVNC_connect_dlg::-webkit-scrollbar-thumb {
   background: linear-gradient(180deg,
-      rgba(78, 195, 212, 0.5) 0%,
-      rgba(157, 111, 217, 0.35) 100%);
+      rgba(78, 195, 212, 0.25) 0%,
+      rgba(157, 111, 217, 0.18) 100%);
+  border-radius: 4px;
 }
 
 html:not(.noVNC_connected) #noVNC_connect_dlg::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(180deg,
-      rgba(78, 195, 212, 0.82) 0%,
-      rgba(157, 111, 217, 0.52) 100%) !important;
+      rgba(78, 195, 212, 0.45) 0%,
+      rgba(157, 111, 217, 0.3) 100%) !important;
 }
 
-html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg) {
+html:not(.noVNC_connected) .noVNC_center {
   scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
-  transition: scrollbar-color 0.3s ease;
+  scrollbar-color: rgba(78, 195, 212, 0.25) rgba(7, 16, 26, 0.1);
 }
 
-html:not(.noVNC_connected).axonos-scrolling .noVNC_center:has(#noVNC_connect_dlg) {
-  scrollbar-color: rgba(78, 195, 212, 0.4) transparent;
-}
-
-html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg)::-webkit-scrollbar {
+html:not(.noVNC_connected) .noVNC_center::-webkit-scrollbar {
   width: 8px;
 }
 
-html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg)::-webkit-scrollbar-track {
+html:not(.noVNC_connected) .noVNC_center::-webkit-scrollbar-track {
   background: transparent;
 }
 
-html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg)::-webkit-scrollbar-thumb {
-  background-color: transparent;
+html:not(.noVNC_connected) .noVNC_center::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg,
+      rgba(78, 195, 212, 0.25) 0%,
+      rgba(157, 111, 217, 0.18) 100%);
   border-radius: 4px;
-  transition: background-color 0.3s ease;
 }
 
-html:not(.noVNC_connected).axonos-scrolling .noVNC_center:has(#noVNC_connect_dlg)::-webkit-scrollbar-thumb {
+html:not(.noVNC_connected) .noVNC_center::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(180deg,
-      rgba(78, 195, 212, 0.5) 0%,
-      rgba(157, 111, 217, 0.35) 100%);
+      rgba(78, 195, 212, 0.45) 0%,
+      rgba(157, 111, 217, 0.3) 100%) !important;
 }
 
-html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg)::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg,
-      rgba(78, 195, 212, 0.8) 0%,
-      rgba(157, 111, 217, 0.65) 100%) !important;
+/* Pause decorative landing-page animations during active scroll */
+.axonos-scroll-paused.axonos-particles {
+  animation-play-state: paused !important;
+}
+.axonos-scroll-paused.axonos-dna-animation::before,
+.axonos-scroll-paused.axonos-dna-animation::after {
+  animation-play-state: paused !important;
+}
+.axonos-scroll-paused.axonos-main-title {
+  animation-play-state: paused !important;
+}
+.axonos-scroll-paused.axonos-highlight {
+  animation-play-state: paused !important;
 }
 
-@media (hover: none) {
-  html:not(.noVNC_connected) {
-    scrollbar-color: rgba(78, 195, 212, 0.3) rgba(7, 16, 26, 0.2);
-  }
-
-  html:not(.noVNC_connected)::-webkit-scrollbar-thumb {
-    background-color: rgba(78, 195, 212, 0.3);
-  }
-
-  html:not(.noVNC_connected) #noVNC_connect_dlg {
-    scrollbar-color: rgba(78, 195, 212, 0.32) rgba(7, 16, 26, 0.22);
-  }
-
-  html:not(.noVNC_connected) #noVNC_connect_dlg::-webkit-scrollbar-thumb {
-    background-color: rgba(78, 195, 212, 0.34);
-  }
-
-  html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg) {
-    scrollbar-color: rgba(78, 195, 212, 0.32) rgba(7, 16, 26, 0.22);
-  }
-
-  html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg)::-webkit-scrollbar-thumb {
-    background-color: rgba(78, 195, 212, 0.34);
-  }
+/* Pause animations when elements go out of view */
+.axonos-anim-out-of-view,
+.axonos-anim-out-of-view::before,
+.axonos-anim-out-of-view::after {
+  animation-play-state: paused !important;
 }
 
 @media (max-width: 480px) {
@@ -2498,7 +2475,8 @@ input#noVNC_setting_path:-webkit-autofill:focus {
     radial-gradient(1px 1px at 130px 80px, var(--green), transparent),
     radial-gradient(2px 2px at 160px 30px, var(--coral), transparent);
   background-size: 200px 100px;
-  animation: particles-float 20s infinite linear;
+  /* Comment out particle float animation to test CPU impact */
+  /* animation: particles-float 20s infinite linear; */
   opacity: 0.28;
   pointer-events: none;
   will-change: transform;
@@ -2506,19 +2484,19 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 
 @keyframes particles-float {
   0% {
-    transform: translateX(0) translateY(0);
+    transform: translate3d(0, 0, 0);
   }
 
   33% {
-    transform: translateX(-20px) translateY(-10px);
+    transform: translate3d(-20px, -10px, 0);
   }
 
   66% {
-    transform: translateX(20px) translateY(10px);
+    transform: translate3d(20px, 10px, 0);
   }
 
   100% {
-    transform: translateX(0) translateY(0);
+    transform: translate3d(0, 0, 0);
   }
 }
 
@@ -2541,6 +2519,8 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   background: linear-gradient(to bottom, var(--cyan) 0%, transparent 50%, var(--cyan) 100%);
   animation: dna-twist 3s infinite ease-in-out;
   will-change: transform;
+  backface-visibility: hidden;
+  transform: translate3d(0, 0, 0);
 }
 
 .axonos-dna-animation::before {
@@ -2557,11 +2537,11 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 
   0%,
   100% {
-    transform: scaleX(1) rotateY(0deg);
+    transform: translate3d(0, 0, 0) scaleX(1) rotateY(0deg);
   }
 
   50% {
-    transform: scaleX(0.3) rotateY(180deg);
+    transform: translate3d(0, 0, 0) scaleX(0.3) rotateY(180deg);
   }
 }
 
@@ -3557,11 +3537,11 @@ html:not(.noVNC_connected) body::before {
   background-size: 78px 78px;
   -webkit-mask-image: radial-gradient(ellipse 95% 75% at 50% 25%, #000, transparent 95%);
   mask-image: radial-gradient(ellipse 95% 75% at 50% 25%, #000, transparent 95%);
-  animation: grid-drift 28s ease-in-out infinite;
+  /* Disable full-screen animation to save CPU */
+  /* animation: grid-drift 28s ease-in-out infinite; */
   pointer-events: none;
   z-index: 1;
   opacity: 0.85;
-  will-change: transform;
 }
 
 /* Pure-transform keyframes — opacity removed so only compositor properties animate */
@@ -3606,11 +3586,11 @@ html:not(.noVNC_connected) body::after {
   background-image:
     radial-gradient(circle at 50% 50%, rgba(180, 200, 240, 0.30) 0.6px, transparent 1.2px);
   background-size: 220px 220px;
-  animation: dot-float 28s ease-in-out infinite;
+  /* Disable full-screen animation to save CPU */
+  /* animation: dot-float 28s ease-in-out infinite; */
   pointer-events: none;
   z-index: -4;
   opacity: 0.45;
-  will-change: transform;
 }
 
 /* Pure-transform keyframes — opacity removed so only compositor properties animate */
@@ -3669,6 +3649,7 @@ html:not(.noVNC_connected) body::after {
 .comet,
 .satellite {
   display: none !important;
+  animation: none !important;
 }
 
 /* Rocket Animations */

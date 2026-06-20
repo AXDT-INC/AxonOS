@@ -61,7 +61,7 @@ Copyright (C) 2019 The noVNC Authors
 
     <!-- Stylesheets -->
     <link rel="stylesheet" href="app/styles/base.css">
-    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=18.0&t=1749136000">
+    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=18.0&t=1749136004">
 
     <!-- Images that will later appear via CSS -->
     <link rel="preload" as="image" href="app/images/info.svg">
@@ -1089,21 +1089,157 @@ Copyright (C) 2019 The noVNC Authors
     </div>
 
     <script>
-        // Landing-page scrollbars: reveal only while actively scrolling, then fade out.
-        // CSS keeps the themed thumb transparent until <html> carries .axonos-scrolling.
+        // High-performance landing-page scroll indicator and animation controller
         (function () {
+            var thumb = null;
             var hideTimer = null;
-            function markScrolling() {
-                var root = document.documentElement;
-                root.classList.add('axonos-scrolling');
+            var ticking = false;
+            var isScrolling = false;
+            var cachedAnimatedElements = null;
+
+            // Do not run/show if connected
+            function isConnected() {
+                return document.documentElement.classList.contains('noVNC_connected');
+            }
+
+            // Lazy query and cache all decorative animated elements once when needed
+            function getAnimatedElements() {
+                if (!cachedAnimatedElements) {
+                    cachedAnimatedElements = [
+                        document.querySelector('.axonos-particles'),
+                        document.querySelector('.axonos-dna-animation'),
+                        document.querySelector('.axonos-main-title'),
+                        document.querySelector('.axonos-highlight')
+                    ].filter(Boolean);
+                }
+                return cachedAnimatedElements;
+            }
+
+            function setAnimationsPaused(paused) {
+                var els = getAnimatedElements();
+                for (var i = 0; i < els.length; i++) {
+                    if (paused) {
+                        els[i].classList.add('axonos-scroll-paused');
+                    } else {
+                        els[i].classList.remove('axonos-scroll-paused');
+                    }
+                }
+            }
+
+            function createScrollIndicator() {
+                if (thumb) return;
+                thumb = document.createElement('div');
+                thumb.id = 'axonos-custom-scroll-thumb';
+                thumb.style.position = 'fixed';
+                thumb.style.right = '3px';
+                thumb.style.width = '6px';
+                thumb.style.borderRadius = '3px';
+                thumb.style.background = 'linear-gradient(180deg, rgba(78, 195, 212, 0.7) 0%, rgba(157, 111, 217, 0.5) 100%)';
+                thumb.style.zIndex = '9999';
+                thumb.style.pointerEvents = 'none';
+                thumb.style.opacity = '0';
+                thumb.style.transition = 'opacity 0.3s ease';
+                thumb.style.willChange = 'transform, opacity';
+                document.body.appendChild(thumb);
+            }
+
+            function updateScrollIndicator() {
+                if (isConnected()) {
+                    if (thumb) thumb.style.opacity = '0';
+                    ticking = false;
+                    return;
+                }
+
+                createScrollIndicator();
+
+                var scrollHeight = document.documentElement.scrollHeight || document.body.scrollHeight;
+                var clientHeight = window.innerHeight || document.documentElement.clientHeight;
+                var scrollTop = window.scrollY || window.pageYOffset || document.documentElement.scrollTop;
+
+                // If not scrollable, hide thumb and stop
+                if (scrollHeight <= clientHeight || clientHeight <= 0) {
+                    if (thumb) thumb.style.opacity = '0';
+                    ticking = false;
+                    return;
+                }
+
+                // Calculate thumb height and top offset proportional to the viewport height
+                var thumbHeight = Math.max(40, (clientHeight / scrollHeight) * clientHeight);
+                var maxScroll = scrollHeight - clientHeight;
+                var maxTrack = clientHeight - thumbHeight - 6; // 3px padding top/bottom
+                var scrollRatio = scrollTop / maxScroll;
+                var topPos = 3 + scrollRatio * maxTrack;
+
+                thumb.style.height = thumbHeight + 'px';
+                thumb.style.transform = 'translateY(' + topPos + 'px)';
+                thumb.style.opacity = '1';
+
+                ticking = false;
+            }
+
+            function onScroll(event) {
+                if (isConnected()) return;
+
+                // Filter scroll events: only handle main page/window scrolling
+                var target = event.target || window;
+                var isMainScroll = (target === window || target === document || target === document.documentElement || target === document.body);
+                if (!isMainScroll) return;
+
+                // Toggle animation pause state exactly once when scrolling starts
+                if (!isScrolling) {
+                    isScrolling = true;
+                    setAnimationsPaused(true);
+                }
+
+                if (!ticking) {
+                    window.requestAnimationFrame(updateScrollIndicator);
+                    ticking = true;
+                }
+
                 if (hideTimer) clearTimeout(hideTimer);
                 hideTimer = setTimeout(function () {
-                    root.classList.remove('axonos-scrolling');
-                }, 900);
+                    if (thumb) thumb.style.opacity = '0';
+                    // Resume animations once when scrolling stops
+                    isScrolling = false;
+                    setAnimationsPaused(false);
+                }, 200); // 200ms idle scroll detection is fast and responsive
             }
-            // Capture phase: scroll events don't bubble, so this catches scrolling from
-            // the document and from the inner fixed scroll container alike.
-            window.addEventListener('scroll', markScrolling, true);
+
+            // Capture phase scroll listener catches document/window scrolling as well as sub-containers.
+            window.addEventListener('scroll', onScroll, { capture: true, passive: true });
+
+            // Re-sync thumb position on window resize
+            window.addEventListener('resize', function () {
+                if (!ticking) {
+                    window.requestAnimationFrame(updateScrollIndicator);
+                    ticking = true;
+                }
+            }, { passive: true });
+
+            // Pause animations when they are scrolled out of view to save CPU
+            if (typeof IntersectionObserver !== 'undefined') {
+                var observer = new IntersectionObserver(function (entries) {
+                    entries.forEach(function (entry) {
+                        if (entry.isIntersecting) {
+                            entry.target.classList.remove('axonos-anim-out-of-view');
+                        } else {
+                            entry.target.classList.add('axonos-anim-out-of-view');
+                        }
+                    });
+                }, { threshold: 0 });
+
+                function observeElements() {
+                    getAnimatedElements().forEach(function (el) {
+                        observer.observe(el);
+                    });
+                }
+
+                if (document.readyState === 'loading') {
+                    window.addEventListener('DOMContentLoaded', observeElements);
+                } else {
+                    observeElements();
+                }
+            }
         }());
     </script>
 
