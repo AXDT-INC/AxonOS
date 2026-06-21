@@ -69,7 +69,7 @@
 <text x="120" y="31" font-size="22" font-weight="300" fill="#4ec3d4">OS</text>
 <text x="68" y="53" font-family="'SF Mono',Menlo,Consolas,monospace" font-size="9" letter-spacing="2.5" fill="rgba(170,210,225,0.48)">GPU-NATIVE SCIENTIFIC COMPUTING</text>
 <text x="900" y="28" text-anchor="middle" font-size="13" font-weight="700" letter-spacing="4" fill="rgba(170,210,225,0.70)" font-family="'SF Mono',Menlo,Consolas,monospace">HOW IT WORKS  /  FOR EVERYONE</text>
-<text x="900" y="52" text-anchor="middle" font-size="10" fill="rgba(170,210,225,0.33)" font-family="'SF Mono',Menlo,Consolas,monospace" letter-spacing="0.8">Sign in with your wallet  /  Pay with ETH  /  Get a powerful GPU desktop in your browser  /  desktop.axonos.io</text>
+<text x="900" y="52" text-anchor="middle" font-size="10" fill="rgba(170,210,225,0.33)" font-family="'SF Mono',Menlo,Consolas,monospace" letter-spacing="0.8">Sign in with your wallet  /  Pay with ETH  /  Get a powerful GPU desktop in your browser  /  app.axonos.io</text>
 
 <!-- LAYER LABELS -->
 <text x="22" y="162" text-anchor="middle" font-size="8" font-weight="700" letter-spacing="3" fill="rgba(78,195,212,0.40)" font-family="'SF Mono',Menlo,Consolas,monospace" transform="rotate(-90,22,162)">YOU</text>
@@ -81,7 +81,7 @@
 <!-- Browser box -->
 <rect x="50" y="88" width="680" height="132" rx="13" fill="url(#lgCard)" stroke="rgba(78,195,212,0.30)" stroke-width="1.2"/>
 <rect x="50" y="88" width="680" height="3" rx="1.5" fill="#4ec3d4" opacity="0.46"/>
-<text x="70" y="109" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(78,195,212,0.65)" font-family="'SF Mono',Menlo,Consolas,monospace">YOUR WEB BROWSER  /  No software to install. Open desktop.axonos.io and go.</text>
+<text x="70" y="109" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(78,195,212,0.65)" font-family="'SF Mono',Menlo,Consolas,monospace">YOUR WEB BROWSER  /  No software to install. Open app.axonos.io and go.</text>
 <!-- Browser icon hint -->
 <rect x="70" y="118" width="204" height="90" rx="9" fill="rgba(78,195,212,0.09)" stroke="rgba(78,195,212,0.28)" stroke-width="1"/>
 <!-- monitor icon -->

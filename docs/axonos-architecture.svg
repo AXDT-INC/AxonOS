@@ -69,7 +69,7 @@
 <text x="120" y="31" font-size="22" font-weight="300" fill="#4ec3d4">OS</text>
 <text x="68" y="53" font-family="'SF Mono',Menlo,Consolas,monospace" font-size="9" letter-spacing="2.5" fill="rgba(170,210,225,0.48)">GPU-NATIVE SCIENTIFIC COMPUTING</text>
 <text x="900" y="28" text-anchor="middle" font-size="13" font-weight="700" letter-spacing="4" fill="rgba(170,210,225,0.70)" font-family="'SF Mono',Menlo,Consolas,monospace">SYSTEM ARCHITECTURE</text>
-<text x="900" y="52" text-anchor="middle" font-size="10" fill="rgba(170,210,225,0.33)" font-family="'SF Mono',Menlo,Consolas,monospace" letter-spacing="0.8">Wallet-gated  /  GPU-exclusive sessions  /  WebRTC 60fps NVFBC  /  Heartbeat billing  /  desktop.axonos.io</text>
+<text x="900" y="52" text-anchor="middle" font-size="10" fill="rgba(170,210,225,0.33)" font-family="'SF Mono',Menlo,Consolas,monospace" letter-spacing="0.8">Wallet-gated  /  GPU-exclusive sessions  /  WebRTC 60fps NVFBC  /  Heartbeat billing  /  app.axonos.io</text>
 
 <!-- LAYER LABELS -->
 <text x="22" y="162" text-anchor="middle" font-size="8" font-weight="700" letter-spacing="3" fill="rgba(78,195,212,0.40)" font-family="'SF Mono',Menlo,Consolas,monospace" transform="rotate(-90,22,162)">CLIENT</text>
@@ -81,7 +81,7 @@
 <!-- Browser box: x=50 y=88 w=680 h=132 -->
 <rect x="50" y="88" width="680" height="132" rx="13" fill="url(#lgCard)" stroke="rgba(78,195,212,0.30)" stroke-width="1.2"/>
 <rect x="50" y="88" width="680" height="3" rx="1.5" fill="#4ec3d4" opacity="0.46"/>
-<text x="70" y="109" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(78,195,212,0.65)" font-family="'SF Mono',Menlo,Consolas,monospace">USER BROWSER  /  desktop.axonos.io</text>
+<text x="70" y="109" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(78,195,212,0.65)" font-family="'SF Mono',Menlo,Consolas,monospace">USER BROWSER  /  app.axonos.io</text>
 <!-- noVNC chip: x=70 y=118 w=204 h=90 -->
 <rect x="70" y="118" width="204" height="90" rx="9" fill="rgba(78,195,212,0.09)" stroke="rgba(78,195,212,0.28)" stroke-width="1"/>
 <text x="172" y="139" text-anchor="middle" font-size="12.5" font-weight="700" fill="#e8edf4">noVNC Client</text>
@@ -158,7 +158,7 @@
 <text x="471" y="331" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Auth / Sessions / Deposits</text>
 <text x="471" y="345" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">WebRTC signaling / Admin</text>
 <text x="471" y="360" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">30 rpm rate limit</text>
-<text x="471" y="381" text-anchor="middle" font-size="8" fill="rgba(78,195,212,0.36)" font-family="'SF Mono',Menlo,Consolas,monospace">CORS: desktop.axonos.io</text>
+<text x="471" y="381" text-anchor="middle" font-size="8" fill="rgba(78,195,212,0.36)" font-family="'SF Mono',Menlo,Consolas,monospace">CORS: app.axonos.io</text>
 
 <!-- Gate chip 3: WebRTC Agent — x=614 y=278 w=247 h=112 -->
 <rect x="614" y="278" width="247" height="112" rx="11" fill="rgba(157,111,217,0.10)" stroke="rgba(157,111,217,0.34)" stroke-width="1"/>

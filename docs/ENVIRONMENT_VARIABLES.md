@@ -146,7 +146,7 @@ Agent-native HTTP-402 rail: `GET /api/x402/access` returns payment requirements,
 | `USDC_EIP712_VERSION` | `2` | EIP-712 domain version of the USDC token. |
 | `X402_RESOURCE` | `/api/x402/access` | Resource path advertised in the 402 challenge. |
 | `X402_RESOURCE_URL` | *(none)* | Absolute base URL for the advertised resource (the JS `x402-fetch` SDK requires an absolute `resource`). Falls back to `AXGT_PUBLIC_BASE_URL`, then the first CORS origin. |
-| `AXGT_PUBLIC_BASE_URL` | *(none)* | Public origin (e.g. `https://desktop.axonos.io`) used to build the absolute x402 resource URL. |
+| `AXGT_PUBLIC_BASE_URL` | *(none)* | Public origin (e.g. `https://app.axonos.io`) used to build the absolute x402 resource URL. |
 
 ### Dynamic USD-equivalent pricing (price oracle)
 

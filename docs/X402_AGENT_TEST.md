@@ -1,7 +1,7 @@
 # x402 Agent Test — verify from your local machine
 
 Confirm a **generic, off-the-shelf x402 agent** can discover and pay AxonOS over
-the **public URL** (`https://desktop.axonos.io`), using the official Coinbase
+the **public URL** (`https://app.axonos.io`), using the official Coinbase
 `x402` Python SDK with **no AxonOS-specific code**.
 
 Everything runs in throwaway Docker containers — nothing installed on your host.
@@ -20,11 +20,11 @@ Everything runs in throwaway Docker containers — nothing installed on your hos
 
 ```bash
 # Discovery descriptor (should print JSON with 3 endpoints)
-docker run --rm curlimages/curl:latest -s https://desktop.axonos.io/.well-known/x402
+docker run --rm curlimages/curl:latest -s https://app.axonos.io/.well-known/x402
 
 # 402 with the v2 PAYMENT-REQUIRED header (proves the canonical resource gate)
 docker run --rm curlimages/curl:latest -s -D - -o /dev/null \
-  "https://desktop.axonos.io/api/x402/access?wallet_address=0x1111111111111111111111111111111111111111" \
+  "https://app.axonos.io/api/x402/access?wallet_address=0x1111111111111111111111111111111111111111" \
   | grep -iE "HTTP/|payment-required"
 ```
 
@@ -59,7 +59,7 @@ from x402.http import x402HTTPClientSync, PAYMENT_REQUIRED_HEADER, PAYMENT_RESPO
 from x402.mechanisms.evm import EthAccountSigner
 from x402.mechanisms.evm.exact import ExactEvmClientScheme
 
-GATE = os.environ.get("GATE", "https://desktop.axonos.io").rstrip("/")
+GATE = os.environ.get("GATE", "https://app.axonos.io").rstrip("/")
 acct = Account.from_key(os.environ["EVM_PRIVKEY"])
 print(f"Generic x402 agent wallet: {acct.address}\nGate: {GATE}\n")
 
@@ -190,7 +190,7 @@ Confirm the minutes you bought stuck — request access again with **no** paymen
 
 ```bash
 docker run --rm curlimages/curl:latest -s \
-  "https://desktop.axonos.io/api/x402/access?wallet_address=0xYOUR_AGENT_WALLET"
+  "https://app.axonos.io/api/x402/access?wallet_address=0xYOUR_AGENT_WALLET"
 ```
 
 **Expect:** `200` with `{"access": true, "remaining_minutes": <something > 0>}` —
@@ -205,7 +205,7 @@ W=0xYOUR_AGENT_WALLET
 for CUR in usdc eth axgt; do
   echo "== $CUR =="
   docker run --rm curlimages/curl:latest -s \
-    "https://desktop.axonos.io/api/discount/quote?currency=$CUR&wallet_address=$W"
+    "https://app.axonos.io/api/discount/quote?currency=$CUR&wallet_address=$W"
   echo
 done
 ```
