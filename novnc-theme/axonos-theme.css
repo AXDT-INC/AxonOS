@@ -344,11 +344,18 @@ html.noVNC_connected .axonos-prerequisites-ticker {
 
 @media (max-width: 520px) {
   .axonos-prerequisites-ticker__kick {
-    flex-basis: clamp(9.25rem, 54vw, 11.85rem);
-    width: clamp(9.25rem, 54vw, 11.85rem);
-    font-size: clamp(0.576rem, 2.16vw + 0.432rem, 0.738rem);
-    letter-spacing: 0.04em;
-    padding-right: 0.38rem;
+    flex: 0 0 110px !important;
+    width: 110px !important;
+    flex-basis: 110px !important;
+    font-size: 0.65rem !important;
+    letter-spacing: 0.02em !important;
+    padding-right: 0.25rem !important;
+  }
+}
+
+@media (max-width: 440px) {
+  #noVNC_connect_dlg {
+    max-width: 100% !important;
   }
 }
 
@@ -3270,6 +3277,11 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
     border: 1px solid var(--hair-mint);
     border-radius: 8px;
     text-align: center;
+    box-sizing: border-box !important;
+  }
+
+  html:not(.noVNC_connected) .axonos-version {
+    display: none !important;
   }
 
   html:not(.noVNC_connected) {
@@ -3279,12 +3291,59 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
   html:not(.noVNC_connected) body {
     height: auto !important;
     touch-action: auto !important;
+    overflow-x: hidden !important;
+  }
+
+  /* Force box-sizing border-box on all key landing page elements to prevent horizontal overflow */
+  .noVNC_center,
+  #noVNC_connect_dlg,
+  #noVNC_connect_dlg *,
+  #noVNC_credentials_dlg,
+  #noVNC_credentials_dlg *,
+  .axonos-vision-header,
+  .axonos-vision-header *,
+  .axonos-mobile-notice,
+  .axonos-mobile-notice *,
+  .axonos-hero-panel,
+  .axonos-hero-panel *,
+  .axonos-connect-wrapper,
+  .axonos-connect-wrapper *,
+  .axonos-specs-panel,
+  .axonos-specs-panel *,
+  .axonos-ssh-toggle,
+  .axonos-ssh-toggle *,
+  .axonos-ssh-card,
+  .axonos-ssh-card * {
+    box-sizing: border-box !important;
   }
 
   html:not(.noVNC_connected) .noVNC_center:has(.noVNC_open),
   html:not(.noVNC_connected) .noVNC_center.noVNC_open {
     position: relative !important;
     height: auto !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 12px !important;
+    margin: 0 !important;
+    overflow-x: hidden !important;
+  }
+
+  #noVNC_connect_dlg {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+  }
+
+  .axonos-vision-header,
+  .axonos-mobile-notice,
+  .axonos-hero-panel,
+  .axonos-connect-wrapper,
+  .axonos-quote {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
   }
 
   #noVNC_credentials_dlg {
@@ -3293,11 +3352,65 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
     left: auto !important;
     transform: none !important;
     margin: 20px auto !important;
+    width: 100% !important;
+    max-width: min(600px, 95vw) !important;
+  }
+
+  #noVNC_credentials_dlg:has(#axonos_wallet_state_insufficient:not(.axonos-wallet-state--hidden)) {
+    max-width: min(860px, 95vw) !important;
   }
 
   html:not(.noVNC_connected) #noVNC_connect_dlg {
     max-height: none !important;
     overflow: visible !important;
+  }
+
+  /* Specs Overview Panel for Mobile */
+  .axonos-specs-panel {
+    background: rgba(6, 12, 22, 0.45);
+    border: 1px solid rgba(140, 200, 220, 0.08);
+    border-radius: 12px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .axonos-spec-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .axonos-spec-icon {
+    font-size: 1.1rem;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(78, 195, 212, 0.06);
+    border-radius: 6px;
+    border: 1px solid rgba(78, 195, 212, 0.12);
+  }
+
+  .axonos-spec-details {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.3;
+  }
+
+  .axonos-spec-name {
+    font-family: var(--font-body);
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--axonos-light);
+  }
+
+  .axonos-spec-desc {
+    font-family: var(--font-body);
+    font-size: 0.72rem;
+    color: var(--ink-mute);
   }
 }
 
@@ -3307,7 +3420,8 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
   }
 
   .axonos-main-title {
-    font-size: 2.5rem !important;
+    font-size: clamp(2rem, 8vw, 2.5rem) !important;
+    letter-spacing: 2px !important;
   }
 
   .axonos-features {
@@ -3321,7 +3435,33 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
 
   #noVNC_connect_dlg {
     padding: 0 !important;
-    margin: 10px;
+    margin: 0 auto !important;
+  }
+
+  .axonos-hero-panel,
+  .axonos-connect-wrapper {
+    padding: 1.25rem 1rem !important;
+  }
+
+  /* Wrap wallet addresses/strings on small screens */
+  .axonos-wallet-card__contract code,
+  .axonos-wallet-state__address {
+    word-break: break-all !important;
+    white-space: normal !important;
+  }
+
+  .axonos-wallet-card__contract {
+    flex-direction: column;
+    align-items: stretch !important;
+    gap: 8px !important;
+  }
+
+  .axonos-wallet-card__contract-label {
+    margin-bottom: 2px;
+  }
+
+  .axonos-wallet-card__contract .axonos-contract-etherscan {
+    margin-left: 0 !important;
   }
 }
 
