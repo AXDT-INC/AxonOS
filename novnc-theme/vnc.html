@@ -4746,6 +4746,265 @@ Copyright (C) 2019 The noVNC Authors
             attributeFilter: ['class']
         });
 
+        // Helper to convert standard select elements to themed AxonOS custom dropdowns
+        function createAxonosCustomSelect(selectEl) {
+            if (!selectEl) return;
+            if (selectEl.dataset.hasCustomSelect) return;
+            selectEl.dataset.hasCustomSelect = 'true';
+            
+            // Hide original select visually but keep it in DOM and accessible
+            selectEl.style.position = 'absolute';
+            selectEl.style.width = '1px';
+            selectEl.style.height = '1px';
+            selectEl.style.padding = '0';
+            selectEl.style.margin = '-1px';
+            selectEl.style.overflow = 'hidden';
+            selectEl.style.clip = 'rect(0,0,0,0)';
+            selectEl.style.border = '0';
+            selectEl.style.opacity = '0';
+            selectEl.style.pointerEvents = 'none';
+
+            // Create wrapper
+            const wrapper = document.createElement('div');
+            wrapper.className = 'axonos-custom-select';
+            
+            // Apply original classes so we can target it in CSS
+            const originalClasses = selectEl.className.split(' ');
+            originalClasses.forEach(function (cls) {
+                if (cls && cls !== 'axonos-custom-select') {
+                    wrapper.classList.add(cls + '-custom-wrapper');
+                }
+            });
+
+            // Create trigger
+            const trigger = document.createElement('div');
+            trigger.className = 'axonos-custom-select__trigger';
+            trigger.tabIndex = 0;
+            
+            const triggerText = document.createElement('span');
+            trigger.appendChild(triggerText);
+            
+            const triggerArrow = document.createElement('div');
+            triggerArrow.className = 'axonos-custom-select__arrow';
+            trigger.appendChild(triggerArrow);
+            
+            wrapper.appendChild(trigger);
+
+            // Create options container
+            const optionsContainer = document.createElement('div');
+            optionsContainer.className = 'axonos-custom-select__options';
+            wrapper.appendChild(optionsContainer);
+
+            // Insert wrapper before original select
+            selectEl.parentNode.insertBefore(wrapper, selectEl);
+            wrapper.appendChild(selectEl); // Nest original select inside wrapper
+
+            function updateSelectedText() {
+                const activeOption = selectEl.options[selectEl.selectedIndex];
+                if (activeOption) {
+                    triggerText.textContent = activeOption.textContent;
+                } else {
+                    triggerText.textContent = '';
+                }
+            }
+
+            function rebuildOptions() {
+                optionsContainer.innerHTML = '';
+                Array.from(selectEl.options).forEach(function (opt, idx) {
+                    const optDiv = document.createElement('div');
+                    optDiv.className = 'axonos-custom-select__option';
+                    if (opt.value === selectEl.value) {
+                        optDiv.classList.add('axonos-custom-select__option--selected');
+                    }
+                    optDiv.textContent = opt.textContent;
+                    optDiv.setAttribute('data-value', opt.value);
+                    optDiv.setAttribute('data-index', idx);
+                    
+                    optDiv.addEventListener('click', function (e) {
+                        e.stopPropagation();
+                        if (selectEl.disabled) return;
+                        selectEl.value = opt.value;
+                        selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+                        closeDropdown();
+                        trigger.focus();
+                    });
+                    
+                    optionsContainer.appendChild(optDiv);
+                });
+                updateSelectedText();
+            }
+
+            function syncUI() {
+                updateSelectedText();
+                const options = optionsContainer.querySelectorAll('.axonos-custom-select__option');
+                options.forEach(function (opt) {
+                    if (opt.getAttribute('data-value') === selectEl.value) {
+                        opt.classList.add('axonos-custom-select__option--selected');
+                    } else {
+                        opt.classList.remove('axonos-custom-select__option--selected');
+                    }
+                });
+
+                if (selectEl.disabled) {
+                    wrapper.classList.add('axonos-custom-select--disabled');
+                    trigger.removeAttribute('tabindex');
+                } else {
+                    wrapper.classList.remove('axonos-custom-select--disabled');
+                    trigger.tabIndex = 0;
+                }
+            }
+
+            rebuildOptions();
+
+            // Observe dynamic options or disabled status changes
+            const observer = new MutationObserver(function (mutations) {
+                let optionsChanged = false;
+                mutations.forEach(function (mutation) {
+                    if (mutation.type === 'childList') {
+                        optionsChanged = true;
+                    } else if (mutation.type === 'attributes') {
+                        syncUI();
+                    }
+                });
+                if (optionsChanged) {
+                    rebuildOptions();
+                }
+            });
+            observer.observe(selectEl, { childList: true, attributes: true, attributeFilter: ['disabled'] });
+
+            // Intercept property changes (direct script value sets)
+            const originalValueDescriptor = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+            Object.defineProperty(selectEl, 'value', {
+                get: function () {
+                    return originalValueDescriptor.get.call(this);
+                },
+                set: function (val) {
+                    originalValueDescriptor.set.call(this, val);
+                    syncUI();
+                },
+                configurable: true
+            });
+
+            const originalIndexDescriptor = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'selectedIndex');
+            Object.defineProperty(selectEl, 'selectedIndex', {
+                get: function () {
+                    return originalIndexDescriptor.get.call(this);
+                },
+                set: function (idx) {
+                    originalIndexDescriptor.set.call(this, idx);
+                    syncUI();
+                },
+                configurable: true
+            });
+
+            const originalDisabledDescriptor = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'disabled');
+            Object.defineProperty(selectEl, 'disabled', {
+                get: function () {
+                    return originalDisabledDescriptor.get.call(this);
+                },
+                set: function (val) {
+                    originalDisabledDescriptor.set.call(this, val);
+                    syncUI();
+                },
+                configurable: true
+            });
+
+            function toggleDropdown() {
+                if (selectEl.disabled) return;
+                const isOpen = wrapper.classList.contains('axonos-custom-select--open');
+                if (isOpen) {
+                    closeDropdown();
+                } else {
+                    openDropdown();
+                }
+            }
+
+            function openDropdown() {
+                document.querySelectorAll('.axonos-custom-select--open').forEach(function (el) {
+                    if (el !== wrapper) {
+                        el.classList.remove('axonos-custom-select--open');
+                    }
+                });
+                wrapper.classList.add('axonos-custom-select--open');
+            }
+
+            function closeDropdown() {
+                wrapper.classList.remove('axonos-custom-select--open');
+            }
+
+            trigger.addEventListener('click', function (e) {
+                e.stopPropagation();
+                toggleDropdown();
+            });
+
+            // Keyboard support
+            trigger.addEventListener('keydown', function (e) {
+                if (selectEl.disabled) return;
+                const options = Array.from(optionsContainer.querySelectorAll('.axonos-custom-select__option'));
+                if (options.length === 0) return;
+                
+                let activeIdx = options.findIndex(opt => opt.classList.contains('axonos-custom-select__option--selected'));
+                if (activeIdx === -1) activeIdx = 0;
+
+                switch (e.key) {
+                    case 'Enter':
+                    case ' ':
+                        e.preventDefault();
+                        if (wrapper.classList.contains('axonos-custom-select--open')) {
+                            const selectedOpt = options[activeIdx];
+                            if (selectedOpt) {
+                                selectEl.value = selectedOpt.getAttribute('data-value');
+                                selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+                            }
+                            closeDropdown();
+                        } else {
+                            openDropdown();
+                        }
+                        break;
+                    case 'ArrowDown':
+                        e.preventDefault();
+                        if (!wrapper.classList.contains('axonos-custom-select--open')) {
+                            openDropdown();
+                        } else {
+                            activeIdx = (activeIdx + 1) % options.length;
+                            const nextVal = options[activeIdx].getAttribute('data-value');
+                            selectEl.value = nextVal;
+                            selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+                        break;
+                    case 'ArrowUp':
+                        e.preventDefault();
+                        if (!wrapper.classList.contains('axonos-custom-select--open')) {
+                            openDropdown();
+                        } else {
+                            activeIdx = (activeIdx - 1 + options.length) % options.length;
+                            const nextVal = options[activeIdx].getAttribute('data-value');
+                            selectEl.value = nextVal;
+                            selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+                        break;
+                    case 'Escape':
+                        e.preventDefault();
+                        closeDropdown();
+                        break;
+                    case 'Tab':
+                        closeDropdown();
+                        break;
+                }
+            });
+
+            document.addEventListener('click', closeDropdown);
+        }
+
+        // Initialize custom selects
+        const selectsToConvert = ['axonos_profile_select', 'noVNC_setting_resize', 'noVNC_setting_logging'];
+        selectsToConvert.forEach(function (id) {
+            const el = document.getElementById(id);
+            if (el) {
+                createAxonosCustomSelect(el);
+            }
+        });
+
         // Also hide loader if connection fails (fallback)
         setTimeout(function () {
             const statusElement = document.getElementById('noVNC_status');
