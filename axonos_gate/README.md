@@ -63,6 +63,22 @@ This module implements **prepaid deposit-credit billing** for AxonOS remote desk
 - `AXGT_ENABLE_X402_SETTLEMENT` (default `true`) and `X402_SETTLEMENT_PRIVATE_KEY`: dedicated low-balance signer that pays gas for `POST /api/x402/settle`. Unset = settle disabled (tx-hash rail still works). **Never the revenue/treasury key.**
 - `USDC_EIP712_NAME` (default `USD Coin`) / `USDC_EIP712_VERSION` (default `2`): must match the token's on-chain EIP-712 domain.
 
+### Settlement rail: self-settle (default) vs CDP facilitator (Bazaar listing)
+
+The x402 rail has two interchangeable settlement backends. **Self-settle is the default and unchanged**; the facilitator rail is purely additive (opt-in).
+
+- **Self-settle (default).** The gate broadcasts the EIP-3009 `transferWithAuthorization` itself (`X402_SETTLEMENT_PRIVATE_KEY`) and pays gas. No facilitator, no third party. This rail is **private** — it does **not** appear in the [Coinbase x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar), because CDP only indexes resources it has settled at least once.
+- **CDP facilitator (opt-in, Bazaar-listable).** Set `AXGT_X402_FACILITATOR_ENABLED=true` to route `verify`+`settle` through CDP (`CDP_FACILITATOR_URL`, default `https://api.cdp.coinbase.com/platform/v2/x402`). CDP broadcasts the tx and pays gas, and **catalogs the resource on first settlement**, making AxonOS discoverable in the Bazaar. The gate still runs its own EIP-3009 checks first (recipient/sender/amount/signature) before handing off, and the settled tx is re-verified on-chain through the same ledger path — so credit, replay protection, and accounting are identical to self-settle.
+
+Config (facilitator mode only):
+
+- `AXGT_X402_FACILITATOR_ENABLED` (default `false`): master switch. Off ⇒ self-settle.
+- `CDP_API_KEY_ID`, `CDP_API_KEY_SECRET`: CDP API key (from `https://portal.cdp.coinbase.com`). Auth is a short-lived EdDSA/ES256 Bearer JWT minted per request via `cdp-sdk` if installed, else the `PyJWT`+`cryptography` fallback.
+- `CDP_FACILITATOR_URL`: facilitator base URL (default CDP platform v2).
+- `AXGT_X402_BAZAAR_DISCOVERABLE` (default `true` when facilitator on), `AXGT_X402_BAZAAR_CATEGORY` (default `compute`), `AXGT_X402_BAZAAR_TAGS` (default `gpu,compute,ssh,linux`): listing metadata advertised in the 402 `accepts[].extensions.bazaar` discovery declaration.
+
+The two rails are mutually exclusive at runtime (the flag picks one), so you can flip a deployment between private and Bazaar-listed without code changes. Implemented in [`x402_facilitator.py`](x402_facilitator.py); self-settle remains in `x402_verifier.py`.
+
 ### Dynamic USD-equivalent pricing (price oracle)
 
 - `AXGT_DYNAMIC_PRICING` (default `false`): credit ETH/AXGT at live USD value; USDC stays fixed at $1.
@@ -152,6 +168,8 @@ When `AXGT_GPU_PROFILES_ENABLED` and weighted billing are on (default), usage de
 - `axgt_verifier.py`: Challenge/signature verification; deposit-credit access (reads from deposit ledger).
 - `deposit_ledger.py`: Postgres-backed deposits, ledger, verified-deposits; billing and admin helpers.
 - `deposit_verifier.py`: Tx-hash verification (RPC, Transfer events, confirmations); credits via deposit_ledger.
+- `x402_verifier.py`: USDC/x402 rail — 402 payment requirements (v1+v2), EIP-3009 self-settlement, tx-hash USDC verification.
+- `x402_facilitator.py`: Opt-in CDP facilitator settlement (Bazaar listing) — CDP JWT auth + `verify`/`settle` + discovery extension. Inactive unless `AXGT_X402_FACILITATOR_ENABLED=true`.
 - `session_manager.py`: Session scheduler + queue + heartbeat-based billing (calls deposit_ledger.deduct_usage). Supports private-beta single-session mode and feature-gated public-beta multi-session mode with exclusive GPU allocation.
 - `session_launcher.py`: Adapter client for session runtime orchestration (`docker_cli` / `http` / `noop`).
 - `session_launcher_service.py`: Host-side launcher API for non-nested deployments (`POST /launch`, `POST /stop`).

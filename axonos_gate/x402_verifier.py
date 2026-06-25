@@ -461,7 +461,7 @@ def build_payment_requirements(minutes_wanted: float = 0.0) -> Dict[str, Any]:
             amount = int((_min_deposit() * Decimal(1_000_000)).to_integral_value())
         except Exception:
             amount = 1_000_000
-    return {
+    reqs = {
         "scheme": _X402_SCHEME,
         "network": _usdc_network(),
         "maxAmountRequired": str(amount),
@@ -476,6 +476,26 @@ def build_payment_requirements(minutes_wanted: float = 0.0) -> Dict[str, Any]:
             "version": _usdc_eip712_version(),
         },
     }
+    _attach_discovery_extension(reqs)
+    return reqs
+
+
+def _attach_discovery_extension(reqs: Dict[str, Any]) -> None:
+    """
+    Attach the x402 Bazaar discovery extension to a PaymentRequirements object when
+    the facilitator/Bazaar rail is enabled. No-op in the default self-settle mode,
+    so 402 bodies are byte-identical unless discovery is explicitly turned on.
+    """
+    try:
+        from . import x402_facilitator as _fac
+    except ImportError:
+        try:
+            from axonos_gate import x402_facilitator as _fac
+        except ImportError:
+            import x402_facilitator as _fac  # type: ignore[no-redef]
+    ext = _fac.bazaar_discovery_extension()
+    if ext:
+        reqs["extensions"] = ext
 
 
 def payment_required_body(minutes_wanted: float = 0.0, error: Optional[str] = None) -> Dict[str, Any]:
@@ -533,7 +553,7 @@ def build_payment_requirements_v2(minutes_wanted: float = 0.0) -> Dict[str, Any]
             amount = int((_min_deposit() * Decimal(1_000_000)).to_integral_value())
         except Exception:
             amount = 1_000_000
-    return {
+    reqs = {
         "scheme": _X402_SCHEME,
         "network": _caip2_network(),
         "asset": contract,
@@ -542,6 +562,8 @@ def build_payment_requirements_v2(minutes_wanted: float = 0.0) -> Dict[str, Any]
         "maxTimeoutSeconds": 120,
         "extra": {"name": _usdc_eip712_name(), "version": _usdc_eip712_version()},
     }
+    _attach_discovery_extension(reqs)
+    return reqs
 
 
 def payment_required_v2(minutes_wanted: float = 0.0, error: Optional[str] = None) -> Dict[str, Any]:
@@ -905,10 +927,41 @@ def settle_x402_payment(authenticated_wallet: str, x_payment_header: str) -> Dic
         _warn_on_domain_mismatch(rpc_url, contract)
         return fail("Authorization signature does not match authenticated wallet")
 
-    # Settle on-chain (we pay gas).
-    settle_tx, settle_err = _submit_transfer_with_authorization(
-        rpc_url, contract, authorization, signature
-    )
+    # Settle the EIP-3009 authorization. Two rails — self-settle stays the default
+    # and is left untouched:
+    #   - facilitator mode (opt-in, AXGT_X402_FACILITATOR_ENABLED): CDP broadcasts
+    #     the transferWithAuthorization AND indexes the resource for the x402 Bazaar.
+    #   - self-settle (default): we broadcast it ourselves and pay gas.
+    # Either way we end up with a settled tx hash that the same tx-hash verifier
+    # below credits (with on-chain re-verification + replay protection).
+    try:
+        from . import x402_facilitator as _fac
+    except ImportError:
+        try:
+            from axonos_gate import x402_facilitator as _fac
+        except ImportError:
+            import x402_facilitator as _fac  # type: ignore[no-redef]
+
+    if _fac.facilitator_enabled():
+        fac_reqs = build_payment_requirements()
+        fac_reqs["network"] = net or _usdc_network()
+        fac_reqs["maxAmountRequired"] = str(value_units)
+        fac_reqs["resource"] = _resource_url()
+        ext = _fac.bazaar_discovery_extension()
+        if ext:
+            fac_reqs["extensions"] = ext
+        # CDP associates the Bazaar resource from the payload too.
+        fac_payload = dict(payload)
+        fac_payload.setdefault("resource", _resource_url())
+        ok, reason = _fac.facilitator_verify(fac_payload, fac_reqs, x402_version=ver)
+        if not ok:
+            return fail(f"Facilitator verification failed: {reason}")
+        settle_tx, settle_err = _fac.facilitator_settle(fac_payload, fac_reqs, x402_version=ver)
+    else:
+        # Self-settle (we pay gas).
+        settle_tx, settle_err = _submit_transfer_with_authorization(
+            rpc_url, contract, authorization, signature
+        )
     if not settle_tx:
         return fail(settle_err or "Settlement failed")
 

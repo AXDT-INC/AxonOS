@@ -145,6 +145,24 @@ class TestSettleX402Gates(unittest.TestCase):
         self.assertTrue(result["x402"])
         self.assertEqual(result["settlement_tx_hash"], "0x" + "ab" * 32)
 
+    def test_facilitator_mode_does_not_self_settle(self):
+        # With the facilitator flag on (and no CDP keys), settle must route to the
+        # facilitator rail and NOT call the self-settle broadcaster. We assert the
+        # branch switched: self-settle is never invoked and the error is the
+        # facilitator's, not a self-settle error.
+        import x402_verifier as x
+        authorization, sig = _sign_authorization(1_000_000)
+        header = _x_payment_header(authorization, sig)
+        with patch.dict(os.environ, {"AXGT_X402_FACILITATOR_ENABLED": "true"}):
+            os.environ.pop("CDP_API_KEY_ID", None)
+            os.environ.pop("CDP_API_KEY_SECRET", None)
+            with patch.object(x, "_submit_transfer_with_authorization",
+                              return_value=("0xshouldnotbeused", None)) as submit:
+                result = self._settle(_SIGNER, header)
+        submit.assert_not_called()
+        self.assertFalse(result["verified"])
+        self.assertIn("Facilitator", result["error"])
+
     def test_rejects_signer_wallet_mismatch(self):
         # Authenticated wallet differs from the authorization.from / signer.
         authorization, sig = _sign_authorization(1_000_000)
