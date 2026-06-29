@@ -316,6 +316,86 @@ class TestAbiStringDecode(unittest.TestCase):
         self.assertIn("0x54fd4d50", calls)
 
 
+class TestPaymentRequiredV2Bazaar(unittest.TestCase):
+    """
+    v2 PaymentRequired must carry the Bazaar discovery extension at BOTH the root
+    (extensions.bazaar — what the Agentic Market / x402 Bazaar validator reads) and
+    accepts[0].extensions.bazaar (what the CDP facilitator reads), from one shared
+    object. No paid/on-chain calls — pure payload construction.
+    """
+
+    def setUp(self):
+        env = dict(_env())
+        env["AXGT_X402_BAZAAR_DISCOVERABLE"] = "true"
+        env["AXGT_PUBLIC_BASE_URL"] = "https://app.axonos.io"
+        env["X402_RESOURCE"] = "/api/x402/session"
+        self.patcher = patch.dict(os.environ, env)
+        self.patcher.start()
+
+    def tearDown(self):
+        self.patcher.stop()
+
+    def test_top_level_extensions_bazaar_info(self):
+        import x402_verifier as x
+        body = x.payment_required_v2()
+        self.assertIn("info", body["extensions"]["bazaar"])
+
+    def test_top_level_extensions_bazaar_schema(self):
+        import x402_verifier as x
+        body = x.payment_required_v2()
+        self.assertIn("schema", body["extensions"]["bazaar"])
+
+    def test_accepts_extensions_bazaar_info_and_schema(self):
+        import x402_verifier as x
+        body = x.payment_required_v2()
+        bazaar = body["accepts"][0]["extensions"]["bazaar"]
+        self.assertIn("info", bazaar)
+        self.assertIn("schema", bazaar)
+
+    def test_root_and_accepts_bazaar_are_same_shape(self):
+        import x402_verifier as x
+        body = x.payment_required_v2()
+        self.assertEqual(body["extensions"]["bazaar"], body["accepts"][0]["extensions"]["bazaar"])
+
+    def test_header_decodes_with_top_level_and_accepts_bazaar(self):
+        # PAYMENT-REQUIRED header value is base64(JSON(payment_required_v2)).
+        import x402_verifier as x
+        decoded = json.loads(base64.b64decode(x.encode_payment_required_header()).decode())
+        self.assertIn("info", decoded["extensions"]["bazaar"])
+        self.assertIn("schema", decoded["extensions"]["bazaar"])
+        self.assertIn("info", decoded["accepts"][0]["extensions"]["bazaar"])
+        self.assertIn("schema", decoded["accepts"][0]["extensions"]["bazaar"])
+
+    def test_discovery_off_keeps_body_free_of_bazaar(self):
+        # Default (facilitator off, discoverable unset) → no Bazaar extension, so
+        # the 402 body stays byte-identical to the pre-Bazaar shape.
+        import x402_verifier as x
+        with patch.dict(os.environ, {"AXGT_X402_BAZAAR_DISCOVERABLE": "false"}):
+            body = x.payment_required_v2()
+        self.assertNotIn("extensions", body)
+        self.assertNotIn("extensions", body["accepts"][0])
+
+
+class TestUnpaidSessionGate(unittest.TestCase):
+    """
+    The /api/x402/session ordering rule: a request with no X-PAYMENT and no prepaid
+    minutes must answer 402 BEFORE wallet/ssh validation (so a probe gets 402, not
+    400); a paid or prepaid request proceeds to input validation.
+    """
+
+    def test_no_payment_not_prepaid_requires_402(self):
+        import x402_verifier as x
+        self.assertTrue(x.unpaid_session_requires_402(has_payment=False, wallet_prepaid=False))
+
+    def test_payment_present_proceeds(self):
+        import x402_verifier as x
+        self.assertFalse(x.unpaid_session_requires_402(has_payment=True, wallet_prepaid=False))
+
+    def test_prepaid_proceeds(self):
+        import x402_verifier as x
+        self.assertFalse(x.unpaid_session_requires_402(has_payment=False, wallet_prepaid=True))
+
+
 if __name__ == "__main__":
     unittest.main()
 
