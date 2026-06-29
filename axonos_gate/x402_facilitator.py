@@ -226,6 +226,19 @@ def _generate_cdp_jwt(method: str, request_path: str) -> Optional[str]:
         return None
 
 
+def _is_debug_enabled() -> bool:
+    return (os.getenv("AXGT_X402_DEBUG") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _get_extension_from_json(data: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(data, dict):
+        return None
+    for k, v in data.items():
+        if k.lower() in ("extensionresponses", "extension_responses", "extension-responses"):
+            return v
+    return None
+
+
 def _post(endpoint: str, body: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[Dict[str, str]]]:
     """POST `body` to `{base}/{endpoint}` with a fresh CDP Bearer JWT. Returns (json, error, headers)."""
     import requests
@@ -236,6 +249,45 @@ def _post(endpoint: str, body: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]]
     jwt_token = _generate_cdp_jwt("POST", path)
     if not jwt_token:
         return None, "CDP facilitator auth unavailable (check CDP_API_KEY_ID/SECRET and cdp-sdk/PyJWT)", None
+
+    if _is_debug_enabled():
+        try:
+            logger.info("=== CDP x402 Debug Log (Request) ===")
+            logger.info("facilitator endpoint called: %s", endpoint)
+            
+            x402_ver = body.get("x402Version")
+            logger.info("x402Version: %s", x402_ver)
+            
+            payload = body.get("paymentPayload") or {}
+            res_val = payload.get("resource")
+            if isinstance(res_val, dict):
+                logger.info("paymentPayload.resource type: object")
+                logger.info("paymentPayload.resource.url: %s", res_val.get("url"))
+            elif isinstance(res_val, str):
+                logger.info("paymentPayload.resource type: string")
+                logger.info("paymentPayload.resource.url: %s", res_val)
+            else:
+                logger.info("paymentPayload.resource type: None/Unknown")
+                logger.info("paymentPayload.resource.url: None")
+                
+            accepted = payload.get("accepted") or {}
+            logger.info("paymentPayload.accepted.network: %s", accepted.get("network"))
+            logger.info("paymentPayload.accepted.payTo: %s", accepted.get("payTo"))
+            
+            bazaar = accepted.get("extensions", {}).get("bazaar") if isinstance(accepted, dict) else None
+            if bazaar is not None:
+                logger.info("whether accepted.extensions.bazaar exists: Yes")
+                info_exists = "Yes" if bazaar.get("info") is not None else "No"
+                schema_exists = "Yes" if bazaar.get("schema") is not None else "No"
+                logger.info("whether accepted.extensions.bazaar.info exists: %s", info_exists)
+                logger.info("whether accepted.extensions.bazaar.schema exists: %s", schema_exists)
+            else:
+                logger.info("whether accepted.extensions.bazaar exists: No")
+                logger.info("whether accepted.extensions.bazaar.info exists: No")
+                logger.info("whether accepted.extensions.bazaar.schema exists: No")
+        except Exception as log_ex:
+            logger.warning("CDP x402 debug request logging failed: %s", log_ex)
+
     try:
         resp = requests.post(
             url,
@@ -254,13 +306,13 @@ def _post(endpoint: str, body: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]]
         data = None
 
     captured_headers = {}
-    for h in ("EXTENSION-RESPONSES", "X-PAYMENT-RESPONSE", "PAYMENT-RESPONSE"):
+    for h in ("EXTENSION-RESPONSES", "X-EXTENSION-RESPONSES", "PAYMENT-RESPONSE", "X-PAYMENT-RESPONSE"):
         val = resp.headers.get(h)
         if val is not None:
             captured_headers[h] = val
 
     # Log Bazaar extension response status clearly
-    ext_resp_raw = captured_headers.get("EXTENSION-RESPONSES")
+    ext_resp_raw = captured_headers.get("EXTENSION-RESPONSES") or captured_headers.get("X-EXTENSION-RESPONSES")
     if ext_resp_raw:
         import base64
         import json
@@ -277,6 +329,34 @@ def _post(endpoint: str, body: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]]
                     logger.info("Bazaar extension rejectedReason: %s", rejected_reason)
         except Exception as e:
             logger.debug("Failed to decode EXTENSION-RESPONSES: %s", e)
+
+    if _is_debug_enabled():
+        try:
+            logger.info("=== CDP x402 Debug Log (Response) ===")
+            logger.info("CDP response HTTP status: %s", resp.status_code)
+            
+            header_names = list(resp.headers.keys())
+            logger.info("CDP response header names only: %s", header_names)
+            
+            ext_header_exists = any(
+                h.lower() in ("extension-responses", "x-extension-responses")
+                for h in header_names
+            )
+            logger.info("whether any extension-related header exists: %s", "Yes" if ext_header_exists else "No")
+            
+            if isinstance(data, dict):
+                logger.info("sanitized CDP JSON response keys: %s", list(data.keys()))
+                tx_hash = data.get("transaction") or data.get("txHash")
+                if tx_hash:
+                    logger.info("settlement tx hash if returned: %s", tx_hash)
+                else:
+                    logger.info("settlement tx hash if returned: None")
+            else:
+                logger.info("sanitized CDP JSON response keys: None (Not a dict)")
+                logger.info("settlement tx hash if returned: None")
+            logger.info("======================================")
+        except Exception as log_ex:
+            logger.warning("CDP x402 debug response logging failed: %s", log_ex)
 
     if resp.status_code >= 400:
         detail = (data or {}).get("error") or (data or {}).get("message") or resp.text[:200]
@@ -304,7 +384,7 @@ def facilitator_verify(
         return False, err, None, headers
     if not isinstance(data, dict):
         return False, "Malformed facilitator verify response", None, headers
-    ext_resp = data.get("extensionResponses") or data.get("extension_responses")
+    ext_resp = _get_extension_from_json(data)
     if ext_resp:
         logger.info("CDP facilitator verify extension responses: %s", ext_resp)
     if data.get("isValid") is True:
@@ -330,7 +410,7 @@ def facilitator_settle(
         return None, err, None, headers
     if not isinstance(data, dict):
         return None, "Malformed facilitator settle response", None, headers
-    ext_resp = data.get("extensionResponses") or data.get("extension_responses")
+    ext_resp = _get_extension_from_json(data)
     if ext_resp:
         logger.info("CDP facilitator settle extension responses: %s", ext_resp)
     if data.get("success") is not True:

@@ -159,5 +159,112 @@ class TestJwtMissingKeys(unittest.TestCase):
             self.assertIsNone(fac._generate_cdp_jwt("POST", "/platform/v2/x402/settle"))
 
 
+class TestFacilitatorEnhancements(unittest.TestCase):
+    def test_json_extension_casing(self):
+        d1 = {"extensionResponses": {"bazaar": {"status": "success"}}}
+        self.assertEqual(fac._get_extension_from_json(d1), {"bazaar": {"status": "success"}})
+        
+        d2 = {"extension_responses": {"bazaar": {"status": "processing"}}}
+        self.assertEqual(fac._get_extension_from_json(d2), {"bazaar": {"status": "processing"}})
+        
+        d3 = {"extension-responses": {"bazaar": {"status": "rejected"}}}
+        self.assertEqual(fac._get_extension_from_json(d3), {"bazaar": {"status": "rejected"}})
+        
+        self.assertIsNone(fac._get_extension_from_json(None))
+        self.assertIsNone(fac._get_extension_from_json("string"))
+
+    def test_header_casing_capture(self):
+        class FakeResponse:
+            def __init__(self, headers, json_data, status_code=200):
+                from requests.structures import CaseInsensitiveDict
+                self.headers = CaseInsensitiveDict(headers)
+                self.json_data = json_data
+                self.status_code = status_code
+                self.text = "raw response"
+            def json(self):
+                return self.json_data
+
+        fake_headers = {
+            "x-extension-responses": "eyJiYXphYXIiOnsic3RhdHVzIjoic3VjY2VzcyJ9fQ==",
+            "x-payment-response": "dGVzdF94X3BheW1lbnRfcmVzcG9uc2U="
+        }
+        
+        with patch("requests.post", return_value=FakeResponse(fake_headers, {"isValid": True})):
+            with patch.object(fac, "_generate_cdp_jwt", return_value="fake_jwt"):
+                data, err, hdrs = fac._post("verify", {})
+                
+        self.assertIsNotNone(hdrs)
+        self.assertEqual(hdrs.get("X-EXTENSION-RESPONSES"), "eyJiYXphYXIiOnsic3RhdHVzIjoic3VjY2VzcyJ9fQ==")
+        self.assertEqual(hdrs.get("X-PAYMENT-RESPONSE"), "dGVzdF94X3BheW1lbnRfcmVzcG9uc2U=")
+
+    def test_debug_logging_safe(self):
+        class FakeResponse:
+            def __init__(self):
+                from requests.structures import CaseInsensitiveDict
+                self.headers = CaseInsensitiveDict({"payment-response": "foo"})
+                self.status_code = 200
+                self.text = "raw text"
+            def json(self):
+                return {"success": True, "transaction": "0xsettlementtx"}
+
+        fake_body = {
+            "x402Version": 2,
+            "paymentPayload": {
+                "resource": {
+                    "url": "https://app.axonos.io/api/x402/session",
+                    "description": "GPU session",
+                    "mimeType": "application/json"
+                },
+                "accepted": {
+                    "network": "eip155:8453",
+                    "payTo": "0xrevenue",
+                    "extensions": {
+                        "bazaar": {
+                            "info": {},
+                            "schema": {}
+                        }
+                    }
+                },
+                "payload": {
+                    "authorization": {
+                        "from": "0xpayer",
+                        "to": "0xrevenue",
+                        "value": "1000000"
+                    },
+                    "signature": "0xsigningproof"
+                }
+            }
+        }
+        
+        import logging
+        old_level = fac.logger.level
+        fac.logger.setLevel(logging.INFO)
+        try:
+            with patch.dict(os.environ, {"AXGT_X402_DEBUG": "true"}):
+                with patch("requests.post", return_value=FakeResponse()):
+                    with patch.object(fac, "_generate_cdp_jwt", return_value="fake_jwt"):
+                        with self.assertLogs(fac.logger, level="INFO") as cm:
+                            data, err, hdrs = fac._post("settle", fake_body)
+                            self.assertEqual(data.get("transaction"), "0xsettlementtx")
+        finally:
+            fac.logger.setLevel(old_level)
+
+        # Combine all log outputs into one text string
+        all_logs = "\n".join(cm.output)
+
+        # Assert none of the sensitive substrings exist in any log message (case-insensitive)
+        sensitive_strings = [
+            "0xsigningproof",
+            "authorization",
+            "private",
+            "bearer",
+            "jwt_token",
+            "X-PAYMENT",
+            "auth_token"
+        ]
+        for s in sensitive_strings:
+            self.assertNotIn(s.lower(), all_logs.lower())
+
+
 if __name__ == "__main__":
     unittest.main()
