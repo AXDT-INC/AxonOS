@@ -573,7 +573,7 @@ def payment_required_v2(minutes_wanted: float = 0.0, error: Optional[str] = None
         "error": error or "Payment required",
         "resource": {
             "url": _resource_url(),
-            "description": "AxonOS GPU compute session minutes",
+            "description": "On-demand GPU Linux compute session with SSH access, rented by the hour and paid in USDC on Base via x402.",
             "mimeType": "application/json",
         },
         "accepts": [build_payment_requirements_v2(minutes_wanted)],
@@ -968,24 +968,36 @@ def settle_x402_payment(authenticated_wallet: str, x_payment_header: str) -> Dic
                 fac_reqs["extensions"] = ext
         # CDP associates the Bazaar resource from the payload too.
         fac_payload = dict(payload)
-        fac_payload.setdefault("resource", _resource_url())
-        ok, reason, verify_ext = _fac.facilitator_verify(fac_payload, fac_reqs, x402_version=ver)
+        base_url = (os.getenv("X402_RESOURCE_URL") or os.getenv("AXGT_PUBLIC_BASE_URL") or "").strip().rstrip("/")
+        if not base_url:
+            cors = (os.getenv("AXGT_CORS_ORIGINS") or "").split(",")[0].strip().rstrip("/")
+            if cors and cors != "*":
+                base_url = cors
+        if not base_url:
+            base_url = "https://app.axonos.io"
+        fac_payload["resource"] = base_url + "/api/x402/session"
+        ok, reason, verify_ext, verify_headers = _fac.facilitator_verify(fac_payload, fac_reqs, x402_version=ver)
         if not ok:
             res = fail(f"Facilitator verification failed: {reason}")
             if verify_ext is not None:
                 res["extension_responses"] = verify_ext
+            if verify_headers:
+                res["headers"] = verify_headers
             return res
-        settle_tx, settle_err, settle_ext = _fac.facilitator_settle(fac_payload, fac_reqs, x402_version=ver)
+        settle_tx, settle_err, settle_ext, settle_headers = _fac.facilitator_settle(fac_payload, fac_reqs, x402_version=ver)
     else:
         # Self-settle (we pay gas).
         settle_tx, settle_err = _submit_transfer_with_authorization(
             rpc_url, contract, authorization, signature
         )
         settle_ext = None
+        settle_headers = None
     if not settle_tx:
         res = fail(settle_err or "Settlement failed")
         if _fac.facilitator_enabled() and settle_ext is not None:
             res["extension_responses"] = settle_ext
+        if _fac.facilitator_enabled() and settle_headers:
+            res["headers"] = settle_headers
         return res
 
     # We just broadcast the tx, so the deposit verifier would see it as pending
@@ -1002,6 +1014,8 @@ def settle_x402_payment(authenticated_wallet: str, x_payment_header: str) -> Dic
     result["x402"] = True
     if _fac.facilitator_enabled() and settle_ext is not None:
         result["extension_responses"] = settle_ext
+    if _fac.facilitator_enabled() and settle_headers:
+        result["headers"] = settle_headers
     return result
 
 

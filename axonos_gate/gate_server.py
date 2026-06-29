@@ -699,8 +699,15 @@ def api_x402_settle():
             ).decode()
             resp.headers['X-PAYMENT-RESPONSE'] = _pr
             resp.headers['PAYMENT-RESPONSE'] = _pr
+        if "headers" in result:
+            for k, v in result["headers"].items():
+                resp.headers[k] = v
         return resp
-    return jsonify(result), 400
+    resp = jsonify(result)
+    if "headers" in result:
+        for k, v in result["headers"].items():
+            resp.headers[k] = v
+    return resp, 400
 
 
 @app.route('/api/x402/session', methods=['POST', 'OPTIONS'])
@@ -750,7 +757,12 @@ def api_x402_session():
             return jsonify({"granted": False, "error": "x402 settlement unavailable"}), 503
         settle_result = settle_x402_payment(authenticated_wallet=wallet_address, x_payment_header=x_payment)
         if not (settle_result.get("verified") or verify_usdc_deposit_is_pending(settle_result)):
-            return jsonify({"granted": False, "error": settle_result.get("error") or "Payment failed", "payment": settle_result}), 400
+            resp = jsonify({"granted": False, "error": settle_result.get("error") or "Payment failed", "payment": settle_result})
+            if "headers" in settle_result:
+                for k, v in settle_result["headers"].items():
+                    resp.headers[k] = v
+            resp.status_code = 400
+            return resp
         # Payment authorized → mint a gate auth token for subsequent heartbeats/release.
         try:
             auth_token, auth_ttl = _issue_gate_auth_token(wallet_address)
@@ -797,6 +809,9 @@ def api_x402_session():
         }).encode()).decode()
         resp.headers['X-PAYMENT-RESPONSE'] = _pr
         resp.headers['PAYMENT-RESPONSE'] = _pr
+    if settle_result and "headers" in settle_result:
+        for k, v in settle_result["headers"].items():
+            resp.headers[k] = v
     resp.status_code = 200 if claim.get("granted") else 409
     return resp
 

@@ -70,7 +70,7 @@ def bazaar_discovery_extension() -> Optional[Dict[str, Any]]:
     """
     Build the Bazaar discovery extension attached to PaymentRequirements so CDP
     indexes the resource. Shape mirrors the CDP `declareDiscoveryExtension()`
-    output: {"bazaar": {"discoverable": true, "category": ..., "tags": [...]}}.
+    v2 schema.
 
     Returns None when discovery is off, so callers can leave requirements untouched.
     """
@@ -82,7 +82,81 @@ def bazaar_discovery_extension() -> Optional[Dict[str, Any]]:
         tags = ["gpu", "compute", "ssh", "linux"]
     else:
         tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
-    return {"bazaar": {"discoverable": True, "category": category, "tags": tags}}
+    return {
+        "bazaar": {
+            "discoverable": True,
+            "category": category,
+            "tags": tags,
+            "info": {
+                "input": {
+                    "type": "http",
+                    "method": "POST",
+                    "bodyType": "json",
+                    "body": {
+                        "wallet_address": {
+                            "type": "string",
+                            "description": "EVM wallet address paying for or claiming the AxonOS compute session.",
+                            "required": True
+                        },
+                        "ssh_pubkey": {
+                            "type": "string",
+                            "description": "SSH public key to authorize access to the rented compute session.",
+                            "required": True
+                        },
+                        "requested_profile": {
+                            "type": "string",
+                            "description": "Optional compute profile, for example small.",
+                            "required": False
+                        }
+                    }
+                },
+                "output": {
+                    "type": "object",
+                    "example": {
+                        "granted": True,
+                        "session_id": 192,
+                        "requested_profile": "small",
+                        "assigned_gpu_ids": [0],
+                        "remaining_seconds": 3600,
+                        "ssh_enabled": True,
+                        "ssh_host": "axonconsole.io",
+                        "ssh_port": 42042,
+                        "ssh_user": "aXonian",
+                        "payment": {
+                            "verified": True,
+                            "credited_minutes": 60,
+                            "settlement_tx_hash": "0x..."
+                        }
+                    }
+                }
+            },
+            "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "required": ["input"],
+                "properties": {
+                    "input": {
+                        "type": "object",
+                        "required": ["type", "method", "bodyType", "body"],
+                        "properties": {
+                            "type": { "const": "http", "type": "string" },
+                            "method": { "enum": ["POST"], "type": "string" },
+                            "bodyType": { "enum": ["json"], "type": "string" },
+                            "body": { "type": "object" }
+                        }
+                    },
+                    "output": {
+                        "type": "object",
+                        "required": ["type"],
+                        "properties": {
+                            "type": { "type": "string" },
+                            "example": { "type": "object" }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -152,8 +226,8 @@ def _generate_cdp_jwt(method: str, request_path: str) -> Optional[str]:
         return None
 
 
-def _post(endpoint: str, body: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-    """POST `body` to `{base}/{endpoint}` with a fresh CDP Bearer JWT. Returns (json, error)."""
+def _post(endpoint: str, body: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[Dict[str, str]]]:
+    """POST `body` to `{base}/{endpoint}` with a fresh CDP Bearer JWT. Returns (json, error, headers)."""
     import requests
 
     base = _facilitator_base()
@@ -161,7 +235,7 @@ def _post(endpoint: str, body: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]]
     path = urlsplit(url).path
     jwt_token = _generate_cdp_jwt("POST", path)
     if not jwt_token:
-        return None, "CDP facilitator auth unavailable (check CDP_API_KEY_ID/SECRET and cdp-sdk/PyJWT)"
+        return None, "CDP facilitator auth unavailable (check CDP_API_KEY_ID/SECRET and cdp-sdk/PyJWT)", None
     try:
         resp = requests.post(
             url,
@@ -173,69 +247,95 @@ def _post(endpoint: str, body: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]]
             timeout=30,
         )
     except Exception as exc:  # noqa: BLE001
-        return None, f"Facilitator request error: {exc}"
+        return None, f"Facilitator request error: {exc}", None
     try:
         data = resp.json()
     except Exception:
         data = None
+
+    captured_headers = {}
+    for h in ("EXTENSION-RESPONSES", "X-PAYMENT-RESPONSE", "PAYMENT-RESPONSE"):
+        val = resp.headers.get(h)
+        if val is not None:
+            captured_headers[h] = val
+
+    # Log Bazaar extension response status clearly
+    ext_resp_raw = captured_headers.get("EXTENSION-RESPONSES")
+    if ext_resp_raw:
+        import base64
+        import json
+        try:
+            decoded_bytes = base64.b64decode(ext_resp_raw)
+            decoded_json = json.loads(decoded_bytes.decode('utf-8'))
+            bazaar_resp = decoded_json.get("bazaar")
+            if bazaar_resp:
+                status = bazaar_resp.get("status")
+                rejected_reason = bazaar_resp.get("rejectedReason")
+                if status:
+                    logger.info("Bazaar extension status: %s", status)
+                if rejected_reason:
+                    logger.info("Bazaar extension rejectedReason: %s", rejected_reason)
+        except Exception as e:
+            logger.debug("Failed to decode EXTENSION-RESPONSES: %s", e)
+
     if resp.status_code >= 400:
         detail = (data or {}).get("error") or (data or {}).get("message") or resp.text[:200]
-        return data, f"Facilitator HTTP {resp.status_code}: {detail}"
-    return data, None
+        return data, f"Facilitator HTTP {resp.status_code}: {detail}", captured_headers
+    return data, None, captured_headers
 
 
 def facilitator_verify(
     payment_payload: Dict[str, Any],
     payment_requirements: Dict[str, Any],
     x402_version: int = 1,
-) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
+) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]], Optional[Dict[str, str]]]:
     """
-    POST /verify. Returns (is_valid, invalid_reason, extension_responses). The facilitator checks the
+    POST /verify. Returns (is_valid, invalid_reason, extension_responses, captured_headers). The facilitator checks the
     EIP-3009 authorization against `payment_requirements` (scheme/network/asset/
     payTo/amount). We still run our own checks first; this is defense in depth and
     the path that lets CDP associate the resource.
     """
-    data, err = _post("verify", {
+    data, err, headers = _post("verify", {
         "x402Version": x402_version,
         "paymentPayload": payment_payload,
         "paymentRequirements": payment_requirements,
     })
     if err:
-        return False, err, None
+        return False, err, None, headers
     if not isinstance(data, dict):
-        return False, "Malformed facilitator verify response", None
+        return False, "Malformed facilitator verify response", None, headers
     ext_resp = data.get("extensionResponses") or data.get("extension_responses")
     if ext_resp:
         logger.info("CDP facilitator verify extension responses: %s", ext_resp)
     if data.get("isValid") is True:
-        return True, None, ext_resp
-    return False, data.get("invalidReason") or "Facilitator reported payment invalid", ext_resp
+        return True, None, ext_resp, headers
+    return False, data.get("invalidReason") or "Facilitator reported payment invalid", ext_resp, headers
 
 
 def facilitator_settle(
     payment_payload: Dict[str, Any],
     payment_requirements: Dict[str, Any],
     x402_version: int = 1,
-) -> Tuple[Optional[str], Optional[str], Optional[Dict[str, Any]]]:
+) -> Tuple[Optional[str], Optional[str], Optional[Dict[str, Any]], Optional[Dict[str, str]]]:
     """
     POST /settle. CDP broadcasts the transferWithAuthorization (and indexes the
-    resource for the Bazaar). Returns (settlement_tx_hash, error, extension_responses).
+    resource for the Bazaar). Returns (settlement_tx_hash, error, extension_responses, captured_headers).
     """
-    data, err = _post("settle", {
+    data, err, headers = _post("settle", {
         "x402Version": x402_version,
         "paymentPayload": payment_payload,
         "paymentRequirements": payment_requirements,
     })
     if err:
-        return None, err, None
+        return None, err, None, headers
     if not isinstance(data, dict):
-        return None, "Malformed facilitator settle response", None
+        return None, "Malformed facilitator settle response", None, headers
     ext_resp = data.get("extensionResponses") or data.get("extension_responses")
     if ext_resp:
         logger.info("CDP facilitator settle extension responses: %s", ext_resp)
     if data.get("success") is not True:
-        return None, data.get("errorReason") or "Facilitator settlement failed", ext_resp
+        return None, data.get("errorReason") or "Facilitator settlement failed", ext_resp, headers
     tx_hash = data.get("transaction") or data.get("txHash")
     if not tx_hash:
-        return None, "Facilitator settled but returned no transaction hash", ext_resp
-    return tx_hash, None, ext_resp
+        return None, "Facilitator settled but returned no transaction hash", ext_resp, headers
+    return tx_hash, None, ext_resp, headers

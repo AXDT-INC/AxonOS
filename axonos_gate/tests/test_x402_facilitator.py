@@ -48,11 +48,12 @@ class TestDiscoveryExtension(unittest.TestCase):
             for k in ("AXGT_X402_BAZAAR_DISCOVERABLE", "AXGT_X402_BAZAAR_CATEGORY", "AXGT_X402_BAZAAR_TAGS"):
                 os.environ.pop(k, None)
             ext = fac.bazaar_discovery_extension()
-        self.assertEqual(ext, {"bazaar": {
-            "discoverable": True,
-            "category": "compute",
-            "tags": ["gpu", "compute", "ssh", "linux"],
-        }})
+        self.assertIsNotNone(ext)
+        self.assertEqual(ext["bazaar"]["discoverable"], True)
+        self.assertEqual(ext["bazaar"]["category"], "compute")
+        self.assertEqual(ext["bazaar"]["tags"], ["gpu", "compute", "ssh", "linux"])
+        self.assertIn("info", ext["bazaar"])
+        self.assertIn("schema", ext["bazaar"])
 
     def test_custom_category_and_tags(self):
         with patch.dict(os.environ, {
@@ -71,66 +72,83 @@ class TestDiscoveryExtension(unittest.TestCase):
         }):
             self.assertIsNone(fac.bazaar_discovery_extension())
 
+    def test_v2_bazaar_schema_fields(self):
+        with patch.dict(os.environ, {"AXGT_X402_FACILITATOR_ENABLED": "true"}):
+            ext = fac.bazaar_discovery_extension()
+        self.assertIsNotNone(ext)
+        bazaar = ext.get("bazaar", {})
+        self.assertEqual(bazaar.get("info", {}).get("input", {}).get("method"), "POST")
+        self.assertEqual(bazaar.get("info", {}).get("input", {}).get("bodyType"), "json")
+        self.assertEqual(bazaar.get("schema", {}).get("$schema"), "https://json-schema.org/draft/2020-12/schema")
+
 
 class TestVerifySettleParsing(unittest.TestCase):
     _PAYLOAD = {"x402Version": 1, "scheme": "exact", "network": "base", "payload": {}}
     _REQS = {"scheme": "exact", "network": "base", "asset": "0xusdc", "payTo": "0xrev"}
 
     def test_verify_valid(self):
-        with patch.object(fac, "_post", return_value=({"isValid": True, "payer": "0xabc"}, None)):
-            ok, reason, ext = fac.facilitator_verify(self._PAYLOAD, self._REQS)
+        with patch.object(fac, "_post", return_value=({"isValid": True, "payer": "0xabc"}, None, {"X-PAYMENT-RESPONSE": "test"})):
+            ok, reason, ext, hdrs = fac.facilitator_verify(self._PAYLOAD, self._REQS)
         self.assertTrue(ok)
         self.assertIsNone(reason)
         self.assertIsNone(ext)
+        self.assertEqual(hdrs, {"X-PAYMENT-RESPONSE": "test"})
 
     def test_verify_invalid_surfaces_reason(self):
-        with patch.object(fac, "_post", return_value=({"isValid": False, "invalidReason": "insufficient_funds"}, None)):
-            ok, reason, ext = fac.facilitator_verify(self._PAYLOAD, self._REQS)
+        with patch.object(fac, "_post", return_value=({"isValid": False, "invalidReason": "insufficient_funds"}, None, None)):
+            ok, reason, ext, hdrs = fac.facilitator_verify(self._PAYLOAD, self._REQS)
         self.assertFalse(ok)
         self.assertEqual(reason, "insufficient_funds")
         self.assertIsNone(ext)
+        self.assertIsNone(hdrs)
 
     def test_verify_http_error(self):
-        with patch.object(fac, "_post", return_value=(None, "Facilitator HTTP 401: bad jwt")):
-            ok, reason, ext = fac.facilitator_verify(self._PAYLOAD, self._REQS)
+        with patch.object(fac, "_post", return_value=(None, "Facilitator HTTP 401: bad jwt", None)):
+            ok, reason, ext, hdrs = fac.facilitator_verify(self._PAYLOAD, self._REQS)
         self.assertFalse(ok)
         self.assertIn("401", reason)
         self.assertIsNone(ext)
+        self.assertIsNone(hdrs)
 
     def test_verify_with_extension_responses(self):
         ext_data = {"bazaar": {"status": "success"}}
-        with patch.object(fac, "_post", return_value=({"isValid": True, "extensionResponses": ext_data}, None)):
-            ok, reason, ext = fac.facilitator_verify(self._PAYLOAD, self._REQS)
+        with patch.object(fac, "_post", return_value=({"isValid": True, "extensionResponses": ext_data}, None, None)):
+            ok, reason, ext, hdrs = fac.facilitator_verify(self._PAYLOAD, self._REQS)
         self.assertTrue(ok)
         self.assertEqual(ext, ext_data)
+        self.assertIsNone(hdrs)
 
     def test_settle_success_returns_tx(self):
-        with patch.object(fac, "_post", return_value=({"success": True, "transaction": "0x" + "ab" * 32}, None)):
-            tx, err, ext = fac.facilitator_settle(self._PAYLOAD, self._REQS)
+        with patch.object(fac, "_post", return_value=({"success": True, "transaction": "0x" + "ab" * 32}, None, {"PAYMENT-RESPONSE": "test"})):
+            tx, err, ext, hdrs = fac.facilitator_settle(self._PAYLOAD, self._REQS)
         self.assertEqual(tx, "0x" + "ab" * 32)
         self.assertIsNone(err)
         self.assertIsNone(ext)
+        self.assertEqual(hdrs, {"PAYMENT-RESPONSE": "test"})
 
     def test_settle_failure_surfaces_reason(self):
-        with patch.object(fac, "_post", return_value=({"success": False, "errorReason": "expired"}, None)):
-            tx, err, ext = fac.facilitator_settle(self._PAYLOAD, self._REQS)
+        with patch.object(fac, "_post", return_value=({"success": False, "errorReason": "expired"}, None, None)):
+            tx, err, ext, hdrs = fac.facilitator_settle(self._PAYLOAD, self._REQS)
         self.assertIsNone(tx)
         self.assertEqual(err, "expired")
         self.assertIsNone(ext)
+        self.assertIsNone(hdrs)
 
     def test_settle_success_but_no_tx_hash(self):
-        with patch.object(fac, "_post", return_value=({"success": True}, None)):
-            tx, err, ext = fac.facilitator_settle(self._PAYLOAD, self._REQS)
+        with patch.object(fac, "_post", return_value=({"success": True}, None, None)):
+            tx, err, ext, hdrs = fac.facilitator_settle(self._PAYLOAD, self._REQS)
         self.assertIsNone(tx)
         self.assertIn("no transaction hash", err)
         self.assertIsNone(ext)
+        self.assertIsNone(hdrs)
 
     def test_settle_with_extension_responses(self):
         ext_data = {"bazaar": {"status": "processing"}}
-        with patch.object(fac, "_post", return_value=({"success": True, "transaction": "0x" + "ab" * 32, "extensionResponses": ext_data}, None)):
-            tx, err, ext = fac.facilitator_settle(self._PAYLOAD, self._REQS)
+        with patch.object(fac, "_post", return_value=({"success": True, "transaction": "0x" + "ab" * 32, "extensionResponses": ext_data}, None, None)):
+            tx, err, ext, hdrs = fac.facilitator_settle(self._PAYLOAD, self._REQS)
         self.assertEqual(tx, "0x" + "ab" * 32)
         self.assertEqual(ext, ext_data)
+        self.assertIsNone(hdrs)
 
 
 class TestJwtMissingKeys(unittest.TestCase):
