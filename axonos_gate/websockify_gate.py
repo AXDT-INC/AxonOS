@@ -96,6 +96,7 @@ try:
         settle_x402_payment,
         discovery_document,
         wallet_from_x_payment,
+        unpaid_session_requires_402,
     )
 except ImportError:
     try:
@@ -108,6 +109,7 @@ except ImportError:
             settle_x402_payment,
             discovery_document,
             wallet_from_x_payment,
+            unpaid_session_requires_402,
         )
     except ImportError:
         verify_usdc_deposit = None
@@ -118,6 +120,7 @@ except ImportError:
         settle_x402_payment = None
         discovery_document = None
         wallet_from_x_payment = None
+        unpaid_session_requires_402 = None
 
 try:
     from deposit_router import verify_deposit_auto
@@ -1708,13 +1711,33 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 return self._send_json(503, {"granted": False, "error": "Session manager unavailable"})
             data = self._read_json_body() or {}
             wallet_address = (data.get("wallet_address") or self.headers.get('X-Wallet-Address') or '').strip()
+            x_payment = self.headers.get('X-PAYMENT') or self.headers.get('PAYMENT-SIGNATURE') or ''
+
+            # 402-before-validation: an unpaid request (no X-PAYMENT) with no
+            # prepaid minutes must get a 402 with x402 payment requirements BEFORE
+            # we reject a missing/invalid wallet_address or ssh_pubkey. An
+            # unauthenticated x402/Bazaar validation probe (e.g. empty body) MUST
+            # see 402 Payment Required, not 400.
+            wallet_prepaid = False
+            if not x_payment and wallet_address and validate_wallet_address(wallet_address):
+                _st = get_wallet_access_status(wallet_address, consume_usage=False)
+                wallet_prepaid = bool(_st.get("verified") and _st.get("remaining_minutes", 0) > 0)
+            if unpaid_session_requires_402 is not None and unpaid_session_requires_402(bool(x_payment), wallet_prepaid):
+                if payment_required_body is None:
+                    return self._send_json(402, {"granted": False, "error": "Payment required"})
+                _xv = (str(data.get('x402_version') or '').strip() or self.headers.get('X-X402-Version'))
+                _err = "Payment required: include an X-PAYMENT header or pre-fund the wallet"
+                return self._send_json(402, _x402_402_body(_xv, 0.0, _err),
+                                       extra_headers=_x402_v2_headers(0.0, _err))
+
+            # Past the gate: a payment is present, or the wallet is prepaid. Now
+            # validate inputs (400 only for an authorized-but-malformed request).
             if not wallet_address or not validate_wallet_address(wallet_address):
                 return self._send_json(400, {"granted": False, "error": "Valid wallet_address required"})
             ssh_pubkey = validate_ssh_public_key(data.get('ssh_pubkey'))
             if not ssh_pubkey:
                 return self._send_json(400, {"granted": False, "error": "A valid ssh_pubkey is required for an agent SSH session"})
             requested_profile = (data.get("requested_profile") or '').strip() or None
-            x_payment = self.headers.get('X-PAYMENT') or self.headers.get('PAYMENT-SIGNATURE') or ''
             settle_result = None
             auth_token = None
             auth_ttl = None
@@ -1729,14 +1752,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 except Exception as ex:
                     logger.warning("x402/session token issue failed: %s", ex)
             else:
-                _st = get_wallet_access_status(wallet_address, consume_usage=False)
-                if not (_st.get("verified") and _st.get("remaining_minutes", 0) > 0):
-                    if payment_required_body is None:
-                        return self._send_json(402, {"granted": False, "error": "Payment required"})
-                    _xv = (str(data.get('x402_version') or '').strip() or self.headers.get('X-X402-Version'))
-                    _err = "Payment required: include an X-PAYMENT header or pre-fund the wallet"
-                    return self._send_json(402, _x402_402_body(_xv, 0.0, _err),
-                                           extra_headers=_x402_v2_headers(0.0, _err))
+                # Prepaid (the gate above already confirmed remaining minutes).
                 try:
                     auth_token, auth_ttl = _issue_auth_token(wallet_address)
                 except Exception as ex:

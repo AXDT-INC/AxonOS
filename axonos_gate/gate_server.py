@@ -73,6 +73,7 @@ try:
         settle_x402_payment,
         discovery_document,
         wallet_from_x_payment,
+        unpaid_session_requires_402,
     )
 except ImportError:
     try:
@@ -85,6 +86,7 @@ except ImportError:
             settle_x402_payment,
             discovery_document,
             wallet_from_x_payment,
+            unpaid_session_requires_402,
         )
     except ImportError:
         verify_usdc_deposit = None
@@ -95,6 +97,7 @@ except ImportError:
         settle_x402_payment = None
         discovery_document = None
         wallet_from_x_payment = None
+        unpaid_session_requires_402 = None
 
 try:
     from deposit_router import verify_deposit_auto
@@ -738,16 +741,31 @@ def api_x402_session():
 
     data = request.get_json(silent=True) or {}
     wallet_address = (data.get("wallet_address") or request.headers.get('X-Wallet-Address') or '').strip()
+    x_payment = request.headers.get('X-PAYMENT') or request.headers.get('PAYMENT-SIGNATURE') or ''
+
+    # 402-before-validation: an unpaid request (no X-PAYMENT) with no prepaid
+    # minutes must get a 402 with x402 payment requirements BEFORE we reject a
+    # missing/invalid wallet_address or ssh_pubkey. An unauthenticated x402/Bazaar
+    # validation probe (e.g. empty body) MUST see 402 Payment Required, not 400.
+    wallet_prepaid = False
+    if not x_payment and wallet_address and validate_wallet_address(wallet_address):
+        _st = get_wallet_access_status(wallet_address, consume_usage=False)
+        wallet_prepaid = bool(_st.get("verified") and _st.get("remaining_minutes", 0) > 0)
+    if unpaid_session_requires_402 is not None and unpaid_session_requires_402(bool(x_payment), wallet_prepaid):
+        if payment_required_body is None:
+            return jsonify({"granted": False, "error": "Payment required"}), 402
+        return _x402_payment_required(0.0, "Payment required: include an X-PAYMENT header or pre-fund the wallet")
+
+    # Past the gate: a payment is present, or the wallet is prepaid. Now validate
+    # the request inputs (return 400 only for an authorized-but-malformed request).
     if not wallet_address or not validate_wallet_address(wallet_address):
         return jsonify({"granted": False, "error": "Valid wallet_address required"}), 400
-
     # SSH is the agent-usable session type (text I/O). A pubkey is mandatory.
     ssh_pubkey = validate_ssh_public_key(data.get('ssh_pubkey'))
     if not ssh_pubkey:
         return jsonify({"granted": False, "error": "A valid ssh_pubkey is required for an agent SSH session"}), 400
     requested_profile = (data.get("requested_profile") or '').strip() or None
 
-    x_payment = request.headers.get('X-PAYMENT') or request.headers.get('PAYMENT-SIGNATURE') or ''
     settle_result = None
     auth_token = None
     auth_ttl = None
@@ -769,12 +787,7 @@ def api_x402_session():
         except Exception as ex:
             logger.warning("x402/session token issue failed for %s: %s", mask_wallet_address(wallet_address), ex)
     else:
-        # No payment: only proceed if the wallet already has prepaid minutes.
-        _st = get_wallet_access_status(wallet_address, consume_usage=False)
-        if not (_st.get("verified") and _st.get("remaining_minutes", 0) > 0):
-            if payment_required_body is None:
-                return jsonify({"granted": False, "error": "Payment required"}), 402
-            return _x402_payment_required(0.0, "Payment required: include an X-PAYMENT header or pre-fund the wallet")
+        # Prepaid (the gate above already confirmed remaining minutes).
         try:
             auth_token, auth_ttl = _issue_gate_auth_token(wallet_address)
         except Exception as ex:
