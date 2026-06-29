@@ -208,6 +208,69 @@ class TestSettleX402Gates(unittest.TestCase):
         self.assertFalse(result["verified"])
         self.assertIn("signature does not match", result["error"])
 
+    def test_v2_facilitator_payload_serialization(self):
+        import x402_verifier as x
+        import axonos_gate.x402_facilitator as fac
+        
+        # Force facilitator mode enabled, bypass keys/jwt block
+        authorization, sig = _sign_authorization(1_000_000)
+        # Create a v2 envelope header
+        import base64
+        import json
+        accepted_req = {
+            "scheme": "exact",
+            "network": "eip155:8453",
+            "asset": _USDC,
+            "amount": "1000000",
+            "payTo": _REVENUE,
+            "extensions": {
+                "bazaar": {
+                    "discoverable": True,
+                    "category": "compute",
+                    "tags": ["gpu"]
+                }
+            }
+        }
+        v2_envelope = {
+            "x402Version": 2,
+            "accepted": accepted_req,
+            "payload": {
+                "authorization": authorization,
+                "signature": sig
+            }
+        }
+        header = base64.b64encode(json.dumps(v2_envelope).encode()).decode()
+
+        with patch.dict(os.environ, {
+            "AXGT_X402_FACILITATOR_ENABLED": "true",
+            "AXGT_X402_BAZAAR_DISCOVERABLE": "true",
+            "AXGT_PUBLIC_BASE_URL": "https://app.axonos.io",
+            "X402_RESOURCE": "/api/x402/session",
+        }):
+            with patch.object(fac, "facilitator_enabled", return_value=True), \
+                 patch.object(fac, "facilitator_verify", return_value=(True, None, None, {})) as mock_verify, \
+                 patch.object(fac, "facilitator_settle", return_value=("0x" + "ab" * 32, None, None, {})) as mock_settle, \
+                 patch.object(x, "verify_usdc_deposit", return_value={"verified": True, "credited_minutes": 60}):
+
+                result = self._settle(_SIGNER, header)
+
+        self.assertTrue(result.get("verified"))
+
+        verify_payload = mock_verify.call_args.args[0]
+        settle_payload = mock_settle.call_args.args[0]
+
+        for p in (verify_payload, settle_payload):
+            self.assertEqual(p["x402Version"], 2)
+            self.assertIsInstance(p["resource"], dict)
+            self.assertEqual(p["resource"]["url"], "https://app.axonos.io/api/x402/session")
+            self.assertEqual(p["network"], "eip155:8453")
+            self.assertIn("accepted", p)
+            self.assertIn("info", p["accepted"]["extensions"]["bazaar"])
+            self.assertIn("schema", p["accepted"]["extensions"]["bazaar"])
+
+        self.assertEqual(mock_verify.call_args.kwargs["x402_version"], 2)
+        self.assertEqual(mock_settle.call_args.kwargs["x402_version"], 2)
+
 
 class TestAbiStringDecode(unittest.TestCase):
     """_decode_abi_string parses ABI-encoded string returns (name()/version())."""

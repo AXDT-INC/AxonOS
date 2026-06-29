@@ -975,7 +975,19 @@ def settle_x402_payment(authenticated_wallet: str, x_payment_header: str) -> Dic
                 base_url = cors
         if not base_url:
             base_url = "https://app.axonos.io"
-        fac_payload["resource"] = base_url + "/api/x402/session"
+
+        if ver == 2:
+            fac_payload["x402Version"] = 2
+            fac_payload["network"] = net or _caip2_network()
+            fac_payload["resource"] = {
+                "url": base_url + "/api/x402/session",
+                "description": "On-demand GPU Linux compute session with SSH access, rented by the hour and paid in USDC on Base via x402.",
+                "mimeType": "application/json",
+            }
+            fac_payload["accepted"] = fac_reqs
+        else:
+            fac_payload["resource"] = base_url + "/api/x402/session"
+
         ok, reason, verify_ext, verify_headers = _fac.facilitator_verify(fac_payload, fac_reqs, x402_version=ver)
         if not ok:
             res = fail(f"Facilitator verification failed: {reason}")
