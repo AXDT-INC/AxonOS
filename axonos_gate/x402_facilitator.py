@@ -188,9 +188,9 @@ def facilitator_verify(
     payment_payload: Dict[str, Any],
     payment_requirements: Dict[str, Any],
     x402_version: int = 1,
-) -> Tuple[bool, Optional[str]]:
+) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
     """
-    POST /verify. Returns (is_valid, invalid_reason). The facilitator checks the
+    POST /verify. Returns (is_valid, invalid_reason, extension_responses). The facilitator checks the
     EIP-3009 authorization against `payment_requirements` (scheme/network/asset/
     payTo/amount). We still run our own checks first; this is defense in depth and
     the path that lets CDP associate the resource.
@@ -201,22 +201,25 @@ def facilitator_verify(
         "paymentRequirements": payment_requirements,
     })
     if err:
-        return False, err
+        return False, err, None
     if not isinstance(data, dict):
-        return False, "Malformed facilitator verify response"
+        return False, "Malformed facilitator verify response", None
+    ext_resp = data.get("extensionResponses") or data.get("extension_responses")
+    if ext_resp:
+        logger.info("CDP facilitator verify extension responses: %s", ext_resp)
     if data.get("isValid") is True:
-        return True, None
-    return False, data.get("invalidReason") or "Facilitator reported payment invalid"
+        return True, None, ext_resp
+    return False, data.get("invalidReason") or "Facilitator reported payment invalid", ext_resp
 
 
 def facilitator_settle(
     payment_payload: Dict[str, Any],
     payment_requirements: Dict[str, Any],
     x402_version: int = 1,
-) -> Tuple[Optional[str], Optional[str]]:
+) -> Tuple[Optional[str], Optional[str], Optional[Dict[str, Any]]]:
     """
     POST /settle. CDP broadcasts the transferWithAuthorization (and indexes the
-    resource for the Bazaar). Returns (settlement_tx_hash, error).
+    resource for the Bazaar). Returns (settlement_tx_hash, error, extension_responses).
     """
     data, err = _post("settle", {
         "x402Version": x402_version,
@@ -224,12 +227,15 @@ def facilitator_settle(
         "paymentRequirements": payment_requirements,
     })
     if err:
-        return None, err
+        return None, err, None
     if not isinstance(data, dict):
-        return None, "Malformed facilitator settle response"
+        return None, "Malformed facilitator settle response", None
+    ext_resp = data.get("extensionResponses") or data.get("extension_responses")
+    if ext_resp:
+        logger.info("CDP facilitator settle extension responses: %s", ext_resp)
     if data.get("success") is not True:
-        return None, data.get("errorReason") or "Facilitator settlement failed"
+        return None, data.get("errorReason") or "Facilitator settlement failed", ext_resp
     tx_hash = data.get("transaction") or data.get("txHash")
     if not tx_hash:
-        return None, "Facilitator settled but returned no transaction hash"
-    return tx_hash, None
+        return None, "Facilitator settled but returned no transaction hash", ext_resp
+    return tx_hash, None, ext_resp

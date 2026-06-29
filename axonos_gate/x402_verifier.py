@@ -466,7 +466,7 @@ def build_payment_requirements(minutes_wanted: float = 0.0) -> Dict[str, Any]:
         "network": _usdc_network(),
         "maxAmountRequired": str(amount),
         "resource": _resource_url(),
-        "description": "AxonOS desktop session minutes",
+        "description": "AxonOS GPU compute session minutes",
         "mimeType": "application/json",
         "payTo": revenue,
         "maxTimeoutSeconds": 120,
@@ -573,7 +573,7 @@ def payment_required_v2(minutes_wanted: float = 0.0, error: Optional[str] = None
         "error": error or "Payment required",
         "resource": {
             "url": _resource_url(),
-            "description": "AxonOS GPU desktop session minutes",
+            "description": "AxonOS GPU compute session minutes",
             "mimeType": "application/json",
         },
         "accepts": [build_payment_requirements_v2(minutes_wanted)],
@@ -626,7 +626,7 @@ def discovery_document() -> Dict[str, Any]:
     return {
         "x402Version": _X402_VERSION,
         "name": "AxonOS GPU compute",
-        "description": "On-demand GPU Linux compute, rented by the minute, paid in USDC via x402.",
+        "description": "On-demand GPU Linux compute, rented by the minute, paid in USDC on Base via x402.",
         "accepts": [build_payment_requirements()],
         "endpoints": [
             {
@@ -639,13 +639,19 @@ def discovery_document() -> Dict[str, Any]:
                 "resource": "/api/x402/settle",
                 "method": "POST",
                 "description": "Settle an x402 EIP-3009 payment (X-PAYMENT header); credits minutes.",
-                "headers": {"X-PAYMENT": "base64 x402 payload"},
+                "headers": {
+                    "X-PAYMENT": "base64 x402 payload",
+                    "PAYMENT-SIGNATURE": "accepted alias for compatible x402 clients"
+                },
             },
             {
                 "resource": "/api/x402/session",
                 "method": "POST",
-                "description": "Agent-native one-shot: pay (X-PAYMENT) AND claim an SSH session. Returns ssh_host/ssh_port + auth_token. No prior wallet sign-in needed.",
-                "headers": {"X-PAYMENT": "base64 x402 payload (or omit if pre-funded)"},
+                "description": "Agent-native one-shot: pay and claim an SSH compute session. Returns ssh_host, ssh_port, auth_token, and remaining minutes.",
+                "headers": {
+                    "X-PAYMENT": "base64 x402 payment payload",
+                    "PAYMENT-SIGNATURE": "accepted alias for compatible x402 clients"
+                },
                 "body": {"wallet_address": "0x...", "ssh_pubkey": "ssh-ed25519 ...", "requested_profile": "optional"},
                 "returns": {"granted": "bool", "ssh_host": "str", "ssh_port": "int", "remaining_minutes": "float", "auth_token": "str"},
             },
@@ -654,7 +660,7 @@ def discovery_document() -> Dict[str, Any]:
             "heartbeat": {"resource": "/api/session/heartbeat", "method": "POST", "note": "send periodically with auth_token to keep the session alive"},
             "release": {"resource": "/api/session/release", "method": "POST"},
         },
-        "notes": "SSH is the agent-usable session type (text I/O). The GUI desktop is not exposed to agents.",
+        "notes": "SSH is currently the agent-usable session type. Desktop/WebRTC agent control may be added later.",
     }
 
 
@@ -943,27 +949,44 @@ def settle_x402_payment(authenticated_wallet: str, x_payment_header: str) -> Dic
             import x402_facilitator as _fac  # type: ignore[no-redef]
 
     if _fac.facilitator_enabled():
-        fac_reqs = build_payment_requirements()
-        fac_reqs["network"] = net or _usdc_network()
-        fac_reqs["maxAmountRequired"] = str(value_units)
-        fac_reqs["resource"] = _resource_url()
-        ext = _fac.bazaar_discovery_extension()
-        if ext:
-            fac_reqs["extensions"] = ext
+        if ver == 2:
+            fac_reqs = build_payment_requirements_v2()
+            fac_reqs["network"] = net or _caip2_network()
+            fac_reqs["amount"] = str(value_units)
+            fac_reqs["asset"] = contract
+            fac_reqs["payTo"] = revenue
+            ext = _fac.bazaar_discovery_extension()
+            if ext:
+                fac_reqs["extensions"] = ext
+        else:
+            fac_reqs = build_payment_requirements()
+            fac_reqs["network"] = net or _usdc_network()
+            fac_reqs["maxAmountRequired"] = str(value_units)
+            fac_reqs["resource"] = _resource_url()
+            ext = _fac.bazaar_discovery_extension()
+            if ext:
+                fac_reqs["extensions"] = ext
         # CDP associates the Bazaar resource from the payload too.
         fac_payload = dict(payload)
         fac_payload.setdefault("resource", _resource_url())
-        ok, reason = _fac.facilitator_verify(fac_payload, fac_reqs, x402_version=ver)
+        ok, reason, verify_ext = _fac.facilitator_verify(fac_payload, fac_reqs, x402_version=ver)
         if not ok:
-            return fail(f"Facilitator verification failed: {reason}")
-        settle_tx, settle_err = _fac.facilitator_settle(fac_payload, fac_reqs, x402_version=ver)
+            res = fail(f"Facilitator verification failed: {reason}")
+            if verify_ext is not None:
+                res["extension_responses"] = verify_ext
+            return res
+        settle_tx, settle_err, settle_ext = _fac.facilitator_settle(fac_payload, fac_reqs, x402_version=ver)
     else:
         # Self-settle (we pay gas).
         settle_tx, settle_err = _submit_transfer_with_authorization(
             rpc_url, contract, authorization, signature
         )
+        settle_ext = None
     if not settle_tx:
-        return fail(settle_err or "Settlement failed")
+        res = fail(settle_err or "Settlement failed")
+        if _fac.facilitator_enabled() and settle_ext is not None:
+            res["extension_responses"] = settle_ext
+        return res
 
     # We just broadcast the tx, so the deposit verifier would see it as pending
     # (unmined / 0 confirmations) and credit nothing. Wait for the receipt + the
@@ -977,6 +1000,8 @@ def settle_x402_payment(authenticated_wallet: str, x_payment_header: str) -> Dic
     result = dict(result)
     result["settlement_tx_hash"] = settle_tx
     result["x402"] = True
+    if _fac.facilitator_enabled() and settle_ext is not None:
+        result["extension_responses"] = settle_ext
     return result
 
 

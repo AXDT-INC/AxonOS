@@ -657,7 +657,7 @@ def api_x402_settle():
         return '', 200
     if settle_x402_payment is None:
         return jsonify({"verified": False, "error": "x402 settlement unavailable"}), 503
-    x_payment = request.headers.get('X-PAYMENT') or ''
+    x_payment = request.headers.get('X-PAYMENT') or request.headers.get('PAYMENT-SIGNATURE') or ''
     if not x_payment:
         if payment_required_body is not None:
             body = payment_required_body(error="X-PAYMENT header required")
@@ -690,13 +690,15 @@ def api_x402_settle():
         if result.get("settlement_tx_hash"):
             import base64 as _b64
             import json as _json
-            resp.headers['X-PAYMENT-RESPONSE'] = _b64.b64encode(
+            _pr = _b64.b64encode(
                 _json.dumps({
                     "success": True,
                     "txHash": result["settlement_tx_hash"],
                     "network": result.get("deposit_currency", "USDC"),
                 }).encode()
             ).decode()
+            resp.headers['X-PAYMENT-RESPONSE'] = _pr
+            resp.headers['PAYMENT-RESPONSE'] = _pr
         return resp
     return jsonify(result), 400
 
@@ -738,7 +740,7 @@ def api_x402_session():
         return jsonify({"granted": False, "error": "A valid ssh_pubkey is required for an agent SSH session"}), 400
     requested_profile = (data.get("requested_profile") or '').strip() or None
 
-    x_payment = request.headers.get('X-PAYMENT') or ''
+    x_payment = request.headers.get('X-PAYMENT') or request.headers.get('PAYMENT-SIGNATURE') or ''
     settle_result = None
     auth_token = None
     auth_ttl = None
@@ -779,6 +781,8 @@ def api_x402_session():
             "credited_minutes": settle_result.get("credited_minutes"),
             "settlement_tx_hash": settle_result.get("settlement_tx_hash"),
         }
+        if "extension_responses" in settle_result:
+            out["payment"]["extension_responses"] = settle_result["extension_responses"]
     if auth_token:
         out["auth_token"] = auth_token
         out["auth_token_expires_in_seconds"] = auth_ttl
@@ -786,11 +790,13 @@ def api_x402_session():
     if settle_result and settle_result.get("settlement_tx_hash"):
         import base64 as _b64
         import json as _json
-        resp.headers['X-PAYMENT-RESPONSE'] = _b64.b64encode(_json.dumps({
+        _pr = _b64.b64encode(_json.dumps({
             "success": True,
             "txHash": settle_result["settlement_tx_hash"],
             "network": settle_result.get("deposit_currency", "USDC"),
         }).encode()).decode()
+        resp.headers['X-PAYMENT-RESPONSE'] = _pr
+        resp.headers['PAYMENT-RESPONSE'] = _pr
     resp.status_code = 200 if claim.get("granted") else 409
     return resp
 

@@ -78,39 +78,59 @@ class TestVerifySettleParsing(unittest.TestCase):
 
     def test_verify_valid(self):
         with patch.object(fac, "_post", return_value=({"isValid": True, "payer": "0xabc"}, None)):
-            ok, reason = fac.facilitator_verify(self._PAYLOAD, self._REQS)
+            ok, reason, ext = fac.facilitator_verify(self._PAYLOAD, self._REQS)
         self.assertTrue(ok)
         self.assertIsNone(reason)
+        self.assertIsNone(ext)
 
     def test_verify_invalid_surfaces_reason(self):
         with patch.object(fac, "_post", return_value=({"isValid": False, "invalidReason": "insufficient_funds"}, None)):
-            ok, reason = fac.facilitator_verify(self._PAYLOAD, self._REQS)
+            ok, reason, ext = fac.facilitator_verify(self._PAYLOAD, self._REQS)
         self.assertFalse(ok)
         self.assertEqual(reason, "insufficient_funds")
+        self.assertIsNone(ext)
 
     def test_verify_http_error(self):
         with patch.object(fac, "_post", return_value=(None, "Facilitator HTTP 401: bad jwt")):
-            ok, reason = fac.facilitator_verify(self._PAYLOAD, self._REQS)
+            ok, reason, ext = fac.facilitator_verify(self._PAYLOAD, self._REQS)
         self.assertFalse(ok)
         self.assertIn("401", reason)
+        self.assertIsNone(ext)
+
+    def test_verify_with_extension_responses(self):
+        ext_data = {"bazaar": {"status": "success"}}
+        with patch.object(fac, "_post", return_value=({"isValid": True, "extensionResponses": ext_data}, None)):
+            ok, reason, ext = fac.facilitator_verify(self._PAYLOAD, self._REQS)
+        self.assertTrue(ok)
+        self.assertEqual(ext, ext_data)
 
     def test_settle_success_returns_tx(self):
         with patch.object(fac, "_post", return_value=({"success": True, "transaction": "0x" + "ab" * 32}, None)):
-            tx, err = fac.facilitator_settle(self._PAYLOAD, self._REQS)
+            tx, err, ext = fac.facilitator_settle(self._PAYLOAD, self._REQS)
         self.assertEqual(tx, "0x" + "ab" * 32)
         self.assertIsNone(err)
+        self.assertIsNone(ext)
 
     def test_settle_failure_surfaces_reason(self):
         with patch.object(fac, "_post", return_value=({"success": False, "errorReason": "expired"}, None)):
-            tx, err = fac.facilitator_settle(self._PAYLOAD, self._REQS)
+            tx, err, ext = fac.facilitator_settle(self._PAYLOAD, self._REQS)
         self.assertIsNone(tx)
         self.assertEqual(err, "expired")
+        self.assertIsNone(ext)
 
     def test_settle_success_but_no_tx_hash(self):
         with patch.object(fac, "_post", return_value=({"success": True}, None)):
-            tx, err = fac.facilitator_settle(self._PAYLOAD, self._REQS)
+            tx, err, ext = fac.facilitator_settle(self._PAYLOAD, self._REQS)
         self.assertIsNone(tx)
         self.assertIn("no transaction hash", err)
+        self.assertIsNone(ext)
+
+    def test_settle_with_extension_responses(self):
+        ext_data = {"bazaar": {"status": "processing"}}
+        with patch.object(fac, "_post", return_value=({"success": True, "transaction": "0x" + "ab" * 32, "extensionResponses": ext_data}, None)):
+            tx, err, ext = fac.facilitator_settle(self._PAYLOAD, self._REQS)
+        self.assertEqual(tx, "0x" + "ab" * 32)
+        self.assertEqual(ext, ext_data)
 
 
 class TestJwtMissingKeys(unittest.TestCase):
