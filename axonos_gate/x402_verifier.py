@@ -480,11 +480,15 @@ def build_payment_requirements(minutes_wanted: float = 0.0) -> Dict[str, Any]:
     return reqs
 
 
-def _attach_discovery_extension(reqs: Dict[str, Any]) -> None:
+def _bazaar_extension() -> Optional[Dict[str, Any]]:
     """
-    Attach the x402 Bazaar discovery extension to a PaymentRequirements object when
-    the facilitator/Bazaar rail is enabled. No-op in the default self-settle mode,
-    so 402 bodies are byte-identical unless discovery is explicitly turned on.
+    Single source of truth for the x402 Bazaar discovery extension object, shaped
+    as {"bazaar": {info..., schema...}}. Returns None when discovery is disabled.
+
+    The SAME object is attached to BOTH the PaymentRequired root (extensions.bazaar)
+    and accepts[0].extensions.bazaar: the Agentic Market / x402 Bazaar validator
+    looks for it at the PaymentRequired root, while the CDP facilitator reads it
+    from accepts[]. Built once here, never duplicated by hand.
     """
     try:
         from . import x402_facilitator as _fac
@@ -493,7 +497,16 @@ def _attach_discovery_extension(reqs: Dict[str, Any]) -> None:
             from axonos_gate import x402_facilitator as _fac
         except ImportError:
             import x402_facilitator as _fac  # type: ignore[no-redef]
-    ext = _fac.bazaar_discovery_extension()
+    return _fac.bazaar_discovery_extension()
+
+
+def _attach_discovery_extension(reqs: Dict[str, Any]) -> None:
+    """
+    Attach the x402 Bazaar discovery extension to a PaymentRequirements object when
+    the facilitator/Bazaar rail is enabled. No-op in the default self-settle mode,
+    so 402 bodies are byte-identical unless discovery is explicitly turned on.
+    """
+    ext = _bazaar_extension()
     if ext:
         reqs["extensions"] = ext
 
@@ -567,7 +580,15 @@ def build_payment_requirements_v2(minutes_wanted: float = 0.0) -> Dict[str, Any]
 
 
 def payment_required_v2(minutes_wanted: float = 0.0, error: Optional[str] = None) -> Dict[str, Any]:
-    """Full v2 PaymentRequired object (goes in the X-PAYMENT-REQUIRED header + body)."""
+    """
+    Full v2 PaymentRequired object (goes in the PAYMENT-REQUIRED header + body).
+
+    The Bazaar discovery extension is attached at BOTH the root (extensions.bazaar)
+    and accepts[0].extensions.bazaar, from one shared object (_bazaar_extension):
+    the Agentic Market validator looks for it at the PaymentRequired root, while the
+    CDP facilitator reads it from accepts[]. build_payment_requirements_v2 handles
+    the accepts[0] side; we add the root copy here.
+    """
     body: Dict[str, Any] = {
         "x402Version": _X402_V2_VERSION,
         "error": error or "Payment required",
@@ -578,7 +599,24 @@ def payment_required_v2(minutes_wanted: float = 0.0, error: Optional[str] = None
         },
         "accepts": [build_payment_requirements_v2(minutes_wanted)],
     }
+    ext = _bazaar_extension()
+    if ext:
+        body["extensions"] = ext
     return body
+
+
+def unpaid_session_requires_402(has_payment: bool, wallet_prepaid: bool) -> bool:
+    """
+    Whether POST /api/x402/session must answer 402 Payment Required BEFORE it
+    validates wallet_address / ssh_pubkey.
+
+    True when there is no X-PAYMENT header and the wallet has no prepaid minutes:
+    an unauthenticated discovery/validation probe (e.g. an empty body) must get a
+    402 with payment requirements — never a 400 for a missing wallet/pubkey — so
+    x402 Bazaar / Agentic Market validators see a proper Payment Required. Only once
+    a payment is present, or the wallet is prepaid, do we validate request inputs.
+    """
+    return not has_payment and not wallet_prepaid
 
 
 def encode_payment_required_header(minutes_wanted: float = 0.0, error: Optional[str] = None) -> str:
