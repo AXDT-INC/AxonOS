@@ -240,7 +240,7 @@ def _gate_pg_init_once() -> bool:
             conn.close()
 
 
-def _issue_gate_auth_token(wallet_address: str) -> tuple[str, int]:
+def _issue_gate_auth_token(wallet_address: str, custom_ttl=None) -> tuple[str, int]:
     now_ts = time.time()
     token = secrets.token_urlsafe(32)
     wallet_norm = (wallet_address or "").strip().lower()
@@ -251,6 +251,7 @@ def _issue_gate_auth_token(wallet_address: str) -> tuple[str, int]:
     conn = _gate_pg_get_connection()
     if not conn:
         raise RuntimeError("Auth token DB connect failed")
+    ttl = custom_ttl if custom_ttl is not None else _AUTH_TOKEN_TTL
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -261,7 +262,7 @@ def _issue_gate_auth_token(wallet_address: str) -> tuple[str, int]:
                 f"""INSERT INTO {_AUTH_TABLE}
                     (token, wallet_address, issued_at, expires_at, status, grace_until)
                     VALUES (%s, %s, %s, %s, 'current', %s)""",
-                (token, wallet_norm, now_ts, now_ts + _AUTH_TOKEN_TTL, now_ts + _AUTH_TOKEN_TTL),
+                (token, wallet_norm, now_ts, now_ts + ttl, now_ts + ttl),
             )
         conn.commit()
     except Exception as e:
@@ -270,7 +271,8 @@ def _issue_gate_auth_token(wallet_address: str) -> tuple[str, int]:
         raise RuntimeError("Auth token DB write failed") from e
     finally:
         conn.close()
-    return token, _AUTH_TOKEN_TTL
+    return token, ttl
+
 
 
 def _is_gate_auth_token_valid(token: str, wallet_address: str) -> bool:
@@ -767,9 +769,6 @@ def api_x402_session():
     requested_profile = (data.get("requested_profile") or '').strip() or None
 
     settle_result = None
-    auth_token = None
-    auth_ttl = None
-
     if x_payment:
         if settle_x402_payment is None:
             return jsonify({"granted": False, "error": "x402 settlement unavailable"}), 503
@@ -781,17 +780,6 @@ def api_x402_session():
                     resp.headers[k] = v
             resp.status_code = 400
             return resp
-        # Payment authorized → mint a gate auth token for subsequent heartbeats/release.
-        try:
-            auth_token, auth_ttl = _issue_gate_auth_token(wallet_address)
-        except Exception as ex:
-            logger.warning("x402/session token issue failed for %s: %s", mask_wallet_address(wallet_address), ex)
-    else:
-        # Prepaid (the gate above already confirmed remaining minutes).
-        try:
-            auth_token, auth_ttl = _issue_gate_auth_token(wallet_address)
-        except Exception as ex:
-            logger.warning("x402/session token issue failed for %s: %s", mask_wallet_address(wallet_address), ex)
 
     claim = try_claim_session(
         wallet_address,
@@ -808,9 +796,25 @@ def api_x402_session():
         }
         if "extension_responses" in settle_result:
             out["payment"]["extension_responses"] = settle_result["extension_responses"]
+
+    auth_token = None
+    auth_ttl = None
+    if claim.get("granted"):
+        try:
+            from axonos_gate.session_manager import session_grace_seconds
+        except ImportError:
+            from session_manager import session_grace_seconds
+        remaining_seconds = claim.get("remaining_seconds", 3600)
+        custom_ttl = max(_AUTH_TOKEN_TTL, remaining_seconds + session_grace_seconds())
+        try:
+            auth_token, auth_ttl = _issue_gate_auth_token(wallet_address, custom_ttl=custom_ttl)
+        except Exception as ex:
+            logger.warning("x402/session token issue failed for %s: %s", mask_wallet_address(wallet_address), ex)
+
     if auth_token:
         out["auth_token"] = auth_token
         out["auth_token_expires_in_seconds"] = auth_ttl
+
     resp = jsonify(out)
     if settle_result and settle_result.get("settlement_tx_hash"):
         import base64 as _b64
@@ -1452,6 +1456,10 @@ def api_session_heartbeat():
         return jsonify(session_heartbeat(wallet_address))
     auth_err = _require_auth_token(wallet_address)
     if auth_err:
+        logger.warning(
+            "Heartbeat unauthorized (401) for wallet %s",
+            mask_wallet_address(wallet_address),
+        )
         return auth_err
     return jsonify(session_heartbeat(wallet_address))
 
@@ -1953,6 +1961,28 @@ def main():
     logger.info(f"AXGT Contract: {(os.getenv('AXGT_CONTRACT_ADDRESS') or '<unset>').strip()}")
     logger.info(f"RPC URL: {(os.getenv('AXGT_RPC_URL') or '<unset>').strip()}")
     _init_all_tables()
+
+    # Start background session cleanup thread
+    import threading
+    try:
+        from axonos_gate.session_manager import perform_session_cleanup
+    except ImportError:
+        from session_manager import perform_session_cleanup
+
+    def cleanup_loop():
+        # Wait on startup
+        time.sleep(10)
+        logger.info("Started background session cleanup loop")
+        while True:
+            try:
+                perform_session_cleanup()
+            except Exception as e:
+                logger.error("Error in background session cleanup: %s", e, exc_info=True)
+            time.sleep(30)
+
+    cleanup_thread = threading.Thread(target=cleanup_loop, daemon=True)
+    cleanup_thread.start()
+
 
     use_gevent = (os.getenv('GATE_USE_GEVENT', '1').strip().lower() in ('1', 'true', 'yes'))
     if use_gevent:

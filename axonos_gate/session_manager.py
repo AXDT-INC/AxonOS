@@ -553,6 +553,18 @@ def _pause_stale_zero_credit_sessions(cur, now: float, hb_cutoff: float) -> List
     return paused
 
 
+def session_grace_seconds() -> int:
+    """Return the session grace period in seconds from AXGT_SESSION_GRACE_SECONDS (default 60)."""
+    raw = (os.getenv("AXGT_SESSION_GRACE_SECONDS") or "").strip()
+    try:
+        val = int(raw)
+        if val >= 0:
+            return val
+    except (ValueError, TypeError):
+        pass
+    return 60
+
+
 def _expire_stale_session(cur, now: float) -> Tuple[Optional[tuple], List[tuple]]:
     """End or pause stale active sessions.
 
@@ -563,15 +575,16 @@ def _expire_stale_session(cur, now: float) -> Tuple[Optional[tuple], List[tuple]
     """
     hb_cutoff = now - _heartbeat_timeout_seconds()
     paused = _pause_stale_zero_credit_sessions(cur, now, hb_cutoff)
+    grace = session_grace_seconds()
     cur.execute(
         f"""UPDATE {_SESSION_TABLE}
             SET status = 'ended'
             WHERE status = 'active'
               AND (last_heartbeat < %s
                    OR expires_at <= %s
-                   OR (hard_expires_at IS NOT NULL AND hard_expires_at <= %s))
+                   OR (hard_expires_at IS NOT NULL AND hard_expires_at + %s <= %s))
             RETURNING wallet_address, id""",
-        (hb_cutoff, now, now),
+        (hb_cutoff, now, grace, now),
     )
     row = cur.fetchone()
     ended = (row[0], row[1]) if row else None
@@ -809,12 +822,15 @@ def _on_session_ended(wallet_address: str, session_id: int) -> None:
 def _expire_stale_paused_sessions(cur, now: float) -> List[tuple]:
     """End paused sessions past resume TTL (container teardown)."""
     cutoff = now - _session_paused_max_seconds()
+    grace = session_grace_seconds()
     cur.execute(
         f"""UPDATE {_SESSION_TABLE}
             SET status = 'ended'
-            WHERE status = 'paused' AND last_heartbeat < %s
+            WHERE status = 'paused'
+              AND (last_heartbeat < %s
+                   OR (hard_expires_at IS NOT NULL AND hard_expires_at + %s <= %s))
             RETURNING wallet_address, id""",
-        (cutoff,),
+        (cutoff, grace, now),
     )
     rows = cur.fetchall() or []
     return [(r[0], r[1]) for r in rows]
@@ -1619,3 +1635,96 @@ def validate_session_files_key(wallet_address: str, files_key: str) -> bool:
         return False
     finally:
         conn.close()
+
+
+def _reconcile_containers(cur, now: float) -> Tuple[List[int], List[Tuple[str, int]]]:
+    """Query running session containers and reconcile them against their DB status.
+
+    Returns (to_stop_ids, to_expire_list).
+    """
+    launcher = _import_session_launcher()
+    running_session_ids = launcher.list_running_sessions()
+    if not running_session_ids:
+        return [], []
+
+    to_stop_ids = []
+    to_expire = []
+    grace = session_grace_seconds()
+    for s_id in running_session_ids:
+        cur.execute(
+            f"SELECT status, hard_expires_at, wallet_address FROM {_SESSION_TABLE} WHERE id = %s",
+            (s_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            logger.info("reconcile: session %s does not exist in DB, scheduling container stop", s_id)
+            to_stop_ids.append(s_id)
+            continue
+
+        status, hard_expires_at, wallet = row[0], row[1], row[2]
+        if status in ("ended", "expired", "released"):
+            logger.info("reconcile: session %s is already %s, scheduling container stop retry", s_id, status)
+            to_stop_ids.append(s_id)
+            continue
+
+        if hard_expires_at is not None and hard_expires_at + grace <= now:
+            logger.info("reconcile: session %s reached hard expiry, scheduling DB update to ended", s_id)
+            cur.execute(
+                f"UPDATE {_SESSION_TABLE} SET status = 'ended' WHERE id = %s",
+                (s_id,),
+            )
+            to_expire.append((wallet, s_id))
+
+    return to_stop_ids, to_expire
+
+
+def perform_session_cleanup() -> None:
+    """Enforce session expiry and reconcile container state with DB under advisory lock."""
+    if not _init_once():
+        return
+    conn = _get_connection()
+    if not conn:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_try_advisory_xact_lock(8889197)")
+            locked = cur.fetchone()[0]
+            if not locked:
+                return
+
+            now = time.time()
+            ended, paused_credit = _expire_stale_session(cur, now)
+            paused_ended = _expire_stale_paused_sessions(cur, now)
+
+            to_stop_ids, to_expire = _reconcile_containers(cur, now)
+
+            conn.commit()
+
+            # 1. Trigger post-commit stale session maintenance hooks
+            if ended or paused_credit or paused_ended:
+                _cleanup_after_stale_maintenance(ended, paused_credit, paused_ended)
+
+            # 2. Trigger post-commit reconciliation expired hooks
+            for wallet, s_id in to_expire:
+                try:
+                    _on_session_ended(wallet, s_id)
+                except Exception as exc:
+                    logger.warning("Post-commit reconcile expire failed for session %s: %s", s_id, exc)
+
+            # 3. Trigger post-commit container cleanups
+            for s_id in to_stop_ids:
+                try:
+                    _cleanup_session_container(s_id)
+                except Exception as exc:
+                    logger.warning("Post-commit container stop failed for session %s: %s", s_id, exc)
+
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logger.warning("perform_session_cleanup failed: %s", exc, exc_info=True)
+    finally:
+        conn.close()
+
+

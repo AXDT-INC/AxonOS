@@ -163,6 +163,59 @@ def stop_session(session_id: int, container_id: Optional[str]) -> None:
     _stop_via_docker_cli(session_id, container_id)
 
 
+def list_running_sessions() -> List[int]:
+    """Retrieve all running session container IDs by querying the launcher or running docker ps."""
+    if not _container_mode_enabled():
+        return []
+    mode = _launcher_mode()
+    if mode == "noop":
+        return []
+    import re
+    pattern = re.compile(r"^/?axgt-session-([0-9]+)$")
+
+    if mode == "http":
+        base_url = (os.getenv("AXGT_SESSION_LAUNCHER_URL") or "").strip().rstrip("/")
+        if not base_url:
+            return []
+        status, data, err = _http_json("GET", f"{base_url}/list-containers", None, timeout_s=10.0)
+        if not err and status < 400 and isinstance(data, dict) and data.get("ok"):
+            containers = data.get("containers") or []
+            session_ids = []
+            for c in containers:
+                if not isinstance(c, dict):
+                    continue
+                name = c.get("name") or ""
+                m = pattern.match(name)
+                if m:
+                    try:
+                        session_ids.append(int(m.group(1)))
+                    except ValueError:
+                        pass
+            return session_ids
+        return []
+
+    # docker_cli mode
+    try:
+        out = subprocess.check_output(
+            ["docker", "ps", "--filter", "name=axgt-session-", "--format", "{{.Names}}"],
+            text=True,
+            env=subprocess_env_for_nested_docker()
+        )
+        session_ids = []
+        for name in out.splitlines():
+            name = name.strip()
+            m = pattern.match(name)
+            if m:
+                try:
+                    session_ids.append(int(m.group(1)))
+                except ValueError:
+                    pass
+        return session_ids
+    except Exception as exc:
+        logger.warning("session_launcher: failed to list docker cli containers: %s", exc)
+        return []
+
+
 # Per-session port scheme. WebRTC sessions get a UDP block for direct ICE; SSH
 # sessions instead get a single published TCP port -> container :22. Both are
 # deterministic from session_id so the gate can derive the connect details
