@@ -45,6 +45,7 @@ def _env():
         "USDC_NETWORK": "base",
         "USDC_MIN_DEPOSIT": "1",
         "X402_SETTLEMENT_PRIVATE_KEY": _PRIVKEY,
+        "AXGT_X402_FACILITATOR_ENABLED": "false",
     }
 
 

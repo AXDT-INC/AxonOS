@@ -12,10 +12,18 @@ _axonos_gate_root = os.path.dirname(_tests_dir)
 if _axonos_gate_root not in sys.path:
     sys.path.insert(0, _axonos_gate_root)
 
-# Mock flask for environments without it installed
-from unittest.mock import MagicMock
-sys.modules['flask'] = MagicMock()
-sys.modules['psycopg2'] = MagicMock()
+# Mock flask and psycopg2 only if they are not installed in the current environment
+try:
+    import flask  # noqa: F401
+except ImportError:
+    from unittest.mock import MagicMock
+    sys.modules['flask'] = MagicMock()
+
+try:
+    import psycopg2  # noqa: F401
+except ImportError:
+    from unittest.mock import MagicMock
+    sys.modules['psycopg2'] = MagicMock()
 
 
 

@@ -27,6 +27,15 @@ if '/axonos_gate' not in sys.path:
 
 # Import our modules
 try:
+    from agentlink_verifier import verify_agentlink_header
+except ImportError:
+    try:
+        from axonos_gate.agentlink_verifier import verify_agentlink_header
+    except ImportError:
+        def verify_agentlink_header(*args, **kwargs):
+            return {"verified": False, "reason": "import_failed"}
+
+try:
     from axgt_verifier import (
         get_challenge_message,
         get_challenge_ttl_seconds,
@@ -573,6 +582,29 @@ def api_x402_access():
     # Payment header: X-PAYMENT (x402 v1) or PAYMENT-SIGNATURE (x402 v2).
     x_payment = request.headers.get('X-PAYMENT') or request.headers.get('PAYMENT-SIGNATURE') or ''
 
+    # Passive AgentLink verification if enabled and header is present
+    agentlink_res = None
+    if (os.getenv("AXGT_AGENTLINK_ENABLED") or "").strip().lower() in ("1", "true", "yes", "on"):
+        agentlink_header = request.headers.get('agentlink') or request.headers.get('AgentLink') or request.headers.get('AGENTLINK')
+        if agentlink_header:
+            try:
+                expected_uri = (os.getenv("X402_ACCESS_RESOURCE_URL") or "").strip()
+                if not expected_uri:
+                    base_url = (os.getenv("AXGT_PUBLIC_BASE_URL") or "").strip().rstrip("/")
+                    if not base_url:
+                        base_url = "https://app.axonos.io"
+                    expected_uri = base_url + "/api/x402/access"
+                res = verify_agentlink_header(agentlink_header, expected_uri)
+                agentlink_res = res
+                if res.get("verified"):
+                    logger.info(
+                        "AgentLink verified passively for access: agent: %s, owner: %s",
+                        mask_wallet_address(res["agent"]),
+                        mask_wallet_address(res["owner"])
+                    )
+            except Exception as e:
+                logger.warning("AgentLink passive verification crashed on access: %s", e)
+
     # --- Payment present: settle inline (canonical "pay the resource") ---
     if x_payment and settle_x402_payment is not None:
         # Wallet comes from the signed authorization; fall back to explicit hints.
@@ -592,6 +624,15 @@ def api_x402_access():
                     "settlement_tx_hash": result.get("settlement_tx_hash"),
                 },
             }
+            if agentlink_res:
+                out["agentlink"] = {
+                    "verified": agentlink_res["verified"],
+                    "chainId": agentlink_res.get("chainId"),
+                    "reason": agentlink_res.get("reason")
+                }
+                if agentlink_res["verified"]:
+                    out["agentlink"]["agent"] = mask_wallet_address(agentlink_res["agent"])
+                    out["agentlink"]["owner"] = mask_wallet_address(agentlink_res["owner"])
             resp = jsonify(out)
             if result.get("settlement_tx_hash"):
                 import base64 as _b64, json as _json
@@ -611,7 +652,17 @@ def api_x402_access():
     if wallet_address and validate_wallet_address(wallet_address):
         status = get_wallet_access_status(wallet_address)
         if status.get('verified') and status.get('remaining_minutes', 0) > 0:
-            return jsonify({"access": True, "remaining_minutes": status.get('remaining_minutes')})
+            out = {"access": True, "remaining_minutes": status.get('remaining_minutes')}
+            if agentlink_res:
+                out["agentlink"] = {
+                    "verified": agentlink_res["verified"],
+                    "chainId": agentlink_res.get("chainId"),
+                    "reason": agentlink_res.get("reason")
+                }
+                if agentlink_res["verified"]:
+                    out["agentlink"]["agent"] = mask_wallet_address(agentlink_res["agent"])
+                    out["agentlink"]["owner"] = mask_wallet_address(agentlink_res["owner"])
+            return jsonify(out)
     # Version-negotiated body (v1 default) + v2 PAYMENT-REQUIRED header — covers JS + Python x402 SDKs.
     return _x402_payment_required(minutes_wanted, "Payment required for access")
 
@@ -745,6 +796,29 @@ def api_x402_session():
     wallet_address = (data.get("wallet_address") or request.headers.get('X-Wallet-Address') or '').strip()
     x_payment = request.headers.get('X-PAYMENT') or request.headers.get('PAYMENT-SIGNATURE') or ''
 
+    # Passive AgentLink verification if enabled and header is present
+    agentlink_res = None
+    if (os.getenv("AXGT_AGENTLINK_ENABLED") or "").strip().lower() in ("1", "true", "yes", "on"):
+        agentlink_header = request.headers.get('agentlink') or request.headers.get('AgentLink') or request.headers.get('AGENTLINK')
+        if agentlink_header:
+            try:
+                expected_uri = (os.getenv("X402_RESOURCE_URL") or "").strip()
+                if not expected_uri or not expected_uri.endswith("/api/x402/session"):
+                    base_url = (os.getenv("AXGT_PUBLIC_BASE_URL") or "").strip().rstrip("/")
+                    if not base_url:
+                        base_url = "https://app.axonos.io"
+                    expected_uri = base_url + "/api/x402/session"
+                res = verify_agentlink_header(agentlink_header, expected_uri)
+                agentlink_res = res
+                if res.get("verified"):
+                    logger.info(
+                        "AgentLink verified passively for session: agent: %s, owner: %s",
+                        mask_wallet_address(res["agent"]),
+                        mask_wallet_address(res["owner"])
+                    )
+            except Exception as e:
+                logger.warning("AgentLink passive verification crashed on session: %s", e)
+
     # 402-before-validation: an unpaid request (no X-PAYMENT) with no prepaid
     # minutes must get a 402 with x402 payment requirements BEFORE we reject a
     # missing/invalid wallet_address or ssh_pubkey. An unauthenticated x402/Bazaar
@@ -796,6 +870,16 @@ def api_x402_session():
         }
         if "extension_responses" in settle_result:
             out["payment"]["extension_responses"] = settle_result["extension_responses"]
+
+    if agentlink_res:
+        out["agentlink"] = {
+            "verified": agentlink_res["verified"],
+            "chainId": agentlink_res.get("chainId"),
+            "reason": agentlink_res.get("reason")
+        }
+        if agentlink_res["verified"]:
+            out["agentlink"]["agent"] = mask_wallet_address(agentlink_res["agent"])
+            out["agentlink"]["owner"] = mask_wallet_address(agentlink_res["owner"])
 
     auth_token = None
     auth_ttl = None

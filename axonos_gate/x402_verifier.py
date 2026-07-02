@@ -500,15 +500,101 @@ def _bazaar_extension() -> Optional[Dict[str, Any]]:
     return _fac.bazaar_discovery_extension()
 
 
+def _agentlink_enabled() -> bool:
+    return (os.getenv("AXGT_AGENTLINK_ENABLED") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _agentlink_mode() -> str:
+    mode = (os.getenv("AXGT_AGENTLINK_MODE") or "").strip().lower()
+    if mode in ("verify_only", "advertise_only"):
+        return mode
+    return "advertise_only"
+
+
+def build_agentlink_declaration(resource_url: str = None) -> Dict[str, Any]:
+    import secrets
+    from datetime import datetime, timezone, timedelta
+    from urllib.parse import urlparse
+
+    nonce = secrets.token_hex(16)
+    issued_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    exp_time = (datetime.now(timezone.utc) + timedelta(seconds=120)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+    if not resource_url:
+        url = (os.getenv("X402_RESOURCE_URL") or "").strip()
+        if url and url.endswith("/api/x402/session"):
+            resource_url = url
+        else:
+            base = (os.getenv("AXGT_PUBLIC_BASE_URL") or "").strip().rstrip("/")
+            if not base:
+                base = "https://app.axonos.io"
+            resource_url = base + "/api/x402/session"
+
+    domain = urlparse(resource_url).hostname or ""
+    chain_id = f"eip155:{_usdc_chain_id()}"
+
+    info = {
+        "domain": domain,
+        "uri": resource_url,
+        "version": "1",
+        "nonce": nonce,
+        "issuedAt": issued_at,
+        "resources": [resource_url],
+        "expirationTime": exp_time
+    }
+
+    supported_chains = [
+        {"chainId": chain_id, "type": "eip191"}
+    ]
+
+    schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+            "domain": {"type": "string"},
+            "address": {"type": "string"},
+            "statement": {"type": "string"},
+            "uri": {"type": "string", "format": "uri"},
+            "version": {"type": "string"},
+            "chainId": {"type": "string"},
+            "type": {"type": "string"},
+            "nonce": {"type": "string"},
+            "issuedAt": {"type": "string", "format": "date-time"},
+            "expirationTime": {"type": "string", "format": "date-time"},
+            "notBefore": {"type": "string", "format": "date-time"},
+            "requestId": {"type": "string"},
+            "resources": {"type": "array", "items": {"type": "string", "format": "uri"}},
+            "signature": {"type": "string"}
+        },
+        "required": ["domain", "address", "uri", "version", "chainId", "type", "nonce", "issuedAt", "signature"]
+    }
+
+    return {
+        "info": info,
+        "supportedChains": supported_chains,
+        "schema": schema,
+        "mode": _agentlink_mode()
+    }
+
+
 def _attach_discovery_extension(reqs: Dict[str, Any]) -> None:
     """
-    Attach the x402 Bazaar discovery extension to a PaymentRequirements object when
-    the facilitator/Bazaar rail is enabled. No-op in the default self-settle mode,
-    so 402 bodies are byte-identical unless discovery is explicitly turned on.
+    Attach the x402 Bazaar discovery extension and optional AgentLink extension
+    to a PaymentRequirements object. Safe merge ensures extensions do not collide.
     """
     ext = _bazaar_extension()
-    if ext:
-        reqs["extensions"] = ext
+    if _agentlink_enabled():
+        if "extensions" not in reqs:
+            reqs["extensions"] = {}
+        if ext and "bazaar" in ext:
+            reqs["extensions"]["bazaar"] = ext["bazaar"]
+        elif ext:
+            for k, v in ext.items():
+                reqs["extensions"][k] = v
+        reqs["extensions"]["agentlink"] = build_agentlink_declaration(reqs.get("resource"))
+    else:
+        if ext:
+            reqs["extensions"] = ext
 
 
 def payment_required_body(minutes_wanted: float = 0.0, error: Optional[str] = None) -> Dict[str, Any]:
@@ -600,8 +686,17 @@ def payment_required_v2(minutes_wanted: float = 0.0, error: Optional[str] = None
         "accepts": [build_payment_requirements_v2(minutes_wanted)],
     }
     ext = _bazaar_extension()
-    if ext:
-        body["extensions"] = ext
+    if _agentlink_enabled():
+        body["extensions"] = {}
+        if ext and "bazaar" in ext:
+            body["extensions"]["bazaar"] = ext["bazaar"]
+        elif ext:
+            for k, v in ext.items():
+                body["extensions"][k] = v
+        body["extensions"]["agentlink"] = build_agentlink_declaration()
+    else:
+        if ext:
+            body["extensions"] = ext
     return body
 
 
