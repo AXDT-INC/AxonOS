@@ -68,6 +68,23 @@ def _configured_profiles() -> Dict[str, int]:
     }
 
 
+# Human-facing profile names for user-visible messages. The lowercase keys above
+# are the canonical wire/config identifiers and never change; these labels only
+# affect display so the UI reads consistently (the frontend shows the same names).
+_PROFILE_DISPLAY_LABELS = {
+    "small": "Single",
+    "medium": "Dual",
+    "large": "Quad",
+    "max": "Octa",
+}
+
+
+def _profile_display_label(profile: Optional[str]) -> str:
+    if not profile:
+        return str(profile)
+    return _PROFILE_DISPLAY_LABELS.get(str(profile).strip().lower(), str(profile))
+
+
 def _gpu_billing_enabled() -> bool:
     """When true, heartbeat billing multiplies wall-clock minutes by assigned GPU count."""
     if not _gpu_profiles_enabled():
@@ -114,7 +131,7 @@ def _prepaid_credit_allows_profile(
         return (
             False,
             (
-                f"Insufficient prepaid credit for profile \"{profile_name}\" ({requested_gpus} GPU(s)). "
+                f"Insufficient prepaid credit for profile \"{_profile_display_label(profile_name)}\" ({requested_gpus} GPU(s)). "
                 f"You have {remaining:.1f} minute(s) but need at least {requested_gpus} "
                 f"(usage bills at {requested_gpus}× wall-clock minutes per GPU)."
             ),
@@ -754,8 +771,8 @@ def _gpu_capacity_fields(
     }
     if impossible:
         out["capacity_note"] = (
-            f"This host exposes {total} GPU(s), but the \"{profile_name}\" profile needs {requested_gpus}. "
-            "Pick a smaller profile (Small = 1, Medium = 2, Large = 4, Max = 8 GPUs), then connect again."
+            f"This host exposes {total} GPU(s), but the \"{_profile_display_label(profile_name)}\" profile needs {requested_gpus}. "
+            "Pick a smaller profile (Single = 1, Dual = 2, Quad = 4, Octa = 8 GPUs), then connect again."
         )
     elif free_n < requested_gpus:
         out["capacity_note"] = (
@@ -1098,7 +1115,7 @@ def try_claim_session(
                         reason = "Desktop is in use by another researcher."
                     else:
                         reason = (
-                            f"No GPUs available for profile \"{profile_name}\" "
+                            f"No GPUs available for profile \"{_profile_display_label(profile_name)}\" "
                             f"({requested_gpus} GPU(s) required)"
                         )
                     return {

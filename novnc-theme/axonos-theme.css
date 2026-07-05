@@ -135,7 +135,9 @@ SOFTWARE.
   --axonos-shadow: rgba(123, 108, 255, 0.25);
 
   /* ── Layout ── */
-  --axonos-prereq-ticker-strip-h: 44px;
+  /* 0px: ticker strip is hidden in the v2 design; dependent offsets (body
+     padding, version pill, sticky rail top) collapse with it. */
+  --axonos-prereq-ticker-strip-h: 0px;
   --axonos-prereq-ticker-sidebar-clear: calc(env(safe-area-inset-left, 0px) + 50px);
   --axonos-prereq-ticker-strip-pad-start: calc(env(safe-area-inset-left, 0px) + max(11px, 0.62rem));
   --axonos-prereq-ticker-body-pad-top: calc(env(safe-area-inset-top, 0px) + var(--axonos-prereq-ticker-strip-h));
@@ -165,8 +167,10 @@ SOFTWARE.
     inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
+/* v2 design: the ticker strip is retired — the topbar/hero carry the network
+   and billing context now. Markup + JS stay (harmless on a hidden element). */
 html:not(.noVNC_connected) .axonos-prerequisites-ticker {
-  display: flex;
+  display: none;
 }
 
 html.noVNC_connected .axonos-prerequisites-ticker {
@@ -459,13 +463,16 @@ html:not(.noVNC_connected) .noVNC_center::-webkit-scrollbar-thumb:hover {
 .axonos-scroll-paused.axonos-particles {
   animation-play-state: paused !important;
 }
+
 .axonos-scroll-paused.axonos-dna-animation::before,
 .axonos-scroll-paused.axonos-dna-animation::after {
   animation-play-state: paused !important;
 }
+
 .axonos-scroll-paused.axonos-main-title {
   animation-play-state: paused !important;
 }
+
 .axonos-scroll-paused.axonos-highlight {
   animation-play-state: paused !important;
 }
@@ -491,16 +498,16 @@ html:not(.noVNC_connected) body {
   padding-top: var(--axonos-prereq-ticker-body-pad-top);
   font-family: var(--font-body);
   color: var(--ink);
-  
+
   /* Fallback and background-color */
   background-color: #080910 !important;
-  
+
   /* AxonDAO ambient background — deep navy + subtle cyan/violet radial glows (omitting redundant 'ellipse' keyword with length sizes) */
   background-image:
     radial-gradient(900px 700px at 85% 18%, rgba(123, 108, 255, 0.1), transparent 60%),
     radial-gradient(1000px 800px at 12% 82%, rgba(139, 124, 255, 0.1), transparent 65%),
     linear-gradient(180deg, #080910 0%, #0a0b13 55%, #07080e 100%) !important;
-    
+
   overflow-x: hidden;
   overflow-y: visible !important;
   position: relative;
@@ -944,7 +951,8 @@ input[type="password"]::placeholder {
 /* AXGT usage overlay (during VNC session: warning or locked) */
 /* Session countdown — inline in the footer, left of "Built with ♥ by AxonDAO" */
 .axonos-session-timer {
-  display: inline;
+  display: inline-flex;
+  align-items: center;
 }
 
 .axonos-session-timer--hidden {
@@ -2526,8 +2534,13 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 
 /* Hero CTA highlight pulse when scrolled to the rail */
 @keyframes axonos-rail-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(123, 108, 255, 0.55); }
-  100% { box-shadow: 0 0 0 14px rgba(123, 108, 255, 0); }
+  0% {
+    box-shadow: 0 0 0 0 rgba(123, 108, 255, 0.55);
+  }
+
+  100% {
+    box-shadow: 0 0 0 14px rgba(123, 108, 255, 0);
+  }
 }
 
 .axonos-rail-pulse {
@@ -2851,7 +2864,9 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 .noVNC_center:has(#noVNC_connect_dlg) {
   align-items: stretch;
   overflow-y: visible !important;
-  padding: 20px;
+  /* No top padding: the topbar's own 20px puts the header at the absolute top
+     like the axonos-web prototype. */
+  padding: 0 20px 20px;
   /* Upstream sets pointer-events:none on .noVNC_center (auto on children) so the
      transparent area passes clicks to the VNC canvas. But on the landing page this
      fixed center IS the scroll container, so wheel events over empty gaps fell
@@ -2896,8 +2911,8 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
     display: block;
     max-width: 1280px;
     align-self: start;
-    margin: 12px auto 0 !important;
-    padding: 10px 30px 0 !important;
+    margin: 0 auto !important;
+    padding: 0 30px !important;
     box-sizing: border-box;
     overflow-x: hidden;
     overflow-y: visible !important;
@@ -5178,6 +5193,7 @@ html.axonos-mic-live::after {
   font-size: 13px;
   padding: 6px 10px;
 }
+
 /* ==========================================================================
    AxonOS v2 design layer (ported from axonos-web / Claude Design prototype)
    Landing structure: topbar · hero + dotted globe · catalog + session rail ·
@@ -5228,7 +5244,7 @@ html.noVNC_connected .axonos-landing-bg {
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  padding: 14px 0 6px;
+  padding: 20px 0;
 }
 
 .axonos-topbar__brand {
@@ -5275,12 +5291,19 @@ html.noVNC_connected .axonos-landing-bg {
   padding: 34px 0 12px;
 }
 
+@media (min-width: 993px) {
+  .axonos-hero {
+    padding: 38px 0 20px;
+    box-sizing: border-box;
+  }
+}
+
 .axonos-hero__globe {
   position: absolute;
-  top: -100px;
-  right: -40px;
-  width: 550px;
-  height: 550px;
+  top: -60px;
+  right: -30px;
+  width: 620px;
+  height: 620px;
   max-width: 52vw;
   pointer-events: none;
   z-index: 1;
@@ -5290,6 +5313,36 @@ html.noVNC_connected .axonos-landing-bg {
   width: 100%;
   height: 100%;
   display: block;
+}
+
+.axonos-loader-quote {
+  margin-top: 32px;
+  text-align: center;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  padding-top: 20px;
+  width: 100%;
+  max-width: 320px;
+}
+
+.axonos-loader-quote p {
+  font-family: var(--font-body);
+  font-size: 13.5px;
+  font-weight: 450;
+  line-height: 1.55;
+  color: #878da6;
+  margin: 0;
+  font-style: italic;
+}
+
+.axonos-loader-quote cite {
+  display: block;
+  margin-top: 8px;
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cyan);
+  letter-spacing: 0.06em;
+  font-style: normal;
 }
 
 .axonos-hero__copy {
@@ -5319,8 +5372,17 @@ html.noVNC_connected .axonos-landing-bg {
 }
 
 @keyframes axonos-pulse-dot {
-  0%, 100% { opacity: 0.55; transform: scale(0.8); }
-  50% { opacity: 1; transform: scale(1); }
+
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.8);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .axonos-hero__title {
@@ -5726,6 +5788,7 @@ html.noVNC_connected .axonos-landing-bg {
 }
 
 @media (prefers-reduced-motion: reduce) {
+
   .axonos-hero__badge-dot,
   .axonos-rail-pulse {
     animation: none;
@@ -5790,4 +5853,1935 @@ html.noVNC_connected .axonos-landing-bg {
 #axonos_retry_connect_error_btn:hover,
 #axonos_verify_deposit_btn:hover {
   filter: brightness(1.08);
+}
+
+/* ==========================================================================
+   AxonOS Screen States and Layout Visibility
+   ========================================================================== */
+#noVNC_connect_dlg.axonos-state-landing .axonos-view-landing {
+  display: block !important;
+}
+
+#noVNC_connect_dlg.axonos-state-landing .axonos-view-dashboard {
+  display: none !important;
+}
+
+#noVNC_connect_dlg.axonos-state-landing .axonos-view-wizard {
+  display: none !important;
+}
+
+#noVNC_connect_dlg.axonos-state-landing .axonos-hero {
+  display: block !important;
+}
+
+#noVNC_connect_dlg.axonos-state-dashboard .axonos-view-landing {
+  display: none !important;
+}
+
+#noVNC_connect_dlg.axonos-state-dashboard .axonos-view-dashboard {
+  display: block !important;
+}
+
+#noVNC_connect_dlg.axonos-state-dashboard .axonos-view-wizard {
+  display: none !important;
+}
+
+#noVNC_connect_dlg.axonos-state-dashboard .axonos-hero {
+  display: none !important;
+}
+
+#noVNC_connect_dlg.axonos-state-wizard .axonos-view-landing {
+  display: none !important;
+}
+
+#noVNC_connect_dlg.axonos-state-wizard .axonos-view-dashboard {
+  display: none !important;
+}
+
+#noVNC_connect_dlg.axonos-state-wizard .axonos-view-wizard {
+  display: block !important;
+}
+
+#noVNC_connect_dlg.axonos-state-wizard .axonos-hero {
+  display: none !important;
+}
+
+#noVNC_connect_dlg:not(.axonos-state-landing):not(.axonos-state-dashboard):not(.axonos-state-wizard) .axonos-view-landing {
+  display: block !important;
+}
+
+#noVNC_connect_dlg:not(.axonos-state-landing):not(.axonos-state-dashboard):not(.axonos-state-wizard) .axonos-view-dashboard {
+  display: none !important;
+}
+
+#noVNC_connect_dlg:not(.axonos-state-landing):not(.axonos-state-dashboard):not(.axonos-state-wizard) .axonos-view-wizard {
+  display: none !important;
+}
+
+#noVNC_connect_dlg:not(.axonos-state-landing):not(.axonos-state-dashboard):not(.axonos-state-wizard) .axonos-hero {
+  display: block !important;
+}
+
+#noVNC_connect_dlg.axonos-state-landing .axonos-footer-banner {
+  display: flex !important;
+}
+
+#noVNC_connect_dlg:not(.axonos-state-landing):not(.axonos-state-dashboard):not(.axonos-state-wizard) .axonos-footer-banner {
+  display: flex !important;
+}
+
+.axonos-footer-banner {
+  position: relative;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  box-sizing: border-box;
+  padding: 54px 30px 44px;
+  font-size: 12.5px;
+  color: #5c6280;
+  z-index: 10;
+  font-family: var(--font-body);
+  pointer-events: auto;
+  gap: 0 16px;
+  line-height: 1;
+}
+
+/* ==========================================================================
+   Stepper & Launch Wizard Styles
+   ========================================================================== */
+.axonos-wizard-container {
+  width: 100%;
+  max-width: 1280px;
+  margin: 10px auto 0;
+  padding: 0 10px;
+}
+
+.axonos-wizard-stepper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 10px 0 32px;
+}
+
+.axonos-wizard-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  opacity: 0.45;
+  transition: opacity 0.25s ease;
+}
+
+.axonos-wizard-step.active {
+  opacity: 1;
+}
+
+.axonos-wizard-step.completed {
+  opacity: 0.85;
+}
+
+.axonos-wizard-step__dot {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--axonos-light);
+  transition: background-color 0.25s, border-color 0.25s, color 0.25s;
+}
+
+.axonos-wizard-step.active .axonos-wizard-step__dot {
+  background: rgba(123, 108, 255, 0.16);
+  border-color: var(--axonos-accent);
+  color: #cfc9ff;
+  box-shadow: 0 0 12px rgba(123, 108, 255, 0.25);
+}
+
+.axonos-wizard-step.completed .axonos-wizard-step__dot {
+  background: rgba(79, 224, 192, 0.12);
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.axonos-wizard-step__label {
+  font-family: var(--font-body);
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--axonos-light);
+}
+
+.axonos-wizard-step.active .axonos-wizard-step__label {
+  font-weight: 600;
+}
+
+.axonos-wizard-step__line {
+  width: 50px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  transition: background-color 0.25s;
+}
+
+.axonos-wizard-step__line.active {
+  background: var(--axonos-accent);
+}
+
+/* Wizard Layout columns */
+.axonos-wizard-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 350px;
+  gap: 26px;
+  align-items: start;
+}
+
+@media (max-width: 992px) {
+  .axonos-wizard-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .axonos-wizard-rail {
+    position: static !important;
+    width: 100% !important;
+  }
+}
+
+.axonos-wizard-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.axonos-wizard-pane {
+  display: none;
+  animation: axRise 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.axonos-wizard-pane.active {
+  display: block;
+}
+
+.axonos-wizard-title {
+  margin: 0 0 4px;
+  font-family: var(--font-body);
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #f1f2f8;
+}
+
+.axonos-wizard-subtitle {
+  margin: 0 0 22px;
+  font-size: 0.85rem;
+  color: #8b91aa;
+  font-weight: 300;
+}
+
+/* Step 2 GPU selection cards */
+.axonos-gpu-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.axonos-gpu-cards-note {
+  margin: 0 0 22px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #878da6;
+  font-weight: 300;
+  font-family: var(--font-body);
+}
+
+@media (max-width: 600px) {
+  .axonos-gpu-cards-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.axonos-gpu-card {
+  text-align: left;
+  cursor: pointer;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.012));
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 165px;
+  transition: border-color 0.25s, background-color 0.25s, box-shadow 0.25s, transform 0.2s;
+  outline: none;
+}
+
+.axonos-gpu-card:hover {
+  border-color: rgba(123, 108, 255, 0.3);
+  background: linear-gradient(180deg, rgba(123, 108, 255, 0.04), rgba(255, 255, 255, 0.012));
+  transform: translateY(-1px);
+}
+
+.axonos-gpu-card.selected {
+  border-color: var(--axonos-accent) !important;
+  background: rgba(123, 108, 255, 0.08) !important;
+  box-shadow: 0 0 14px rgba(123, 108, 255, 0.2) !important;
+}
+
+.axonos-gpu-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.axonos-gpu-card__title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.axonos-gpu-card__name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #f1f2f8;
+}
+
+.axonos-gpu-card__popular {
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: #1a1330;
+  background: #b7a6ff;
+  padding: 2px 6px;
+  border-radius: 5px;
+}
+
+.axonos-gpu-card__spec {
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: #8b91aa;
+}
+
+.axonos-gpu-card__check {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  color: transparent;
+  transition: background-color 0.2s, border-color 0.2s, color 0.2s;
+}
+
+.axonos-gpu-card.selected .axonos-gpu-card__check {
+  background-color: var(--axonos-accent);
+  border-color: var(--axonos-accent);
+  color: #fff;
+}
+
+.axonos-gpu-card__specs-row {
+  display: flex;
+  gap: 18px;
+  margin-top: 14px;
+}
+
+.axonos-gpu-card__spec-item {
+  display: flex;
+  flex-direction: column;
+}
+
+.axonos-gpu-card__spec-label {
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  color: #6b7187;
+  text-transform: uppercase;
+}
+
+.axonos-gpu-card__spec-value {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: #d7dae6;
+  margin-top: 2px;
+}
+
+.axonos-gpu-card__rate-row {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.axonos-gpu-card__rate {
+  font-family: var(--font-mono);
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: #cfc9ff;
+}
+
+.axonos-gpu-card__rate-label {
+  font-size: 0.75rem;
+  color: #8b91aa;
+}
+
+/* Storage volume range slider */
+.axonos-storage-slider-wrap {
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01));
+  padding: 20px;
+  margin-bottom: 14px;
+}
+
+.axonos-storage-slider-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.axonos-storage-slider-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #edeff6;
+}
+
+.axonos-storage-slider-val {
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #cfc9ff;
+}
+
+.axonos-storage-slider-desc {
+  font-size: 0.78rem;
+  color: #878da6;
+  font-weight: 300;
+  margin-bottom: 16px;
+  line-height: 1.45;
+}
+
+.axonos-storage-slider {
+  width: 100%;
+  accent-color: var(--axonos-accent);
+  cursor: pointer;
+  height: 6px;
+  border-radius: 99px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.axonos-storage-slider-limits {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 0.7rem;
+  color: #6b7187;
+  font-family: var(--font-mono);
+}
+
+/* SSH toggle option card */
+.axonos-ssh-card-toggle {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.022);
+  padding: 16px 18px;
+  cursor: pointer;
+  transition: border-color 0.2s, background-color 0.2s;
+}
+
+.axonos-ssh-card-toggle:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.axonos-ssh-card-toggle__switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 20px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.1);
+  transition: background-color 0.2s;
+  margin-top: 2px;
+}
+
+.axonos-ssh-card-toggle.checked .axonos-ssh-card-toggle__switch {
+  background: linear-gradient(90deg, #6a57f2, #8b7cff);
+}
+
+.axonos-ssh-card-toggle__knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s ease;
+}
+
+.axonos-ssh-card-toggle.checked .axonos-ssh-card-toggle__knob {
+  transform: translateX(18px);
+}
+
+.axonos-ssh-card-toggle__title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #e6e9f2;
+}
+
+.axonos-ssh-card-toggle__desc {
+  margin-top: 3px;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: #878da6;
+  font-weight: 300;
+}
+
+/* Pay tokens selection bar */
+.axonos-wizard-token-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.22);
+  margin-bottom: 18px;
+}
+
+.axonos-wizard-token-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: none;
+  background: none;
+  border-radius: 9px;
+  padding: 8px;
+  color: #9aa0ba;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+.axonos-wizard-token-tab:hover {
+  color: #e2e5f0;
+}
+
+.axonos-wizard-token-tab.active {
+  background: rgba(255, 255, 255, 0.05);
+  color: #e2e5f0;
+}
+
+.axonos-wizard-token-tab__badge {
+  font-size: 0.6rem;
+  font-weight: 600;
+  color: #1a1330;
+  background: var(--green);
+  padding: 2px 5px;
+  border-radius: 4px;
+  margin-left: 2px;
+}
+
+/* Amount inputs and calculator specs */
+.axonos-deposit-input-card {
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01));
+  padding: 22px;
+  margin-bottom: 18px;
+}
+
+.axonos-deposit-input-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #8b91aa;
+  margin-bottom: 10px;
+  text-transform: uppercase;
+}
+
+.axonos-deposit-input-field-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.28);
+  border-radius: 13px;
+  padding: 12px 16px;
+}
+
+.axonos-deposit-input-field {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  color: #f1f2f8;
+  font-size: 1.35rem;
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+
+.axonos-deposit-input-ticker {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #a6acc2;
+  padding: 6px 12px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.axonos-deposit-quick-grid {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.axonos-deposit-quick-btn {
+  flex: 1;
+  padding: 9px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  color: #c7cce0;
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s, border-color 0.2s;
+}
+
+.axonos-deposit-quick-btn:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.axonos-deposit-calc-rows {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  font-size: 0.8rem;
+}
+
+.axonos-deposit-calc-row {
+  display: flex;
+  justify-content: space-between;
+  color: #9097b0;
+}
+
+.axonos-deposit-calc-row__val {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: #e6e9f2;
+}
+
+.axonos-deposit-calc-row__val--purple {
+  color: #cfc9ff;
+  font-size: 0.9rem;
+}
+
+.axonos-deposit-calc-row--bonus {
+  color: var(--green);
+}
+
+/* Pay launch footer card banner */
+.axonos-pay-banner {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 14px;
+  border-radius: 13px;
+  border: 1px solid rgba(79, 224, 192, 0.2);
+  background: rgba(79, 224, 192, 0.06);
+  margin-bottom: 14px;
+}
+
+.axonos-pay-banner__icon {
+  flex: 0 0 auto;
+  color: var(--green);
+  display: flex;
+}
+
+.axonos-pay-banner__text {
+  font-size: 0.78rem;
+  color: #a9d9ce;
+  font-weight: 300;
+  line-height: 1.45;
+}
+
+.axonos-pay-banner__highlight {
+  color: #cff3ea;
+  font-weight: 600;
+}
+
+/* Wizard summary rail elements */
+.axonos-wizard-rail {
+  position: sticky;
+  top: 20px;
+}
+
+.axonos-rail-card {
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.012));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  overflow: hidden;
+  box-shadow: 0 30px 80px -40px rgba(0, 0, 0, 0.7);
+}
+
+.axonos-rail-header {
+  padding: 20px 22px 0;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  color: #8b91aa;
+  text-transform: uppercase;
+}
+
+.axonos-rail-body {
+  padding: 16px 22px;
+  display: flex;
+  flex-direction: column;
+}
+
+.axonos-rail-item {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.axonos-rail-item:last-child {
+  border-bottom: none;
+}
+
+.axonos-rail-item__icon-wrap {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  color: var(--axonos-light);
+}
+
+.axonos-rail-item__icon-wrap--purple {
+  background: rgba(123, 108, 255, 0.12);
+  border-color: rgba(123, 108, 255, 0.24);
+  color: #b7a6ff;
+}
+
+.axonos-rail-item__details {
+  flex: 1;
+  min-width: 0;
+}
+
+.axonos-rail-item__label {
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  color: #6b7187;
+  text-transform: uppercase;
+}
+
+.axonos-rail-item__value {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #edeff6;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.axonos-rail-item__subvalue {
+  font-size: 0.7rem;
+  color: #8b91aa;
+  font-family: var(--font-mono);
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.axonos-rail-item__flex-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+}
+
+.axonos-rail-item__inline-val {
+  font-family: var(--font-mono);
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #edeff6;
+}
+
+.axonos-rail-footer {
+  padding: 18px 22px;
+  background: rgba(0, 0, 0, 0.22);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.axonos-rail-footer__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: #9097b0;
+  margin-bottom: 8px;
+}
+
+.axonos-rail-footer__row:last-of-type {
+  margin-bottom: 0;
+}
+
+.axonos-rail-footer__val {
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #cfc9ff;
+}
+
+.axonos-rail-footer__val-sub {
+  font-size: 0.7rem;
+  color: #8b91aa;
+}
+
+.axonos-rail-footer__val--light {
+  color: #e6e9f2;
+}
+
+.axonos-rail-action-btn {
+  margin-top: 14px !important;
+  width: 100%;
+  border: none !important;
+  border-radius: 12px !important;
+  padding: 12px 18px !important;
+  font-family: var(--font-body);
+  font-size: 0.88rem !important;
+  font-weight: 600 !important;
+  color: #fff !important;
+  -webkit-text-fill-color: #fff !important;
+  background: var(--grad-primary) !important;
+  box-shadow: var(--shadow-primary) !important;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: filter 0.2s, transform 0.2s, box-shadow 0.2s !important;
+}
+
+.axonos-rail-action-btn:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+.axonos-rail-action-btn svg {
+  flex-shrink: 0;
+  color: #fff;
+}
+
+.axonos-rail-action-hint {
+  margin-top: 10px;
+  text-align: center;
+  font-size: 0.72rem;
+  color: #6b7187;
+  line-height: 1.4;
+}
+
+/* Back button in wizard content */
+.axonos-wizard-back-btn {
+  background: none;
+  border: none;
+  color: #9097b0;
+  font-size: 0.85rem;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  padding: 4px;
+  transition: color 0.2s;
+}
+
+.axonos-wizard-back-btn:hover {
+  color: #c7cce0;
+}
+
+.axonos-wizard-back-btn svg {
+  color: inherit;
+}
+
+/* ==========================================================================
+   User Dashboard Layout Styles
+   ========================================================================== */
+.axonos-dashboard-container {
+  width: 100%;
+  max-width: 1280px;
+  margin: 10px auto 0;
+  padding: 0 10px 40px;
+}
+
+.axonos-dashboard-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-bottom: 28px;
+}
+
+.axonos-dashboard-header__tag {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: #7b8199;
+  text-transform: uppercase;
+}
+
+.axonos-dashboard-title {
+  margin: 10px 0 0;
+  font-family: var(--font-body);
+  font-size: 2.2rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: #f4f5fb;
+  line-height: 1.1;
+}
+
+.axonos-dashboard-new-btn {
+  border: none !important;
+  border-radius: 13px !important;
+  padding: 12px 20px !important;
+  font-family: var(--font-body);
+  font-size: 0.88rem !important;
+  font-weight: 600 !important;
+  color: #fff !important;
+  -webkit-text-fill-color: #fff !important;
+  background: var(--grad-primary) !important;
+  box-shadow: 0 12px 30px -12px rgba(123, 108, 255, 0.9) !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  transition: filter 0.2s, transform 0.2s, box-shadow 0.2s !important;
+}
+
+.axonos-dashboard-new-btn:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+.axonos-dashboard-new-btn svg {
+  color: inherit;
+}
+
+.axonos-dashboard-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 36px;
+}
+
+@media (max-width: 768px) {
+  .axonos-dashboard-stats-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.axonos-dashboard-stat-card {
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.012));
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+}
+
+.axonos-dashboard-stat-card--accent {
+  border-color: rgba(123, 108, 255, 0.24);
+  background: linear-gradient(180deg, rgba(123, 108, 255, 0.1), rgba(255, 255, 255, 0.012));
+}
+
+.axonos-dashboard-stat-card__label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: #8b91aa;
+  text-transform: uppercase;
+}
+
+.axonos-dashboard-stat-card--accent .axonos-dashboard-stat-card__label {
+  color: #9aa0bd;
+}
+
+.axonos-dashboard-stat-card__value-row {
+  margin-top: 12px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.axonos-dashboard-stat-card__value {
+  font-family: var(--font-mono);
+  font-size: 2rem;
+  font-weight: 600;
+  color: #f1f2f8;
+  letter-spacing: -0.02em;
+}
+
+.axonos-dashboard-stat-card__value-unit {
+  font-size: 0.8rem;
+  color: #8b91aa;
+}
+
+.axonos-dashboard-stat-card__action-btn {
+  align-self: flex-start;
+  margin-top: 16px;
+  border: 1px solid rgba(123, 108, 255, 0.4) !important;
+  background: rgba(123, 108, 255, 0.14) !important;
+  color: #cfc9ff !important;
+  -webkit-text-fill-color: #cfc9ff !important;
+  border-radius: 10px !important;
+  padding: 8px 14px !important;
+  font-size: 0.78rem !important;
+  font-weight: 600 !important;
+  cursor: pointer;
+  transition: background-color 0.2s, transform 0.2s !important;
+}
+
+.axonos-dashboard-stat-card__action-btn:hover {
+  background: rgba(123, 108, 255, 0.22) !important;
+}
+
+.axonos-dashboard-stat-card__desc {
+  margin-top: 16px;
+  font-size: 0.78rem;
+  color: #878da6;
+  font-weight: 300;
+}
+
+.axonos-dashboard-stat-card__desc b {
+  color: #cfc9ff;
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.axonos-dashboard-stat-card__wallet-row {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.axonos-dashboard-stat-card__wallet-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 9px rgba(79, 224, 192, 0.7);
+}
+
+.axonos-dashboard-stat-card__wallet-addr {
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  color: #e6e9f2;
+}
+
+.axonos-dashboard-section-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: #7b8199;
+  margin: 40px 0 16px;
+  text-transform: uppercase;
+}
+
+/* Dashboard Sessions Grid and Cards */
+.axonos-session-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+}
+
+@media (max-width: 768px) {
+  .axonos-session-cards-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.axonos-session-card {
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.012));
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.axonos-session-card__top {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.axonos-session-card__icon-wrap {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  color: var(--axonos-light);
+}
+
+.axonos-session-card__icon-wrap svg {
+  width: 22px;
+  height: 22px;
+}
+
+.axonos-session-card__details {
+  flex: 1;
+  min-width: 0;
+}
+
+.axonos-session-card__name-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.axonos-session-card__name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #f1f2f8;
+}
+
+.axonos-session-card__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--green);
+  padding: 2px 7px;
+  border-radius: 99px;
+  background: rgba(79, 224, 192, 0.1);
+  border: 1px solid rgba(79, 224, 192, 0.24);
+}
+
+.axonos-session-card__status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+.axonos-session-card__specs {
+  margin-top: 3px;
+  font-size: 0.72rem;
+  color: #8b91aa;
+  font-family: var(--font-mono);
+}
+
+.axonos-session-card__bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.axonos-session-card__rate-desc {
+  font-size: 0.75rem;
+  color: #9097b0;
+}
+
+.axonos-session-card__rate-desc b {
+  color: #cfc9ff;
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.axonos-session-card__actions {
+  display: flex;
+  gap: 9px;
+}
+
+.axonos-session-card__btn {
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 0.78rem !important;
+  font-weight: 600 !important;
+  border-radius: 10px !important;
+  padding: 8px 14px !important;
+  transition: background-color 0.2s, transform 0.2s !important;
+}
+
+.axonos-session-card__btn--danger {
+  border: 1px solid rgba(255, 95, 87, 0.22) !important;
+  background: rgba(255, 95, 87, 0.06) !important;
+  color: #ff9a93 !important;
+  -webkit-text-fill-color: #ff9a93 !important;
+}
+
+.axonos-session-card__btn--danger:hover {
+  background: rgba(255, 95, 87, 0.12) !important;
+}
+
+.axonos-session-card__btn--primary {
+  border: none !important;
+  background: linear-gradient(180deg, #8b7cff, #6a57f2) !important;
+  color: #fff !important;
+  -webkit-text-fill-color: #fff !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.axonos-session-card__btn--primary:hover {
+  filter: brightness(1.08);
+}
+
+.axonos-session-card__btn--primary svg {
+  color: inherit;
+}
+
+/* Empty State Card */
+.axonos-dashboard-empty {
+  border-radius: 18px;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.015);
+  padding: 50px 30px;
+  text-align: center;
+}
+
+.axonos-dashboard-empty__icon-wrap {
+  width: 54px;
+  height: 54px;
+  margin: 0 auto 18px;
+  border-radius: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(123, 108, 255, 0.12);
+  border: 1px solid rgba(123, 108, 255, 0.28);
+  color: #b7a6ff;
+}
+
+.axonos-dashboard-empty__title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #f1f2f8;
+}
+
+.axonos-dashboard-empty__desc {
+  margin: 8px auto 22px;
+  max-width: 400px;
+  font-size: 0.78rem;
+  line-height: 1.6;
+  color: #9097b0;
+  font-weight: 300;
+}
+
+.axonos-dashboard-empty__btn {
+  border: none !important;
+  border-radius: 12px !important;
+  padding: 11px 22px !important;
+  font-family: var(--font-body);
+  font-size: 0.82rem !important;
+  font-weight: 600 !important;
+  color: #fff !important;
+  -webkit-text-fill-color: #fff !important;
+  background: linear-gradient(180deg, #8b7cff, #6a57f2) !important;
+  box-shadow: 0 12px 30px -12px rgba(123, 108, 255, 0.9) !important;
+  cursor: pointer;
+  transition: filter 0.2s, transform 0.2s !important;
+}
+
+.axonos-dashboard-empty__btn:hover {
+  filter: brightness(1.08);
+}
+
+/* ==========================================================================
+   Active Session Workspace sidebar & split view layout
+   ========================================================================== */
+html.noVNC_connected body {
+  overflow: hidden !important;
+}
+
+/* Connected viewer + telemetry rail.
+   NOTE: this build has no #noVNC_screen flex wrapper — #noVNC_container and
+   .axonos-session-sidebar are body siblings. So the rail is a fixed column on
+   the right and the viewer shrinks to leave room for it (reclaiming the full
+   width when the rail is collapsed). */
+html.noVNC_connected #noVNC_container {
+  width: calc(100% - 320px) !important;
+  height: 100% !important;
+  position: relative !important;
+  background: #0c0d15 !important;
+  overflow: auto !important;
+  transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Rail collapsed → viewer takes the whole width */
+html.noVNC_connected:has(.axonos-session-sidebar.collapsed) #noVNC_container {
+  width: 100% !important;
+}
+
+/* Telemetry rail — fixed right column over the connected viewer */
+.axonos-session-sidebar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 320px;
+  height: 100vh;
+  background: #0a0b12;
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  overflow-y: auto;
+  z-index: 50;
+  box-sizing: border-box;
+  transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1), padding 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s;
+}
+
+.axonos-session-sidebar.collapsed {
+  width: 0px !important;
+  padding: 0px !important;
+  opacity: 0;
+  border-left: none !important;
+  pointer-events: none;
+}
+
+/* Keep the billing HUD (wallet management) clear of the telemetry rail; it
+   still carries Switch/Sign-out actions the rail doesn't. Snaps back to the
+   corner when the rail is collapsed. */
+html.noVNC_connected .axonos-session-hud {
+  right: calc(332px + env(safe-area-inset-right, 0px)) !important;
+}
+
+html.noVNC_connected:has(.axonos-session-sidebar.collapsed) .axonos-session-hud {
+  right: calc(12px + env(safe-area-inset-right, 0px)) !important;
+}
+
+.axonos-session-sidebar__section {
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.012));
+  padding: 20px;
+}
+
+.axonos-session-sidebar__sec-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.axonos-session-sidebar__sec-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: #8b91aa;
+  text-transform: uppercase;
+}
+
+.axonos-session-sidebar__sec-val {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: #8b91aa;
+}
+
+.axonos-session-sidebar__sec-value-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.axonos-session-sidebar__sec-value {
+  font-family: var(--font-mono);
+  font-size: 2.2rem;
+  font-weight: 600;
+  color: #fff;
+  letter-spacing: -0.02em;
+}
+
+.axonos-session-sidebar__sec-value-unit {
+  font-size: 0.8rem;
+  color: #8b91aa;
+}
+
+.axonos-session-sidebar__sec-hint {
+  margin-top: 6px;
+  font-size: 0.78rem;
+  color: #9097b0;
+  line-height: 1.45;
+}
+
+.axonos-session-sidebar__sec-hint b {
+  color: #d7dae6;
+  font-weight: 600;
+}
+
+/* Progress bar inside sidebar */
+.axonos-sidebar-progress-track {
+  margin-top: 14px;
+  height: 6px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+  position: relative;
+}
+
+.axonos-sidebar-progress-bar {
+  height: 100%;
+  background: var(--grad-primary);
+  border-radius: 99px;
+  transition: width 0.3s ease;
+  width: 0%;
+}
+
+.axonos-sidebar-progress-bar--green {
+  background: var(--green) !important;
+}
+
+.axonos-sidebar-progress-bar--orange {
+  background: #ff5f57 !important;
+}
+
+/* Action button in sidebar */
+.axonos-sidebar-action-btn {
+  margin-top: 14px !important;
+  width: 100%;
+  border: none !important;
+  border-radius: 12px !important;
+  padding: 11px !important;
+  font-family: var(--font-body);
+  font-size: 0.82rem !important;
+  font-weight: 600 !important;
+  color: #fff !important;
+  -webkit-text-fill-color: #fff !important;
+  background: var(--grad-primary) !important;
+  box-shadow: none !important;
+  cursor: pointer;
+  transition: filter 0.2s !important;
+}
+
+.axonos-sidebar-action-btn:hover {
+  filter: brightness(1.08);
+}
+
+/* Telemetry list progress bars */
+.axonos-telemetry-list {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.axonos-telemetry-item {
+  display: flex;
+  flex-direction: column;
+}
+
+.axonos-telemetry-item__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+}
+
+.axonos-telemetry-item__label {
+  font-size: 0.78rem;
+  color: #a6acc2;
+}
+
+.axonos-telemetry-item__val {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #d7dae6;
+}
+
+/* Control buttons inside sidebar */
+.axonos-sidebar-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.axonos-sidebar-ctrl-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.axonos-sidebar-ctrl-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.axonos-sidebar-ctrl-btn__icon {
+  flex: 0 0 auto;
+  color: #a6acc2;
+  display: flex;
+}
+
+.axonos-sidebar-ctrl-btn__details {
+  display: flex;
+  flex-direction: column;
+}
+
+.axonos-sidebar-ctrl-btn__title {
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #e6e9f2;
+}
+
+.axonos-sidebar-ctrl-btn__desc {
+  font-size: 0.7rem;
+  color: #878da6;
+  font-weight: 300;
+  margin-top: 1px;
+}
+
+.axonos-sidebar-ctrl-btn--danger {
+  border-color: rgba(255, 95, 87, 0.22);
+  background: rgba(255, 95, 87, 0.06);
+}
+
+.axonos-sidebar-ctrl-btn--danger:hover {
+  background: rgba(255, 95, 87, 0.1);
+}
+
+.axonos-sidebar-ctrl-btn--danger .axonos-sidebar-ctrl-btn__icon {
+  color: #ff7a72;
+}
+
+.axonos-sidebar-ctrl-btn--danger .axonos-sidebar-ctrl-btn__title {
+  color: #ff9a93;
+}
+
+.axonos-sidebar-ctrl-btn--danger .axonos-sidebar-ctrl-btn__desc {
+  color: #b58783;
+}
+
+/* Sidebar collapse/expand toggle button */
+.axonos-sidebar-toggle {
+  position: absolute;
+  top: 12px;
+  right: 332px;
+  z-index: 100;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(8, 10, 18, 0.85);
+  backdrop-filter: blur(4px);
+  color: #a6acc2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: right 0.3s cubic-bezier(0.16, 1, 0.3, 1), color 0.2s, background-color 0.2s;
+}
+
+.axonos-sidebar-toggle:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+
+.axonos-sidebar-toggle.collapsed {
+  right: 12px !important;
+}
+
+.axonos-sidebar-toggle svg {
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.axonos-sidebar-toggle.collapsed svg {
+  transform: rotate(180deg);
+}
+
+/* Adjust control bar hints in full-screen */
+#noVNC_control_bar_hint {
+  z-index: 30 !important;
+}
+
+/* ==========================================================================
+   Boot Checklist Loader Progress Styles
+   ========================================================================== */
+.axonos-prep-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 14px;
+}
+
+.axonos-prep-step {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 11px 0;
+  opacity: 0.35;
+  transition: opacity 0.3s ease;
+}
+
+.axonos-prep-step.active {
+  opacity: 0.95;
+}
+
+.axonos-prep-step.completed {
+  opacity: 0.95;
+}
+
+.axonos-prep-step__icon {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--axonos-light);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.axonos-prep-step.active .axonos-prep-step__icon {
+  border-color: var(--axonos-accent);
+  color: #cfc9ff;
+  background: rgba(123, 108, 255, 0.1);
+  animation: axPulse 1.5s ease-in-out infinite;
+}
+
+.axonos-prep-step.completed .axonos-prep-step__icon {
+  border-color: var(--green);
+  color: var(--green);
+  background: rgba(79, 224, 192, 0.1);
+}
+
+.axonos-prep-step__label {
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  color: #9097b0;
+  font-weight: 300;
+}
+
+.axonos-prep-step.active .axonos-prep-step__label {
+  font-weight: 500;
+  color: #f2f3f9;
+}
+
+.axonos-prep-step.completed .axonos-prep-step__label {
+  color: #9097b0;
+}
+
+/* Hide sidebar and toggle when not connected */
+.axonos-session-sidebar,
+.axonos-sidebar-toggle {
+  display: none !important;
+}
+
+html.noVNC_connected .axonos-session-sidebar {
+  display: flex !important;
+}
+
+html.noVNC_connected .axonos-sidebar-toggle {
+  display: flex !important;
+}
+
+/* Landing screen session rail and layout alignment */
+#noVNC_connect_dlg:not(.axonos-state-dashboard):not(.axonos-state-wizard) .axonos-connect-wrapper {
+  display: none !important;
+}
+
+#noVNC_connect_dlg:not(.axonos-state-dashboard):not(.axonos-state-wizard) .axonos-landing-main {
+  display: block !important;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+/* Global top bar layout & components styling */
+/* The topbar lives INSIDE #noVNC_connect_dlg (already max-width 1280px with
+   30px side padding on desktop), so it must not re-add width/padding of its
+   own — that double-indented the brand vs the hero/content below. */
+.axonos-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 0;
+  position: relative;
+  z-index: 20;
+}
+
+.axonos-topbar__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.axonos-topbar-network {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 99px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.022);
+  font-size: 12.5px;
+  color: #a6acc2;
+}
+
+.axonos-topbar-network-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4fe0c0;
+  box-shadow: 0 0 10px rgba(79, 224, 192, 0.7);
+  flex: 0 0 auto;
+}
+
+/* Testnet variant: gold dot + tinted border as a caution cue */
+.axonos-topbar-network--testnet {
+  border-color: rgba(242, 193, 78, 0.4);
+  color: #e8d5a0;
+}
+
+.axonos-topbar-network--testnet .axonos-topbar-network-dot {
+  background: #f2c14e;
+  box-shadow: 0 0 10px rgba(242, 193, 78, 0.7);
+}
+
+/* Brand is an in-app home button; keep it looking like the plain brand */
+button.axonos-topbar__brand {
+  background: none;
+  border: none;
+  padding: 0;
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.axonos-topbar__brand:hover .axonos-main-title {
+  filter: brightness(1.1);
+}
+
+/* ⓘ tooltip inside the network pills: explains the L1 (AXGT/ETH) vs
+   L2 Base (USDC) split. Pure CSS bubble, keyboard-focusable. */
+.axonos-pill-info {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 7px;
+  font-size: 12px;
+  line-height: 1;
+  color: #6b7187;
+  cursor: help;
+  outline: none;
+  transition: color 0.15s ease;
+}
+
+.axonos-pill-info:hover,
+.axonos-pill-info:focus-visible {
+  color: #c7cce0;
+}
+
+.axonos-pill-info::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 12px);
+  right: -14px;
+  width: 250px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(170deg, rgba(24, 26, 40, 0.98), rgba(13, 14, 24, 0.98));
+  box-shadow: 0 20px 50px -20px rgba(0, 0, 0, 0.8);
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: #c7cce0;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: normal;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-4px);
+  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+  pointer-events: none;
+  z-index: 120;
+}
+
+.axonos-pill-info:hover::after,
+.axonos-pill-info:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+/* Footer version stamp doubles as the marketing-site link (axonos.io) */
+.axonos-footer-version-link {
+  color: inherit;
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.axonos-footer-version-link:hover {
+  color: #a9a2ff;
+  text-decoration: underline;
+}
+
+/* Topbar secondary nav (Docs) — ghost pill, same vocabulary as the hero's
+   "Browse environments" button, so the gradient stays unique to Connect wallet */
+.axonos-topbar-ghost {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 99px;
+  padding: 10px 20px;
+  font-family: var(--font-body);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #d7dae6;
+  text-decoration: none;
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+  transition: background 0.18s ease;
+}
+
+.axonos-topbar-ghost:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Topbar primary CTA (Connect wallet) — prototype gradient pill */
+.axonos-topbar-cta {
+  display: inline-flex;
+  align-items: center;
+  border: none;
+  border-radius: 99px;
+  padding: 10px 20px;
+  font-family: var(--font-body);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #fff;
+  text-decoration: none;
+  background: linear-gradient(180deg, #8b7cff, #6a57f2);
+  box-shadow: 0 10px 24px -12px rgba(123, 108, 255, 0.9);
+  cursor: pointer;
+  transition: filter 0.18s ease;
+}
+
+.axonos-topbar-cta:hover {
+  filter: brightness(1.08);
+}
+
+.axonos-topbar-credits {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 99px;
+  border: 1px solid rgba(123, 108, 255, 0.3);
+  background: rgba(123, 108, 255, 0.1);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #cfc9ff;
+}
+
+.axonos-topbar-wallet-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 13px;
+  border-radius: 99px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: #c7cce0;
+  cursor: pointer;
+  outline: none;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.axonos-topbar-wallet-btn:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.axonos-topbar-wallet-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4fe0c0;
+}
+
+/* Responsive grid for featured templates (4 columns on desktop, wrapping on smaller screens) */
+.axonos-featured-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  width: 100%;
+}
+
+@media (min-width: 600px) {
+  .axonos-featured-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 992px) {
+  .axonos-featured-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
 }

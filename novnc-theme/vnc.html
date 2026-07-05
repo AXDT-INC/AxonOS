@@ -108,7 +108,7 @@ Copyright (C) 2019 The noVNC Authors
     </script>
     <script src="app/error-handler.js"></script>
     <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
-    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260613k"></script>
+    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260705a"></script>
 </head>
 
 <body>
@@ -434,12 +434,49 @@ Copyright (C) 2019 The noVNC Authors
 
             <!-- Global top bar: brand + network pill -->
             <header class="axonos-topbar">
-                <div class="axonos-topbar__brand">
+                <!-- In-app home: pure screen switch (dashboard if a wallet is connected, else
+                     landing) — never navigates, so heartbeats/sessions are never disrupted.
+                     The marketing site link lives in the footer (axonos.io). -->
+                <button type="button" id="axonos_topbar_brand" class="axonos-topbar__brand" title="Home">
                     <img src="axon-x.png" alt="Axon" class="axonos-topbar__logo">
                     <h1 class="axonos-main-title">Axon<span class="axonos-highlight">OS</span></h1>
                     <span class="axonos-beta-chip">BETA</span>
-                </div>
+                </button>
                 <div class="axonos-topbar__meta">
+                    <!-- Network pills: filled by applyAxonosNetworkEnvironmentUi() from /api/config.
+                         Ethereum (L1: AXGT/ETH rails, AXGT_CHAIN_ID) + Base (L2: USDC rail, USDC_CHAIN_ID). -->
+                    <div id="axonos_topbar_network" class="axonos-topbar-network" translate="no">
+                        <span class="axonos-topbar-network-dot"></span><span
+                            id="axonos_topbar_network_label">Ethereum Mainnet</span><span
+                            class="axonos-pill-info" tabindex="0" aria-label="Why Ethereum?"
+                            data-tip="AXGT and ETH payments settle on Ethereum (L1). USDC is separate — it settles on Base (L2).">ⓘ</span>
+                    </div>
+                    <div id="axonos_topbar_network_base" class="axonos-topbar-network" translate="no"
+                        style="display: none;">
+                        <span class="axonos-topbar-network-dot"></span><span
+                            id="axonos_topbar_network_base_label">Base Mainnet</span><span
+                            class="axonos-pill-info" tabindex="0" aria-label="Why Base?"
+                            data-tip="USDC payments settle on Base (L2), not Ethereum — your wallet switches to Base when you pay with USDC.">ⓘ</span>
+                    </div>
+                    <div id="axonos_topbar_user_wrap" style="display: none; align-items: center; gap: 10px;">
+                        <div class="axonos-topbar-credits">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                                <path d="M12 2 4 13h6l-1 9 9-12h-6l1-8z" fill="#B7A6FF" />
+                            </svg>
+                            <span id="axonos_topbar_credits_val">0</span> credits
+                        </div>
+                        <button type="button" id="axonos_topbar_wallet_btn" class="axonos-topbar-wallet-btn">
+                            <span class="axonos-topbar-wallet-dot"></span>
+                            <span id="axonos_topbar_wallet_addr">—</span>
+                        </button>
+                    </div>
+                    <!-- Secondary nav: ghost style so Connect wallet stays the single primary CTA.
+                         New tab on purpose: same-tab navigation unloads the page and kills
+                         session heartbeats. -->
+                    <a href="https://docs.axonos.io" target="_blank" rel="noopener noreferrer"
+                        class="axonos-topbar-ghost">Docs</a>
+                    <button type="button" id="axonos_topbar_connect_btn" class="axonos-topbar-cta">Connect
+                        wallet</button>
                 </div>
             </header>
 
@@ -456,8 +493,8 @@ Copyright (C) 2019 The noVNC Authors
                         virtualization, no setup. Pick an environment, choose your hardware, and pay by the minute in
                         crypto.</p>
                     <div class="axonos-hero__ctas">
-                        <button type="button" id="axonos_hero_launch_btn" class="axonos-cta axonos-cta--primary">Launch
-                            GPU desktop<svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <button type="button" id="axonos_hero_launch_btn" class="axonos-cta axonos-cta--primary">Connect
+                            wallet<svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                                 <path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2"
                                     stroke-linecap="round" stroke-linejoin="round" />
                             </svg></button>
@@ -465,10 +502,11 @@ Copyright (C) 2019 The noVNC Authors
                             environments</button>
                     </div>
                     <p id="axonos_session_storage_hint" class="axonos-hero__note">
-                        Sessions are <strong>ephemeral</strong> — files and changes
-                        are NOT saved between sessions. Credits are consumed per GPU per wall-clock minute while active.
+                        Sessions feature <strong>persistent storage</strong> — files in your home folder are
+                        automatically saved for your wallet address between sessions (billed per GB/hour while stored).
+                        Credits are consumed per GPU per wall-clock minute while active.
                         Top up before expiry (or within 2 hours after) to keep your running session alive. Unused
-                        credits remain unspent for subsequent sessions. Persistent storage coming soon.</p>
+                        credits remain unspent for subsequent sessions.</p>
                 </div>
             </section>
 
@@ -477,208 +515,167 @@ Copyright (C) 2019 The noVNC Authors
                 aria-live="polite"></p>
 
             <!-- Main: environment catalog (left) + session rail (right) -->
-            <div class="axonos-landing-main">
+            <div class="axonos-landing-main axonos-view-landing">
 
-            <!-- Left column: environments and About content -->
-            <div class="axonos-hero-panel">
-
-                <div class="axonos-section-head">
-                    <div class="axonos-section-head__kick">READY-TO-RUN ENVIRONMENTS</div>
-                    <div class="axonos-section-head__title">Curated stacks. Zero setup.</div>
-                </div>
-
-                <!-- Tab Headers -->
-                <div class="axonos-tabs-nav">
-                    <button type="button" class="axonos-tab-btn active" id="axonos_tab_btn_templates"
-                        data-tab="templates">Science Templates</button>
-                    <button type="button" class="axonos-tab-btn" id="axonos_tab_btn_about" data-tab="about">About
-                        AxonOS</button>
-                </div>
-
-                <!-- Tab Content panes -->
-                <div class="axonos-tabs-content">
-                    <!-- Templates View -->
-                    <div class="axonos-tab-pane active" id="tab-templates">
-                        <div class="axonos-templates-controls">
-                            <div class="axonos-search-wrap">
-                                <input type="text" id="axonos_template_search" class="axonos-templates-search-input"
-                                    placeholder="Search scientific templates (e.g. PyTorch, GROMACS)..."
-                                    autocomplete="off" spellcheck="false" />
-                            </div>
-                            <div class="axonos-filter-pills" id="axonos_filter_pills">
-                                <button type="button" class="axonos-filter-pill active" data-category="all">All</button>
-                                <button type="button" class="axonos-filter-pill" data-category="ai-ml">AI / ML</button>
-                                <button type="button" class="axonos-filter-pill" data-category="bio-chem">Bio /
-                                    Chem</button>
-                                <button type="button" class="axonos-filter-pill" data-category="data-science">Data
-                                    Science</button>
-                                <button type="button" class="axonos-filter-pill" data-category="physics-quantum">Physics
-                                    / Quantum</button>
-                            </div>
+                <!-- READY-TO-RUN ENVIRONMENTS (matching axonos-web) -->
+                <div class="axonos-ready-envs-section"
+                    style="max-width: 1280px; margin: 0 auto; padding: 46px 0 0; width: 100%;">
+                    <div
+                        style="display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 18px;">
+                        <div>
+                            <div style="font-size: 12px; font-weight: 600; letter-spacing: .14em; color: #7B8199;">
+                                READY-TO-RUN ENVIRONMENTS</div>
+                            <div
+                                style="margin-top: 6px; font-size: 22px; font-weight: 600; color: #EDEFF6; letter-spacing: -.01em;">
+                                Curated stacks. Zero setup.</div>
                         </div>
-                        <div class="axonos-templates-grid" id="axonos_templates_grid">
-                            <!-- Populated programmatically in ui.js to prevent unsafe HTML injection -->
-                        </div>
-                    </div>
-
-                    <!-- About View -->
-                    <div class="axonos-tab-pane" id="tab-about">
-                        <!-- Mission Statement -->
-                        <div class="axonos-mission">
-                            <p class="axonos-mission-text">
-                                ⚡ <strong>GPU-Native</strong> • 🖥️ <strong>Full Desktop</strong> • 🚀 <strong>Raw
-                                    Performance</strong>
-                            </p>
-                            <p class="axonos-subtitle">
-                                Direct driver passthrough. No virtualization overhead. Your GPU. Your Desktop.
-                            </p>
-                        </div>
-                        <!-- Feature Highlights -->
-                        <div class="axonos-features">
-                            <div class="axonos-feature">
-                                <div class="axonos-feature-icon">⚡</div>
-                                <div class="axonos-feature-text">GPU-Native</div>
-                            </div>
-                            <div class="axonos-feature">
-                                <div class="axonos-feature-icon">🔬</div>
-                                <div class="axonos-feature-text">Scientific Tools</div>
-                            </div>
-                            <div class="axonos-feature">
-                                <div class="axonos-feature-icon">🧠</div>
-                                <div class="axonos-feature-text">AI Assistant</div>
-                            </div>
-                            <div class="axonos-feature">
-                                <div class="axonos-feature-icon">🖥️</div>
-                                <div class="axonos-feature-text">Full Desktop</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Right Column: Connect Pane (sticky session rail) -->
-            <div class="axonos-connect-wrapper">
-                <div class="axonos-rail-kick">YOUR SESSION</div>
-                <!-- Selected template banner -->
-                <div class="axonos-selected-template-banner" id="axonos_selected_template_banner">
-                    <span class="axonos-selected-template-label">Environment</span>
-                    <div class="axonos-selected-template-title-wrap">
-                        <span class="axonos-selected-template-icon" id="axonos_selected_template_icon">🧬</span>
-                        <span class="axonos-selected-template-title" id="axonos_selected_template_title">AxonOS Default
-                            Desktop</span>
-                    </div>
-                </div>
-
-                <div id="axonos_resume_panel" class="axonos-resume-panel axonos-resume-panel--hidden"
-                    aria-live="polite">
-                    <p class="axonos-resume-panel__title">Your desktop is saved</p>
-                    <p id="axonos_resume_panel_detail" class="axonos-resume-panel__detail"></p>
-                    <p id="axonos_resume_panel_ttl" class="axonos-resume-panel__ttl"></p>
-                </div>
-                <div id="axonos_profile_picker_wrap" class="axonos-profile-picker" role="group"
-                    aria-label="GPU profile selection">
-                    <label class="axonos-profile-picker__label" for="axonos_profile_select">GPU profile</label>
-                    <select id="axonos_profile_select" class="axonos-profile-picker__select">
-                        <option value="small">Small (1 GPU)</option>
-                        <option value="medium">Medium (2 GPUs)</option>
-                        <option value="large">Large (4 GPUs)</option>
-                        <option value="max">Max (8 GPUs)</option>
-                    </select>
-                    <p id="axonos_profile_burn_hint" class="axonos-profile-picker__hint" aria-live="polite"></p>
-                </div>
-                <!-- Direct SSH toggle: launches a headless GPU shell over SSH and
-                     bypasses the browser desktop/WebRTC viewer entirely. -->
-                <div id="axonos_ssh_toggle_wrap" class="axonos-ssh-toggle" role="group" aria-label="Direct SSH access">
-                    <label class="axonos-ssh-toggle__row">
-                        <input type="checkbox" id="axonos_ssh_toggle" class="axonos-ssh-toggle__input" />
-                        <span class="axonos-ssh-toggle__text">
-                            <span class="axonos-ssh-toggle__title">Direct SSH access</span>
-                            <span class="axonos-ssh-toggle__desc">Headless GPU shell over SSH instead of the
-                                desktop — full scp/sftp and port forwarding, no browser viewer.</span>
-                        </span>
-                    </label>
-                    <div id="axonos_ssh_key_wrap" class="axonos-ssh-key axonos-ssh-key--hidden">
-                        <label class="axonos-ssh-key__label" for="axonos_ssh_pubkey">Your SSH public key</label>
-                        <textarea id="axonos_ssh_pubkey" class="axonos-ssh-key__input" rows="3" spellcheck="false"
-                            autocomplete="off" autocapitalize="off"
-                            placeholder="ssh-ed25519 AAAA… you@host   (the contents of ~/.ssh/id_ed25519.pub)"></textarea>
-                        <p class="axonos-ssh-key__hint">Public key only — authentication is key-only, no password.
-                            Keep this tab open to keep the session alive.</p>
-                    </div>
-                </div>
-
-                <!-- Specs Overview Panel -->
-                <div class="axonos-specs-panel">
-                    <span class="axonos-selected-template-label">Every session includes</span>
-                    <div class="axonos-spec-item">
-                        <span class="axonos-spec-icon" aria-hidden="true"><svg width="16" height="16"
-                                viewBox="0 0 24 24" fill="none">
-                                <path d="M12 2.5c3.4 3.4 5 6 5 9a5 5 0 0 1-10 0c0-2 1-3.6 2.6-5 0 1.8 1.2 2.6 1.9.8.6-1.4.1-3.1.5-4.8z"
-                                    stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
+                        <button type="button" id="axonos_landing_view_all_btn"
+                            style="background: none; border: none; color: #A9A2FF; font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                            <!-- translate="no": noVNC's l10n translateDOM trims text nodes (String.trim
+                                 also eats &nbsp;), which was collapsing "View all 8" into "View all8". -->
+                            <span translate="no">View all <span id="axonos_landing_view_all_count">8</span></span>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                                <path d="M5 12h14M13 6l6 6-6 6" stroke="#A9A2FF" stroke-width="2" stroke-linecap="round"
                                     stroke-linejoin="round" />
-                            </svg></span>
-                        <div class="axonos-spec-details">
-                            <span class="axonos-spec-name">GPU Passthrough</span>
-                            <span class="axonos-spec-desc">Dedicated PCIe driver passthrough</span>
-                        </div>
+                            </svg>
+                        </button>
                     </div>
-                    <div class="axonos-spec-item">
-                        <span class="axonos-spec-icon" aria-hidden="true"><svg width="16" height="16"
-                                viewBox="0 0 24 24" fill="none">
-                                <rect x="3" y="5" width="18" height="13" rx="2.2" stroke="currentColor"
-                                    stroke-width="1.6" />
-                                <path d="M9 21h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
-                            </svg></span>
-                        <div class="axonos-spec-details">
-                            <span class="axonos-spec-name">Linux Desktop</span>
-                            <span class="axonos-spec-desc">XFCE4 with direct rendering</span>
-                        </div>
-                    </div>
-                    <div class="axonos-spec-item">
-                        <span class="axonos-spec-icon" aria-hidden="true"><svg width="16" height="16"
-                                viewBox="0 0 24 24" fill="none">
-                                <ellipse cx="12" cy="6.2" rx="7.2" ry="2.7" stroke="currentColor" stroke-width="1.5" />
-                                <path d="M4.8 6.2v11.6c0 1.5 3.2 2.7 7.2 2.7s7.2-1.2 7.2-2.7V6.2M4.8 12c0 1.5 3.2 2.7 7.2 2.7s7.2-1.2 7.2-2.7"
-                                    stroke="currentColor" stroke-width="1.5" />
-                            </svg></span>
-                        <div class="axonos-spec-details">
-                            <span class="axonos-spec-name">Storage Volume</span>
-                            <span class="axonos-spec-desc">Persistent host-backed home directory</span>
-                        </div>
+                    <div id="axonos_landing_featured_grid" class="axonos-featured-grid">
+                        <!-- Populated programmatically in ui.js -->
                     </div>
                 </div>
 
-                <div id="noVNC_connect_button" class="axonos-enhanced-connect">
-                    <div class="axonos-connect-content">
-                        <div class="axonos-connect-icon">
-                            <img src="icon.png" alt="AxonOS" style="width: 48px; height: 48px; object-fit: contain;">
+                <!-- Right Column: Connect Pane (sticky session rail) -->
+                <div class="axonos-connect-wrapper">
+                    <div class="axonos-rail-kick">YOUR SESSION</div>
+                    <!-- Selected template banner -->
+                    <div class="axonos-selected-template-banner" id="axonos_selected_template_banner">
+                        <span class="axonos-selected-template-label">Environment</span>
+                        <div class="axonos-selected-template-title-wrap">
+                            <span class="axonos-selected-template-icon" id="axonos_selected_template_icon">🧬</span>
+                            <span class="axonos-selected-template-title" id="axonos_selected_template_title">AxonOS
+                                Default
+                                Desktop</span>
                         </div>
-                        <span class="axonos-connect-text">Launch GPU-Native Desktop</span>
-                        <div class="axonos-connect-subtext">Full Linux environment with direct GPU access</div>
+                    </div>
+
+                    <div id="axonos_resume_panel" class="axonos-resume-panel axonos-resume-panel--hidden"
+                        aria-live="polite">
+                        <p class="axonos-resume-panel__title">Your desktop is saved</p>
+                        <p id="axonos_resume_panel_detail" class="axonos-resume-panel__detail"></p>
+                        <p id="axonos_resume_panel_ttl" class="axonos-resume-panel__ttl"></p>
+                    </div>
+                    <div id="axonos_profile_picker_wrap" class="axonos-profile-picker" role="group"
+                        aria-label="GPU profile selection">
+                        <label class="axonos-profile-picker__label" for="axonos_profile_select">GPU profile</label>
+                        <select id="axonos_profile_select" class="axonos-profile-picker__select">
+                            <option value="small">Single (1 GPU)</option>
+                            <option value="medium">Dual (2 GPUs)</option>
+                            <option value="large">Quad (4 GPUs)</option>
+                            <option value="max">Octa (8 GPUs)</option>
+                        </select>
+                        <p id="axonos_profile_burn_hint" class="axonos-profile-picker__hint" aria-live="polite"></p>
+                    </div>
+                    <!-- Direct SSH toggle: launches a headless GPU shell over SSH and
+                     bypasses the browser desktop/WebRTC viewer entirely. -->
+                    <div id="axonos_ssh_toggle_wrap" class="axonos-ssh-toggle" role="group"
+                        aria-label="Direct SSH access">
+                        <label class="axonos-ssh-toggle__row">
+                            <input type="checkbox" id="axonos_ssh_toggle" class="axonos-ssh-toggle__input" />
+                            <span class="axonos-ssh-toggle__text">
+                                <span class="axonos-ssh-toggle__title">Direct SSH access</span>
+                                <span class="axonos-ssh-toggle__desc">Headless GPU shell over SSH instead of the
+                                    desktop — full scp/sftp and port forwarding, no browser viewer.</span>
+                            </span>
+                        </label>
+                        <div id="axonos_ssh_key_wrap" class="axonos-ssh-key axonos-ssh-key--hidden">
+                            <label class="axonos-ssh-key__label" for="axonos_ssh_pubkey">Your SSH public key</label>
+                            <textarea id="axonos_ssh_pubkey" class="axonos-ssh-key__input" rows="3" spellcheck="false"
+                                autocomplete="off" autocapitalize="off"
+                                placeholder="ssh-ed25519 AAAA… you@host   (the contents of ~/.ssh/id_ed25519.pub)"></textarea>
+                            <p class="axonos-ssh-key__hint">Public key only — authentication is key-only, no password.
+                                Keep this tab open to keep the session alive.</p>
+                        </div>
+                    </div>
+
+                    <!-- Specs Overview Panel -->
+                    <div class="axonos-specs-panel">
+                        <span class="axonos-selected-template-label">Every session includes</span>
+                        <div class="axonos-spec-item">
+                            <span class="axonos-spec-icon" aria-hidden="true"><svg width="16" height="16"
+                                    viewBox="0 0 24 24" fill="none">
+                                    <path
+                                        d="M12 2.5c3.4 3.4 5 6 5 9a5 5 0 0 1-10 0c0-2 1-3.6 2.6-5 0 1.8 1.2 2.6 1.9.8.6-1.4.1-3.1.5-4.8z"
+                                        stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
+                                        stroke-linejoin="round" />
+                                </svg></span>
+                            <div class="axonos-spec-details">
+                                <span class="axonos-spec-name">GPU Passthrough</span>
+                                <span class="axonos-spec-desc">Dedicated PCIe driver passthrough</span>
+                            </div>
+                        </div>
+                        <div class="axonos-spec-item">
+                            <span class="axonos-spec-icon" aria-hidden="true"><svg width="16" height="16"
+                                    viewBox="0 0 24 24" fill="none">
+                                    <rect x="3" y="5" width="18" height="13" rx="2.2" stroke="currentColor"
+                                        stroke-width="1.6" />
+                                    <path d="M9 21h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                                </svg></span>
+                            <div class="axonos-spec-details">
+                                <span class="axonos-spec-name">Linux Desktop</span>
+                                <span class="axonos-spec-desc">XFCE4 with direct rendering</span>
+                            </div>
+                        </div>
+                        <div class="axonos-spec-item">
+                            <span class="axonos-spec-icon" aria-hidden="true"><svg width="16" height="16"
+                                    viewBox="0 0 24 24" fill="none">
+                                    <ellipse cx="12" cy="6.2" rx="7.2" ry="2.7" stroke="currentColor"
+                                        stroke-width="1.5" />
+                                    <path
+                                        d="M4.8 6.2v11.6c0 1.5 3.2 2.7 7.2 2.7s7.2-1.2 7.2-2.7V6.2M4.8 12c0 1.5 3.2 2.7 7.2 2.7s7.2-1.2 7.2-2.7"
+                                        stroke="currentColor" stroke-width="1.5" />
+                                </svg></span>
+                            <div class="axonos-spec-details">
+                                <span class="axonos-spec-name">Storage Volume</span>
+                                <span class="axonos-spec-desc">Persistent host-backed home directory</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="noVNC_connect_button" class="axonos-enhanced-connect">
+                        <div class="axonos-connect-content">
+                            <div class="axonos-connect-icon">
+                                <img src="icon.png" alt="AxonOS"
+                                    style="width: 48px; height: 48px; object-fit: contain;">
+                            </div>
+                            <span class="axonos-connect-text">Launch GPU-Native Desktop</span>
+                            <div class="axonos-connect-subtext">Full Linux environment with direct GPU access</div>
+                        </div>
+                    </div>
+                    <!-- SSH connect card: shown after a granted SSH claim in place of the viewer. -->
+                    <div id="axonos_ssh_connect_card" class="axonos-ssh-card axonos-ssh-card--hidden"
+                        aria-live="polite">
+                        <div class="axonos-ssh-card__header">
+                            <span class="axonos-ssh-card__icon">⌨️</span>
+                            <span class="axonos-ssh-card__title">SSH session ready</span>
+                        </div>
+                        <p class="axonos-ssh-card__label">Connect from your terminal</p>
+                        <div class="axonos-ssh-card__cmd-row">
+                            <code id="axonos_ssh_connect_cmd" class="axonos-ssh-card__cmd">—</code>
+                            <button type="button" id="axonos_ssh_copy_btn" class="axonos-ssh-card__copy"
+                                title="Copy SSH command">Copy</button>
+                        </div>
+                        <p id="axonos_ssh_card_ttl" class="axonos-ssh-card__ttl"></p>
+                        <p class="axonos-ssh-card__note">Keep this tab open — the session is released when it closes.
+                        </p>
+                        <button type="button" id="axonos_ssh_end_btn" class="axonos-ssh-card__end">End session</button>
                     </div>
                 </div>
-                <!-- SSH connect card: shown after a granted SSH claim in place of the viewer. -->
-                <div id="axonos_ssh_connect_card" class="axonos-ssh-card axonos-ssh-card--hidden" aria-live="polite">
-                    <div class="axonos-ssh-card__header">
-                        <span class="axonos-ssh-card__icon">⌨️</span>
-                        <span class="axonos-ssh-card__title">SSH session ready</span>
-                    </div>
-                    <p class="axonos-ssh-card__label">Connect from your terminal</p>
-                    <div class="axonos-ssh-card__cmd-row">
-                        <code id="axonos_ssh_connect_cmd" class="axonos-ssh-card__cmd">—</code>
-                        <button type="button" id="axonos_ssh_copy_btn" class="axonos-ssh-card__copy"
-                            title="Copy SSH command">Copy</button>
-                    </div>
-                    <p id="axonos_ssh_card_ttl" class="axonos-ssh-card__ttl"></p>
-                    <p class="axonos-ssh-card__note">Keep this tab open — the session is released when it closes.</p>
-                    <button type="button" id="axonos_ssh_end_btn" class="axonos-ssh-card__end">End session</button>
-                </div>
-            </div>
 
             </div><!-- /.axonos-landing-main -->
 
             <!-- How it works -->
-            <section class="axonos-steps">
+            <section class="axonos-steps axonos-view-landing">
                 <div class="axonos-section-head axonos-section-head--center">
                     <div class="axonos-section-head__kick">HOW IT WORKS</div>
                     <div class="axonos-section-head__title">From idea to GPU in three steps.</div>
@@ -700,61 +697,596 @@ Copyright (C) 2019 The noVNC Authors
                         <div class="axonos-step-card__n">03</div>
                         <div class="axonos-step-card__title">Launch &amp; connect</div>
                         <div class="axonos-step-card__body">A full Linux desktop opens in your browser in under a
-                            minute. Prefer a shell? Switch on direct SSH.</div>
+                            minute. Prefer a shell? Switch on headless SSH.</div>
                     </div>
                 </div>
             </section>
 
-            <!-- Trust strip -->
-            <section class="axonos-trust">
-                <div class="axonos-trust-item">
-                    <span class="axonos-trust-item__icon" aria-hidden="true"><svg width="18" height="18"
-                            viewBox="0 0 24 24" fill="none">
-                            <circle cx="12" cy="12" r="1.4" fill="currentColor" />
-                            <ellipse cx="12" cy="12" rx="9" ry="3.6" stroke="currentColor" stroke-width="1.5"
-                                transform="rotate(45 12 12)" />
-                            <ellipse cx="12" cy="12" rx="9" ry="3.6" stroke="currentColor" stroke-width="1.5"
-                                transform="rotate(-45 12 12)" />
-                        </svg></span>
-                    <div>
-                        <div class="axonos-trust-item__title">Non-custodial</div>
-                        <div class="axonos-trust-item__body">Connect with a one-time signature. No gas, no transaction —
-                            we never hold your funds.</div>
+            <!-- Trust strip (matching axonos-web exactly) -->
+            <div class="axonos-view-landing"
+                style="max-width: 1280px; margin: 40px auto 0; padding: 0; width: 100%; box-sizing: border-box;">
+                <div
+                    style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; border-radius: 18px; border: 1px solid rgba(255, 255, 255, 0.07); background: rgba(255, 255, 255, 0.018); overflow: hidden; width: 100%;">
+                    <!-- Non-custodial -->
+                    <div
+                        style="padding: 24px 26px; border-right: 1px solid rgba(255, 255, 255, 0.06); display: flex; gap: 14px; align-items: flex-start; min-width: 0;">
+                        <div
+                            style="flex: 0 0 auto; width: 38px; height: 38px; border-radius: 11px; display: flex; align-items: center; justify-content: center; background: rgba(79, 224, 192, 0.1); border: 1px solid rgba(79, 224, 192, 0.22); color: #4FE0C0;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                                <circle cx="12" cy="12" r="1.4" fill="currentColor" />
+                                <ellipse cx="12" cy="12" rx="9" ry="3.6" stroke="currentColor" stroke-width="1.5"
+                                    transform="rotate(45 12 12)" />
+                                <ellipse cx="12" cy="12" rx="9" ry="3.6" stroke="currentColor" stroke-width="1.5"
+                                    transform="rotate(-45 12 12)" />
+                            </svg>
+                        </div>
+                        <div style="min-width: 0;">
+                            <div style="font-size: 13.5px; font-weight: 600; color: #E6E9F2;">Non-custodial</div>
+                            <div
+                                style="margin-top: 4px; font-size: 12.5px; line-height: 1.5; color: #878DA6; font-weight: 300;">
+                                Connect with a one-time signature. No gas, no transaction — we never hold your funds.
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Real GPUs -->
+                    <div
+                        style="padding: 24px 26px; border-right: 1px solid rgba(255, 255, 255, 0.06); display: flex; gap: 14px; align-items: flex-start; min-width: 0;">
+                        <div
+                            style="flex: 0 0 auto; width: 38px; height: 38px; border-radius: 11px; display: flex; align-items: center; justify-content: center; background: rgba(79, 224, 192, 0.1); border: 1px solid rgba(79, 224, 192, 0.22); color: #4FE0C0;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                                <path
+                                    d="M12 2.5c3.4 3.4 5 6 5 9a5 5 0 0 1-10 0c0-2 1-3.6 2.6-5 0 1.8 1.2 2.6 1.9.8.6-1.4.1-3.1.5-4.8z"
+                                    stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
+                                    stroke-linejoin="round" />
+                            </svg>
+                        </div>
+                        <div style="min-width: 0;">
+                            <div style="font-size: 13.5px; font-weight: 600; color: #E6E9F2;">Real GPUs</div>
+                            <div
+                                style="margin-top: 4px; font-size: 12.5px; line-height: 1.5; color: #878DA6; font-weight: 300;">
+                                Dedicated PCIe passthrough to physical hardware. No virtualization overhead, ever.</div>
+                        </div>
+                    </div>
+                    <!-- Your files persist -->
+                    <div style="padding: 24px 26px; display: flex; gap: 14px; align-items: flex-start; min-width: 0;">
+                        <div
+                            style="flex: 0 0 auto; width: 38px; height: 38px; border-radius: 11px; display: flex; align-items: center; justify-content: center; background: rgba(79, 224, 192, 0.1); border: 1px solid rgba(79, 224, 192, 0.22); color: #4FE0C0;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                                <path
+                                    d="M9 3h6M10 3v6.2L5.6 17a1.5 1.5 0 0 0 1.3 2.3h10.2a1.5 1.5 0 0 0 1.3-2.3L14 9.2V3"
+                                    stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
+                                    stroke-linejoin="round" />
+                                <path d="M7.7 14.5h8.6" stroke="currentColor" stroke-width="1.4" opacity="0.55"
+                                    stroke-linecap="round" />
+                            </svg>
+                        </div>
+                        <div style="min-width: 0;">
+                            <div style="font-size: 13.5px; font-weight: 600; color: #E6E9F2;">Your files persist</div>
+                            <div
+                                style="margin-top: 4px; font-size: 12.5px; line-height: 1.5; color: #878DA6; font-weight: 300;">
+                                Your home folder is saved to your wallet and waiting the next time you launch.</div>
+                        </div>
                     </div>
                 </div>
-                <div class="axonos-trust-item">
-                    <span class="axonos-trust-item__icon" aria-hidden="true"><svg width="18" height="18"
-                            viewBox="0 0 24 24" fill="none">
-                            <path d="M12 2.5c3.4 3.4 5 6 5 9a5 5 0 0 1-10 0c0-2 1-3.6 2.6-5 0 1.8 1.2 2.6 1.9.8.6-1.4.1-3.1.5-4.8z"
-                                stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
-                                stroke-linejoin="round" />
-                        </svg></span>
-                    <div>
-                        <div class="axonos-trust-item__title">Real GPUs</div>
-                        <div class="axonos-trust-item__body">Dedicated PCIe passthrough to physical hardware. No
-                            virtualization overhead, ever.</div>
-                    </div>
-                </div>
-                <div class="axonos-trust-item">
-                    <span class="axonos-trust-item__icon" aria-hidden="true"><svg width="18" height="18"
-                            viewBox="0 0 24 24" fill="none">
-                            <path d="M12 2 4 13h6l-1 9 9-12h-6l1-8z" stroke="currentColor" stroke-width="1.6"
-                                stroke-linejoin="round" />
-                        </svg></span>
-                    <div>
-                        <div class="axonos-trust-item__title">Pay as you go</div>
-                        <div class="axonos-trust-item__body">Pay in ETH, USDC or AXGT. Unused credits stay on your
-                            wallet for your next session.</div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Scientific Quote (Footer) -->
-            <div class="axonos-quote">
-                <p>"The best way to predict the future is to invent it."</p>
-                <cite>— Alan Kay</cite>
             </div>
 
+
+            <!-- Dashboard View -->
+            <div id="axonos_dashboard_container" class="axonos-dashboard-container axonos-view-dashboard"
+                style="display: none;">
+                <div class="axonos-dashboard-header">
+                    <div>
+                        <div class="axonos-dashboard-header__tag">WELCOME BACK</div>
+                        <h1 class="axonos-dashboard-title">Your workspace</h1>
+                    </div>
+                    <button type="button" id="axonos_dashboard_new_session_btn" class="axonos-dashboard-new-btn">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                            <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                        </svg>
+                        New session
+                    </button>
+                </div>
+
+                <div class="axonos-dashboard-stats-grid">
+                    <div class="axonos-dashboard-stat-card axonos-dashboard-stat-card--accent">
+                        <div class="axonos-dashboard-stat-card__label">CREDIT BALANCE</div>
+                        <div class="axonos-dashboard-stat-card__value-row">
+                            <span id="axonos_dashboard_credits" class="axonos-dashboard-stat-card__value">—</span>
+                            <span class="axonos-dashboard-stat-card__value-unit">credits</span>
+                        </div>
+                        <button type="button" id="axonos_dashboard_topup_btn"
+                            class="axonos-dashboard-stat-card__action-btn">Top up credits</button>
+                    </div>
+                    <div class="axonos-dashboard-stat-card">
+                        <div class="axonos-dashboard-stat-card__label">ACTIVE SESSIONS</div>
+                        <div class="axonos-dashboard-stat-card__value-row">
+                            <span id="axonos_dashboard_active_count" class="axonos-dashboard-stat-card__value">0</span>
+                            <span class="axonos-dashboard-stat-card__value-unit">running</span>
+                        </div>
+                        <div class="axonos-dashboard-stat-card__desc">Burning <b id="axonos_dashboard_burn_rate">—</b>
+                            cr/min combined</div>
+                    </div>
+                    <div class="axonos-dashboard-stat-card">
+                        <div class="axonos-dashboard-stat-card__label">WALLET</div>
+                        <div class="axonos-dashboard-stat-card__wallet-row">
+                            <span class="axonos-dashboard-stat-card__wallet-dot"></span>
+                            <span id="axonos_dashboard_wallet_addr"
+                                class="axonos-dashboard-stat-card__wallet-addr">—</span>
+                        </div>
+                        <div id="axonos_dashboard_wallet_info" class="axonos-dashboard-stat-card__desc">Ethereum Mainnet
+                        </div>
+                    </div>
+                </div>
+
+                <div class="axonos-dashboard-section-label">YOUR SESSIONS</div>
+                <div id="axonos_dashboard_sessions_list">
+                    <!-- Session cards populated by script -->
+                </div>
+                <div id="axonos_dashboard_empty_state" class="axonos-dashboard-empty" style="display: none;">
+                    <div class="axonos-dashboard-empty__icon-wrap">
+                        <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+                            <rect x="4" y="4" width="16" height="16" rx="3" stroke="currentColor" stroke-width="1.6" />
+                            <rect x="8.5" y="8.5" width="7" height="7" rx="1.4" stroke="currentColor"
+                                stroke-width="1.3" />
+                            <path d="M9 1.5v2.5M15 1.5v2.5M9 20v2.5M15 20v2.5M1.5 9H4M1.5 15H4M20 9h2.5M20 15h2.5"
+                                stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+                        </svg>
+                    </div>
+                    <div class="axonos-dashboard-empty__title">No active sessions yet</div>
+                    <p class="axonos-dashboard-empty__desc">Spin up a GPU desktop in under a minute — pick an
+                        environment, choose your hardware, and launch.</p>
+                    <button type="button" id="axonos_dashboard_first_session_btn"
+                        class="axonos-dashboard-empty__btn">Launch your first session</button>
+                </div>
+
+                <!-- QUICK LAUNCH section (matching axonos-web) -->
+                <div class="axonos-dashboard-section-label" style="margin-top: 40px; margin-bottom: 16px;">QUICK LAUNCH
+                </div>
+                <div id="axonos_dashboard_quick_launch" class="axonos-featured-grid">
+                    <!-- Populated programmatically in ui.js -->
+                </div>
+            </div>
+
+            <!-- Launch Wizard View -->
+            <div id="axonos_wizard_container" class="axonos-wizard-container axonos-view-wizard" style="display: none;">
+                <!-- Stepper progress bar -->
+                <div class="axonos-wizard-stepper">
+                    <div class="axonos-wizard-step active" id="axonos_step_env_indicator">
+                        <div class="axonos-wizard-step__dot">1</div>
+                        <div class="axonos-wizard-step__label">Environment</div>
+                    </div>
+                    <div class="axonos-wizard-step__line" id="axonos_step_line_1"></div>
+                    <div class="axonos-wizard-step" id="axonos_step_hw_indicator">
+                        <div class="axonos-wizard-step__dot">2</div>
+                        <div class="axonos-wizard-step__label">Hardware</div>
+                    </div>
+                    <div class="axonos-wizard-step__line" id="axonos_step_line_2"></div>
+                    <div class="axonos-wizard-step" id="axonos_step_pay_indicator">
+                        <div class="axonos-wizard-step__dot">3</div>
+                        <div class="axonos-wizard-step__label">Credits</div>
+                    </div>
+                </div>
+
+                <!-- Wizard layout: split columns -->
+                <div class="axonos-wizard-layout">
+                    <!-- Left: Step Content -->
+                    <div class="axonos-wizard-content">
+                        <!-- Step 1: Environment Selection -->
+                        <div class="axonos-wizard-pane active" id="axonos_wizard_pane_env">
+                            <h2 class="axonos-wizard-title">Choose your environment</h2>
+                            <p class="axonos-wizard-subtitle">Every stack comes pre-installed and GPU-ready. Pick one —
+                                you can change it later.</p>
+
+                            <div class="axonos-templates-controls" style="margin-bottom: 18px;">
+                                <div class="axonos-search-wrap" style="flex: 1; min-width: 240px;">
+                                    <input type="text" id="axonos_wizard_template_search"
+                                        class="axonos-templates-search-input"
+                                        placeholder="Search scientific templates (e.g. PyTorch, GROMACS)..."
+                                        autocomplete="off" spellcheck="false" />
+                                </div>
+                                <div class="axonos-filter-pills" id="axonos_wizard_filter_pills">
+                                    <button type="button" class="axonos-filter-pill active"
+                                        data-category="all">All</button>
+                                    <button type="button" class="axonos-filter-pill" data-category="ai-ml">AI /
+                                        ML</button>
+                                    <button type="button" class="axonos-filter-pill" data-category="bio-chem">Bio /
+                                        Chem</button>
+                                    <button type="button" class="axonos-filter-pill" data-category="data-science">Data
+                                        Science</button>
+                                    <button type="button" class="axonos-filter-pill"
+                                        data-category="physics-quantum">Physics / Quantum</button>
+                                </div>
+                            </div>
+
+                            <div class="axonos-templates-grid" id="axonos_wizard_templates_grid">
+                                <!-- Reuses renderAxonosTemplates grid target -->
+                            </div>
+                        </div>
+
+                        <!-- Step 2: Hardware Configuration -->
+                        <div class="axonos-wizard-pane" id="axonos_wizard_pane_hw">
+                            <h2 class="axonos-wizard-title">Pick your hardware</h2>
+                            <p class="axonos-wizard-subtitle">You only pay for the minutes you run. Bigger boxes finish
+                                faster.</p>
+
+                            <div class="axonos-gpu-cards-grid">
+                                <button type="button" class="axonos-gpu-card selected" data-gpu="small">
+                                    <div class="axonos-gpu-card__header">
+                                        <div>
+                                            <div class="axonos-gpu-card__title-wrap">
+                                                <span class="axonos-gpu-card__name">Single</span>
+                                            </div>
+                                            <div class="axonos-gpu-card__spec">1× Tesla V100 · 32 GB VRAM</div>
+                                        </div>
+                                        <div class="axonos-gpu-card__check">✓</div>
+                                    </div>
+                                    <div class="axonos-gpu-card__specs-row">
+                                        <div class="axonos-gpu-card__spec-item"><span
+                                                class="axonos-gpu-card__spec-label">VRAM / GPU</span><span
+                                                class="axonos-gpu-card__spec-value">32 GB</span></div>
+                                        <div class="axonos-gpu-card__spec-item"><span
+                                                class="axonos-gpu-card__spec-label">CPU · RAM</span><span
+                                                class="axonos-gpu-card__spec-value">Shared</span></div>
+                                    </div>
+                                    <div class="axonos-gpu-card__rate-row">
+                                        <span class="axonos-gpu-card__rate">1</span>
+                                        <span class="axonos-gpu-card__rate-label">credits / min</span>
+                                    </div>
+                                </button>
+                                <button type="button" class="axonos-gpu-card" data-gpu="medium">
+                                    <div class="axonos-gpu-card__header">
+                                        <div>
+                                            <div class="axonos-gpu-card__title-wrap">
+                                                <span class="axonos-gpu-card__name">Dual</span>
+                                                <span class="axonos-gpu-card__popular">POPULAR</span>
+                                            </div>
+                                            <div class="axonos-gpu-card__spec">2× Tesla V100 · 64 GB VRAM</div>
+                                        </div>
+                                        <div class="axonos-gpu-card__check">✓</div>
+                                    </div>
+                                    <div class="axonos-gpu-card__specs-row">
+                                        <div class="axonos-gpu-card__spec-item"><span
+                                                class="axonos-gpu-card__spec-label">VRAM / GPU</span><span
+                                                class="axonos-gpu-card__spec-value">32 GB</span></div>
+                                        <div class="axonos-gpu-card__spec-item"><span
+                                                class="axonos-gpu-card__spec-label">CPU · RAM</span><span
+                                                class="axonos-gpu-card__spec-value">Shared</span></div>
+                                    </div>
+                                    <div class="axonos-gpu-card__rate-row">
+                                        <span class="axonos-gpu-card__rate">2</span>
+                                        <span class="axonos-gpu-card__rate-label">credits / min</span>
+                                    </div>
+                                </button>
+                                <button type="button" class="axonos-gpu-card" data-gpu="large">
+                                    <div class="axonos-gpu-card__header">
+                                        <div>
+                                            <div class="axonos-gpu-card__title-wrap">
+                                                <span class="axonos-gpu-card__name">Quad</span>
+                                            </div>
+                                            <div class="axonos-gpu-card__spec">4× Tesla V100 · 128 GB VRAM</div>
+                                        </div>
+                                        <div class="axonos-gpu-card__check">✓</div>
+                                    </div>
+                                    <div class="axonos-gpu-card__specs-row">
+                                        <div class="axonos-gpu-card__spec-item"><span
+                                                class="axonos-gpu-card__spec-label">VRAM / GPU</span><span
+                                                class="axonos-gpu-card__spec-value">32 GB</span></div>
+                                        <div class="axonos-gpu-card__spec-item"><span
+                                                class="axonos-gpu-card__spec-label">CPU · RAM</span><span
+                                                class="axonos-gpu-card__spec-value">Shared</span></div>
+                                    </div>
+                                    <div class="axonos-gpu-card__rate-row">
+                                        <span class="axonos-gpu-card__rate">4</span>
+                                        <span class="axonos-gpu-card__rate-label">credits / min</span>
+                                    </div>
+                                </button>
+                                <button type="button" class="axonos-gpu-card" data-gpu="max">
+                                    <div class="axonos-gpu-card__header">
+                                        <div>
+                                            <div class="axonos-gpu-card__title-wrap">
+                                                <span class="axonos-gpu-card__name">Octa</span>
+                                            </div>
+                                            <div class="axonos-gpu-card__spec">8× Tesla V100 · 256 GB VRAM</div>
+                                        </div>
+                                        <div class="axonos-gpu-card__check">✓</div>
+                                    </div>
+                                    <div class="axonos-gpu-card__specs-row">
+                                        <div class="axonos-gpu-card__spec-item"><span
+                                                class="axonos-gpu-card__spec-label">VRAM / GPU</span><span
+                                                class="axonos-gpu-card__spec-value">32 GB</span></div>
+                                        <div class="axonos-gpu-card__spec-item"><span
+                                                class="axonos-gpu-card__spec-label">CPU · RAM</span><span
+                                                class="axonos-gpu-card__spec-value">Shared</span></div>
+                                    </div>
+                                    <div class="axonos-gpu-card__rate-row">
+                                        <span class="axonos-gpu-card__rate">8</span>
+                                        <span class="axonos-gpu-card__rate-label">credits / min</span>
+                                    </div>
+                                </button>
+                            </div>
+                            <p class="axonos-gpu-cards-note">Each profile dedicates whole Tesla V100 GPUs to your
+                                session. vCPU and system RAM are drawn from a shared host pool and are not reserved per
+                                profile.</p>
+
+                            <!-- Storage selector -->
+                            <div class="axonos-storage-slider-wrap">
+                                <div class="axonos-storage-slider-header">
+                                    <span class="axonos-storage-slider-title">Persistent storage volume</span>
+                                    <span id="axonos_wizard_storage_val" class="axonos-storage-slider-val">100 GB</span>
+                                </div>
+                                <p class="axonos-storage-slider-desc">Your home folder is automatically saved to your
+                                    wallet between sessions. Storage is billed at 0.05 credits per GB/hour while active
+                                    or saved.</p>
+                                <input type="range" id="axonos_wizard_storage_slider" class="axonos-storage-slider"
+                                    min="10" max="500" step="10" value="100">
+                                <div class="axonos-storage-slider-limits">
+                                    <span>10 GB</span>
+                                    <span>500 GB</span>
+                                </div>
+                            </div>
+
+                            <!-- SSH toggle option -->
+                            <button type="button" id="axonos_wizard_ssh_toggle_card" class="axonos-ssh-card-toggle">
+                                <div class="axonos-ssh-card-toggle__switch">
+                                    <div class="axonos-ssh-card-toggle__knob"></div>
+                                </div>
+                                <div class="axonos-ssh-card-toggle__details">
+                                    <div class="axonos-ssh-card-toggle__title">Direct SSH access</div>
+                                    <div class="axonos-ssh-card-toggle__desc">Skip the browser desktop — connect via
+                                        standard SSH with full port-forwarding and SFTP capabilities instead.</div>
+                                </div>
+                            </button>
+
+                            <!-- SSH key entry (hidden unless checked) -->
+                            <div id="axonos_wizard_ssh_key_wrap" class="axonos-ssh-key axonos-ssh-key--hidden"
+                                style="margin-top: 14px;">
+                                <label class="axonos-ssh-key__label" for="axonos_wizard_ssh_pubkey">Your SSH public
+                                    key</label>
+                                <textarea id="axonos_wizard_ssh_pubkey" class="axonos-ssh-key__input" rows="3"
+                                    spellcheck="false"
+                                    placeholder="ssh-ed25519 AAAA… you@host   (the contents of ~/.ssh/id_ed25519.pub)"></textarea>
+                                <p class="axonos-ssh-key__hint">Public key only — authentication is key-only, no
+                                    password.</p>
+                            </div>
+                        </div>
+
+                        <!-- Step 3: Pay -->
+                        <div class="axonos-wizard-pane" id="axonos_wizard_pane_pay">
+                            <h2 class="axonos-wizard-title">Add credits & launch</h2>
+                            <p class="axonos-wizard-subtitle">Credits represent minutes of compute. Top up any amount —
+                                unused credits stay on your wallet.</p>
+
+                            <!-- Wallet list if not connected -->
+                            <div id="axonos_wizard_wallet_unconnected" class="axonos-wallet-state"
+                                style="border: 1px solid rgba(123,108,255,.28); background: linear-gradient(180deg,rgba(123,108,255,.1),rgba(255,255,255,.01)); padding: 28px; text-align: center; border-radius: 18px;">
+                                <div
+                                    style="width: 48px; height: 48px; margin: 0 auto 16px; border-radius: 14px; display: flex; align-items: center; justify-content: center; background: rgba(123,108,255,.16); border: 1px solid rgba(123,108,255,.3);">
+                                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                                        <rect x="3" y="6" width="18" height="13" rx="3" stroke="#B7A6FF"
+                                            stroke-width="1.7" />
+                                        <path d="M16 12h2" stroke="#B7A6FF" stroke-width="2" stroke-linecap="round" />
+                                    </svg>
+                                </div>
+                                <div style="font-size: 17px; font-weight: 600; color: #f1f2f8;">Connect your wallet to
+                                    continue</div>
+                                <p
+                                    style="margin: 8px auto 20px; max-width: 380px; font-size: 13px; line-height: 1.6; color: #9097b0; font-weight: 300;">
+                                    One-time signature — no gas, no transaction. We never take custody of your funds.
+                                </p>
+                                <button type="button" id="axonos_wizard_connect_wallet_btn"
+                                    class="axonos-rail-action-btn" style="max-width: 280px; margin: 0 auto;">Connect
+                                    Wallet</button>
+                            </div>
+
+                            <!-- Connected payment card -->
+                            <div id="axonos_wizard_wallet_connected" style="display: none;">
+                                <!-- Payment method selector -->
+                                <div class="axonos-wizard-token-tabs">
+                                    <button type="button" class="axonos-wizard-token-tab active"
+                                        data-token="usdc">USDC</button>
+                                    <button type="button" class="axonos-wizard-token-tab" data-token="eth">ETH</button>
+                                    <button type="button" class="axonos-wizard-token-tab" data-token="axgt">AXGT <span
+                                            class="axonos-wizard-token-tab__badge">+25%</span></button>
+                                </div>
+
+                                <!-- Deposit Input Card -->
+                                <div class="axonos-deposit-input-card">
+                                    <div class="axonos-deposit-input-label">Amount to deposit</div>
+                                    <div class="axonos-deposit-input-field-wrap">
+                                        <input type="text" id="axonos_wizard_pay_amount"
+                                            class="axonos-deposit-input-field" inputmode="decimal" value="5">
+                                        <span id="axonos_wizard_pay_ticker"
+                                            class="axonos-deposit-input-ticker">USDC</span>
+                                    </div>
+
+                                    <!-- Quick select amount buttons -->
+                                    <div class="axonos-deposit-quick-grid" id="axonos_wizard_quick_amounts">
+                                        <button type="button" class="axonos-deposit-quick-btn"
+                                            data-value="5">+5</button>
+                                        <button type="button" class="axonos-deposit-quick-btn"
+                                            data-value="20">+20</button>
+                                        <button type="button" class="axonos-deposit-quick-btn"
+                                            data-value="50">+50</button>
+                                    </div>
+
+                                    <!-- Calc calculator rows -->
+                                    <div class="axonos-deposit-calc-rows">
+                                        <div class="axonos-deposit-calc-row">
+                                            <span>You receive</span>
+                                            <span id="axonos_wizard_pay_credits"
+                                                class="axonos-deposit-calc-row__val axonos-deposit-calc-row__val--purple">600
+                                                credits</span>
+                                        </div>
+                                        <div class="axonos-deposit-calc-row">
+                                            <span>Est. runtime · <span
+                                                    id="axonos_wizard_pay_gpu_label">Single</span></span>
+                                            <span id="axonos_wizard_pay_runtime"
+                                                class="axonos-deposit-calc-row__val">10h 0m</span>
+                                        </div>
+                                        <div class="axonos-deposit-calc-row axonos-deposit-calc-row--bonus"
+                                            id="axonos_wizard_pay_bonus_row" style="display: none;">
+                                            <span>AXGT bonus</span>
+                                            <span class="axonos-deposit-calc-row__val" style="color: inherit;">+25%
+                                                credits included</span>
+                                        </div>
+                                        <div class="axonos-deposit-calc-row">
+                                            <span>AXGT holder tier</span>
+                                            <span id="axonos_wizard_pay_tier" class="axonos-deposit-calc-row__val">None
+                                                (0% discount)</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Deposit Info Banner -->
+                                <div class="axonos-pay-banner">
+                                    <div class="axonos-pay-banner__icon">
+                                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+                                            <path d="M9 12.5l2.2 2.2L15.5 9" stroke="currentColor" stroke-width="2"
+                                                stroke-linecap="round" stroke-linejoin="round" />
+                                            <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.5" />
+                                        </svg>
+                                    </div>
+                                    <p class="axonos-pay-banner__text">Ready to pay <span id="axonos_wizard_pay_desc"
+                                            class="axonos-pay-banner__highlight">~5 USDC</span> from your wallet.
+                                        Already holding AXGT? Your discount is applied automatically.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Navigation actions -->
+                        <div
+                            style="margin-top: 24px; display: flex; justify-content: space-between; align-items: center;">
+                            <button type="button" id="axonos_wizard_back_btn" class="axonos-wizard-back-btn">
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+                                    <path d="M19 12H5M11 6l-6 6 6 6" stroke="currentColor" stroke-width="2"
+                                        stroke-linecap="round" stroke-linejoin="round" />
+                                </svg>
+                                <span id="axonos_wizard_back_label">Back to home</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Right: Sticky Summary Rail -->
+                    <div class="axonos-wizard-rail">
+                        <div class="axonos-rail-card">
+                            <div class="axonos-rail-header">YOUR SESSION</div>
+                            <div class="axonos-rail-body">
+                                <div class="axonos-rail-item">
+                                    <div class="axonos-rail-item__icon-wrap" id="axonos_wizard_rail_env_icon">🧬</div>
+                                    <div class="axonos-rail-item__details">
+                                        <div class="axonos-rail-item__label">ENVIRONMENT</div>
+                                        <div class="axonos-rail-item__value" id="axonos_wizard_rail_env_title">AxonOS
+                                            Default Desktop</div>
+                                    </div>
+                                </div>
+                                <div class="axonos-rail-item">
+                                    <div class="axonos-rail-item__icon-wrap axonos-rail-item__icon-wrap--purple">
+                                        <svg width="19" height="19" viewBox="0 0 24 24" fill="none">
+                                            <rect x="4" y="4" width="16" height="16" rx="3" stroke="currentColor"
+                                                stroke-width="1.6" />
+                                            <rect x="8" y="8" width="8" height="8" rx="1.5" stroke="currentColor"
+                                                stroke-width="1.4" />
+                                            <path
+                                                d="M9 1.5v2.5M12 1.5v2.5M15 1.5v2.5M9 20v2.5M12 20v2.5M15 20v2.5M1.5 9H4M1.5 12H4M1.5 15H4M20 9h2.5M20 12h2.5M20 15h2.5"
+                                                stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+                                        </svg>
+                                    </div>
+                                    <div class="axonos-rail-item__details">
+                                        <div class="axonos-rail-item__label">HARDWARE</div>
+                                        <div class="axonos-rail-item__value" id="axonos_wizard_rail_gpu_name">Single
+                                        </div>
+                                        <div class="axonos-rail-item__subvalue" id="axonos_wizard_rail_gpu_desc">1×
+                                            Tesla V100 · 32 GB VRAM</div>
+                                    </div>
+                                </div>
+                                <div class="axonos-rail-item">
+                                    <div class="axonos-rail-item__icon-wrap">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                                            <ellipse cx="12" cy="6.2" rx="7.2" ry="2.7" stroke="currentColor"
+                                                stroke-width="1.5" />
+                                            <path d="M4.8 6.2v11.6c0 1.5 3.2 2.7 7.2 2.7s7.2-1.2 7.2-2.7V6.2"
+                                                stroke="currentColor" stroke-width="1.5" />
+                                            <path d="M4.8 12c0 1.5 3.2 2.7 7.2 2.7s7.2-1.2 7.2-2.7"
+                                                stroke="currentColor" stroke-width="1.3" />
+                                        </svg>
+                                    </div>
+                                    <div class="axonos-rail-item__flex-row">
+                                        <div class="axonos-rail-item__label">STORAGE</div>
+                                        <div class="axonos-rail-item__inline-val" id="axonos_wizard_rail_storage">100 GB
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="axonos-rail-item">
+                                    <div class="axonos-rail-item__icon-wrap">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                                            <rect x="3" y="5" width="18" height="14" rx="2.4" stroke="currentColor"
+                                                stroke-width="1.5" />
+                                            <path d="M7 9.8l2.6 2.2L7 14.2M12.5 14.2h4" stroke="currentColor"
+                                                stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                                        </svg>
+                                    </div>
+                                    <div class="axonos-rail-item__flex-row">
+                                        <div class="axonos-rail-item__label">SSH ACCESS</div>
+                                        <div class="axonos-rail-item__inline-val" id="axonos_wizard_rail_ssh">Disabled
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="axonos-rail-footer">
+                                <div class="axonos-rail-footer__row">
+                                    <span>Burn rate</span>
+                                    <span class="axonos-rail-footer__val" id="axonos_wizard_rail_rate">1 <span
+                                            class="axonos-rail-footer__val-sub">cr/min</span></span>
+                                </div>
+                                <div class="axonos-rail-footer__row" id="axonos_wizard_rail_balance_row"
+                                    style="display: none;">
+                                    <span>Wallet balance</span>
+                                    <span class="axonos-rail-footer__val axonos-rail-footer__val--light"
+                                        id="axonos_wizard_rail_balance">— cr</span>
+                                </div>
+                                <button type="button" id="axonos_wizard_primary_btn" class="axonos-rail-action-btn">
+                                    <span>Next Step</span>
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                                        <path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2"
+                                            stroke-linecap="round" stroke-linejoin="round" />
+                                    </svg>
+                                </button>
+                                <div id="axonos_wizard_primary_hint" class="axonos-rail-action-hint"
+                                    style="display: none;"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Footer banner (matching axonos-web exactly) -->
+            <div class="axonos-footer-banner axonos-view-landing">
+                <span id="axonos_session_timer" class="axonos-session-timer axonos-session-timer--hidden"
+                    title="Desktop time remaining on your prepaid credit"><span class="axonos-session-timer__label">Time
+                        left</span>&nbsp;<span id="axonos_session_timer_value"
+                        class="axonos-session-timer__value">—:—</span></span><span id="axonos_session_timer_sep"
+                    class="axonos-session-timer--hidden"
+                    style="color: rgba(255, 255, 255, 0.15); line-height: 1;">|</span>
+                <span style="display: inline-flex; align-items: center; line-height: 1;">
+                    Built with <span
+                        style="color:rgba(255, 95, 87, 0.75); font-size: 1.2em; display: inline-flex; align-items: center; line-height: 1; margin: 0 0.25em;">♥</span>
+                    by <a href="https://axondao.io" target="_blank" rel="noopener noreferrer"
+                        style="color: #A9A2FF; text-decoration: none; font-weight: 600; margin-left: 0.25em; line-height: 1;">AxonDAO</a>
+                </span>
+                <span style="color: rgba(255, 255, 255, 0.15); line-height: 1;">|</span>
+                <a href="https://github.com/AXDT-INC/AxonOS" target="_blank" rel="noopener noreferrer"
+                    style="color: #5C6280; text-decoration: none; display: inline-flex; align-items: center; line-height: 1;">
+                    <svg height="16" width="16" viewBox="0 0 16 16" fill="#5C6280" style="display: block;"
+                        aria-label="GitHub">
+                        <path
+                            d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
+                    </svg>
+                </a>
+                <span style="color: rgba(255, 255, 255, 0.15); line-height: 1;">|</span>
+                <a href="https://axonos.io" target="_blank" rel="noopener noreferrer"
+                    class="axonos-footer-version-link" style="line-height: 1;">AxonOS v0.2</a>
+            </div>
         </div>
     </div>
 
@@ -823,20 +1355,18 @@ Copyright (C) 2019 The noVNC Authors
                             balance: —</p>
 
                         <!-- Payment method selector: shows only the chosen rail's panel + input. -->
-                        <div id="axonos_pay_rail_toggle" class="axonos-pay-rail-toggle"
-                            role="tablist" aria-label="Payment method"
+                        <div id="axonos_pay_rail_toggle" class="axonos-pay-rail-toggle" role="tablist"
+                            aria-label="Payment method"
                             style="display:none;justify-content:center;gap:0.4rem;margin:0.6rem auto 0.2rem;flex-wrap:wrap;">
                             <button type="button" id="axonos_pay_rail_usdc" role="tab"
-                                class="axonos-connect-wallet-btn axonos-pay-rail-btn"
-                                data-rail="usdc"
-                                style="margin:0;padding:0.4rem 1rem;font-size:0.85rem;">USDC <span style="opacity:0.7;">(Base)</span></button>
+                                class="axonos-connect-wallet-btn axonos-pay-rail-btn" data-rail="usdc"
+                                style="margin:0;padding:0.4rem 1rem;font-size:0.85rem;">USDC <span
+                                    style="opacity:0.7;">(Base)</span></button>
                             <button type="button" id="axonos_pay_rail_eth" role="tab"
-                                class="axonos-connect-wallet-btn axonos-pay-rail-btn"
-                                data-rail="eth"
+                                class="axonos-connect-wallet-btn axonos-pay-rail-btn" data-rail="eth"
                                 style="margin:0;padding:0.4rem 1rem;font-size:0.85rem;">ETH</button>
                             <button type="button" id="axonos_pay_rail_axgt" role="tab"
-                                class="axonos-connect-wallet-btn axonos-pay-rail-btn"
-                                data-rail="axgt"
+                                class="axonos-connect-wallet-btn axonos-pay-rail-btn" data-rail="axgt"
                                 style="margin:0;padding:0.4rem 1rem;font-size:0.85rem;display:none;">AXGT</button>
                         </div>
 
@@ -909,8 +1439,8 @@ Copyright (C) 2019 The noVNC Authors
                                         style="opacity:0.78;">Eligible tier</span><strong
                                         id="axonos_usdc_discount_tier">—</strong></li>
                                 <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
-                                        style="opacity:0.78;">Holder discount</span><strong id="axonos_usdc_discount_percent"
-                                        style="color:#4fe0c0;">—</strong></li>
+                                        style="opacity:0.78;">Holder discount</span><strong
+                                        id="axonos_usdc_discount_percent" style="color:#4fe0c0;">—</strong></li>
                                 <li
                                     style="display:flex;justify-content:space-between;gap:0.5rem;border-top:1px dashed rgba(255, 255, 255, 0.112);margin-top:0.35rem;padding-top:0.35rem;">
                                     <span>Minimum USDC (your tier)</span><strong id="axonos_usdc_discount_min"
@@ -1093,6 +1623,132 @@ Copyright (C) 2019 The noVNC Authors
             tabindex="-1"></textarea>
     </div>
 
+    <!-- Session Telemetry Sidebar (visible when connected) -->
+    <div id="axonos_session_sidebar" class="axonos-session-sidebar">
+        <!-- Section 1: Credits Remaining -->
+        <div class="axonos-session-sidebar__section">
+            <div class="axonos-session-sidebar__sec-header">
+                <span class="axonos-session-sidebar__sec-label">Prepaid Credits</span>
+            </div>
+            <div class="axonos-session-sidebar__sec-value-row">
+                <span id="axonos_sidebar_credits" class="axonos-session-sidebar__sec-value">—</span>
+                <span class="axonos-session-sidebar__sec-value-unit">credits</span>
+            </div>
+            <p class="axonos-session-sidebar__sec-hint">Remaining time: ≈ <b id="axonos_sidebar_time_left">—</b></p>
+            <div class="axonos-sidebar-progress-track">
+                <div id="axonos_sidebar_credits_progress" class="axonos-sidebar-progress-bar" style="width: 100%;">
+                </div>
+            </div>
+            <button type="button" id="axonos_sidebar_topup_btn" class="axonos-sidebar-action-btn">Top up
+                credits</button>
+        </div>
+
+        <!-- Section 2: Live Telemetry -->
+        <div class="axonos-session-sidebar__section">
+            <div class="axonos-session-sidebar__sec-header">
+                <span class="axonos-session-sidebar__sec-label">Live Telemetry</span>
+            </div>
+            <div class="axonos-telemetry-list">
+                <div class="axonos-telemetry-item">
+                    <div class="axonos-telemetry-item__row">
+                        <span class="axonos-telemetry-item__label">CPU Utilization</span>
+                        <span id="axonos_telemetry_cpu_val" class="axonos-telemetry-item__val">0%</span>
+                    </div>
+                    <div class="axonos-sidebar-progress-track">
+                        <div id="axonos_telemetry_cpu_progress"
+                            class="axonos-sidebar-progress-bar axonos-sidebar-progress-bar--green" style="width: 0%;">
+                        </div>
+                    </div>
+                </div>
+                <div class="axonos-telemetry-item">
+                    <div class="axonos-telemetry-item__row">
+                        <span class="axonos-telemetry-item__label">System RAM</span>
+                        <span id="axonos_telemetry_ram_val" class="axonos-telemetry-item__val">0%</span>
+                    </div>
+                    <div class="axonos-sidebar-progress-track">
+                        <div id="axonos_telemetry_ram_progress"
+                            class="axonos-sidebar-progress-bar axonos-sidebar-progress-bar--green" style="width: 0%;">
+                        </div>
+                    </div>
+                </div>
+                <div class="axonos-telemetry-item">
+                    <div class="axonos-telemetry-item__row">
+                        <span class="axonos-telemetry-item__label">GPU Utilization</span>
+                        <span id="axonos_telemetry_gpu_val" class="axonos-telemetry-item__val">0%</span>
+                    </div>
+                    <div class="axonos-sidebar-progress-track">
+                        <div id="axonos_telemetry_gpu_progress"
+                            class="axonos-sidebar-progress-bar axonos-sidebar-progress-bar--green" style="width: 0%;">
+                        </div>
+                    </div>
+                </div>
+                <div class="axonos-telemetry-item">
+                    <div class="axonos-telemetry-item__row">
+                        <span class="axonos-telemetry-item__label">VRAM Usage</span>
+                        <span id="axonos_telemetry_vram_val" class="axonos-telemetry-item__val">0%</span>
+                    </div>
+                    <div class="axonos-sidebar-progress-track">
+                        <div id="axonos_telemetry_vram_progress"
+                            class="axonos-sidebar-progress-bar axonos-sidebar-progress-bar--green" style="width: 0%;">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Section 3: Storage volume -->
+        <div class="axonos-session-sidebar__section">
+            <div class="axonos-session-sidebar__sec-header">
+                <span class="axonos-session-sidebar__sec-label">Storage Volume</span>
+                <span class="axonos-session-sidebar__sec-val" id="axonos_sidebar_storage_quota">100 GB</span>
+            </div>
+            <div class="axonos-sidebar-progress-track">
+                <div id="axonos_sidebar_storage_progress" class="axonos-sidebar-progress-bar" style="width: 12%;"></div>
+            </div>
+            <p class="axonos-session-sidebar__sec-hint" style="margin-top: 10px; font-size: 0.72rem;">Home storage
+                volume is mounted and synced to wallet.</p>
+        </div>
+
+        <!-- Section 4: Control Actions -->
+        <div class="axonos-sidebar-controls">
+            <button type="button" id="axonos_sidebar_detach_btn" class="axonos-sidebar-ctrl-btn">
+                <span class="axonos-sidebar-ctrl-btn__icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                        <polyline points="15 3 21 3 21 9" />
+                        <line x1="10" y1="14" x2="21" y2="3" />
+                    </svg>
+                </span>
+                <span class="axonos-sidebar-ctrl-btn__details">
+                    <span class="axonos-sidebar-ctrl-btn__title">Detach session</span>
+                    <span class="axonos-sidebar-ctrl-btn__desc">Return to home screen (desktop keeps running)</span>
+                </span>
+            </button>
+            <button type="button" id="axonos_sidebar_end_btn"
+                class="axonos-sidebar-ctrl-btn axonos-sidebar-ctrl-btn--danger">
+                <span class="axonos-sidebar-ctrl-btn__icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                    </svg>
+                </span>
+                <span class="axonos-sidebar-ctrl-btn__details">
+                    <span class="axonos-sidebar-ctrl-btn__title">End session</span>
+                    <span class="axonos-sidebar-ctrl-btn__desc">Stop billing and release GPU hardware</span>
+                </span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Sidebar Collapse Toggle Button -->
+    <button type="button" id="axonos_sidebar_toggle" class="axonos-sidebar-toggle" title="Toggle Telemetry Sidebar">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="9 18 15 12 9 6" />
+        </svg>
+    </button>
+
     <!-- AXGT usage overlay: warning (low minutes) or locked (exhausted). Shown only when connected. -->
     <div id="axonos_usage_overlay" class="axonos-usage-overlay axonos-usage-overlay--hidden" aria-hidden="true">
         <div class="axonos-usage-overlay__panel">
@@ -1138,11 +1794,31 @@ Copyright (C) 2019 The noVNC Authors
         </div>
         <div class="axonos-loading-text">Preparing session</div>
         <div class="axonos-loading-subtext">Connecting to AxonOS with direct GPU access…</div>
+        <div class="axonos-prep-steps">
+            <div class="axonos-prep-step active" id="axonos_prep_step_1">
+                <div class="axonos-prep-step__icon">1</div>
+                <span class="axonos-prep-step__label">Verifying payment on-chain</span>
+            </div>
+            <div class="axonos-prep-step" id="axonos_prep_step_2">
+                <div class="axonos-prep-step__icon">2</div>
+                <span class="axonos-prep-step__label">Provisioning GPU node</span>
+            </div>
+            <div class="axonos-prep-step" id="axonos_prep_step_3">
+                <div class="axonos-prep-step__icon">3</div>
+                <span class="axonos-prep-step__label">Booting Linux desktop</span>
+            </div>
+            <div class="axonos-prep-step" id="axonos_prep_step_4">
+                <div class="axonos-prep-step__icon">4</div>
+                <span class="axonos-prep-step__label">Mounting your storage volume</span>
+            </div>
+        </div>
+        <!-- Inspiring Quote during loading -->
+        <div class="axonos-loader-quote">
+            <p>"The best way to predict the future is to invent it."</p>
+            <cite>— Alan Kay</cite>
+        </div>
     </div>
 
-    <!-- AxonOS Branding -->
-    <div class="axonos-branding">AxonOS v0.1</div>
-    <div class="axonos-version">GPU-Native Scientific Computing</div>
 
     <!-- Session billing HUD — top-right corner, visible while the remote desktop is shown -->
     <div id="axonos_session_hud" class="axonos-session-hud axonos-session-hud--hidden" aria-hidden="true"
@@ -1171,8 +1847,8 @@ Copyright (C) 2019 The noVNC Authors
                 desktop session. Changing only the wallet-extension dropdown may not update the wallet exposed to
                 AxonOS.</p>
             <div class="axonos-hud-wallet-menu__actions">
-                <button type="button" id="axonos_session_hud_switch_wallet"
-                    class="axonos-session-hud__btn">Switch Wallet</button>
+                <button type="button" id="axonos_session_hud_switch_wallet" class="axonos-session-hud__btn">Switch
+                    Wallet</button>
                 <button type="button" id="axonos_session_hud_disconnect_wallet"
                     class="axonos-session-hud__btn axonos-session-hud__btn--danger">Sign out wallet</button>
                 <button type="button" id="axonos_session_hud_wallet_menu_cancel"
@@ -1180,25 +1856,7 @@ Copyright (C) 2019 The noVNC Authors
             </div>
         </div>
     </div>
-    <div class="axonos-footer-banner"
-        style="position:fixed;bottom:10px;left:0;right:0;text-align:center;font-size:11px;color:rgba(166, 172, 194, 0.38);z-index:54;pointer-events:auto;font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.06em;">
-        <span id="axonos_session_timer" class="axonos-session-timer axonos-session-timer--hidden"
-            title="Desktop time remaining on your prepaid credit"><span class="axonos-session-timer__label">Time
-                left</span>&nbsp;<span id="axonos_session_timer_value"
-                class="axonos-session-timer__value">—:—</span></span><span id="axonos_session_timer_sep"
-            class="axonos-session-timer--hidden" style="margin:0 0.4em;opacity:0.4;">|</span>
-        Built with<span
-            style="color:rgba(255, 95, 87, 0.75);font-size:1.6em;margin:0 0.2em;vertical-align:middle;line-height:1;">♥</span>by<a
-            href="https://axondao.io" target="_blank" rel="noopener noreferrer"
-            style="color:rgba(123, 108, 255, 0.72);text-decoration:none;margin-left:0.4em;font-weight:700;"><b>Axon</b>DAO</a><span
-            style="margin:0 0.4em;opacity:0.4;">|</span><a href="https://github.com/AXDT-INC/AxonOS" target="_blank"
-            rel="noopener noreferrer"
-            style="color:rgba(166, 172, 194, 0.45);text-decoration:none;vertical-align:middle;"><svg height="16" width="16"
-                viewBox="0 0 16 16" fill="rgba(166, 172, 194, 0.45)" style="vertical-align:middle;" aria-label="GitHub">
-                <path
-                    d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
-            </svg></a>
-    </div>
+
 
     <!-- Template Details Modal -->
     <div id="axonos_template_modal" class="axonos-modal" aria-hidden="true" role="dialog"
@@ -1482,17 +2140,41 @@ Copyright (C) 2019 The noVNC Authors
                 var browseBtn = document.getElementById('axonos_hero_browse_btn');
                 var rail = document.querySelector('.axonos-connect-wrapper');
                 var main = document.querySelector('.axonos-landing-main');
-                if (launchBtn && rail) {
+                if (launchBtn) {
                     launchBtn.addEventListener('click', function () {
-                        rail.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                        rail.classList.remove('axonos-rail-pulse');
-                        void rail.offsetWidth; // restart the highlight animation
-                        rail.classList.add('axonos-rail-pulse');
+                        var wallet = window.verifiedWalletAddress;
+                        if (wallet) {
+                            if (typeof axonosLoadDashboard === 'function') axonosLoadDashboard();
+                        } else {
+                            // Open the credentials dialog popup, then trigger wallet connect
+                            var dlg = document.getElementById('noVNC_credentials_dlg');
+                            if (dlg) dlg.classList.add('noVNC_open');
+                            if (typeof window.onConnectWalletClick === 'function') {
+                                window.onConnectWalletClick();
+                            }
+                        }
                     });
                 }
                 if (browseBtn && main) {
                     browseBtn.addEventListener('click', function () {
                         main.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    });
+                }
+
+                // Brand = in-app home: dashboard when a wallet is connected, else the
+                // landing screen. Pure screen switch — never navigates, so running
+                // sessions and heartbeats are untouched.
+                var brandBtn = document.getElementById('axonos_topbar_brand');
+                if (brandBtn) {
+                    brandBtn.addEventListener('click', function () {
+                        var wallet = window.verifiedWalletAddress;
+                        if (wallet && typeof axonosLoadDashboard === 'function') {
+                            axonosLoadDashboard();
+                        } else if (typeof axonosUpdateActiveScreen === 'function') {
+                            axonosUpdateActiveScreen('landing');
+                        }
+                        var dlg = document.getElementById('noVNC_connect_dlg');
+                        if (dlg && dlg.parentElement) dlg.parentElement.scrollTop = 0;
                     });
                 }
             }
@@ -1514,7 +2196,8 @@ Copyright (C) 2019 The noVNC Authors
                 Are you sure you want to proceed?
             </div>
             <div class="axonos-confirm-footer">
-                <button type="button" id="axonos_confirm_cancel" class="axonos-btn axonos-btn--secondary">Cancel</button>
+                <button type="button" id="axonos_confirm_cancel"
+                    class="axonos-btn axonos-btn--secondary">Cancel</button>
                 <button type="button" id="axonos_confirm_ok" class="axonos-btn axonos-btn--primary">Confirm</button>
             </div>
         </div>
@@ -1724,6 +2407,14 @@ Copyright (C) 2019 The noVNC Authors
             var msg = phases[phase] || phases.preparing;
             if (titleEl) titleEl.textContent = msg[0];
             if (subEl) subEl.textContent = msg[1];
+
+            // Progressively check checklist steps
+            if (typeof window.axonosBootOverlayNextStep === 'function') {
+                if (phase === 'preparing') window.axonosBootOverlayNextStep(1);
+                else if (phase === 'claiming') window.axonosBootOverlayNextStep(2);
+                else if (phase === 'webrtc') window.axonosBootOverlayNextStep(3);
+                else if (phase === 'vnc') window.axonosBootOverlayNextStep(4);
+            }
         }
 
         window.axonosIsReconnectLaunch = axonosIsReconnectLaunch;
@@ -2223,7 +2914,7 @@ Copyright (C) 2019 The noVNC Authors
         }
 
         function axonosProfileLabel(profile) {
-            var labels = { small: 'Small', medium: 'Medium', large: 'Large', max: 'Max' };
+            var labels = { small: 'Single', medium: 'Dual', large: 'Quad', max: 'Octa' };
             return labels[profile] || profile;
         }
 
@@ -2474,7 +3165,7 @@ Copyright (C) 2019 The noVNC Authors
                 var profile = getRequestedProfile();
                 var gpus = axonosGpuCountForProfile(profile);
                 if (gpus > 1) {
-                    var profileLabels = { small: 'Small', medium: 'Medium', large: 'Large', max: 'Max' };
+                    var profileLabels = { small: 'Single', medium: 'Dual', large: 'Quad', max: 'Octa' };
                     text += ' (' + (profileLabels[profile] || profile) + ', ' + gpus + ' GPUs)';
                 }
             }
@@ -2512,7 +3203,7 @@ Copyright (C) 2019 The noVNC Authors
             }
             var profile = getRequestedProfile();
             var gpus = axonosGpuCountForProfile(profile);
-            var profileLabels = { small: 'Small', medium: 'Medium', large: 'Large', max: 'Max' };
+            var profileLabels = { small: 'Single', medium: 'Dual', large: 'Quad', max: 'Octa' };
             var profileLabel = profileLabels[profile] || profile;
             hint.style.display = '';
             if (gpus <= 1) {
@@ -2620,6 +3311,7 @@ Copyright (C) 2019 The noVNC Authors
             '11155111': { kind: 'testnet', label: 'Sepolia testnet', caution: 'Test token · not real funds' },
             '5': { kind: 'testnet', label: 'Goerli testnet (deprecated)', caution: 'Test token · not real funds' },
             '17000': { kind: 'testnet', label: 'Holesky testnet', caution: 'Test token · not real funds' },
+            '8453': { kind: 'mainnet', label: 'Base mainnet' },
             '84532': { kind: 'testnet', label: 'Base Sepolia testnet', caution: 'Test token · not real funds' },
             '31337': { kind: 'testnet', label: 'Local dev chain', caution: 'Local · not real funds' }
         };
@@ -2670,6 +3362,36 @@ Copyright (C) 2019 The noVNC Authors
             };
         }
 
+        /** Topbar pills: Ethereum (L1, AXGT/ETH) + Base (L2, USDC) driven by server env.
+         *  kind 'mainnet' → "<Chain> Mainnet" teal dot; anything else → "<Chain> Testnet" gold dot. */
+        function axonosApplyTopbarNetworkPills(ethEnv) {
+            var ethPill = document.getElementById('axonos_topbar_network');
+            var ethLabel = document.getElementById('axonos_topbar_network_label');
+            if (ethPill && ethLabel) {
+                if (ethEnv && ethEnv.chainId) {
+                    ethPill.style.display = '';
+                    ethPill.classList.toggle('axonos-topbar-network--testnet', ethEnv.kind !== 'mainnet');
+                    ethLabel.textContent = ethEnv.kind === 'mainnet' ? 'Ethereum Mainnet' : 'Ethereum Testnet';
+                } else {
+                    ethPill.style.display = 'none';
+                }
+            }
+            var basePill = document.getElementById('axonos_topbar_network_base');
+            var baseLabel = document.getElementById('axonos_topbar_network_base_label');
+            if (basePill && baseLabel) {
+                var usdcOn = axonosConfig.usdc_deposits_enabled
+                    && /^0x[a-fA-F0-9]{40}$/.test(String(axonosConfig.usdc_contract_address || ''));
+                var baseKnown = AXONOS_KNOWN_CHAIN_ENV[String(parseInt(String(axonosConfig.usdc_chain_id || ''), 10))];
+                if (usdcOn && baseKnown) {
+                    basePill.style.display = '';
+                    basePill.classList.toggle('axonos-topbar-network--testnet', baseKnown.kind !== 'mainnet');
+                    baseLabel.textContent = baseKnown.kind === 'mainnet' ? 'Base Mainnet' : 'Base Testnet';
+                } else {
+                    basePill.style.display = 'none';
+                }
+            }
+        }
+
         function applyAxonosNetworkEnvironmentUi(chainIdStr) {
             var land = document.getElementById('axonos_landing_network');
             var walletLine = document.getElementById('axonos_wallet_network_line');
@@ -2696,6 +3418,7 @@ Copyright (C) 2019 The noVNC Authors
                     walletLine.classList.add('axonos-wallet-network-line--hidden');
                     walletLine.textContent = '';
                 }
+                axonosApplyTopbarNetworkPills(null);
                 return;
             }
             // Match etherscanBase default: missing chain id → treat as mainnet (see loadAxonOSConfig).
@@ -2708,6 +3431,7 @@ Copyright (C) 2019 The noVNC Authors
                     walletLine.classList.add('axonos-wallet-network-line--hidden');
                     walletLine.textContent = '';
                 }
+                axonosApplyTopbarNetworkPills(null);
                 return;
             }
             var mod = env.kind === 'mainnet' ? 'mainnet' : (env.kind === 'other' ? 'other' : 'testnet');
@@ -2717,6 +3441,7 @@ Copyright (C) 2019 The noVNC Authors
                 walletLine.classList.add('axonos-wallet-network-line--' + mod);
                 walletLine.textContent = env.walletText;
             }
+            axonosApplyTopbarNetworkPills(env);
         }
 
         function formatCreditMinutes(m) {
@@ -3098,7 +3823,7 @@ Copyright (C) 2019 The noVNC Authors
                     // Only show the toggle when there's a real choice (>1 rail).
                     if (toggleEl) toggleEl.style.display = nRails > 1 ? 'flex' : 'none';
                     var saved = null;
-                    try { saved = localStorage.getItem('axonos_pay_rail'); } catch (e) {}
+                    try { saved = localStorage.getItem('axonos_pay_rail'); } catch (e) { }
                     var preferred = (saved && avail[saved]) ? saved
                         : (avail.usdc ? 'usdc' : (avail.eth ? 'eth' : 'axgt'));
                     axonosSelectPayRail(preferred);
@@ -3387,7 +4112,7 @@ Copyright (C) 2019 The noVNC Authors
                         if (cur && String(cur.value || '').trim() === val) {
                             updateUsdcPaymentPreview(d, val);
                         }
-                    }).catch(function () {});
+                    }).catch(function () { });
             }, 400);
         }
 
@@ -3490,7 +4215,7 @@ Copyright (C) 2019 The noVNC Authors
                         if (seq !== axonosAxgtAmountQuoteSeq || !d || !d.ok) return;
                         var cur = document.getElementById('axonos_pay_axgt_amount');
                         if (cur && String(cur.value || '').trim() === val) updateAxgtPaymentPreview(d, val);
-                    }).catch(function () {});
+                    }).catch(function () { });
             }, 400);
         }
 
@@ -3683,39 +4408,19 @@ Copyright (C) 2019 The noVNC Authors
                         window.verifiedWalletAuthToken = data.auth_token || null;
                         window.axonosAllowVncConnect = true;
                         try { localStorage.setItem('axonos_last_wallet', walletAddress); } catch (e) { }
-                        var balanceDisplay = (data.balance_axgt != null) ? (String(data.balance_axgt) + ' AXGT') : ((typeof data.remaining_minutes === 'number') ? (data.remaining_minutes + ' min remaining') : '—');
-                        axonosRefreshPausedResumeStatus().then(function () {
-                            var resumeHint = window.axonosPausedResume
-                                ? (' · Resume ' + axonosProfileLabel(window.axonosPausedResume.profile) +
-                                    ' (' + window.axonosPausedResume.gpuCount + ' GPU' +
-                                    (window.axonosPausedResume.gpuCount === 1 ? '' : 's') + ')')
-                                : '';
-                            setWalletUIState('axonos_wallet_state_verified', {
-                                address: walletAddress,
-                                balanceDisplay: balanceDisplay + resumeHint
-                            });
-                            if (window.axonosPausedResume) {
-                                var credentialsDialog = document.getElementById('noVNC_credentials_dlg');
-                                if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
-                                axonosTryResumeDesktopAfterCredit();
-                                return;
-                            }
+                        if (typeof axonosOnWalletVerified === 'function') {
+                            axonosOnWalletVerified(walletAddress, data);
+                        } else {
+                            var credentialsDialog = document.getElementById('noVNC_credentials_dlg');
+                            if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
                             claimSession().then(function (claim) {
                                 if (claim.granted) {
                                     tryConnectAfterClaim();
                                 } else {
                                     handleSessionClaimDenied(claim, 'Session claim denied.');
-                                    if (!axonosClaimReasonNeedsWalletOrResume(claim)) {
-                                        var credentialsDialog = document.getElementById('noVNC_credentials_dlg');
-                                        if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
-                                    }
                                 }
-                            }).catch(function () {
-                                setWalletUIState('axonos_wallet_state_connect_error', {
-                                    msg: 'Session claim failed. Check network or try again.'
-                                });
                             });
-                        });
+                        }
                         return;
                     }
                     if (st === 503 || !data.auth_token) {
@@ -4349,6 +5054,7 @@ Copyright (C) 2019 The noVNC Authors
                 setWalletUIState('axonos_wallet_state_choose_wallet');
             });
         }
+        window.onConnectWalletClick = onConnectWalletClick;
 
         if (connectWalletBtn) connectWalletBtn.addEventListener('click', function () { onConnectWalletClick(); });
         if (retryConnectBtn) retryConnectBtn.addEventListener('click', function () { onConnectWalletClick(); });
@@ -4431,7 +5137,7 @@ Copyright (C) 2019 The noVNC Authors
                 rail = avail.usdc ? 'usdc' : (avail.eth ? 'eth' : (avail.axgt ? 'axgt' : 'eth'));
             }
             axonosActivePayRail = rail;
-            try { localStorage.setItem('axonos_pay_rail', rail); } catch (e) {}
+            try { localStorage.setItem('axonos_pay_rail', rail); } catch (e) { }
 
             var ethRowEl = document.getElementById('axonos_pay_eth_amount');
             ethRowEl = ethRowEl && ethRowEl.closest ? ethRowEl.closest('.axonos-pay-deposit-row') : null;
@@ -4531,6 +5237,9 @@ Copyright (C) 2019 The noVNC Authors
             window.axonosPausedResume = null;
             axonosApplyResumeConnectUi(false);
             setWalletUIState('axonos_wallet_state_disconnected');
+            if (typeof axonosSyncTopbar === 'function') {
+                axonosSyncTopbar(null, null);
+            }
         }
 
         // True when a remote desktop is on screen OR mid-negotiation ("Connecting
@@ -5011,7 +5720,7 @@ Copyright (C) 2019 The noVNC Authors
             if (!selectEl) return;
             if (selectEl.dataset.hasCustomSelect) return;
             selectEl.dataset.hasCustomSelect = 'true';
-            
+
             // Hide original select visually but keep it in DOM and accessible
             selectEl.style.position = 'absolute';
             selectEl.style.width = '1px';
@@ -5027,7 +5736,7 @@ Copyright (C) 2019 The noVNC Authors
             // Create wrapper
             const wrapper = document.createElement('div');
             wrapper.className = 'axonos-custom-select';
-            
+
             // Apply original classes so we can target it in CSS
             const originalClasses = selectEl.className.split(' ');
             originalClasses.forEach(function (cls) {
@@ -5040,14 +5749,14 @@ Copyright (C) 2019 The noVNC Authors
             const trigger = document.createElement('div');
             trigger.className = 'axonos-custom-select__trigger';
             trigger.tabIndex = 0;
-            
+
             const triggerText = document.createElement('span');
             trigger.appendChild(triggerText);
-            
+
             const triggerArrow = document.createElement('div');
             triggerArrow.className = 'axonos-custom-select__arrow';
             trigger.appendChild(triggerArrow);
-            
+
             wrapper.appendChild(trigger);
 
             // Create options container
@@ -5079,7 +5788,7 @@ Copyright (C) 2019 The noVNC Authors
                     optDiv.textContent = opt.textContent;
                     optDiv.setAttribute('data-value', opt.value);
                     optDiv.setAttribute('data-index', idx);
-                    
+
                     optDiv.addEventListener('click', function (e) {
                         e.stopPropagation();
                         if (selectEl.disabled) return;
@@ -5088,7 +5797,7 @@ Copyright (C) 2019 The noVNC Authors
                         closeDropdown();
                         trigger.focus();
                     });
-                    
+
                     optionsContainer.appendChild(optDiv);
                 });
                 updateSelectedText();
@@ -5202,7 +5911,7 @@ Copyright (C) 2019 The noVNC Authors
                 if (selectEl.disabled) return;
                 const options = Array.from(optionsContainer.querySelectorAll('.axonos-custom-select__option'));
                 if (options.length === 0) return;
-                
+
                 let activeIdx = options.findIndex(opt => opt.classList.contains('axonos-custom-select__option--selected'));
                 if (activeIdx === -1) activeIdx = 0;
 
@@ -5287,5 +5996,918 @@ Copyright (C) 2019 The noVNC Authors
                 });
             }
         }, 1000);
+
+        // ==========================================================================
+        // AxonOS Workspace Revamp Controllers (Dashboard, Stepper Wizard, Sidebar)
+        // ==========================================================================
+
+        let axonosCurrentWizardStep = 1;
+        let axonosSelectedGpuProfile = 'small'; // small, medium, large, max
+        let axonosSelectedPaymentToken = 'usdc'; // usdc, eth, axgt
+        let axonosTelemetryInterval = null;
+
+        // Screen states toggler
+        function axonosUpdateActiveScreen(screen) {
+            console.log('[AxonOS] Switching screen state to:', screen);
+            const connectDlg = document.getElementById('noVNC_connect_dlg');
+            if (connectDlg) {
+                connectDlg.classList.remove('axonos-state-landing', 'axonos-state-dashboard', 'axonos-state-wizard');
+                connectDlg.classList.add('axonos-state-' + screen);
+            }
+
+            // Adjust visual display blocks manually for absolute compatibility
+            const landingMain = document.querySelector('.axonos-landing-main');
+            const dashboardContainer = document.getElementById('axonos_dashboard_container');
+            const wizardContainer = document.getElementById('axonos_wizard_container');
+            const heroSection = document.querySelector('.axonos-hero');
+
+            if (landingMain) landingMain.style.display = (screen === 'landing') ? '' : 'none';
+            if (heroSection) heroSection.style.display = (screen === 'landing') ? 'block' : 'none';
+
+            if (dashboardContainer) {
+                dashboardContainer.style.display = (screen === 'dashboard') ? 'block' : 'none';
+            }
+            if (wizardContainer) {
+                wizardContainer.style.display = (screen === 'wizard') ? 'block' : 'none';
+            }
+        }
+        window.axonosUpdateActiveScreen = axonosUpdateActiveScreen;
+
+        // Sync topbar state elements
+        function axonosSyncTopbar(wallet, credits) {
+            const connectBtn = document.getElementById('axonos_topbar_connect_btn');
+            const userWrap = document.getElementById('axonos_topbar_user_wrap');
+            const addrEl = document.getElementById('axonos_topbar_wallet_addr');
+            const creditsEl = document.getElementById('axonos_topbar_credits_val');
+
+            if (wallet) {
+                if (connectBtn) connectBtn.style.display = 'none';
+                if (userWrap) userWrap.style.display = 'flex';
+                if (addrEl) addrEl.textContent = wallet.slice(0, 6) + '…' + wallet.slice(-4);
+                if (creditsEl) creditsEl.textContent = (credits != null) ? Math.round(credits) : '0';
+            } else {
+                if (connectBtn) connectBtn.style.display = 'block';
+                if (userWrap) userWrap.style.display = 'none';
+            }
+        }
+        window.axonosSyncTopbar = axonosSyncTopbar;
+
+        // Handler when wallet is verified
+        function axonosOnWalletVerified(walletAddress, data) {
+            console.log('[AxonOS] Wallet verified:', walletAddress);
+            var credentialsDialog = document.getElementById('noVNC_credentials_dlg');
+            if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
+
+            // Sync topbar
+            axonosSyncTopbar(walletAddress, data ? data.remaining_minutes : null);
+
+            // Refresh paused/resume state first
+            axonosRefreshPausedResumeStatus().then(function () {
+                if (window.axonosPausedResume) {
+                    console.log('[AxonOS] Paused session detected, resuming desktop directly');
+                    axonosTryResumeDesktopAfterCredit();
+                    return;
+                }
+                // Check if they already have active sessions running
+                axonosLoadDashboard();
+            });
+        }
+        window.axonosOnWalletVerified = axonosOnWalletVerified;
+
+        // Load and render the dashboard workspace
+        function axonosLoadDashboard() {
+            const wallet = window.verifiedWalletAddress || verifiedWalletAddress;
+            if (!wallet) return;
+
+            if (typeof UI !== 'undefined' && typeof UI.renderDashboardQuickLaunch === 'function') {
+                UI.renderDashboardQuickLaunch();
+            }
+
+            console.log('[AxonOS] Loading dashboard workspace for:', wallet);
+
+            // Set wallet address display
+            const addrEl = document.getElementById('axonos_dashboard_wallet_addr');
+            if (addrEl) {
+                addrEl.textContent = wallet.slice(0, 6) + '…' + wallet.slice(-4);
+            }
+
+            // Fetch session status
+            sessionStatusForWallet(wallet).then(function (status) {
+                console.log('[AxonOS] Dashboard status fetch:', status);
+
+                const listEl = document.getElementById('axonos_dashboard_sessions_list');
+                const emptyEl = document.getElementById('axonos_dashboard_empty_state');
+                const activeCountEl = document.getElementById('axonos_dashboard_active_count');
+                const combinedRateEl = document.getElementById('axonos_dashboard_burn_rate');
+
+                if (activeCountEl) activeCountEl.textContent = status.active_sessions_count || 0;
+
+                let activeSessionsList = status.active_sessions || [];
+                if (!status.multi_session_enabled && status.active && status.is_owner) {
+                    // Fallback to single active session object mapping
+                    activeSessionsList = [{
+                        session_id: status.paused_session_id || 1,
+                        requested_profile: status.owner_requested_profile || status.latest_requested_profile || 'small',
+                        assigned_gpu_ids: status.owner_assigned_gpu_ids || status.latest_assigned_gpu_ids || [],
+                        allocation_status: status.allocation_status || 'allocated',
+                        started_at: Date.now() / 1000 - 300 // mock 5 min ago
+                    }];
+                }
+
+                if (activeSessionsList.length > 0) {
+                    if (emptyEl) emptyEl.style.display = 'none';
+                    if (listEl) {
+                        listEl.style.display = 'grid';
+                        listEl.innerHTML = '';
+
+                        let totalRate = 0;
+                        activeSessionsList.forEach(function (session) {
+                            const profile = session.requested_profile || 'small';
+                            const gpuCount = axonosGpuCountForProfile(profile);
+                            const rate = gpuCount; // credits per min
+                            totalRate += rate;
+
+                            const card = document.createElement('div');
+                            card.className = 'axonos-session-card';
+
+                            // Environment icon/name lookup
+                            let envTitle = 'AxonOS Desktop';
+                            let envIcon = '🧬';
+                            const lastTemplate = window.axonosSelectedTemplateId || window.sessionStorage.getItem('axonosSelectedTemplateId');
+                            const template = (window.AXONOS_TEMPLATES || []).find(t => t.id === lastTemplate);
+                            if (template) {
+                                envTitle = template.title;
+                                envIcon = template.icon;
+                            }
+
+                            // Compute simple uptime
+                            let uptimeStr = 'Just launched';
+                            if (session.started_at) {
+                                const uptimeSecs = Math.max(0, Math.floor(Date.now() / 1000 - session.started_at));
+                                const hours = Math.floor(uptimeSecs / 3600);
+                                const mins = Math.floor((uptimeSecs % 3600) / 60);
+                                uptimeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+                            }
+
+                            card.innerHTML = `
+                                <div class="axonos-session-card__top">
+                                    <div class="axonos-session-card__icon-wrap">${envIcon}</div>
+                                    <div class="axonos-session-card__details">
+                                        <div class="axonos-session-card__name-row">
+                                            <span class="axonos-session-card__name">${envTitle}</span>
+                                            <span class="axonos-session-card__status">
+                                                <span class="axonos-session-card__status-dot"></span>${session.allocation_status === 'allocating' ? 'Allocating' : 'Running'}
+                                            </span>
+                                        </div>
+                                        <div class="axonos-session-card__specs">
+                                            ${axonosProfileLabel(profile)} (${gpuCount} GPU${gpuCount > 1 ? 's' : ''}) · up ${uptimeStr}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="axonos-session-card__bottom">
+                                    <div class="axonos-session-card__rate-desc">Burning <b>${rate}</b> cr/min</div>
+                                    <div class="axonos-session-card__actions">
+                                        <button type="button" class="axonos-session-card__btn axonos-session-card__btn--danger end-btn">End</button>
+                                        <button type="button" class="axonos-session-card__btn axonos-session-card__btn--primary reconnect-btn">
+                                            Open desktop
+                                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                        </button>
+                                    </div>
+                                </div>
+                            `;
+
+                            // Bind events
+                            card.querySelector('.end-btn').addEventListener('click', function () {
+                                UI.showConfirm('End Desktop Session?', 'Ending this session will stop billing and release the GPU hardware. All unsaved changes outside your persistent volume will be lost.', 'End Session').then(function (ok) {
+                                    if (ok) {
+                                        axonosEndSession(session.session_id);
+                                    }
+                                });
+                            });
+
+                            card.querySelector('.reconnect-btn').addEventListener('click', function () {
+                                tryConnectAfterClaim();
+                            });
+
+                            listEl.appendChild(card);
+                        });
+
+                        if (combinedRateEl) combinedRateEl.textContent = totalRate;
+                    }
+                } else {
+                    if (listEl) listEl.style.display = 'none';
+                    if (emptyEl) emptyEl.style.display = 'block';
+                    if (combinedRateEl) combinedRateEl.textContent = '0';
+                }
+
+                // Query credit balance
+                axonosFetchWalletAccessStatus(wallet).then(function (res) {
+                    const creditsValEl = document.getElementById('axonos_dashboard_credits');
+                    const creditsStr = (res.remaining_minutes != null) ? Math.round(res.remaining_minutes) : '—';
+                    if (creditsValEl) creditsValEl.textContent = creditsStr;
+
+                    // Update global headers and topbar widget as well
+                    var headerCredits = document.querySelector('.axonos-header-credits-val');
+                    if (headerCredits) headerCredits.textContent = creditsStr;
+                    axonosSyncTopbar(wallet, res.remaining_minutes);
+                });
+
+                axonosUpdateActiveScreen('dashboard');
+            }).catch(function (err) {
+                console.error('[AxonOS] Error fetching dashboard status:', err);
+                if (emptyEl) emptyEl.style.display = 'block';
+                axonosUpdateActiveScreen('dashboard');
+            });
+        }
+        window.axonosLoadDashboard = axonosLoadDashboard;
+
+        // End session helper
+        function axonosEndSession(sessionId) {
+            console.log('[AxonOS] Releasing session:', sessionId);
+            const wallet = window.verifiedWalletAddress || verifiedWalletAddress;
+            if (!wallet) return;
+
+            axonosFetch({
+                method: 'POST',
+                url: new URL('/api/session/release', window.location.origin).toString(),
+                body: JSON.stringify({ wallet_address: wallet })
+            }).then(function () {
+                console.log('[AxonOS] Session released successfully');
+                axonosLoadDashboard();
+            }).catch(function (err) {
+                console.error('[AxonOS] Failed to release session:', err);
+                axonosLoadDashboard();
+            });
+        }
+        window.axonosEndSession = axonosEndSession;
+
+        // Launch Wizard Init
+        function axonosStartWizard() {
+            axonosCurrentWizardStep = 1;
+
+            // Reveal the wizard screen (hides landing + dashboard). Without this the
+            // dialog stays in its previous state class and the CSS keeps the wizard
+            // container display:none, so "New session" / "Top up" would do nothing.
+            axonosUpdateActiveScreen('wizard');
+
+            // Set Step 1 inputs search and categories
+            const searchInput = document.getElementById('axonos_wizard_template_search');
+            if (searchInput) {
+                searchInput.value = '';
+                searchInput.addEventListener('input', function (e) {
+                    UI.renderAxonosTemplates(e.target.value, 'all', '#axonos_wizard_templates_grid');
+                });
+            }
+
+            // Sync categories pills
+            const filterPills = document.querySelectorAll('#axonos_wizard_filter_pills .axonos-filter-pill');
+            filterPills.forEach(pill => {
+                pill.addEventListener('click', () => {
+                    filterPills.forEach(p => p.classList.remove('active'));
+                    pill.classList.add('active');
+                    const cat = pill.getAttribute('data-category') || 'all';
+                    UI.renderAxonosTemplates(searchInput ? searchInput.value : '', cat, '#axonos_wizard_templates_grid');
+                });
+            });
+
+            // Initial render of templates grid (redirected to wizard container grid)
+            UI.renderAxonosTemplates('', 'all', '#axonos_wizard_templates_grid');
+
+            // Wire GPU cards selection click listener
+            const gpuCards = document.querySelectorAll('.axonos-gpu-card');
+            gpuCards.forEach(card => {
+                card.addEventListener('click', () => {
+                    gpuCards.forEach(c => c.classList.remove('selected'));
+                    card.classList.add('selected');
+                    axonosSelectedGpuProfile = card.getAttribute('data-gpu') || 'small';
+
+                    // Sync the hidden profiles select field
+                    const selectEl = document.getElementById('axonos_profile_select');
+                    if (selectEl) {
+                        selectEl.value = axonosSelectedGpuProfile;
+                        selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+
+                    axonosUpdateWizardSummaryRail();
+                    axonosUpdatePayCalculator();
+                });
+            });
+
+            // Wire storage slider listener
+            const slider = document.getElementById('axonos_wizard_storage_slider');
+            const sliderVal = document.getElementById('axonos_wizard_storage_val');
+            if (slider && sliderVal) {
+                slider.addEventListener('input', (e) => {
+                    sliderVal.textContent = e.target.value + ' GB';
+                    axonosUpdateWizardSummaryRail();
+                });
+            }
+
+            // Wire SSH Toggle option card
+            const sshToggleCard = document.getElementById('axonos_wizard_ssh_toggle_card');
+            const sshToggleInput = document.getElementById('axonos_ssh_toggle'); // reuse actual checkbox
+            const sshKeyWrap = document.getElementById('axonos_wizard_ssh_key_wrap');
+            const sshKeyTextarea = document.getElementById('axonos_wizard_ssh_pubkey');
+
+            if (sshToggleCard && sshToggleInput) {
+                // Ensure correct visual default
+                sshToggleCard.classList.toggle('checked', !!sshToggleInput.checked);
+                if (sshKeyWrap) sshKeyWrap.classList.toggle('axonos-ssh-key--hidden', !sshToggleInput.checked);
+
+                sshToggleCard.addEventListener('click', () => {
+                    const newVal = !sshToggleInput.checked;
+                    sshToggleInput.checked = newVal;
+                    sshToggleInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+                    sshToggleCard.classList.toggle('checked', newVal);
+                    if (sshKeyWrap) sshKeyWrap.classList.toggle('axonos-ssh-key--hidden', !newVal);
+                    if (newVal && sshKeyTextarea) sshKeyTextarea.focus();
+
+                    axonosUpdateWizardSummaryRail();
+                });
+            }
+
+            // Sync SSH public key textarea changes
+            if (sshKeyTextarea && document.getElementById('axonos_ssh_pubkey')) {
+                sshKeyTextarea.addEventListener('input', (e) => {
+                    const realKey = document.getElementById('axonos_ssh_pubkey');
+                    if (realKey) {
+                        realKey.value = e.target.value;
+                        realKey.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                });
+            }
+
+            // Wire Step 3 payment tabs
+            const tokenTabs = document.querySelectorAll('.axonos-wizard-token-tab');
+            tokenTabs.forEach(tab => {
+                tab.addEventListener('click', () => {
+                    tokenTabs.forEach(t => t.classList.remove('active'));
+                    tab.classList.add('active');
+                    axonosSelectedPaymentToken = tab.getAttribute('data-token') || 'usdc';
+
+                    // Update pay calculator UI
+                    axonosUpdatePayCalculator();
+                });
+            });
+
+            // Wire amount input changes
+            const amountInput = document.getElementById('axonos_wizard_pay_amount');
+            if (amountInput) {
+                amountInput.addEventListener('input', () => {
+                    axonosUpdatePayCalculator();
+                });
+            }
+
+            // Wire quick-deposit buttons click
+            const quickBtns = document.querySelectorAll('#axonos_wizard_quick_amounts .axonos-deposit-quick-btn');
+            quickBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    if (amountInput) {
+                        amountInput.value = btn.getAttribute('data-value');
+                        axonosUpdatePayCalculator();
+                    }
+                });
+            });
+
+            // Primary actions wiring
+            const primaryBtn = document.getElementById('axonos_wizard_primary_btn');
+            if (primaryBtn) {
+                // Remove previous listeners (clone and replace)
+                const newBtn = primaryBtn.cloneNode(true);
+                primaryBtn.parentNode.replaceChild(newBtn, primaryBtn);
+
+                newBtn.addEventListener('click', () => {
+                    if (axonosCurrentWizardStep === 1) {
+                        axonosGoToWizardStep(2);
+                    } else if (axonosCurrentWizardStep === 2) {
+                        // Check if SSH is enabled but public key is invalid
+                        const isSsh = sshToggleInput && sshToggleInput.checked;
+                        if (isSsh && sshKeyTextarea && !UI.axonosSshKeyLooksValid(sshKeyTextarea.value)) {
+                            UI.showConfirm('Invalid SSH Key', 'Please enter a valid SSH public key in the textarea (should start with ssh-rsa, ssh-ed25519, etc.).', 'Ok');
+                            return;
+                        }
+                        axonosGoToWizardStep(3);
+                    } else if (axonosCurrentWizardStep === 3) {
+                        // Launch session!
+                        axonosTriggerLaunchFromWizard();
+                    }
+                });
+            }
+
+            // Back button wiring
+            const backBtn = document.getElementById('axonos_wizard_back_btn');
+            if (backBtn) {
+                const newBack = backBtn.cloneNode(true);
+                backBtn.parentNode.replaceChild(newBack, backBtn);
+                newBack.addEventListener('click', () => {
+                    if (axonosCurrentWizardStep === 1) {
+                        // Go back to Dashboard
+                        axonosLoadDashboard();
+                    } else {
+                        axonosGoToWizardStep(axonosCurrentWizardStep - 1);
+                    }
+                });
+            }
+
+            axonosGoToWizardStep(1);
+            axonosUpdateWizardSummaryRail();
+        }
+        window.axonosStartWizard = axonosStartWizard;
+
+        // Wizard steps switching handler
+        function axonosGoToWizardStep(stepNum) {
+            axonosCurrentWizardStep = stepNum;
+            console.log('[AxonOS] Going to wizard step:', stepNum);
+
+            // Stepper dots progress update
+            const stepEnv = document.getElementById('axonos_step_env_indicator');
+            const stepHw = document.getElementById('axonos_step_hw_indicator');
+            const stepPay = document.getElementById('axonos_step_pay_indicator');
+            const line1 = document.getElementById('axonos_step_line_1');
+            const line2 = document.getElementById('axonos_step_line_2');
+
+            if (stepEnv) {
+                stepEnv.classList.toggle('active', stepNum === 1);
+                stepEnv.classList.toggle('completed', stepNum > 1);
+            }
+            if (stepHw) {
+                stepHw.classList.toggle('active', stepNum === 2);
+                stepHw.classList.toggle('completed', stepNum > 2);
+            }
+            if (stepPay) {
+                stepPay.classList.toggle('active', stepNum === 3);
+            }
+
+            if (line1) line1.classList.toggle('active', stepNum > 1);
+            if (line2) line2.classList.toggle('active', stepNum > 2);
+
+            // Hide show step content panes
+            const panes = ['env', 'hw', 'pay'];
+            panes.forEach((p, idx) => {
+                const paneEl = document.getElementById('axonos_wizard_pane_' + p);
+                if (paneEl) {
+                    paneEl.classList.toggle('active', idx + 1 === stepNum);
+                }
+            });
+
+            // Update Back Button Label
+            const backLabel = document.getElementById('axonos_wizard_back_label');
+            if (backLabel) {
+                if (stepNum === 1) backLabel.textContent = 'Back to home';
+                else if (stepNum === 2) backLabel.textContent = 'Back to environments';
+                else if (stepNum === 3) backLabel.textContent = 'Back to hardware';
+            }
+
+            // Summary rail primary action label
+            const primaryBtnText = document.querySelector('#axonos_wizard_primary_btn span');
+            if (primaryBtnText) {
+                if (stepNum === 1) primaryBtnText.textContent = 'Choose Hardware';
+                else if (stepNum === 2) primaryBtnText.textContent = 'Configure Credits';
+                else if (stepNum === 3) {
+                    const isSsh = document.getElementById('axonos_ssh_toggle') && document.getElementById('axonos_ssh_toggle').checked;
+                    primaryBtnText.textContent = isSsh ? 'Launch Direct SSH Session' : 'Launch GPU Desktop';
+                }
+            }
+
+            // Wallet view state checks in Step 3
+            if (stepNum === 3) {
+                const wallet = window.verifiedWalletAddress || verifiedWalletAddress;
+                const unconnectedPanel = document.getElementById('axonos_wizard_wallet_unconnected');
+                const connectedPanel = document.getElementById('axonos_wizard_wallet_connected');
+                const railBalanceRow = document.getElementById('axonos_wizard_rail_balance_row');
+                const railBalanceVal = document.getElementById('axonos_wizard_rail_balance');
+
+                if (wallet) {
+                    if (unconnectedPanel) unconnectedPanel.style.display = 'none';
+                    if (connectedPanel) connectedPanel.style.display = 'block';
+                    if (railBalanceRow) railBalanceRow.style.display = 'flex';
+
+                    axonosFetchWalletAccessStatus(wallet).then(res => {
+                        const balStr = (res.remaining_minutes != null) ? Math.round(res.remaining_minutes) + ' cr' : '—';
+                        if (railBalanceVal) railBalanceVal.textContent = balStr;
+                    });
+
+                    axonosUpdatePayCalculator();
+                } else {
+                    if (unconnectedPanel) unconnectedPanel.style.display = 'block';
+                    if (connectedPanel) connectedPanel.style.display = 'none';
+                    if (railBalanceRow) railBalanceRow.style.display = 'none';
+                }
+            } else {
+                const railBalanceRow = document.getElementById('axonos_wizard_rail_balance_row');
+                if (railBalanceRow) railBalanceRow.style.display = 'none';
+            }
+
+            axonosUpdateWizardSummaryRail();
+        }
+        window.axonosGoToWizardStep = axonosGoToWizardStep;
+
+        // Update Wizard summary rail info values
+        function axonosUpdateWizardSummaryRail() {
+            // Selected environment
+            let envTitle = 'AxonOS Default Desktop';
+            let envIcon = '🧬';
+            const selectedTemplate = window.axonosSelectedTemplateId || window.sessionStorage.getItem('axonosSelectedTemplateId');
+            if (selectedTemplate) {
+                const template = (window.AXONOS_TEMPLATES || []).find(t => t.id === selectedTemplate);
+                if (template) {
+                    envTitle = template.title;
+                    envIcon = template.icon;
+                }
+            }
+
+            const railIconEl = document.getElementById('axonos_wizard_rail_env_icon');
+            const railTitleEl = document.getElementById('axonos_wizard_rail_env_title');
+            if (railIconEl) railIconEl.innerHTML = envIcon;
+            if (railTitleEl) railTitleEl.textContent = envTitle;
+
+            // Selected Hardware
+            const gpuCount = axonosGpuCountForProfile(axonosSelectedGpuProfile);
+            const rate = gpuCount; // burn rate in cr/min
+
+            const railGpuEl = document.getElementById('axonos_wizard_rail_gpu_name');
+            const railGpuDesc = document.getElementById('axonos_wizard_rail_gpu_desc');
+            const railRateEl = document.getElementById('axonos_wizard_rail_rate');
+
+            if (railGpuEl) railGpuEl.textContent = axonosProfileLabel(axonosSelectedGpuProfile);
+            if (railGpuDesc) {
+                if (axonosSelectedGpuProfile === 'small') railGpuDesc.textContent = '1× Tesla V100 · 32 GB VRAM';
+                else if (axonosSelectedGpuProfile === 'medium') railGpuDesc.textContent = '2× Tesla V100 · 64 GB VRAM';
+                else if (axonosSelectedGpuProfile === 'large') railGpuDesc.textContent = '4× Tesla V100 · 128 GB VRAM';
+                else if (axonosSelectedGpuProfile === 'max') railGpuDesc.textContent = '8× Tesla V100 · 256 GB VRAM';
+            }
+            if (railRateEl) railRateEl.innerHTML = `${rate} <span class="axonos-rail-footer__val-sub">cr/min</span>`;
+
+            // Selected storage
+            const slider = document.getElementById('axonos_wizard_storage_slider');
+            const railStorageEl = document.getElementById('axonos_wizard_rail_storage');
+            if (railStorageEl && slider) {
+                railStorageEl.textContent = slider.value + ' GB';
+            }
+
+            // SSH status
+            const sshToggle = document.getElementById('axonos_ssh_toggle');
+            const railSshEl = document.getElementById('axonos_wizard_rail_ssh');
+            if (railSshEl && sshToggle) {
+                railSshEl.textContent = sshToggle.checked ? 'Enabled' : 'Disabled';
+            }
+        }
+        window.axonosUpdateWizardSummaryRail = axonosUpdateWizardSummaryRail;
+
+        // Update payment calculators dynamically
+        function axonosUpdatePayCalculator() {
+            const tickerEl = document.getElementById('axonos_wizard_pay_ticker');
+            const amountInput = document.getElementById('axonos_wizard_pay_amount');
+            const quickGrid = document.getElementById('axonos_wizard_quick_amounts');
+
+            const creditsVal = document.getElementById('axonos_wizard_pay_credits');
+            const runtimeVal = document.getElementById('axonos_wizard_pay_runtime');
+            const bonusRow = document.getElementById('axonos_wizard_pay_bonus_row');
+            const tierVal = document.getElementById('axonos_wizard_pay_tier');
+            const gpuLabel = document.getElementById('axonos_wizard_pay_gpu_label');
+            const descEl = document.getElementById('axonos_wizard_pay_desc');
+
+            if (!amountInput) return;
+
+            // Set up ticker and values based on selected token
+            const token = axonosSelectedPaymentToken;
+            if (tickerEl) tickerEl.textContent = token.toUpperCase();
+
+            // Setup quick amounts buttons
+            if (quickGrid) {
+                if (token === 'usdc') {
+                    quickGrid.innerHTML = `
+                        <button type="button" class="axonos-deposit-quick-btn" data-value="5">+5</button>
+                        <button type="button" class="axonos-deposit-quick-btn" data-value="20">+20</button>
+                        <button type="button" class="axonos-deposit-quick-btn" data-value="50">+50</button>
+                    `;
+                } else if (token === 'eth') {
+                    quickGrid.innerHTML = `
+                        <button type="button" class="axonos-deposit-quick-btn" data-value="0.005">+0.005</button>
+                        <button type="button" class="axonos-deposit-quick-btn" data-value="0.01">+0.01</button>
+                        <button type="button" class="axonos-deposit-quick-btn" data-value="0.05">+0.05</button>
+                    `;
+                } else if (token === 'axgt') {
+                    quickGrid.innerHTML = `
+                        <button type="button" class="axonos-deposit-quick-btn" data-value="100">+100</button>
+                        <button type="button" class="axonos-deposit-quick-btn" data-value="500">+500</button>
+                        <button type="button" class="axonos-deposit-quick-btn" data-value="1000">+1000</button>
+                    `;
+                }
+
+                // Rebind click events
+                quickGrid.querySelectorAll('.axonos-deposit-quick-btn').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        amountInput.value = btn.getAttribute('data-value');
+                        axonosUpdatePayCalculator();
+                    });
+                });
+            }
+
+            const amount = parseFloat(amountInput.value) || 0;
+            if (descEl) descEl.textContent = `~${amount} ${token.toUpperCase()}`;
+
+            // Calculate credit conversions
+            let receivedCredits = 0;
+            if (token === 'usdc') {
+                receivedCredits = amount * 120; // 1 USDC = 120 credits
+            } else if (token === 'eth') {
+                receivedCredits = amount * 120000; // 1 ETH = 120,000 credits
+            } else if (token === 'axgt') {
+                receivedCredits = amount * 0.6; // 100 AXGT = 60 credits (0.6 multiplier)
+                // Add AXGT 25% bonus
+                receivedCredits = receivedCredits * 1.25;
+            }
+
+            if (creditsVal) creditsVal.textContent = Math.round(receivedCredits) + ' credits';
+            if (bonusRow) bonusRow.style.display = (token === 'axgt') ? 'flex' : 'none';
+
+            // Calculate estimated runtime
+            const burnRate = axonosGpuCountForProfile(axonosSelectedGpuProfile);
+            const runMins = receivedCredits / Math.max(1, burnRate);
+            const hours = Math.floor(runMins / 60);
+            const mins = Math.floor(runMins % 60);
+
+            if (runtimeVal) runtimeVal.textContent = `${hours}h ${mins}m`;
+            if (gpuLabel) gpuLabel.textContent = axonosProfileLabel(axonosSelectedGpuProfile);
+        }
+        window.axonosUpdatePayCalculator = axonosUpdatePayCalculator;
+
+        // Perform session deposit & launch from within wizard Step 3
+        function axonosTriggerLaunchFromWizard() {
+            const wallet = window.verifiedWalletAddress || verifiedWalletAddress;
+            if (!wallet) return;
+
+            console.log('[AxonOS] Triggering launch/deposit from Step 3 payment');
+
+            const token = axonosSelectedPaymentToken;
+            const amountInput = document.getElementById('axonos_wizard_pay_amount');
+            const amount = amountInput ? amountInput.value.trim() : '0';
+
+            // Check if they already have enough credits to proceed directly without depositing
+            axonosFetchWalletAccessStatus(wallet).then(function (res) {
+                const remaining = res.remaining_minutes || 0;
+                const required = axonosGpuCountForProfile(axonosSelectedGpuProfile);
+
+                if (remaining >= required) {
+                    console.log('[AxonOS] Sufficient credits already available, bypassing deposit');
+                    // Claim directly
+                    claimSession().then(function (claim) {
+                        if (claim.granted) {
+                            tryConnectAfterClaim();
+                        } else {
+                            handleSessionClaimDenied(claim, 'Session claim denied.');
+                        }
+                    });
+                } else {
+                    // Trigger MetaMask payment modal or dynamic deposit flow
+                    // Sync inputs on original recharge modal elements so the core payment methods receive the values correctly
+                    if (token === 'usdc') {
+                        const originalInput = document.getElementById('axonos_pay_usdc_amount');
+                        if (originalInput) {
+                            originalInput.value = amount;
+                            originalInput.dispatchEvent(new Event('input', { bubbles: true }));
+                        }
+                        const usdcBtn = document.getElementById('axonos_pay_usdc_btn');
+                        if (usdcBtn) usdcBtn.click();
+                    } else if (token === 'eth') {
+                        const originalInput = document.getElementById('axonos_pay_eth_amount');
+                        if (originalInput) {
+                            originalInput.value = amount;
+                            originalInput.dispatchEvent(new Event('input', { bubbles: true }));
+                        }
+                        const ethBtn = document.getElementById('axonos_pay_eth_btn');
+                        if (ethBtn) ethBtn.click();
+                    } else if (token === 'axgt') {
+                        const originalInput = document.getElementById('axonos_pay_axgt_amount');
+                        if (originalInput) {
+                            originalInput.value = amount;
+                            originalInput.dispatchEvent(new Event('input', { bubbles: true }));
+                        }
+                        const axgtBtn = document.getElementById('axonos_pay_axgt_btn');
+                        if (axgtBtn) axgtBtn.click();
+                    }
+                }
+            });
+        }
+
+        // Stepper click binding for unconnected wallet connect
+        const wizardConnectBtn = document.getElementById('axonos_wizard_connect_wallet_btn');
+        if (wizardConnectBtn) {
+            wizardConnectBtn.addEventListener('click', () => {
+                onConnectWalletClick();
+            });
+        }
+
+        // Wire Dashboard Actions
+        const dashNewBtn = document.getElementById('axonos_dashboard_new_session_btn');
+        if (dashNewBtn) {
+            dashNewBtn.addEventListener('click', () => {
+                axonosStartWizard();
+            });
+        }
+        const dashEmptyBtn = document.getElementById('axonos_dashboard_first_session_btn');
+        if (dashEmptyBtn) {
+            dashEmptyBtn.addEventListener('click', () => {
+                axonosStartWizard();
+            });
+        }
+        const dashTopupBtn = document.getElementById('axonos_dashboard_topup_btn');
+        if (dashTopupBtn) {
+            dashTopupBtn.addEventListener('click', () => {
+                axonosStartWizard();
+                setTimeout(() => axonosGoToWizardStep(3), 50);
+            });
+        }
+
+        // Telemetry Sidebar Collapse Toggle
+        const sidebar = document.getElementById('axonos_session_sidebar');
+        const sidebarToggle = document.getElementById('axonos_sidebar_toggle');
+        if (sidebar && sidebarToggle) {
+            sidebarToggle.addEventListener('click', () => {
+                const isCollapsed = sidebar.classList.contains('collapsed');
+                sidebar.classList.toggle('collapsed', !isCollapsed);
+                sidebarToggle.classList.toggle('collapsed', !isCollapsed);
+            });
+        }
+
+        // Wire Sidebar controls
+        const sidebarDetachBtn = document.getElementById('axonos_sidebar_detach_btn');
+        if (sidebarDetachBtn && typeof UI !== 'undefined' && typeof UI.detach === 'function') {
+            sidebarDetachBtn.addEventListener('click', () => {
+                UI.detach();
+            });
+        }
+        const sidebarEndBtn = document.getElementById('axonos_sidebar_end_btn');
+        if (sidebarEndBtn && typeof UI !== 'undefined' && typeof UI.endSession === 'function') {
+            sidebarEndBtn.addEventListener('click', () => {
+                UI.endSession();
+            });
+        }
+        const sidebarTopupBtn = document.getElementById('axonos_sidebar_topup_btn');
+        if (sidebarTopupBtn) {
+            sidebarTopupBtn.addEventListener('click', () => {
+                // Defer to credentials popup recharge layout
+                var dlg = document.getElementById('noVNC_credentials_dlg');
+                if (dlg) {
+                    dlg.classList.add('noVNC_open');
+                }
+            });
+        }
+
+        // Live Telemetry Simulation Loop when Connected
+        function axonosStartTelemetryLoop() {
+            if (axonosTelemetryInterval) clearInterval(axonosTelemetryInterval);
+
+            // Initial telemetry render
+            axonosTickTelemetry();
+
+            axonosTelemetryInterval = setInterval(() => {
+                axonosTickTelemetry();
+            }, 3000);
+        }
+
+        function axonosStopTelemetryLoop() {
+            if (axonosTelemetryInterval) {
+                clearInterval(axonosTelemetryInterval);
+                axonosTelemetryInterval = null;
+            }
+        }
+
+        function axonosTickTelemetry() {
+            const wallet = window.verifiedWalletAddress || verifiedWalletAddress;
+            if (!wallet) return;
+
+            // Generate slightly fluctuating mock utilization stats
+            const cpu = Math.floor(15 + Math.random() * 25);
+            const ram = Math.floor(42 + Math.random() * 5);
+            const gpu = Math.floor(5 + Math.random() * 85);
+            const vram = Math.floor(50 + Math.random() * 8);
+
+            // Bind values
+            const cpuVal = document.getElementById('axonos_telemetry_cpu_val');
+            const cpuProgress = document.getElementById('axonos_telemetry_cpu_progress');
+            if (cpuVal && cpuProgress) {
+                cpuVal.textContent = cpu + '%';
+                cpuProgress.style.width = cpu + '%';
+            }
+
+            const ramVal = document.getElementById('axonos_telemetry_ram_val');
+            const ramProgress = document.getElementById('axonos_telemetry_ram_progress');
+            if (ramVal && ramProgress) {
+                ramVal.textContent = ram + '%';
+                ramProgress.style.width = ram + '%';
+            }
+
+            const gpuVal = document.getElementById('axonos_telemetry_gpu_val');
+            const gpuProgress = document.getElementById('axonos_telemetry_gpu_progress');
+            if (gpuVal && gpuProgress) {
+                gpuVal.textContent = gpu + '%';
+                gpuProgress.style.width = gpu + '%';
+
+                // Color warn if utilization is super high
+                gpuProgress.classList.toggle('axonos-sidebar-progress-bar--orange', gpu > 80);
+            }
+
+            const vramVal = document.getElementById('axonos_telemetry_vram_val');
+            const vramProgress = document.getElementById('axonos_telemetry_vram_progress');
+            if (vramVal && vramProgress) {
+                vramVal.textContent = vram + '%';
+                vramProgress.style.width = vram + '%';
+            }
+
+            // Sync credits balance and remaining time
+            axonosFetchWalletAccessStatus(wallet).then(res => {
+                const credits = res.remaining_minutes || 0;
+                const creditsValEl = document.getElementById('axonos_sidebar_credits');
+                const creditsProgress = document.getElementById('axonos_sidebar_credits_progress');
+                const timeLeftEl = document.getElementById('axonos_sidebar_time_left');
+
+                if (creditsValEl) creditsValEl.textContent = Math.round(credits);
+
+                // Calc time remaining: credits / (profile gpus)
+                const requestedGpuCount = axonosGpuCountForProfile(window.axonosOwnedSession ? window.axonosOwnedSession.profile : 'small');
+                const minutesLeft = credits / Math.max(1, requestedGpuCount);
+                const h = Math.floor(minutesLeft / 60);
+                const m = Math.floor(minutesLeft % 60);
+                if (timeLeftEl) {
+                    timeLeftEl.textContent = h > 0 ? `${h}h ${m}m` : `${m}m`;
+                }
+
+                // Progress track: full capacity is roughly 600 credits
+                if (creditsProgress) {
+                    const pct = Math.min(100, (credits / 600) * 100);
+                    creditsProgress.style.width = pct + '%';
+                    creditsProgress.classList.toggle('axonos-sidebar-progress-bar--orange', credits < 15);
+                }
+            });
+        }
+
+        // Listen for VNC connection events to manage the loop.
+        // Use the classList check directly — the local isConnected() helpers live
+        // inside the globe/scroll IIFEs and are out of scope here.
+        new MutationObserver(function () {
+            if (document.documentElement.classList.contains('noVNC_connected')) {
+                axonosStartTelemetryLoop();
+            } else {
+                axonosStopTelemetryLoop();
+            }
+        }).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+
+        // Update the boot checklist overlay phase animations during loading
+        window.axonosBootOverlayNextStep = function (stepNum) {
+            console.log('[AxonOS] Loading Checklist Step:', stepNum);
+            for (let i = 1; i <= 4; i++) {
+                const el = document.getElementById('axonos_prep_step_' + i);
+                if (el) {
+                    el.classList.toggle('active', i === stepNum);
+                    el.classList.toggle('completed', i < stepNum);
+                }
+            }
+        };
+
+        // Bind topbar Connect button
+        const topbarConnectBtn = document.getElementById('axonos_topbar_connect_btn');
+        if (topbarConnectBtn) {
+            topbarConnectBtn.addEventListener('click', function () {
+                // Open the credentials dialog popup, then trigger wallet connect
+                var dlg = document.getElementById('noVNC_credentials_dlg');
+                if (dlg) dlg.classList.add('noVNC_open');
+                if (typeof onConnectWalletClick === 'function') {
+                    onConnectWalletClick();
+                }
+            });
+        }
+
+        // Bind topbar Wallet click to disconnect
+        const topbarWalletBtn = document.getElementById('axonos_topbar_wallet_btn');
+        if (topbarWalletBtn) {
+            topbarWalletBtn.addEventListener('click', function () {
+                if (typeof UI !== 'undefined' && typeof UI.showConfirm === 'function') {
+                    UI.showConfirm('Disconnect wallet?', 'Disconnecting will clear the active session view.', 'Disconnect').then(function (ok) {
+                        if (ok && typeof axonosDisconnectWalletSession === 'function') {
+                            axonosDisconnectWalletSession();
+                        }
+                    });
+                } else {
+                    if (confirm('Disconnect wallet? Disconnecting will clear the active session view.')) {
+                        if (typeof axonosDisconnectWalletSession === 'function') {
+                            axonosDisconnectWalletSession();
+                        }
+                    }
+                }
+            });
+        }
+
+        // If the user reloads the page with an already connected wallet, land them on dashboard
+        setTimeout(() => {
+            const wallet = window.verifiedWalletAddress || verifiedWalletAddress;
+            if (wallet && !document.documentElement.classList.contains('noVNC_connected')) {
+                axonosLoadDashboard();
+            } else {
+                axonosSyncTopbar(null, null);
+            }
+        }, 300);
     });
 </script>

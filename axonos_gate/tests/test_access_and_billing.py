@@ -372,7 +372,7 @@ class TestBillingAndSession(unittest.TestCase):
             result = session_manager.try_claim_session("0x123", "medium")
             
         self.assertFalse(result["granted"])
-        self.assertEqual(result["reason"], "No GPUs available for profile \"medium\" (2 GPU(s) required)")
+        self.assertEqual(result["reason"], "No GPUs available for profile \"Dual\" (2 GPU(s) required)")
 
 
 class TestGpuDeviceDiscovery(unittest.TestCase):

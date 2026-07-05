@@ -233,6 +233,11 @@ const AXONOS_TEMPLATES = [
     }
 ];
 
+// Expose the catalog to the inline vnc.html scripts. ui.js loads as a module,
+// so AXONOS_TEMPLATES is otherwise module-private and the landing/wizard summary
+// code (which runs in global scope) can't read it.
+window.AXONOS_TEMPLATES = AXONOS_TEMPLATES;
+
 const UI = {
 
     connected: false,
@@ -616,50 +621,26 @@ const UI = {
         }
         window.axonosSelectedTemplateId = restored;
 
-        // Toggle logic for Tab Navigation
-        const templatesTabBtn = document.getElementById('axonos_tab_btn_templates');
-        const aboutTabBtn = document.getElementById('axonos_tab_btn_about');
-        const templatesPane = document.getElementById('tab-templates');
-        const aboutPane = document.getElementById('tab-about');
-
-        if (templatesTabBtn && aboutTabBtn && templatesPane && aboutPane) {
-            templatesTabBtn.addEventListener('click', () => {
-                templatesTabBtn.classList.add('active');
-                aboutTabBtn.classList.remove('active');
-                templatesPane.classList.add('active');
-                aboutPane.classList.remove('active');
-            });
-
-            aboutTabBtn.addEventListener('click', () => {
-                aboutTabBtn.classList.add('active');
-                templatesTabBtn.classList.remove('active');
-                aboutPane.classList.add('active');
-                templatesPane.classList.remove('active');
+        // Bind landing page View all button and set count dynamically
+        const viewAllBtn = document.getElementById('axonos_landing_view_all_btn');
+        const viewAllCount = document.getElementById('axonos_landing_view_all_count');
+        if (viewAllCount && typeof AXONOS_TEMPLATES !== 'undefined') {
+            viewAllCount.textContent = AXONOS_TEMPLATES.length;
+        }
+        if (viewAllBtn) {
+            viewAllBtn.addEventListener('click', () => {
+                const wallet = window.verifiedWalletAddress;
+                if (wallet) {
+                    if (typeof axonosStartWizard === 'function') axonosStartWizard();
+                } else {
+                    const dlg = document.getElementById('noVNC_credentials_dlg');
+                    if (dlg) dlg.classList.add('noVNC_open');
+                    if (typeof window.onConnectWalletClick === 'function') {
+                        window.onConnectWalletClick();
+                    }
+                }
             });
         }
-
-        // Live Search Input logic
-        const searchInput = document.getElementById('axonos_template_search');
-        let currentSearchTerm = '';
-        let currentCategory = 'all';
-
-        if (searchInput) {
-            searchInput.addEventListener('input', (e) => {
-                currentSearchTerm = e.target.value;
-                UI.renderAxonosTemplates(currentSearchTerm, currentCategory);
-            });
-        }
-
-        // Filter Pills Category logic
-        const filterPills = document.querySelectorAll('.axonos-filter-pill');
-        filterPills.forEach(pill => {
-            pill.addEventListener('click', () => {
-                filterPills.forEach(p => p.classList.remove('active'));
-                pill.classList.add('active');
-                currentCategory = pill.getAttribute('data-category') || 'all';
-                UI.renderAxonosTemplates(currentSearchTerm, currentCategory);
-            });
-        });
 
         // Close Modal Event Listeners
         const modal = document.getElementById('axonos_template_modal');
@@ -686,12 +667,170 @@ const UI = {
         });
 
         // Initial Render
-        UI.renderAxonosTemplates('', 'all');
+        UI.renderLandingFeaturedTemplates();
+        UI.renderDashboardQuickLaunch();
         UI.updateAxonosSelectedTemplateBanner();
     },
 
-    renderAxonosTemplates(searchTerm = '', activeCategory = 'all') {
-        const grid = document.getElementById('axonos_templates_grid');
+    renderLandingFeaturedTemplates() {
+        const grid = document.getElementById('axonos_landing_featured_grid');
+        if (!grid) return;
+        grid.replaceChildren();
+
+        const parser = new DOMParser();
+        const featured = AXONOS_TEMPLATES.slice(0, 4);
+
+        featured.forEach(t => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.style.cssText = "text-align:left;cursor:pointer;border-radius:18px;border:1px solid rgba(255,255,255,.07);background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.012));padding:20px;display:flex;flex-direction:column;gap:14px;min-height:172px;width:100%;transition: all 0.2s ease-in-out;outline:none;";
+            
+            btn.addEventListener('mouseenter', () => {
+                btn.style.borderColor = 'rgba(123,108,255,.4)';
+                btn.style.background = 'linear-gradient(180deg,rgba(123,108,255,.08),rgba(255,255,255,.012))';
+                btn.style.transform = 'translateY(-2px)';
+            });
+            btn.addEventListener('mouseleave', () => {
+                btn.style.borderColor = 'rgba(255,255,255,.07)';
+                btn.style.background = 'linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.012))';
+                btn.style.transform = 'translateY(0)';
+            });
+
+            const headerRow = document.createElement('div');
+            headerRow.style.cssText = "display:flex;align-items:center;justify-content:space-between;width:100%;";
+
+            const iconWrap = document.createElement('div');
+            iconWrap.style.cssText = "width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);";
+            try {
+                const parsedSvg = parser.parseFromString(t.icon, 'image/svg+xml');
+                iconWrap.appendChild(parsedSvg.documentElement);
+            } catch (err) {
+                iconWrap.textContent = '🧬';
+            }
+
+            const catTag = document.createElement('span');
+            catTag.style.cssText = "font-size:10px;font-weight:600;letter-spacing:.05em;color:#9AA0BA;padding:4px 9px;border-radius:7px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);";
+            const catLabels = { 'ai-ml': 'AI/ML', 'bio-chem': 'Bio/Chem', 'data-science': 'Data Science', 'physics-quantum': 'Physics/Quantum' };
+            catTag.textContent = catLabels[t.category] || t.category;
+
+            headerRow.appendChild(iconWrap);
+            headerRow.appendChild(catTag);
+
+            const textWrap = document.createElement('div');
+            textWrap.style.cssText = "display:flex;flex-direction:column;gap:6px;";
+
+            const title = document.createElement('div');
+            title.style.cssText = "font-size:15.5px;font-weight:600;color:#F1F2F8;letter-spacing:-.01em;";
+            title.textContent = t.title;
+
+            const shortDesc = document.createElement('div');
+            shortDesc.style.cssText = "font-size:12.5px;line-height:1.5;color:#878DA6;font-weight:300;";
+            shortDesc.textContent = t.desc.split('.')[0] + '.';
+
+            textWrap.appendChild(title);
+            textWrap.appendChild(shortDesc);
+
+            btn.appendChild(headerRow);
+            btn.appendChild(textWrap);
+
+            btn.addEventListener('click', () => {
+                const wallet = window.verifiedWalletAddress;
+                if (wallet) {
+                    window.axonosSelectedTemplateId = t.id;
+                    UI.persistAxonosSelectedTemplate();
+                    UI.updateAxonosSelectedTemplateBanner();
+                    if (typeof axonosStartWizard === 'function') {
+                        axonosStartWizard();
+                    }
+                } else {
+                    const dlg = document.getElementById('noVNC_credentials_dlg');
+                    if (dlg) dlg.classList.add('noVNC_open');
+                    if (typeof window.onConnectWalletClick === 'function') {
+                        window.onConnectWalletClick();
+                    }
+                }
+            });
+
+            grid.appendChild(btn);
+        });
+    },
+
+    renderDashboardQuickLaunch() {
+        const grid = document.getElementById('axonos_dashboard_quick_launch');
+        if (!grid) return;
+        grid.replaceChildren();
+
+        const parser = new DOMParser();
+        const featured = AXONOS_TEMPLATES.slice(0, 4);
+
+        featured.forEach(t => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.style.cssText = "text-align:left;cursor:pointer;border-radius:18px;border:1px solid rgba(255,255,255,.07);background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.012));padding:20px;display:flex;flex-direction:column;gap:14px;min-height:160px;width:100%;transition: all 0.2s ease-in-out;outline:none;";
+            
+            btn.addEventListener('mouseenter', () => {
+                btn.style.borderColor = 'rgba(123,108,255,.4)';
+                btn.style.background = 'linear-gradient(180deg,rgba(123,108,255,.08),rgba(255,255,255,.012))';
+                btn.style.transform = 'translateY(-2px)';
+            });
+            btn.addEventListener('mouseleave', () => {
+                btn.style.borderColor = 'rgba(255,255,255,.07)';
+                btn.style.background = 'linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.012))';
+                btn.style.transform = 'translateY(0)';
+            });
+
+            const headerRow = document.createElement('div');
+            headerRow.style.cssText = "display:flex;align-items:center;justify-content:space-between;width:100%;";
+
+            const iconWrap = document.createElement('div');
+            iconWrap.style.cssText = "width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);";
+            try {
+                const parsedSvg = parser.parseFromString(t.icon, 'image/svg+xml');
+                iconWrap.appendChild(parsedSvg.documentElement);
+            } catch (err) {
+                iconWrap.textContent = '🧬';
+            }
+
+            const catTag = document.createElement('span');
+            catTag.style.cssText = "font-size:10px;font-weight:600;letter-spacing:.05em;color:#9AA0BA;padding:4px 9px;border-radius:7px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);";
+            const catLabels = { 'ai-ml': 'AI/ML', 'bio-chem': 'Bio/Chem', 'data-science': 'Data Science', 'physics-quantum': 'Physics/Quantum' };
+            catTag.textContent = catLabels[t.category] || t.category;
+
+            headerRow.appendChild(iconWrap);
+            headerRow.appendChild(catTag);
+
+            const textWrap = document.createElement('div');
+            textWrap.style.cssText = "display:flex;flex-direction:column;gap:6px;";
+
+            const title = document.createElement('div');
+            title.style.cssText = "font-size:15.5px;font-weight:600;color:#F1F2F8;letter-spacing:-.01em;";
+            title.textContent = t.title;
+
+            const shortDesc = document.createElement('div');
+            shortDesc.style.cssText = "font-size:12.5px;line-height:1.5;color:#878DA6;font-weight:300;";
+            shortDesc.textContent = t.desc.split('.')[0] + '.';
+
+            textWrap.appendChild(title);
+            textWrap.appendChild(shortDesc);
+
+            btn.appendChild(headerRow);
+            btn.appendChild(textWrap);
+
+            btn.addEventListener('click', () => {
+                window.axonosSelectedTemplateId = t.id;
+                UI.persistAxonosSelectedTemplate();
+                UI.updateAxonosSelectedTemplateBanner();
+                if (typeof axonosStartWizard === 'function') {
+                    axonosStartWizard();
+                }
+            });
+
+            grid.appendChild(btn);
+        });
+    },
+
+    renderAxonosTemplates(searchTerm = '', activeCategory = 'all', gridSelector = '#axonos_wizard_templates_grid') {
+        const grid = document.querySelector(gridSelector);
         if (!grid) return;
         grid.replaceChildren();
 
@@ -794,7 +933,7 @@ const UI = {
                 }
                 UI.persistAxonosSelectedTemplate();
                 UI.updateAxonosSelectedTemplateBanner();
-                UI.renderAxonosTemplates(searchTerm, activeCategory);
+                UI.renderAxonosTemplates(searchTerm, activeCategory, gridSelector);
             });
 
             const infoBtn = document.createElement('button');
@@ -819,7 +958,7 @@ const UI = {
                 }
                 UI.persistAxonosSelectedTemplate();
                 UI.updateAxonosSelectedTemplateBanner();
-                UI.renderAxonosTemplates(searchTerm, activeCategory);
+                UI.renderAxonosTemplates(searchTerm, activeCategory, gridSelector);
             });
 
             grid.appendChild(card);
