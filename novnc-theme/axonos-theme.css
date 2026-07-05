@@ -22,19 +22,20 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-/* AxonOS Theme for noVNC — AxonDAO Official Branding */
-/* Deep navy background, BrutalType typeface, AxonDAO cyan/violet/warm accent system */
+/* AxonOS Theme for noVNC — AxonOS v2 design (ported from axonos-web) */
+/* Near-black background, purple primary / teal success accents, BrutalType display type */
 
 /*
- * AxonDAO Design Tokens (applied via CSS custom properties in :root):
- * --cyan:    #4ec3d4  — primary accent (teal/cyan)
- * --violet:  #9d6fd9  — secondary accent (purple)
- * --warm:    #e8a85a  — tertiary accent (orange/warm)
- * --green:   #7be0c8  — success / mint
- * --coral:   #f2607a  — error / danger
- * --bg-0:    #07101a  — primary background (darkest)
- * --ink:     #e8edf4  — primary text
- * Font: BrutalType (woff2, 200–900) · Orbitron kept for monospace data labels
+ * AxonOS v2 Design Tokens (applied via CSS custom properties in :root):
+ * --cyan:    #7b6cff  — primary accent (purple; token name kept for compatibility)
+ * --violet:  #8b7cff  — secondary accent (soft purple)
+ * --warm:    #f2c14e  — warning / gold
+ * --green:   #4fe0c0  — success / live / teal
+ * --coral:   #ff5f57  — error / danger
+ * --bg-0:    #080910  — primary background (darkest)
+ * --ink:     #e9ebf2  — primary text
+ * Fonts: Hanken Grotesk (body, Google Fonts w/ system fallback) ·
+ *        BrutalType (display, local woff2) · JetBrains Mono (data, Google Fonts)
  */
 
 /* BrutalType — AxonDAO official typeface (ExtraLight/Light/Bold/ExtraBold/Black) */
@@ -91,45 +92,47 @@ SOFTWARE.
 
 :root {
   /* ── AxonDAO official design tokens ── */
-  --bg-0: #07101a;
-  --bg-1: #0a1424;
-  --bg-2: #0c1a2e;
-  --panel-2: #0f2238;
-  --ink: #e8edf4;
-  --ink-dim: rgba(200, 220, 235, .92);
-  --ink-mute: rgba(170, 210, 225, .62);
-  --ink-faint: rgba(170, 210, 225, .40);
-  --cyan: #4ec3d4;
-  --violet: #9d6fd9;
-  --warm: #e8a85a;
-  --pink: #e87fa4;
-  --coral: #f2607a;
-  --green: #7be0c8;
-  --mint: #4ec3d4;
-  --mint-soft: #6fd4e2;
-  --orange: #e8a85a;
-  --violet-fg: #b3a3eb;
+  --bg-0: #080910;
+  --bg-1: #0d0e18;
+  --bg-2: #12131f;
+  --panel-2: #161726;
+  --ink: #e9ebf2;
+  --ink-dim: rgba(199, 204, 224, 0.92);
+  --ink-mute: rgba(166, 172, 194, 0.62);
+  --ink-faint: rgba(166, 172, 194, 0.4);
+  --cyan: #7b6cff;
+  --violet: #8b7cff;
+  --warm: #f2c14e;
+  --pink: #b79bff;
+  --coral: #ff5f57;
+  --green: #4fe0c0;
+  --mint: #7b6cff;
+  --mint-soft: #9b8cff;
+  --orange: #f2c14e;
+  --violet-fg: #b7a6ff;
   --violet-bg: rgba(120, 100, 200, 0.16);
-  --rule: rgba(140, 200, 220, .07);
-  --rule-strong: rgba(140, 200, 220, .16);
-  --hair: rgba(140, 200, 220, .07);
-  --hair-2: rgba(140, 200, 220, .16);
-  --hair-mint: rgba(78, 195, 212, 0.35);
-  --font-body: 'Brutal', -apple-system, system-ui, sans-serif;
-  --font-display: 'Brutal', -apple-system, system-ui, sans-serif;
-  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --rule: rgba(255, 255, 255, 0.06);
+  --rule-strong: rgba(255, 255, 255, 0.1);
+  --hair: rgba(255, 255, 255, 0.06);
+  --hair-2: rgba(255, 255, 255, 0.1);
+  --hair-mint: rgba(123, 108, 255, 0.35);
+  --grad-primary: linear-gradient(180deg, #8b7cff, #6a57f2);
+  --shadow-primary: 0 12px 30px -12px rgba(123, 108, 255, 0.9);
+  --font-body: 'Hanken Grotesk', -apple-system, system-ui, sans-serif;
+  --font-display: 'BrutalType', 'Brutal', 'Hanken Grotesk', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
   /* ── AxonOS operational aliases (map to AxonDAO tokens) ── */
-  --axonos-primary: #4ec3d4;
-  --axonos-secondary: #9d6fd9;
-  --axonos-accent: #4ec3d4;
-  --axonos-warm: #e8a85a;
-  --axonos-dark: #07101a;
-  --axonos-dark-2: #0a1424;
-  --axonos-dark-3: #0c1a2e;
-  --axonos-light: #e8edf4;
-  --axonos-hover: #7be0c8;
-  --axonos-shadow: rgba(78, 195, 212, 0.25);
+  --axonos-primary: #7b6cff;
+  --axonos-secondary: #8b7cff;
+  --axonos-accent: #7b6cff;
+  --axonos-warm: #f2c14e;
+  --axonos-dark: #080910;
+  --axonos-dark-2: #0d0e18;
+  --axonos-dark-3: #12131f;
+  --axonos-light: #e9ebf2;
+  --axonos-hover: #4fe0c0;
+  --axonos-shadow: rgba(123, 108, 255, 0.25);
 
   /* ── Layout ── */
   --axonos-prereq-ticker-strip-h: 44px;
@@ -155,7 +158,7 @@ SOFTWARE.
   justify-content: flex-start;
   padding-left: var(--axonos-prereq-ticker-strip-pad-start);
   padding-right: 10px;
-  background: rgba(7, 16, 26, 0.97);
+  background: rgba(8, 9, 16, 0.97);
   border-bottom: 1px solid var(--hair-mint);
   box-shadow:
     0 4px 22px rgba(0, 0, 0, 0.4),
@@ -176,8 +179,8 @@ html.noVNC_connected .axonos-prerequisites-ticker {
   flex: 0 0 clamp(10.5rem, 19.25vw, 13.5rem);
   width: clamp(10.5rem, 19.25vw, 13.5rem);
   padding: 0 0.42rem 0 0;
-  border-right: 1px solid rgba(78, 195, 212, 0.28);
-  font-family: 'Brutal', "Orbitron", system-ui, sans-serif;
+  border-right: 1px solid rgba(123, 108, 255, 0.28);
+  font-family: var(--font-display);
   font-size: clamp(0.738rem, 0.63vw + 0.486rem, 0.954rem);
   font-weight: 600;
   letter-spacing: 0.03em;
@@ -231,12 +234,12 @@ html.noVNC_connected .axonos-prerequisites-ticker {
 
 .axonos-prerequisites-ticker__marquee-wrap::before {
   left: 0;
-  background: linear-gradient(90deg, rgba(7, 16, 26, 0.97) 0%, transparent 100%);
+  background: linear-gradient(90deg, rgba(8, 9, 16, 0.97) 0%, transparent 100%);
 }
 
 .axonos-prerequisites-ticker__marquee-wrap::after {
   right: 0;
-  background: linear-gradient(270deg, rgba(7, 16, 26, 0.97) 0%, transparent 100%);
+  background: linear-gradient(270deg, rgba(8, 9, 16, 0.97) 0%, transparent 100%);
 }
 
 .axonos-prerequisites-ticker__mask {
@@ -362,9 +365,9 @@ html.noVNC_connected .axonos-prerequisites-ticker {
 /* Landing scrollbars — themed; WebKit thumbs hidden until the scrollbar groove is hovered */
 html:not(.noVNC_connected) {
   scrollbar-width: thin;
-  scrollbar-color: rgba(78, 195, 212, 0.25) rgba(7, 16, 26, 0.1);
+  scrollbar-color: rgba(123, 108, 255, 0.25) rgba(8, 9, 16, 0.1);
   overflow-y: auto !important;
-  background-color: #060e1a !important;
+  background-color: #080910 !important;
   color-scheme: dark;
 }
 
@@ -378,31 +381,31 @@ html:not(.noVNC_connected)::-webkit-scrollbar-corner {
 }
 
 html:not(.noVNC_connected)::-webkit-scrollbar-track {
-  background: rgba(7, 16, 26, 0.1);
+  background: rgba(8, 9, 16, 0.1);
 }
 
 html:not(.noVNC_connected)::-webkit-scrollbar-thumb {
   background: linear-gradient(180deg,
-      rgba(78, 195, 212, 0.25) 0%,
-      rgba(157, 111, 217, 0.18) 100%);
+      rgba(123, 108, 255, 0.25) 0%,
+      rgba(139, 124, 255, 0.18) 100%);
   border-radius: 5px;
 }
 
 html:not(.noVNC_connected)::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(180deg,
-      rgba(78, 195, 212, 0.45) 0%,
-      rgba(157, 111, 217, 0.3) 100%) !important;
+      rgba(123, 108, 255, 0.45) 0%,
+      rgba(139, 124, 255, 0.3) 100%) !important;
 }
 
 html:not(.noVNC_connected)::-webkit-scrollbar-thumb:active {
   background: linear-gradient(180deg,
-      rgba(78, 195, 212, 0.6) 0%,
-      rgba(157, 111, 217, 0.45) 100%) !important;
+      rgba(123, 108, 255, 0.6) 0%,
+      rgba(139, 124, 255, 0.45) 100%) !important;
 }
 
 html:not(.noVNC_connected) #noVNC_connect_dlg {
   scrollbar-width: thin;
-  scrollbar-color: rgba(78, 195, 212, 0.25) rgba(7, 16, 26, 0.1);
+  scrollbar-color: rgba(123, 108, 255, 0.25) rgba(8, 9, 16, 0.1);
 }
 
 html:not(.noVNC_connected) #noVNC_connect_dlg::-webkit-scrollbar {
@@ -415,20 +418,20 @@ html:not(.noVNC_connected) #noVNC_connect_dlg::-webkit-scrollbar-track {
 
 html:not(.noVNC_connected) #noVNC_connect_dlg::-webkit-scrollbar-thumb {
   background: linear-gradient(180deg,
-      rgba(78, 195, 212, 0.25) 0%,
-      rgba(157, 111, 217, 0.18) 100%);
+      rgba(123, 108, 255, 0.25) 0%,
+      rgba(139, 124, 255, 0.18) 100%);
   border-radius: 4px;
 }
 
 html:not(.noVNC_connected) #noVNC_connect_dlg::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(180deg,
-      rgba(78, 195, 212, 0.45) 0%,
-      rgba(157, 111, 217, 0.3) 100%) !important;
+      rgba(123, 108, 255, 0.45) 0%,
+      rgba(139, 124, 255, 0.3) 100%) !important;
 }
 
 html:not(.noVNC_connected) .noVNC_center {
   scrollbar-width: thin;
-  scrollbar-color: rgba(78, 195, 212, 0.25) rgba(7, 16, 26, 0.1);
+  scrollbar-color: rgba(123, 108, 255, 0.25) rgba(8, 9, 16, 0.1);
 }
 
 html:not(.noVNC_connected) .noVNC_center::-webkit-scrollbar {
@@ -441,15 +444,15 @@ html:not(.noVNC_connected) .noVNC_center::-webkit-scrollbar-track {
 
 html:not(.noVNC_connected) .noVNC_center::-webkit-scrollbar-thumb {
   background: linear-gradient(180deg,
-      rgba(78, 195, 212, 0.25) 0%,
-      rgba(157, 111, 217, 0.18) 100%);
+      rgba(123, 108, 255, 0.25) 0%,
+      rgba(139, 124, 255, 0.18) 100%);
   border-radius: 4px;
 }
 
 html:not(.noVNC_connected) .noVNC_center::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(180deg,
-      rgba(78, 195, 212, 0.45) 0%,
-      rgba(157, 111, 217, 0.3) 100%) !important;
+      rgba(123, 108, 255, 0.45) 0%,
+      rgba(139, 124, 255, 0.3) 100%) !important;
 }
 
 /* Pause decorative landing-page animations during active scroll */
@@ -490,13 +493,13 @@ html:not(.noVNC_connected) body {
   color: var(--ink);
   
   /* Fallback and background-color */
-  background-color: #060e1a !important;
+  background-color: #080910 !important;
   
   /* AxonDAO ambient background — deep navy + subtle cyan/violet radial glows (omitting redundant 'ellipse' keyword with length sizes) */
   background-image:
-    radial-gradient(900px 700px at 85% 18%, rgba(78, 195, 212, 0.10), transparent 60%),
-    radial-gradient(1000px 800px at 12% 82%, rgba(157, 111, 217, 0.10), transparent 65%),
-    linear-gradient(180deg, #060e1a 0%, #050a14 55%, #03070d 100%) !important;
+    radial-gradient(900px 700px at 85% 18%, rgba(123, 108, 255, 0.1), transparent 60%),
+    radial-gradient(1000px 800px at 12% 82%, rgba(139, 124, 255, 0.1), transparent 65%),
+    linear-gradient(180deg, #080910 0%, #0a0b13 55%, #07080e 100%) !important;
     
   overflow-x: hidden;
   overflow-y: visible !important;
@@ -512,8 +515,8 @@ html:not(.noVNC_connected) body::before {
   right: 0;
   bottom: 0;
   background-image:
-    linear-gradient(rgba(78, 195, 212, 0.018) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(78, 195, 212, 0.018) 1px, transparent 1px);
+    linear-gradient(rgba(123, 108, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(123, 108, 255, 0.018) 1px, transparent 1px);
   background-size: 45px 45px;
   background-position: center;
   pointer-events: none;
@@ -552,18 +555,18 @@ html.noVNC_connected #noVNC_container {
 
 /* Control bar styling */
 #noVNC_control_bar {
-  background: linear-gradient(180deg, rgba(10, 20, 36, .98) 0%, rgba(7, 16, 26, .98) 100%) !important;
+  background: linear-gradient(180deg, rgba(13, 14, 24, 0.98) 0%, rgba(8, 9, 16, 0.98) 100%) !important;
   border: 1px solid var(--hair-mint);
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(78, 195, 212, .08) !important;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(123, 108, 255, 0.08) !important;
 }
 
 #noVNC_control_bar.noVNC_open {
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(78, 195, 212, .12) !important;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(123, 108, 255, 0.12) !important;
 }
 
 /* Control bar handle */
 #noVNC_control_bar_handle {
-  background: linear-gradient(180deg, rgba(12, 26, 46, .98) 0%, rgba(9, 18, 32, .98) 100%) !important;
+  background: linear-gradient(180deg, rgba(18, 19, 31, 0.98) 0%, rgba(9, 18, 32, .98) 100%) !important;
   border: 1px solid var(--rule-strong);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4) !important;
 }
@@ -575,7 +578,7 @@ html.noVNC_connected #noVNC_container {
 
 /* Panel headings */
 .noVNC_panel .noVNC_heading {
-  background: linear-gradient(135deg, rgba(78, 195, 212, .14), rgba(157, 111, 217, .10)) !important;
+  background: linear-gradient(135deg, rgba(123, 108, 255, 0.14), rgba(139, 124, 255, 0.1)) !important;
   color: var(--ink) !important;
   border: 1px solid var(--hair-mint) !important;
   border-radius: 8px;
@@ -586,16 +589,16 @@ html.noVNC_connected #noVNC_container {
 
 /* Connect button */
 #noVNC_connect_button {
-  background: linear-gradient(135deg, #1c5a6d 0%, #34397f 100%) !important;
+  background: linear-gradient(180deg, #8b7cff 0%, #6a57f2 100%) !important;
   border: none;
   color: var(--axonos-light) !important;
-  box-shadow: 0 4px 15px rgba(42, 68, 120, 0.42) !important;
+  box-shadow: 0 14px 34px -14px rgba(123, 108, 255, 0.95) !important;
 }
 
 #noVNC_connect_button:hover {
-  background: linear-gradient(135deg, #0f2a4d 0%, #1a3b6b 100%) !important;
+  background: linear-gradient(180deg, #9b8cff 0%, #7867f6 100%) !important;
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(20, 44, 84, 0.58) !important;
+  box-shadow: 0 18px 40px -14px rgba(123, 108, 255, 1) !important;
 }
 
 #noVNC_connect_button div {
@@ -605,10 +608,10 @@ html.noVNC_connected #noVNC_container {
 
 /* Panels */
 .noVNC_panel {
-  background-color: rgba(10, 20, 36, 0.96) !important;
+  background-color: rgba(13, 14, 24, 0.96) !important;
   border: 1px solid var(--rule-strong) !important;
   border-radius: 14px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(78, 195, 212, .06);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(123, 108, 255, 0.06);
 }
 
 /* Logo customization */
@@ -783,7 +786,7 @@ input[type="password"]::placeholder {
 }
 
 .axonos-wallet-dialog-header .axonos-wallet-contract code {
-  background: rgba(78, 195, 212, .12);
+  background: rgba(123, 108, 255, 0.12);
   padding: 4px 8px;
   border-radius: 4px;
   font-family: var(--font-mono);
@@ -820,12 +823,12 @@ input[type="password"]::placeholder {
 }
 
 .axonos-wallet-gate {
-  background: rgba(10, 20, 36, 0.96);
+  background: rgba(13, 14, 24, 0.96);
   border: 1px solid var(--rule-strong);
   border-radius: 14px;
   padding: 20px;
   margin: 20px 0;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, .4), 0 0 0 1px rgba(78, 195, 212, .06);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .4), 0 0 0 1px rgba(123, 108, 255, 0.06);
 }
 
 .axonos-wallet-header h2 {
@@ -884,7 +887,7 @@ input[type="password"]::placeholder {
 }
 
 .axonos-verify-btn {
-  background: rgba(78, 195, 212, .10);
+  background: rgba(123, 108, 255, 0.1);
   border: 1px solid var(--hair-mint);
   color: var(--cyan);
   -webkit-text-fill-color: var(--cyan);
@@ -898,10 +901,10 @@ input[type="password"]::placeholder {
 }
 
 .axonos-verify-btn:hover:not(:disabled) {
-  background: rgba(78, 195, 212, .18);
+  background: rgba(123, 108, 255, 0.18);
   border-color: var(--cyan);
   transform: translateY(-1px);
-  box-shadow: 0 6px 20px rgba(78, 195, 212, .2);
+  box-shadow: 0 6px 20px rgba(123, 108, 255, 0.2);
 }
 
 .axonos-verify-btn:disabled {
@@ -917,23 +920,23 @@ input[type="password"]::placeholder {
 }
 
 .axonos-wallet-status.verified {
-  background: rgba(123, 224, 200, .15);
-  border: 1px solid rgba(123, 224, 200, .4);
+  background: rgba(79, 224, 192, 0.15);
+  border: 1px solid rgba(79, 224, 192, 0.4);
   color: var(--green);
   border-radius: 8px;
 }
 
 .axonos-wallet-status.not-verified,
 .axonos-wallet-status.error {
-  background: rgba(242, 96, 122, .12);
-  border: 1px solid rgba(242, 96, 122, .4);
+  background: rgba(255, 95, 87, 0.12);
+  border: 1px solid rgba(255, 95, 87, 0.4);
   color: var(--coral);
   border-radius: 8px;
 }
 
 .axonos-wallet-status.verifying {
-  background: rgba(232, 168, 90, .12);
-  border: 1px solid rgba(232, 168, 90, .4);
+  background: rgba(242, 193, 78, 0.12);
+  border: 1px solid rgba(242, 193, 78, 0.4);
   color: var(--warm);
   border-radius: 8px;
 }
@@ -961,12 +964,12 @@ input[type="password"]::placeholder {
 
 /* Amber under the warning threshold */
 .axonos-session-timer--warning .axonos-session-timer__value {
-  color: rgba(232, 168, 90, 0.98);
+  color: rgba(242, 193, 78, 0.98);
 }
 
 /* Red + pulse in the final minute */
 .axonos-session-timer--critical .axonos-session-timer__value {
-  color: rgba(242, 96, 122, 0.98);
+  color: rgba(255, 95, 87, 0.98);
   animation: axonos-session-timer-pulse 1s ease-in-out infinite;
 }
 
@@ -996,7 +999,7 @@ input[type="password"]::placeholder {
   right: calc(12px + env(safe-area-inset-right, 0px));
   z-index: 56;
   padding: 8px 12px;
-  background: rgba(10, 20, 36, 0.82);
+  background: rgba(13, 14, 24, 0.82);
   border: 1px solid var(--hair-mint);
   border-radius: 8px;
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
@@ -1025,11 +1028,11 @@ input[type="password"]::placeholder {
 
 /* Mirror the footer countdown's warning/critical colors on the remaining-time line */
 .axonos-session-hud--warning #axonos_session_hud_remaining {
-  color: rgba(232, 168, 90, 0.98);
+  color: rgba(242, 193, 78, 0.98);
 }
 
 .axonos-session-hud--critical #axonos_session_hud_remaining {
-  color: rgba(242, 96, 122, 0.98);
+  color: rgba(255, 95, 87, 0.98);
 }
 
 /* Compact "Manage" affordance on the wallet row. The HUD itself is
@@ -1042,7 +1045,7 @@ input[type="password"]::placeholder {
   font-size: 10px;
   letter-spacing: 0.04em;
   color: var(--ink-mute);
-  background: rgba(78, 195, 212, 0.10);
+  background: rgba(123, 108, 255, 0.1);
   border: 1px solid var(--hair-mint);
   border-radius: 5px;
   cursor: pointer;
@@ -1051,7 +1054,7 @@ input[type="password"]::placeholder {
 }
 
 .axonos-session-hud__manage:hover {
-  background: rgba(78, 195, 212, 0.22);
+  background: rgba(123, 108, 255, 0.22);
   color: rgba(120, 230, 180, 0.95);
 }
 
@@ -1115,7 +1118,7 @@ input[type="password"]::placeholder {
   font-size: 10px;
   letter-spacing: 0.04em;
   color: var(--ink-mute);
-  background: rgba(78, 195, 212, 0.12);
+  background: rgba(123, 108, 255, 0.12);
   border: 1px solid var(--hair-mint);
   border-radius: 5px;
   cursor: pointer;
@@ -1124,13 +1127,13 @@ input[type="password"]::placeholder {
 }
 
 .axonos-session-hud__btn:hover {
-  background: rgba(78, 195, 212, 0.22);
+  background: rgba(123, 108, 255, 0.22);
   color: rgba(120, 230, 180, 0.95);
 }
 
 .axonos-session-hud__btn--danger:hover {
-  background: rgba(242, 96, 122, 0.18);
-  color: rgba(242, 96, 122, 0.98);
+  background: rgba(255, 95, 87, 0.18);
+  color: rgba(255, 95, 87, 0.98);
 }
 
 .axonos-usage-overlay {
@@ -1157,17 +1160,17 @@ input[type="password"]::placeholder {
 }
 
 .axonos-usage-overlay--warning .axonos-usage-overlay__panel {
-  background: rgba(10, 20, 36, 0.98);
+  background: rgba(13, 14, 24, 0.98);
   border: 1px solid var(--hair-mint);
   color: var(--ink);
-  box-shadow: 0 0 30px rgba(78, 195, 212, .15), 0 20px 60px rgba(0, 0, 0, .6);
+  box-shadow: 0 0 30px rgba(123, 108, 255, 0.15), 0 20px 60px rgba(0, 0, 0, .6);
 }
 
 .axonos-usage-overlay--locked .axonos-usage-overlay__panel {
-  background: rgba(10, 20, 36, 0.98);
-  border: 1px solid rgba(242, 96, 122, .45);
+  background: rgba(13, 14, 24, 0.98);
+  border: 1px solid rgba(255, 95, 87, 0.45);
   color: var(--ink);
-  box-shadow: 0 0 30px rgba(242, 96, 122, .12), 0 20px 60px rgba(0, 0, 0, .6);
+  box-shadow: 0 0 30px rgba(255, 95, 87, 0.12), 0 20px 60px rgba(0, 0, 0, .6);
 }
 
 .axonos-usage-overlay__message {
@@ -1192,15 +1195,15 @@ input[type="password"]::placeholder {
 .axonos-usage-overlay__btn--exit {
   color: var(--coral) !important;
   -webkit-text-fill-color: var(--coral) !important;
-  background: rgba(242, 96, 122, .08) !important;
-  border: 1px solid rgba(242, 96, 122, .45) !important;
+  background: rgba(255, 95, 87, 0.08) !important;
+  border: 1px solid rgba(255, 95, 87, 0.45) !important;
   box-shadow: none;
   border-radius: 999px !important;
 }
 
 .axonos-usage-overlay__btn--exit:hover:not(:disabled) {
   border-color: var(--coral) !important;
-  background: rgba(242, 96, 122, .15) !important;
+  background: rgba(255, 95, 87, 0.15) !important;
 }
 
 /* Prerequisites on connect panel (what you need to sign in) */
@@ -1208,7 +1211,7 @@ input[type="password"]::placeholder {
   max-width: 480px;
   margin: 0 auto 20px auto;
   padding: 14px 18px;
-  background: rgba(78, 195, 212, .04);
+  background: rgba(123, 108, 255, 0.04);
   border: 1px solid var(--rule-strong);
   border-radius: 12px;
   text-align: left;
@@ -1251,7 +1254,7 @@ input[type="password"]::placeholder {
 .axonos-wallet-prereqs {
   margin: 14px 0;
   padding: 12px 14px;
-  background: rgba(78, 195, 212, .05);
+  background: rgba(123, 108, 255, 0.05);
   border-radius: 8px;
   color: var(--ink-dim);
   border-left: 3px solid var(--cyan);
@@ -1312,10 +1315,10 @@ input[type="password"]::placeholder {
   padding: 24px;
   border-radius: 20px;
   text-align: center;
-  background: rgba(10, 20, 36, 0.98);
+  background: rgba(13, 14, 24, 0.98);
   border: 1px solid var(--hair-mint);
   color: var(--ink);
-  box-shadow: 0 0 30px rgba(78, 195, 212, .12), 0 20px 60px rgba(0, 0, 0, .6), inset 0 1px 0 rgba(255, 255, 255, .04);
+  box-shadow: 0 0 30px rgba(123, 108, 255, 0.12), 0 20px 60px rgba(0, 0, 0, .6), inset 0 1px 0 rgba(255, 255, 255, .04);
 }
 
 .axonos-queue-overlay__title {
@@ -1362,12 +1365,12 @@ input[type="password"]::placeholder {
   cursor: pointer;
   color: var(--ink) !important;
   -webkit-text-fill-color: var(--ink) !important;
-  background: rgba(78, 195, 212, .08) !important;
+  background: rgba(123, 108, 255, 0.08) !important;
   border: 1px solid var(--hair-mint) !important;
   border-radius: 999px !important;
   font-family: var(--font-body) !important;
   box-shadow:
-    0 0 0 1px rgba(78, 195, 212, .08),
+    0 0 0 1px rgba(123, 108, 255, 0.08),
     0 4px 14px rgba(0, 0, 0, .4),
     inset 0 1px 0 rgba(255, 255, 255, .04);
   transition:
@@ -1380,8 +1383,8 @@ input[type="password"]::placeholder {
 .axonos-queue-overlay__btn:hover:not(:disabled) {
   border-color: var(--cyan) !important;
   box-shadow:
-    0 0 0 1px rgba(78, 195, 212, .25),
-    0 6px 20px rgba(78, 195, 212, .12),
+    0 0 0 1px rgba(123, 108, 255, 0.25),
+    0 6px 20px rgba(123, 108, 255, 0.12),
     0 8px 24px rgba(0, 0, 0, .45),
     inset 0 1px 0 rgba(255, 255, 255, .06);
   transform: translateY(-1px);
@@ -1471,7 +1474,7 @@ input[type="password"]::placeholder {
   white-space: nowrap;
   font-family: var(--font-body) !important;
   letter-spacing: 0.04em;
-  background: rgba(78, 195, 212, .10) !important;
+  background: rgba(123, 108, 255, 0.1) !important;
   border: 1px solid var(--hair-mint) !important;
   border-radius: 999px !important;
   cursor: pointer !important;
@@ -1486,15 +1489,15 @@ input[type="password"]::placeholder {
   display: inline-block;
   width: 18px;
   height: 18px;
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234ec3d4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='5' width='20' height='14' rx='2'/%3E%3Cpath d='M2 10h20'/%3E%3Cpath d='M16 14h.01'/%3E%3C/svg%3E") center/contain no-repeat;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b7a6ff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='5' width='20' height='14' rx='2'/%3E%3Cpath d='M2 10h20'/%3E%3Cpath d='M16 14h.01'/%3E%3C/svg%3E") center/contain no-repeat;
   flex-shrink: 0;
 }
 
 .axonos-connect-wallet-btn:hover {
   transform: translateY(-2px) !important;
-  background: rgba(78, 195, 212, .18) !important;
+  background: rgba(123, 108, 255, 0.18) !important;
   border-color: var(--cyan) !important;
-  box-shadow: 0 6px 22px rgba(78, 195, 212, .22) !important;
+  box-shadow: 0 6px 22px rgba(123, 108, 255, 0.22) !important;
 }
 
 .axonos-connect-wallet-btn:active {
@@ -1549,7 +1552,7 @@ input[type="password"]#noVNC_password_input {
 
 /* Ensure all credentials dialog inputs are dark */
 #noVNC_credentials_dlg {
-  background-color: rgba(10, 20, 36, 0.97) !important;
+  background-color: rgba(13, 14, 24, 0.97) !important;
   border: 1px solid var(--rule-strong) !important;
   border-radius: 20px !important;
   position: fixed;
@@ -1660,7 +1663,7 @@ input[type="password"]#noVNC_password_input {
 .axonos-contract-copy-btn {
   padding: 4px 10px !important;
   font-size: 0.78rem !important;
-  background: rgba(78, 195, 212, .10) !important;
+  background: rgba(123, 108, 255, 0.1) !important;
   color: var(--cyan) !important;
   border: 1px solid var(--hair-mint) !important;
   border-radius: 999px !important;
@@ -1671,7 +1674,7 @@ input[type="password"]#noVNC_password_input {
 }
 
 .axonos-contract-copy-btn:hover {
-  background: rgba(78, 195, 212, .18) !important;
+  background: rgba(123, 108, 255, 0.18) !important;
   border-color: var(--cyan) !important;
 }
 
@@ -1713,7 +1716,7 @@ input[type="password"]#noVNC_password_input {
   width: 32px;
   height: 32px;
   margin: 0 auto 12px;
-  border: 3px solid rgba(78, 195, 212, .18);
+  border: 3px solid rgba(123, 108, 255, 0.18);
   border-top-color: var(--cyan);
   border-radius: 50%;
   animation: axonos-spin 0.8s linear infinite;
@@ -1815,8 +1818,8 @@ input[type="password"]#noVNC_password_input {
 }
 
 .axonos-discount-panel #axonos_discount_percent {
-  color: #7adf8a !important;
-  -webkit-text-fill-color: #7adf8a !important;
+  color: #4fe0c0 !important;
+  -webkit-text-fill-color: #4fe0c0 !important;
 }
 
 .axonos-discount-panel #axonos_discount_min_eth {
@@ -1830,8 +1833,8 @@ input[type="password"]#noVNC_password_input {
 }
 
 .axonos-discount-panel #axonos_discount_preview_minutes {
-  color: #7adf8a !important;
-  -webkit-text-fill-color: #7adf8a !important;
+  color: #4fe0c0 !important;
+  -webkit-text-fill-color: #4fe0c0 !important;
 }
 
 .axonos-pay-eth-hint {
@@ -1845,8 +1848,8 @@ input[type="password"]#noVNC_password_input {
 }
 
 .axonos-pay-eth-hint--ok {
-  color: #7adf8a !important;
-  -webkit-text-fill-color: #7adf8a !important;
+  color: #4fe0c0 !important;
+  -webkit-text-fill-color: #4fe0c0 !important;
 }
 
 .axonos-pay-eth-hint--error {
@@ -1935,8 +1938,8 @@ input[type="password"]#noVNC_password_input {
   font-weight: 600 !important;
   color: var(--green) !important;
   -webkit-text-fill-color: var(--green) !important;
-  background: rgba(123, 224, 200, .12) !important;
-  border: 1px solid rgba(123, 224, 200, .35) !important;
+  background: rgba(79, 224, 192, 0.12) !important;
+  border: 1px solid rgba(79, 224, 192, 0.35) !important;
   border-radius: 999px !important;
   cursor: pointer !important;
   font-family: var(--font-body) !important;
@@ -1945,7 +1948,7 @@ input[type="password"]#noVNC_password_input {
 
 .axonos-continue-btn:hover {
   transform: translateY(-1px) !important;
-  background: rgba(123, 224, 200, .20) !important;
+  background: rgba(79, 224, 192, 0.2) !important;
   border-color: var(--green) !important;
 }
 
@@ -1979,8 +1982,8 @@ input[type="password"]#noVNC_password_input {
   font-weight: 600 !important;
   color: var(--warm) !important;
   -webkit-text-fill-color: var(--warm) !important;
-  background: rgba(232, 168, 90, .12) !important;
-  border: 1px solid rgba(232, 168, 90, .35) !important;
+  background: rgba(242, 193, 78, 0.12) !important;
+  border: 1px solid rgba(242, 193, 78, 0.35) !important;
   border-radius: 999px !important;
   cursor: pointer !important;
   font-family: var(--font-body) !important;
@@ -1989,15 +1992,15 @@ input[type="password"]#noVNC_password_input {
 
 .axonos-switch-network-btn:hover {
   transform: translateY(-1px) !important;
-  background: rgba(232, 168, 90, .20) !important;
+  background: rgba(242, 193, 78, 0.2) !important;
 }
 
 /* Settings panel dark theme styling */
 #noVNC_settings {
-  background-color: rgba(10, 20, 36, 0.97) !important;
+  background-color: rgba(13, 14, 24, 0.97) !important;
   border: 1px solid var(--rule-strong) !important;
   border-radius: 14px !important;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(78, 195, 212, .06) !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(123, 108, 255, 0.06) !important;
 }
 
 /* Settings panel inputs */
@@ -2005,7 +2008,7 @@ input[type="password"]#noVNC_password_input {
 #noVNC_settings input[type="number"],
 #noVNC_settings input[type="range"],
 #noVNC_settings select {
-  background-color: rgba(7, 16, 26, 0.92) !important;
+  background-color: rgba(8, 9, 16, 0.92) !important;
   border: 1px solid var(--rule-strong) !important;
   color: var(--ink) !important;
   border-radius: 8px !important;
@@ -2018,14 +2021,14 @@ input[type="password"]#noVNC_password_input {
 #noVNC_settings input[type="number"]:focus,
 #noVNC_settings select:focus {
   border-color: var(--cyan) !important;
-  box-shadow: 0 0 0 2px rgba(78, 195, 212, .15) !important;
-  background-color: rgba(10, 20, 36, 0.96) !important;
+  box-shadow: 0 0 0 2px rgba(123, 108, 255, 0.15) !important;
+  background-color: rgba(13, 14, 24, 0.96) !important;
   outline: none !important;
 }
 
 /* Range sliders */
 #noVNC_settings input[type="range"] {
-  background: rgba(7, 16, 26, 0.92) !important;
+  background: rgba(8, 9, 16, 0.92) !important;
   border: 1px solid var(--rule) !important;
   border-radius: 999px !important;
   height: 8px !important;
@@ -2033,7 +2036,7 @@ input[type="password"]#noVNC_password_input {
 
 #noVNC_settings input[type="range"]::-webkit-slider-thumb {
   background: var(--cyan) !important;
-  border: 2px solid rgba(78, 195, 212, .5) !important;
+  border: 2px solid rgba(123, 108, 255, 0.5) !important;
   border-radius: 50% !important;
   cursor: pointer !important;
   height: 18px !important;
@@ -2042,7 +2045,7 @@ input[type="password"]#noVNC_password_input {
 
 #noVNC_settings input[type="range"]::-moz-range-thumb {
   background: var(--cyan) !important;
-  border: 2px solid rgba(78, 195, 212, .5) !important;
+  border: 2px solid rgba(123, 108, 255, 0.5) !important;
   border-radius: 50% !important;
   cursor: pointer !important;
   height: 18px !important;
@@ -2065,7 +2068,7 @@ input[type="password"]#noVNC_password_input {
 
 /* Settings headings */
 #noVNC_settings .noVNC_heading {
-  background: linear-gradient(135deg, rgba(78, 195, 212, .12), rgba(157, 111, 217, .08)) !important;
+  background: linear-gradient(135deg, rgba(123, 108, 255, 0.12), rgba(139, 124, 255, 0.08)) !important;
   color: var(--ink) !important;
   border: 1px solid var(--hair-mint) !important;
   border-radius: 8px !important;
@@ -2077,7 +2080,7 @@ input[type="password"]#noVNC_password_input {
 
 /* Expander sections */
 #noVNC_settings .noVNC_expander {
-  background-color: rgba(78, 195, 212, .08) !important;
+  background-color: rgba(123, 108, 255, 0.08) !important;
   color: var(--cyan) !important;
   border: 1px solid var(--hair-mint) !important;
   border-radius: 8px !important;
@@ -2089,7 +2092,7 @@ input[type="password"]#noVNC_password_input {
 }
 
 #noVNC_settings .noVNC_expander:hover {
-  background-color: rgba(78, 195, 212, .14) !important;
+  background-color: rgba(123, 108, 255, 0.14) !important;
   border-color: var(--cyan) !important;
 }
 
@@ -2177,7 +2180,7 @@ select#noVNC_setting_logging option {
 
 /* Add custom dropdown arrow */
 #noVNC_settings select {
-  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234ec3d4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6,9 12,15 18,9'%3e%3c/polyline%3e%3c/svg%3e") !important;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b7a6ff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6,9 12,15 18,9'%3e%3c/polyline%3e%3c/svg%3e") !important;
   background-repeat: no-repeat !important;
   background-position: right 8px center !important;
   background-size: 16px !important;
@@ -2342,7 +2345,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   padding: 8px 10px !important;
   border: 1px solid var(--rule-strong) !important;
   border-radius: 999px !important;
-  background: rgba(78, 195, 212, .08) !important;
+  background: rgba(123, 108, 255, 0.08) !important;
   color: var(--cyan) !important;
   -webkit-text-fill-color: var(--cyan) !important;
   font-size: 12px !important;
@@ -2357,7 +2360,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 
 #noVNC_restart_session_button:hover {
   border-color: var(--cyan) !important;
-  background: rgba(78, 195, 212, .15) !important;
+  background: rgba(123, 108, 255, 0.15) !important;
   transform: translateY(-1px);
 }
 
@@ -2368,54 +2371,39 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 
 /* AxonOS Enhanced Login UI Styles */
 
-/* Vision Header Styling */
-.axonos-vision-header {
-  position: relative;
-  text-align: center;
-  margin-bottom: 30px;
-  padding: 30px 20px;
-  background: linear-gradient(135deg, rgba(78, 195, 212, .11) 0%, rgba(157, 111, 217, .09) 100%);
-  border-radius: 20px;
-  overflow: hidden;
-  border: 1px solid var(--rule-strong);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(78, 195, 212, .06);
-}
-
+/* Top bar brand (wordmark lives in .axonos-topbar; v2 design) */
 .axonos-main-title {
-  font-size: 4rem !important;
-  font-weight: 900 !important;
-  color: var(--ink) !important;
-  text-shadow:
-    0 0 30px rgba(78, 195, 212, .45),
-    0 0 60px rgba(78, 195, 212, .20),
-    2px 2px 8px rgba(0, 0, 0, 0.8) !important;
-  margin: 0 0 15px 0 !important;
-  font-family: 'Brutal', "Orbitron", "Arial", sans-serif !important;
-  letter-spacing: 4px;
-  animation: title-glow 3s ease-in-out infinite alternate;
+  margin: 0 !important;
+  font-family: var(--font-display) !important;
+  font-size: 1.25rem !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.012em;
+  color: #f3f4fa !important;
+  line-height: 1;
 }
 
 .axonos-highlight {
-  color: var(--axonos-accent) !important;
-  text-shadow:
-    0 0 40px var(--axonos-accent),
-    0 0 80px var(--axonos-accent) !important;
-  animation: accent-pulse 2s ease-in-out infinite alternate;
+  background: linear-gradient(120deg, #5fe3d0, #7fa8ff, #b79bff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent !important;
 }
 
+/* Hero badge text (typewriter target) */
 .axonos-tagline {
-  font-size: 1.1rem;
-  color: var(--ink-mute);
-  font-weight: 300;
-  margin: 0 0 15px 0;
+  font-size: 11px;
+  color: #9aa0ba;
+  font-weight: 600;
+  margin: 0;
   text-transform: uppercase;
-  letter-spacing: 0.18em;
-  font-family: var(--font-mono);
-  min-height: 1.6em;
+  letter-spacing: 0.16em;
+  font-family: var(--font-body);
+  min-height: 1.4em;
 }
 
 /* Network environment (mainnet vs testnet) — driven by /api/config axgt_chain_id; see vnc.html applyAxonosNetworkEnvironmentUi */
 .axonos-network-banner {
+  display: none !important;
   font-size: 0.82rem;
   font-weight: 500;
   letter-spacing: 0.08em;
@@ -2426,6 +2414,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   line-height: 1.35;
   font-family: var(--font-mono);
   text-transform: uppercase;
+  text-align: center;
 }
 
 .axonos-network-banner--hidden {
@@ -2435,21 +2424,21 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 
 .axonos-network-banner--mainnet {
   color: var(--green);
-  background: rgba(123, 224, 200, .12);
-  border: 1px solid rgba(123, 224, 200, .35);
+  background: rgba(79, 224, 192, 0.12);
+  border: 1px solid rgba(79, 224, 192, 0.35);
 }
 
 .axonos-network-banner--testnet {
   color: var(--warm);
-  background: rgba(232, 168, 90, .12);
-  border: 1px solid rgba(232, 168, 90, .40);
-  box-shadow: 0 0 18px rgba(232, 168, 90, .10);
+  background: rgba(242, 193, 78, 0.12);
+  border: 1px solid rgba(242, 193, 78, 0.4);
+  box-shadow: 0 0 18px rgba(242, 193, 78, 0.1);
 }
 
 .axonos-network-banner--other {
   color: var(--pink);
-  background: rgba(232, 127, 164, .12);
-  border: 1px solid rgba(232, 127, 164, .35);
+  background: rgba(183, 155, 255, 0.12);
+  border: 1px solid rgba(183, 155, 255, 0.35);
 }
 
 .axonos-wallet-network-line {
@@ -2475,96 +2464,12 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   color: var(--pink);
 }
 
-/* Particle Animation Background */
-.axonos-particles {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-image:
-    radial-gradient(2px 2px at 20px 30px, var(--cyan), transparent),
-    radial-gradient(2px 2px at 40px 70px, var(--violet), transparent),
-    radial-gradient(1px 1px at 90px 40px, var(--warm), transparent),
-    radial-gradient(1px 1px at 130px 80px, var(--green), transparent),
-    radial-gradient(2px 2px at 160px 30px, var(--coral), transparent);
-  background-size: 200px 100px;
-  /* Comment out particle float animation to test CPU impact */
-  /* animation: particles-float 20s infinite linear; */
-  opacity: 0.28;
-  pointer-events: none;
-  will-change: transform;
-}
-
-@keyframes particles-float {
-  0% {
-    transform: translate3d(0, 0, 0);
-  }
-
-  33% {
-    transform: translate3d(-20px, -10px, 0);
-  }
-
-  66% {
-    transform: translate3d(20px, 10px, 0);
-  }
-
-  100% {
-    transform: translate3d(0, 0, 0);
-  }
-}
-
-/* DNA Animation */
-.axonos-dna-animation {
-  position: absolute;
-  top: 10px;
-  right: 15px;
-  width: 40px;
-  height: 60px;
-  opacity: 0.6;
-}
-
-.axonos-dna-animation::before,
-.axonos-dna-animation::after {
-  content: '';
-  position: absolute;
-  width: 2px;
-  height: 100%;
-  background: linear-gradient(to bottom, var(--cyan) 0%, transparent 50%, var(--cyan) 100%);
-  animation: dna-twist 3s infinite ease-in-out;
-  will-change: transform;
-  backface-visibility: hidden;
-  transform: translate3d(0, 0, 0);
-}
-
-.axonos-dna-animation::before {
-  left: 10px;
-  animation-delay: 0s;
-}
-
-.axonos-dna-animation::after {
-  right: 10px;
-  animation-delay: 1.5s;
-}
-
-@keyframes dna-twist {
-
-  0%,
-  100% {
-    transform: translate3d(0, 0, 0) scaleX(1) rotateY(0deg);
-  }
-
-  50% {
-    transform: translate3d(0, 0, 0) scaleX(0.3) rotateY(180deg);
-  }
-}
-
 /* Mission Section */
 .axonos-mission {
   text-align: center;
   margin: 25px 0;
   padding: 20px;
-  background: rgba(78, 195, 212, .05);
+  background: rgba(123, 108, 255, 0.05);
   border: 1px solid var(--rule-strong);
   border-radius: 14px;
 }
@@ -2590,22 +2495,43 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   opacity: 0.9;
 }
 
-/* Connect wrapper: profile + launch (prerequisites headline is the fixed header ticker) */
+/* Connect wrapper: session rail card (prerequisites headline is the fixed header ticker) */
 .axonos-connect-wrapper {
   position: relative;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 0.9rem;
   width: 100%;
   box-sizing: border-box;
-  border: 1px solid var(--rule-strong);
-  border-radius: 16px;
-  background: rgba(8, 16, 28, 0.55);
-  padding: 1.5rem 1.25rem;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(78, 195, 212, 0.06);
-  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.012));
+  padding: 1.35rem 1.25rem;
+  box-shadow: 0 30px 80px -40px rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   margin-top: 1.5rem;
+}
+
+/* "YOUR SESSION" rail kicker */
+.axonos-rail-kick {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  color: #8b91aa;
+  font-family: var(--font-body);
+}
+
+/* Hero CTA highlight pulse when scrolled to the rail */
+@keyframes axonos-rail-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(123, 108, 255, 0.55); }
+  100% { box-shadow: 0 0 0 14px rgba(123, 108, 255, 0); }
+}
+
+.axonos-rail-pulse {
+  animation: axonos-rail-pulse 1.1s ease-out 2;
 }
 
 .axonos-resume-panel {
@@ -2615,7 +2541,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   padding: 0.85rem 1.15rem;
   box-sizing: border-box;
   text-align: center;
-  background: linear-gradient(135deg, rgba(78, 195, 212, .10) 0%, rgba(12, 26, 46, 0.55) 100%);
+  background: linear-gradient(135deg, rgba(123, 108, 255, 0.1) 0%, rgba(18, 19, 31, 0.55) 100%);
   border: 1px solid var(--hair-mint);
   border-radius: 14px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 8px 28px rgba(0, 0, 0, 0.28);
@@ -2662,8 +2588,8 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   padding: 0.62rem 1.15rem;
   box-sizing: border-box;
   background: linear-gradient(135deg,
-      rgba(78, 195, 212, .08) 0%,
-      rgba(10, 20, 36, 0.55) 100%);
+      rgba(123, 108, 255, 0.08) 0%,
+      rgba(13, 14, 24, 0.55) 100%);
   border: 1px solid var(--rule-strong);
   border-radius: 14px;
   box-shadow:
@@ -2680,7 +2606,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-mute);
-  text-shadow: 0 0 14px rgba(78, 195, 212, .3), 0 1px 2px rgba(0, 0, 0, 0.85);
+  text-shadow: 0 0 14px rgba(123, 108, 255, 0.3), 0 1px 2px rgba(0, 0, 0, 0.85);
   opacity: 0.98;
   flex: 0 0 auto;
 }
@@ -2700,7 +2626,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   cursor: pointer;
   color: var(--axonos-light) !important;
   background-color: rgba(12, 18, 28, 0.92) !important;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%234ec3d4' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23b7a6ff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") !important;
   background-repeat: no-repeat !important;
   background-position: right 0.65rem center !important;
   border: 1px solid var(--hair-mint) !important;
@@ -2724,8 +2650,8 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   outline: none !important;
   border-color: var(--cyan) !important;
   box-shadow:
-    0 0 0 2px rgba(78, 195, 212, .25),
-    0 0 18px rgba(78, 195, 212, .18),
+    0 0 0 2px rgba(123, 108, 255, 0.25),
+    0 0 18px rgba(123, 108, 255, 0.18),
     inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
 }
 
@@ -2745,7 +2671,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 .axonos-profile-picker__select option {
-  background: #141a24;
+  background: #14151f;
   color: var(--axonos-light);
   font-weight: 500;
   padding: 0.35rem;
@@ -2788,59 +2714,35 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 
 
 
-/* Enhanced Connect Button */
+/* Enhanced Connect Button — v2 primary gradient CTA */
 .axonos-enhanced-connect {
-  background: linear-gradient(135deg, rgba(10, 24, 44, 0.96) 0%, rgba(7, 16, 26, 0.96) 100%) !important;
-  border: 1px solid var(--hair-mint) !important;
-  border-radius: 20px !important;
-  padding: 18px !important;
-  margin: 24px 0 !important;
+  background: var(--grad-primary) !important;
+  border: none !important;
+  border-radius: 13px !important;
+  padding: 13px 18px !important;
+  margin: 10px 0 !important;
   cursor: pointer !important;
-  transition: all 0.35s cubic-bezier(.2, .7, .2, 1) !important;
+  transition: filter 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease !important;
   position: relative;
   overflow: hidden;
-  box-shadow:
-    0 12px 40px rgba(0, 0, 0, 0.45),
-    0 0 0 1px rgba(78, 195, 212, .08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
-  backdrop-filter: blur(10px);
-}
-
-.axonos-enhanced-connect::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(120deg, transparent 0%, rgba(78, 195, 212, 0.12) 50%, transparent 100%);
-  transition: left 0.55s cubic-bezier(0.2, 0.7, 0.3, 1);
-}
-
-.axonos-enhanced-connect:hover::before {
-  left: 100%;
+  box-shadow: 0 14px 34px -14px rgba(123, 108, 255, 0.95) !important;
 }
 
 .axonos-enhanced-connect:hover {
-  background: linear-gradient(135deg, rgba(14, 30, 54, 0.98) 0%, rgba(10, 22, 40, 0.98) 100%) !important;
-  border-color: var(--cyan) !important;
-  transform: translateY(-4px) scale(1.015) !important;
-  box-shadow:
-    0 20px 60px rgba(0, 0, 0, 0.55),
-    0 0 30px rgba(78, 195, 212, .15),
-    0 8px 32px rgba(0, 0, 0, 0.4),
-    inset 0 1px 0 rgba(255, 255, 255, 0.10) !important;
+  filter: brightness(1.08);
+  transform: translateY(-1px) !important;
+  box-shadow: 0 18px 40px -14px rgba(123, 108, 255, 1) !important;
 }
 
 .axonos-connect-content {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
   background: transparent !important;
   border: none !important;
   border-radius: 10px !important;
-  padding: 10px;
+  padding: 4px;
   backdrop-filter: none;
 }
 
@@ -2854,34 +2756,25 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 }
 
 .axonos-connect-icon {
-  font-size: 1.7rem;
-  animation: rocket-pulse 2s infinite ease-in-out;
+  line-height: 0;
 }
 
-@keyframes rocket-pulse {
-
-  0%,
-  100% {
-    transform: scale(1);
-  }
-
-  50% {
-    transform: scale(1.1);
-  }
+.axonos-connect-icon img {
+  width: 26px !important;
+  height: 26px !important;
 }
 
 .axonos-connect-text {
-  font-size: 1.2rem !important;
-  font-weight: 800 !important;
-  color: var(--ink) !important;
-  text-shadow: 0 0 20px rgba(78, 195, 212, .3), 2px 2px 4px rgba(0, 0, 0, 0.8);
+  font-size: 15px !important;
+  font-weight: 600 !important;
+  color: #fff !important;
   font-family: var(--font-body);
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
 }
 
 .axonos-connect-subtext {
-  font-size: 0.82rem;
-  color: var(--ink-mute);
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.72);
   font-weight: 300;
   letter-spacing: 0.01em;
 }
@@ -2924,14 +2817,15 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   font-family: var(--font-mono);
 }
 
-/* Scientific Quote */
+/* Scientific Quote (landing footer; extra bottom padding clears the fixed footer banner) */
 .axonos-quote {
+  position: relative;
+  z-index: 10;
   text-align: center;
-  margin: 25px 0 3.5rem;
-  padding: 20px;
-  background: rgba(78, 195, 212, .04);
-  border-left: 3px solid var(--cyan);
-  border-radius: 8px;
+  margin: 30px 0 0;
+  padding: 24px 20px 56px;
+  background: transparent;
+  border: none;
   font-style: italic;
 }
 
@@ -2986,7 +2880,7 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
   overflow: visible !important;
 }
 
-/* Desktop landscape landing: hero + CTA columns, full-width features/quote below */
+/* Desktop landing (v2): block-flow sections; catalog + sticky session rail */
 @media (min-width: 993px) {
   html:not(.noVNC_connected) .noVNC_center:has(#noVNC_connect_dlg) {
     box-sizing: border-box;
@@ -2999,16 +2893,11 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
   }
 
   #noVNC_connect_dlg {
-    display: grid;
-    grid-template-columns: minmax(0, 1.7fr) minmax(320px, 420px);
-    column-gap: 2.5rem;
-    row-gap: 1.5rem;
-    max-width: min(1680px, 96vw);
-    align-items: stretch;
-    align-content: start;
+    display: block;
+    max-width: 1280px;
     align-self: start;
-    margin: 40px auto !important;
-    padding: 32px 20px !important;
+    margin: 12px auto 0 !important;
+    padding: 10px 30px 0 !important;
     box-sizing: border-box;
     overflow-x: hidden;
     overflow-y: visible !important;
@@ -3025,131 +2914,21 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
     overflow: visible !important;
   }
 
-  /* Grid children shrink instead of forcing horizontal overflow */
   #noVNC_connect_dlg>* {
     min-width: 0;
   }
 
-  #noVNC_connect_dlg>.axonos-mobile-notice {
-    grid-column: 1 / -1;
+  /* Two-column main: environment catalog + sticky session rail */
+  .axonos-landing-main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
+    column-gap: 26px;
+    align-items: start;
   }
 
-  #noVNC_connect_dlg>.axonos-vision-header {
-    grid-column: 1 / -1;
-    grid-row: 1;
-    margin-bottom: 0.5rem;
-    padding: 24px 20px;
-    background: linear-gradient(180deg, rgba(78, 195, 212, 0.08) 0%, rgba(157, 111, 217, 0.04) 100%);
-    border: 1px solid var(--rule-strong);
-    border-radius: 16px;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-    overflow: hidden;
-  }
-
-  /* Keep helix inside hero; avoids crowding the CTA gutter */
-  #noVNC_connect_dlg .axonos-dna-animation {
-    right: 18px;
-    left: auto;
-    top: 18px;
-    opacity: 0.35;
-    transform: scale(0.92);
-    transform-origin: top right;
-  }
-
-  #noVNC_connect_dlg .axonos-main-title {
-    font-size: 3.15rem !important;
-    letter-spacing: 3px;
-  }
-
-  #noVNC_connect_dlg .axonos-tagline {
-    font-size: 1.05rem;
-  }
-
-  #noVNC_connect_dlg>.axonos-hero-panel {
-    grid-column: 1;
-    grid-row: 2;
-    align-self: stretch;
-  }
-
-  #noVNC_connect_dlg>.axonos-connect-wrapper {
-    grid-column: 2;
-    grid-row: 2;
-    align-self: stretch;
-    justify-self: stretch;
-    box-sizing: border-box;
-    overflow-x: hidden;
-    padding: 1.5rem 1.25rem;
-    margin-left: 0;
-    margin-top: 0;
-    border: 1px solid var(--rule-strong);
-    border-radius: 16px;
-    background: rgba(8, 16, 28, 0.55);
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-start;
-    gap: 1.25rem;
-  }
-
-  #noVNC_connect_dlg>.axonos-quote {
-    grid-column: 1 / -1;
-    grid-row: 3;
-    margin: 1rem 0 3.5rem;
-    padding: 12px;
-    text-align: center;
-    border: none;
-    background: transparent;
-  }
-
-  #noVNC_connect_dlg>.axonos-quote p {
-    margin-bottom: 8px;
-  }
-
-  /* Specs Overview Panel */
-  .axonos-specs-panel {
-    background: rgba(6, 12, 22, 0.45);
-    border: 1px solid rgba(140, 200, 220, 0.08);
-    border-radius: 12px;
-    padding: 14px 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .axonos-spec-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .axonos-spec-icon {
-    font-size: 1.1rem;
-    width: 28px;
-    height: 28px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(78, 195, 212, 0.06);
-    border-radius: 6px;
-    border: 1px solid rgba(78, 195, 212, 0.12);
-  }
-
-  .axonos-spec-details {
-    display: flex;
-    flex-direction: column;
-    line-height: 1.3;
-  }
-
-  .axonos-spec-name {
-    font-family: var(--font-body);
-    font-size: 0.82rem;
-    font-weight: 700;
-    color: var(--axonos-light);
-  }
-
-  .axonos-spec-desc {
-    font-family: var(--font-body);
-    font-size: 0.72rem;
-    color: var(--ink-mute);
+  #noVNC_connect_dlg>.axonos-landing-main>.axonos-connect-wrapper {
+    position: sticky;
+    top: calc(var(--axonos-prereq-ticker-body-pad-top, 44px) + 16px);
   }
 
   /* Full width of launch column without exceeding parent */
@@ -3162,15 +2941,61 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
     margin-bottom: 0 !important;
   }
 
-  #noVNC_connect_dlg .axonos-enhanced-connect:hover {
-    transform: translateY(-4px) scale(1.02) !important;
-  }
-
   /* Picker stretches in the narrower column */
   .axonos-profile-picker {
     max-width: none;
     margin-top: 0;
   }
+}
+
+/* Specs Overview Panel (all viewports) */
+.axonos-specs-panel {
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.axonos-spec-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.axonos-spec-icon {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #b7a6ff;
+  background: rgba(123, 108, 255, 0.1);
+  border-radius: 9px;
+  border: 1px solid rgba(123, 108, 255, 0.22);
+}
+
+.axonos-spec-details {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+
+.axonos-spec-name {
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--axonos-light);
+}
+
+.axonos-spec-desc {
+  font-family: var(--font-body);
+  font-size: 0.74rem;
+  font-weight: 300;
+  color: var(--ink-mute);
 }
 
 /* Mobile notice: hidden on desktop, shown on small viewports */
@@ -3233,8 +3058,8 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
   top: 0.75rem;
   right: 0.75rem;
   background: transparent;
-  border: 1px solid rgba(140, 200, 220, 0.2);
-  color: rgba(140, 200, 220, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.124);
+  color: rgba(255, 255, 255, 0.31);
   border-radius: 50%;
   width: 1.75rem;
   height: 1.75rem;
@@ -3248,16 +3073,16 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
 }
 
 .axonos-loader-cancel:hover {
-  color: rgba(140, 200, 220, 0.9);
-  border-color: rgba(140, 200, 220, 0.5);
-  background: rgba(140, 200, 220, 0.08);
+  color: rgba(255, 255, 255, 0.558);
+  border-color: rgba(255, 255, 255, 0.31);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 /* Timeout message shown after 90 s of waiting */
 .axonos-loader-timeout-msg {
   margin-top: 1rem;
   font-size: 0.78rem;
-  color: rgba(232, 168, 90, 0.85);
+  color: rgba(242, 193, 78, 0.85);
   text-align: center;
 }
 
@@ -3273,7 +3098,7 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
     display: block;
     margin-bottom: 1.25rem;
     padding: 1rem 1.25rem;
-    background: rgba(78, 195, 212, .07);
+    background: rgba(123, 108, 255, 0.07);
     border: 1px solid var(--hair-mint);
     border-radius: 8px;
     text-align: center;
@@ -3365,63 +3190,11 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
     overflow: visible !important;
   }
 
-  /* Specs Overview Panel for Mobile */
-  .axonos-specs-panel {
-    background: rgba(6, 12, 22, 0.45);
-    border: 1px solid rgba(140, 200, 220, 0.08);
-    border-radius: 12px;
-    padding: 14px 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .axonos-spec-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .axonos-spec-icon {
-    font-size: 1.1rem;
-    width: 28px;
-    height: 28px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(78, 195, 212, 0.06);
-    border-radius: 6px;
-    border: 1px solid rgba(78, 195, 212, 0.12);
-  }
-
-  .axonos-spec-details {
-    display: flex;
-    flex-direction: column;
-    line-height: 1.3;
-  }
-
-  .axonos-spec-name {
-    font-family: var(--font-body);
-    font-size: 0.82rem;
-    font-weight: 700;
-    color: var(--axonos-light);
-  }
-
-  .axonos-spec-desc {
-    font-family: var(--font-body);
-    font-size: 0.72rem;
-    color: var(--ink-mute);
-  }
 }
 
 @media (max-width: 768px) {
   .axonos-mobile-notice {
     margin-bottom: 1.25rem;
-  }
-
-  .axonos-main-title {
-    font-size: clamp(2rem, 8vw, 2.5rem) !important;
-    letter-spacing: 2px !important;
   }
 
   .axonos-features {
@@ -3494,12 +3267,12 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: rgba(10, 20, 36, 0.97);
+  background: rgba(13, 14, 24, 0.97);
   border-radius: 20px;
   padding: 40px;
   border: 1px solid var(--hair-mint);
   box-shadow:
-    0 0 40px rgba(78, 195, 212, .18),
+    0 0 40px rgba(123, 108, 255, 0.18),
     0 20px 60px rgba(0, 0, 0, .6),
     inset 0 1px 0 rgba(255, 255, 255, .04);
   backdrop-filter: blur(14px);
@@ -3561,7 +3334,7 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
 .axonos-spinner {
   width: 80px;
   height: 80px;
-  border: 4px solid rgba(78, 195, 212, .15);
+  border: 4px solid rgba(123, 108, 255, 0.15);
   border-top: 4px solid var(--cyan);
   border-radius: 50%;
   animation: axonos-spin 1s linear infinite;
@@ -3600,7 +3373,7 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
   font-weight: 800;
   text-align: center;
   margin-bottom: 10px;
-  text-shadow: 0 0 14px rgba(78, 195, 212, .45);
+  text-shadow: 0 0 14px rgba(123, 108, 255, 0.45);
   animation: text-pulse 2s ease-in-out infinite;
   letter-spacing: -0.01em;
 }
@@ -3682,8 +3455,8 @@ html:not(.noVNC_connected) body::before {
   right: 0;
   bottom: 0;
   background-image:
-    linear-gradient(rgba(140, 200, 220, .025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(140, 200, 220, .025) 1px, transparent 1px);
+    linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
   background-size: 78px 78px;
   -webkit-mask-image: radial-gradient(ellipse 95% 75% at 50% 25%, #000, transparent 95%);
   mask-image: radial-gradient(ellipse 95% 75% at 50% 25%, #000, transparent 95%);
@@ -3781,7 +3554,7 @@ html:not(.noVNC_connected) body::after {
 /* Enhanced feature hover effects */
 .axonos-feature:hover .axonos-feature-icon {
   transform: scale(1.2) rotate(5deg);
-  filter: drop-shadow(0 0 12px rgba(78, 195, 212, .55)) brightness(1.2);
+  filter: drop-shadow(0 0 12px rgba(123, 108, 255, 0.55)) brightness(1.2);
 }
 
 
@@ -3999,7 +3772,7 @@ html:not(.noVNC_connected) body::after {
   border-radius: 16px;
   background: rgba(8, 16, 28, 0.55);
   padding: 1.5rem 1.25rem;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(78, 195, 212, 0.06);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(123, 108, 255, 0.06);
   backdrop-filter: blur(10px);
 }
 
@@ -4018,7 +3791,7 @@ html:not(.noVNC_connected) body::after {
 }
 
 .axonos-tab-btn {
-  background: rgba(10, 20, 36, 0.4);
+  background: rgba(13, 14, 24, 0.4);
   border: 1px solid transparent;
   border-bottom: none;
   border-radius: 8px 8px 0 0;
@@ -4035,15 +3808,15 @@ html:not(.noVNC_connected) body::after {
 
 .axonos-tab-btn:hover {
   color: var(--axonos-light);
-  background: rgba(78, 195, 212, 0.05);
+  background: rgba(123, 108, 255, 0.05);
 }
 
 .axonos-tab-btn.active {
   color: var(--cyan);
-  background: rgba(12, 26, 46, 0.65);
+  background: rgba(18, 19, 31, 0.65);
   border-color: var(--rule-strong);
   border-bottom: 1px solid var(--bg-1);
-  box-shadow: 0 -4px 12px rgba(78, 195, 212, 0.05);
+  box-shadow: 0 -4px 12px rgba(123, 108, 255, 0.05);
 }
 
 .axonos-tab-btn.active::after {
@@ -4118,7 +3891,7 @@ html:not(.noVNC_connected) body::after {
 .axonos-templates-search-input:focus {
   outline: none;
   border-color: var(--cyan);
-  box-shadow: 0 0 10px rgba(78, 195, 212, 0.15), inset 0 2px 4px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 0 10px rgba(123, 108, 255, 0.15), inset 0 2px 4px rgba(0, 0, 0, 0.3);
 }
 
 .axonos-filter-pills {
@@ -4128,7 +3901,7 @@ html:not(.noVNC_connected) body::after {
 }
 
 .axonos-filter-pill {
-  background: rgba(12, 26, 46, 0.4);
+  background: rgba(18, 19, 31, 0.4);
   border: 1px solid var(--rule-strong);
   color: var(--ink-mute);
   padding: 6px 12px;
@@ -4142,7 +3915,7 @@ html:not(.noVNC_connected) body::after {
 
 .axonos-filter-pill:hover {
   color: var(--axonos-light);
-  border-color: rgba(78, 195, 212, 0.4);
+  border-color: rgba(123, 108, 255, 0.4);
 }
 
 .axonos-filter-pill.active {
@@ -4150,7 +3923,7 @@ html:not(.noVNC_connected) body::after {
   background: var(--cyan);
   border-color: var(--cyan);
   font-weight: 700;
-  box-shadow: 0 0 10px rgba(78, 195, 212, 0.3);
+  box-shadow: 0 0 10px rgba(123, 108, 255, 0.3);
 }
 
 /* Templates Grid */
@@ -4190,7 +3963,7 @@ html:not(.noVNC_connected) body::after {
 
 /* Template Card */
 .axonos-template-card {
-  background: linear-gradient(135deg, rgba(10, 24, 44, 0.75) 0%, rgba(12, 26, 46, 0.5) 100%);
+  background: linear-gradient(135deg, rgba(10, 24, 44, 0.75) 0%, rgba(18, 19, 31, 0.5) 100%);
   border: 1px solid var(--rule-strong);
   border-radius: 14px;
   padding: 16px;
@@ -4205,15 +3978,15 @@ html:not(.noVNC_connected) body::after {
 }
 
 .axonos-template-card:hover {
-  border-color: rgba(78, 195, 212, 0.4);
+  border-color: rgba(123, 108, 255, 0.4);
   transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(78, 195, 212, 0.08);
+  box-shadow: 0 8px 24px rgba(123, 108, 255, 0.08);
 }
 
 .axonos-template-card.selected {
   border-color: var(--cyan);
-  background: linear-gradient(135deg, rgba(78, 195, 212, 0.07) 0%, rgba(10, 24, 44, 0.8) 100%);
-  box-shadow: 0 0 16px rgba(78, 195, 212, 0.15), inset 0 0 0 1px rgba(78, 195, 212, 0.15);
+  background: linear-gradient(135deg, rgba(123, 108, 255, 0.07) 0%, rgba(10, 24, 44, 0.8) 100%);
+  box-shadow: 0 0 16px rgba(123, 108, 255, 0.15), inset 0 0 0 1px rgba(123, 108, 255, 0.15);
 }
 
 .axonos-template-header {
@@ -4228,17 +4001,17 @@ html:not(.noVNC_connected) body::after {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(78, 195, 212, 0.08);
+  background: rgba(123, 108, 255, 0.08);
   border-radius: 10px;
-  border: 1px solid rgba(78, 195, 212, 0.15);
+  border: 1px solid rgba(123, 108, 255, 0.15);
   transition: all 0.25s ease;
 }
 
 .axonos-template-card:hover .axonos-template-icon-wrap,
 .axonos-template-card.selected .axonos-template-icon-wrap {
-  background: rgba(78, 195, 212, 0.14);
+  background: rgba(123, 108, 255, 0.14);
   border-color: var(--cyan);
-  box-shadow: 0 0 10px rgba(78, 195, 212, 0.2);
+  box-shadow: 0 0 10px rgba(123, 108, 255, 0.2);
 }
 
 .axonos-template-icon-wrap svg {
@@ -4252,7 +4025,7 @@ html:not(.noVNC_connected) body::after {
 }
 
 .axonos-template-tag {
-  background: rgba(12, 26, 46, 0.6);
+  background: rgba(18, 19, 31, 0.6);
   border: 1px solid var(--rule-strong);
   color: var(--ink-mute);
   padding: 3px 8px;
@@ -4264,7 +4037,7 @@ html:not(.noVNC_connected) body::after {
 }
 
 .axonos-template-card.selected .axonos-template-tag {
-  border-color: rgba(78, 195, 212, 0.2);
+  border-color: rgba(123, 108, 255, 0.2);
   color: var(--cyan);
 }
 
@@ -4295,7 +4068,7 @@ html:not(.noVNC_connected) body::after {
 
 .axonos-template-image-info {
   background: rgba(6, 12, 22, 0.65);
-  border: 1px solid rgba(140, 200, 220, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.031);
   border-radius: 8px;
   padding: 6px 10px;
   margin-top: 4px;
@@ -4309,7 +4082,7 @@ html:not(.noVNC_connected) body::after {
 }
 
 .axonos-template-card.selected .axonos-template-image-info {
-  border-color: rgba(78, 195, 212, 0.12);
+  border-color: rgba(123, 108, 255, 0.12);
 }
 
 .axonos-template-actions {
@@ -4332,7 +4105,7 @@ html:not(.noVNC_connected) body::after {
 
 .axonos-template-btn.select-btn {
   flex: 1;
-  background: rgba(78, 195, 212, 0.08);
+  background: rgba(123, 108, 255, 0.08);
   border: 1px solid var(--hair-mint);
   color: var(--cyan);
 }
@@ -4341,7 +4114,7 @@ html:not(.noVNC_connected) body::after {
   background: var(--cyan);
   border-color: var(--cyan);
   color: var(--bg-0);
-  box-shadow: 0 0 12px rgba(78, 195, 212, 0.3);
+  box-shadow: 0 0 12px rgba(123, 108, 255, 0.3);
 }
 
 .axonos-template-card.selected .axonos-template-btn.select-btn {
@@ -4351,7 +4124,7 @@ html:not(.noVNC_connected) body::after {
 }
 
 .axonos-template-btn.info-btn {
-  background: rgba(10, 20, 36, 0.6);
+  background: rgba(13, 14, 24, 0.6);
   border: 1px solid var(--rule-strong);
   color: var(--ink-mute);
 }
@@ -4363,7 +4136,7 @@ html:not(.noVNC_connected) body::after {
 
 /* Selected Template Banner (Right Column Connect Panel) */
 .axonos-selected-template-banner {
-  background: linear-gradient(135deg, rgba(78, 195, 212, 0.08) 0%, rgba(10, 24, 44, 0.5) 100%);
+  background: linear-gradient(135deg, rgba(123, 108, 255, 0.08) 0%, rgba(10, 24, 44, 0.5) 100%);
   border: 1px solid var(--hair-mint);
   border-radius: 14px;
   padding: 12px 16px;
@@ -4440,7 +4213,7 @@ html:not(.noVNC_connected) body::after {
 }
 
 .axonos-modal-content {
-  background: linear-gradient(145deg, #0c1a2e, #07101a);
+  background: linear-gradient(145deg, #12131f, #080910);
   border: 1px solid var(--rule-strong);
   border-radius: 20px;
   width: 90%;
@@ -4449,7 +4222,7 @@ html:not(.noVNC_connected) body::after {
   overflow-y: auto;
   position: relative;
   z-index: 10002;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.8), 0 0 40px rgba(78, 195, 212, 0.15);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.8), 0 0 40px rgba(123, 108, 255, 0.15);
   padding: 30px;
   box-sizing: border-box;
   transform: scale(0.9);
@@ -4481,10 +4254,10 @@ html:not(.noVNC_connected) body::after {
 }
 
 .axonos-modal-close:hover {
-  background: rgba(242, 96, 122, 0.12);
+  background: rgba(255, 95, 87, 0.12);
   border-color: var(--coral);
   color: var(--coral);
-  box-shadow: 0 0 10px rgba(242, 96, 122, 0.3);
+  box-shadow: 0 0 10px rgba(255, 95, 87, 0.3);
 }
 
 /* Modal Body elements */
@@ -4498,7 +4271,7 @@ html:not(.noVNC_connected) body::after {
 .axonos-m-icon-box {
   width: 44px;
   height: 44px;
-  background: rgba(78, 195, 212, 0.1);
+  background: rgba(123, 108, 255, 0.1);
   border: 1px solid var(--hair-mint);
   border-radius: 12px;
   display: flex;
@@ -4545,7 +4318,7 @@ html:not(.noVNC_connected) body::after {
   letter-spacing: 0.12em;
   color: var(--cyan);
   margin: 0 0 8px 0;
-  border-bottom: 1px dashed rgba(78, 195, 212, 0.2);
+  border-bottom: 1px dashed rgba(123, 108, 255, 0.2);
   padding-bottom: 4px;
 }
 
@@ -4566,7 +4339,7 @@ html:not(.noVNC_connected) body::after {
 }
 
 .axonos-m-copy-btn {
-  background: rgba(78, 195, 212, 0.1);
+  background: rgba(123, 108, 255, 0.1);
   border: 1px solid var(--hair-mint);
   color: var(--cyan);
   padding: 4px 10px;
@@ -4590,7 +4363,7 @@ html:not(.noVNC_connected) body::after {
 }
 
 .axonos-m-pkg-badge {
-  background: rgba(78, 195, 212, 0.04);
+  background: rgba(123, 108, 255, 0.04);
   border: 1px solid var(--rule-strong);
   color: var(--axonos-light);
   padding: 4px 10px;
@@ -4600,7 +4373,7 @@ html:not(.noVNC_connected) body::after {
 }
 
 .axonos-m-command-box {
-  background: #03080f;
+  background: #0a0b13;
   border: 1px solid var(--rule-strong);
   border-radius: 10px;
   padding: 12px 16px;
@@ -5028,7 +4801,7 @@ html.axonos-mic-live::after {
 .axonos-ssh-key__input:focus {
   outline: none;
   border-color: var(--cyan);
-  box-shadow: 0 0 0 2px rgba(78, 195, 212, 0.18);
+  box-shadow: 0 0 0 2px rgba(123, 108, 255, 0.18);
 }
 
 .axonos-ssh-key__hint {
@@ -5044,7 +4817,7 @@ html.axonos-mic-live::after {
   border: 1px solid var(--hair-mint);
   border-radius: 12px;
   background: var(--bg-1);
-  box-shadow: 0 0 14px rgba(78, 195, 212, 0.12);
+  box-shadow: 0 0 14px rgba(123, 108, 255, 0.12);
 }
 
 .axonos-ssh-card--hidden {
@@ -5131,8 +4904,8 @@ html.axonos-mic-live::after {
 /* Custom Confirmation Modals aligned with AxonOS Theme */
 .axonos-confirm-content {
   max-width: 440px !important;
-  border: 1px solid rgba(78, 195, 212, 0.22) !important;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7), 0 0 40px rgba(78, 195, 212, 0.12) !important;
+  border: 1px solid rgba(123, 108, 255, 0.22) !important;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7), 0 0 40px rgba(123, 108, 255, 0.12) !important;
   padding: 28px !important;
 }
 
@@ -5177,7 +4950,7 @@ html.axonos-mic-live::after {
 }
 
 .axonos-btn--primary {
-  background: rgba(78, 195, 212, 0.1) !important;
+  background: rgba(123, 108, 255, 0.1) !important;
   border: 1px solid var(--hair-mint) !important;
   color: var(--cyan) !important;
   -webkit-text-fill-color: var(--cyan) !important;
@@ -5185,9 +4958,9 @@ html.axonos-mic-live::after {
 
 .axonos-btn--primary:hover {
   transform: translateY(-2px) !important;
-  background: rgba(78, 195, 212, 0.18) !important;
+  background: rgba(123, 108, 255, 0.18) !important;
   border-color: var(--cyan) !important;
-  box-shadow: 0 6px 22px rgba(78, 195, 212, 0.22) !important;
+  box-shadow: 0 6px 22px rgba(123, 108, 255, 0.22) !important;
 }
 
 .axonos-btn--primary:active {
@@ -5196,17 +4969,17 @@ html.axonos-mic-live::after {
 }
 
 .axonos-btn--danger {
-  background: rgba(242, 96, 122, 0.1) !important;
-  border: 1px solid rgba(242, 96, 122, 0.35) !important;
+  background: rgba(255, 95, 87, 0.1) !important;
+  border: 1px solid rgba(255, 95, 87, 0.35) !important;
   color: var(--coral) !important;
   -webkit-text-fill-color: var(--coral) !important;
 }
 
 .axonos-btn--danger:hover {
   transform: translateY(-2px) !important;
-  background: rgba(242, 96, 122, 0.18) !important;
+  background: rgba(255, 95, 87, 0.18) !important;
   border-color: var(--coral) !important;
-  box-shadow: 0 6px 22px rgba(242, 96, 122, 0.22) !important;
+  box-shadow: 0 6px 22px rgba(255, 95, 87, 0.22) !important;
 }
 
 .axonos-btn--danger:active {
@@ -5215,7 +4988,7 @@ html.axonos-mic-live::after {
 }
 
 .axonos-btn--secondary {
-  background: rgba(170, 210, 225, 0.06) !important;
+  background: rgba(166, 172, 194, 0.06) !important;
   border: 1px solid var(--rule-strong) !important;
   color: var(--ink-mute) !important;
   -webkit-text-fill-color: var(--ink-mute) !important;
@@ -5223,7 +4996,7 @@ html.axonos-mic-live::after {
 
 .axonos-btn--secondary:hover {
   transform: translateY(-2px) !important;
-  background: rgba(170, 210, 225, 0.12) !important;
+  background: rgba(166, 172, 194, 0.12) !important;
   border-color: var(--ink-mute) !important;
 }
 
@@ -5256,7 +5029,7 @@ html.axonos-mic-live::after {
 .axonos-custom-select__arrow {
   width: 16px;
   height: 16px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%234ec3d4' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23b7a6ff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: center;
   transition: transform 0.2s ease;
@@ -5275,10 +5048,10 @@ html.axonos-mic-live::after {
   width: max-content;
   z-index: 9999;
   margin-top: 6px;
-  background: rgba(10, 20, 36, 0.98);
+  background: rgba(13, 14, 24, 0.98);
   border: 1px solid var(--hair-mint);
   border-radius: 12px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(78, 195, 212, 0.1);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(123, 108, 255, 0.1);
   overflow: hidden;
   backdrop-filter: blur(12px);
   opacity: 0;
@@ -5306,12 +5079,12 @@ html.axonos-mic-live::after {
 }
 
 .axonos-custom-select__option:hover {
-  background: rgba(78, 195, 212, 0.12);
+  background: rgba(123, 108, 255, 0.12);
   color: var(--cyan);
 }
 
 .axonos-custom-select__option--selected {
-  background: rgba(78, 195, 212, 0.2);
+  background: rgba(123, 108, 255, 0.2);
   color: var(--cyan);
   font-weight: 700;
   box-shadow: inset 3px 0 0 var(--cyan);
@@ -5360,8 +5133,8 @@ html.axonos-mic-live::after {
   outline: none;
   border-color: var(--cyan);
   box-shadow:
-    0 0 0 2px rgba(78, 195, 212, .25),
-    0 0 18px rgba(78, 195, 212, .18),
+    0 0 0 2px rgba(123, 108, 255, 0.25),
+    0 0 18px rgba(123, 108, 255, 0.18),
     inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
@@ -5404,4 +5177,617 @@ html.axonos-mic-live::after {
   font-family: var(--font-mono);
   font-size: 13px;
   padding: 6px 10px;
+}
+/* ==========================================================================
+   AxonOS v2 design layer (ported from axonos-web / Claude Design prototype)
+   Landing structure: topbar · hero + dotted globe · catalog + session rail ·
+   how-it-works · trust strip · footer. Appended last so equal-specificity
+   overrides win by cascade order.
+   ========================================================================== */
+
+/* ---- Ambient background: radial glow + masked grid ---- */
+.axonos-landing-bg {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.axonos-landing-bg__glow {
+  position: absolute;
+  top: -340px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 1100px;
+  height: 680px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(96, 84, 210, 0.2), transparent 65%);
+  filter: blur(40px);
+}
+
+.axonos-landing-bg__grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.022) 1px, transparent 1px);
+  background-size: 60px 60px;
+  mask-image: radial-gradient(circle at 50% 12%, #000, transparent 70%);
+  -webkit-mask-image: radial-gradient(circle at 50% 12%, #000, transparent 70%);
+}
+
+html.noVNC_connected .axonos-landing-bg {
+  display: none;
+}
+
+/* ---- Top bar ---- */
+.axonos-topbar {
+  position: relative;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 0 6px;
+}
+
+.axonos-topbar__brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.axonos-topbar__logo {
+  height: 26px;
+  width: auto;
+  display: block;
+}
+
+.axonos-beta-chip {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--warm);
+  border: 1px solid rgba(242, 193, 78, 0.5);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  opacity: 0.95;
+}
+
+.axonos-topbar__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Network pill sits in the topbar now: keep pill styles, drop centering */
+.axonos-topbar .axonos-network-banner {
+  margin: 0;
+  font-size: 0.72rem;
+}
+
+/* ---- Hero ---- */
+.axonos-hero {
+  position: relative;
+  z-index: 10;
+  padding: 34px 0 12px;
+}
+
+.axonos-hero__globe {
+  position: absolute;
+  top: -100px;
+  right: -40px;
+  width: 550px;
+  height: 550px;
+  max-width: 52vw;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.axonos-hero__globe canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.axonos-hero__copy {
+  position: relative;
+  z-index: 2;
+  max-width: 640px;
+}
+
+.axonos-hero__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 14px;
+  border-radius: 99px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.03);
+  margin-bottom: 24px;
+}
+
+.axonos-hero__badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: axonos-pulse-dot 2.4s ease-in-out infinite;
+  flex: 0 0 auto;
+}
+
+@keyframes axonos-pulse-dot {
+  0%, 100% { opacity: 0.55; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+.axonos-hero__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(38px, 5vw, 66px);
+  line-height: 1.02;
+  font-weight: 800;
+  letter-spacing: -0.012em;
+  color: #f4f5fb;
+}
+
+.axonos-hero__sub {
+  margin: 22px 0 0;
+  max-width: 600px;
+  font-size: 16.5px;
+  line-height: 1.6;
+  color: #9ca2ba;
+  font-weight: 300;
+  font-family: var(--font-body);
+}
+
+.axonos-hero__ctas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 13px;
+  margin-top: 30px;
+}
+
+.axonos-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 13px;
+  padding: 14px 26px;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: var(--font-body);
+  cursor: pointer;
+  transition: filter 0.18s ease, transform 0.18s ease, background 0.18s ease;
+}
+
+.axonos-cta--primary {
+  border: none;
+  color: #fff;
+  background: var(--grad-primary);
+  box-shadow: 0 14px 34px -14px rgba(123, 108, 255, 0.95);
+}
+
+.axonos-cta--primary:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+.axonos-cta--ghost {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.03);
+  color: #d7dae6;
+}
+
+.axonos-cta--ghost:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.axonos-hero__note {
+  display: none !important;
+  margin: 26px 0 0;
+  max-width: 640px;
+  font-size: 0.72rem;
+  line-height: 1.55;
+  color: rgba(242, 193, 78, 0.72);
+  font-family: var(--font-mono);
+  letter-spacing: 0.01em;
+}
+
+.axonos-hero__note strong {
+  color: var(--warm);
+}
+
+/* ---- Section heads ---- */
+.axonos-section-head {
+  margin-bottom: 18px;
+}
+
+.axonos-section-head--center {
+  text-align: center;
+  margin-bottom: 30px;
+}
+
+.axonos-section-head__kick {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: #7b8199;
+  font-family: var(--font-body);
+}
+
+.axonos-section-head__title {
+  margin-top: 6px;
+  font-size: 22px;
+  font-weight: 600;
+  color: #edeff6;
+  letter-spacing: -0.01em;
+  font-family: var(--font-body);
+}
+
+/* ---- Landing main: flatten the catalog panel onto the page ---- */
+.axonos-landing-main {
+  position: relative;
+  z-index: 10;
+  margin-top: 26px;
+}
+
+.axonos-hero-panel {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  padding: 0;
+}
+
+/* ---- Tabs as segmented pills ---- */
+.axonos-tabs-nav {
+  border-bottom: none;
+  padding-bottom: 0;
+  margin: 1.1rem 0 1rem;
+}
+
+.axonos-tab-btn {
+  background: rgba(255, 255, 255, 0.022);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 99px;
+  color: #9097b0;
+  padding: 8px 16px;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  font-weight: 500;
+  top: 0;
+}
+
+.axonos-tab-btn:hover {
+  color: var(--axonos-light);
+  background: rgba(123, 108, 255, 0.08);
+  border-color: rgba(123, 108, 255, 0.3);
+}
+
+.axonos-tab-btn.active {
+  color: #d8d2ff;
+  background: rgba(123, 108, 255, 0.16);
+  border: 1px solid rgba(123, 108, 255, 0.5);
+  box-shadow: none;
+}
+
+.axonos-tab-btn.active::after {
+  content: none;
+}
+
+/* ---- Search + filter pills (design style) ---- */
+.axonos-templates-search-input {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.025);
+  border-radius: 12px;
+  padding: 11px 16px;
+  font-size: 13.5px;
+  box-shadow: none;
+}
+
+.axonos-templates-search-input:focus {
+  border-color: rgba(123, 108, 255, 0.55);
+  box-shadow: 0 0 0 1px rgba(123, 108, 255, 0.2);
+}
+
+.axonos-filter-pill {
+  background: rgba(255, 255, 255, 0.022);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #9097b0;
+  padding: 7px 14px;
+  font-size: 12px;
+}
+
+.axonos-filter-pill.active {
+  color: #d8d2ff;
+  background: rgba(123, 108, 255, 0.16);
+  border-color: rgba(123, 108, 255, 0.5);
+  font-weight: 600;
+  box-shadow: none;
+}
+
+/* ---- Template cards (design card language) ---- */
+.axonos-templates-grid {
+  max-height: 560px;
+}
+
+.axonos-template-card {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.012));
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 18px;
+  padding: 18px;
+  box-shadow: none;
+}
+
+.axonos-template-card:hover {
+  border-color: rgba(123, 108, 255, 0.4);
+  background: linear-gradient(180deg, rgba(123, 108, 255, 0.08), rgba(255, 255, 255, 0.012));
+  box-shadow: none;
+}
+
+.axonos-template-card.selected {
+  border-color: rgba(123, 108, 255, 0.55);
+  background: linear-gradient(180deg, rgba(123, 108, 255, 0.12), rgba(255, 255, 255, 0.012));
+  box-shadow: 0 0 0 1px rgba(123, 108, 255, 0.2), 0 16px 44px -18px rgba(123, 108, 255, 0.5);
+}
+
+.axonos-template-icon-wrap {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.axonos-template-tag {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  color: #9aa0ba;
+  border-radius: 6px;
+  font-family: var(--font-body);
+  font-weight: 500;
+}
+
+/* ---- How it works ---- */
+.axonos-steps {
+  position: relative;
+  z-index: 10;
+  padding: 56px 0 0;
+}
+
+.axonos-steps__grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+}
+
+.axonos-step-card {
+  position: relative;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01));
+  padding: 26px;
+}
+
+.axonos-step-card__n {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--cyan);
+  letter-spacing: 0.1em;
+}
+
+.axonos-step-card__title {
+  margin-top: 14px;
+  font-size: 17px;
+  font-weight: 600;
+  color: #eff1f7;
+  font-family: var(--font-body);
+}
+
+.axonos-step-card__body {
+  margin-top: 8px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: #8b91aa;
+  font-weight: 300;
+  font-family: var(--font-body);
+}
+
+/* ---- Trust strip ---- */
+.axonos-trust {
+  position: relative;
+  z-index: 10;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0;
+  margin-top: 40px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.018);
+  overflow: hidden;
+}
+
+.axonos-trust-item {
+  padding: 24px 26px;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.axonos-trust-item:last-child {
+  border-right: none;
+}
+
+.axonos-trust-item__icon {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--green);
+  background: rgba(79, 224, 192, 0.1);
+  border: 1px solid rgba(79, 224, 192, 0.22);
+}
+
+.axonos-trust-item__title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #e6e9f2;
+  font-family: var(--font-body);
+}
+
+.axonos-trust-item__body {
+  margin-top: 4px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #878da6;
+  font-weight: 300;
+  font-family: var(--font-body);
+}
+
+/* ---- Footer credit ---- */
+.axonos-quote__credit {
+  margin-top: 14px;
+  font-size: 12.5px;
+  color: #5c6280;
+  font-family: var(--font-body);
+  font-style: normal;
+}
+
+/* ---- Wallet dialog: v2 modal card ---- */
+#noVNC_credentials_dlg.axonos-wallet-card {
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(170deg, rgba(24, 26, 40, 0.97), rgba(13, 14, 24, 0.97));
+  box-shadow: 0 50px 130px -30px rgba(0, 0, 0, 0.85);
+}
+
+/* ---- Session HUD: v2 card ---- */
+.axonos-session-hud {
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(13, 14, 24, 0.92);
+}
+
+/* ---- Responsive ---- */
+@media (max-width: 1100px) {
+  .axonos-hero__globe {
+    top: -30px;
+    right: -80px;
+    width: 480px;
+    height: 480px;
+    opacity: 0.8;
+  }
+}
+
+@media (max-width: 992px) {
+  .axonos-topbar {
+    padding: 12px 0 4px;
+    flex-wrap: wrap;
+  }
+
+  .axonos-hero {
+    padding: 22px 0 8px;
+  }
+
+  .axonos-hero__globe {
+    display: none;
+  }
+
+  .axonos-hero__copy {
+    max-width: 100%;
+  }
+
+  .axonos-steps__grid,
+  .axonos-trust {
+    grid-template-columns: 1fr;
+  }
+
+  .axonos-trust-item {
+    border-right: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .axonos-trust-item:last-child {
+    border-bottom: none;
+  }
+
+  .axonos-landing-main {
+    margin-top: 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .axonos-hero__badge-dot,
+  .axonos-rail-pulse {
+    animation: none;
+  }
+}
+
+/* ---- SSH toggle rendered as a v2 switch ---- */
+.axonos-ssh-toggle__input {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: 42px;
+  height: 24px;
+  margin-top: 1px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.12);
+  border: none;
+  outline: none;
+  transition: background 0.2s ease;
+}
+
+.axonos-ssh-toggle__input::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  transition: transform 0.2s ease;
+}
+
+.axonos-ssh-toggle__input:checked {
+  background: linear-gradient(90deg, #6a57f2, #8b7cff);
+}
+
+.axonos-ssh-toggle__input:checked::before {
+  transform: translateX(18px);
+}
+
+.axonos-ssh-toggle__input:focus-visible {
+  box-shadow: 0 0 0 2px rgba(123, 108, 255, 0.5);
+}
+
+/* ---- Wallet dialog primary actions: gradient CTA ---- */
+#axonos_connect_wallet_btn,
+#axonos_retry_connect_btn,
+#axonos_retry_connect_error_btn,
+#axonos_verify_deposit_btn {
+  background: var(--grad-primary) !important;
+  border: none !important;
+  color: #fff !important;
+  -webkit-text-fill-color: #fff !important;
+  border-radius: 12px !important;
+  box-shadow: var(--shadow-primary);
+}
+
+#axonos_connect_wallet_btn:hover,
+#axonos_retry_connect_btn:hover,
+#axonos_retry_connect_error_btn:hover,
+#axonos_verify_deposit_btn:hover {
+  filter: brightness(1.08);
 }

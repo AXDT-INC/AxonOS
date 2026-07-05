@@ -582,6 +582,7 @@ COPY novnc-theme/icons/* /usr/share/novnc/app/images/icons/
 COPY novnc-theme/icon.png /usr/share/novnc/icon.png
 COPY novnc-theme/images/linux.svg /usr/share/novnc/app/images/linux.svg
 COPY novnc-theme/telemetry.html /usr/share/novnc/
+COPY novnc-theme/axon-x.png /usr/share/novnc/axon-x.png
 
 # Install AXGT Gate dependencies. Copy ONLY the manifest here so that editing gate
 # code (COPY'd last, near the end of this Dockerfile) does not invalidate this layer

@@ -46,7 +46,7 @@ Copyright (C) 2019 The noVNC Authors
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="theme-color" content="#060e1a">
+    <meta name="theme-color" content="#080910">
     <meta name="color-scheme" content="dark">
     <!-- Home Screen Icons (favourites and bookmarks use the normal icons) -->
     <link rel="apple-touch-icon" sizes="60x60" type="image/png" href="icon.png">
@@ -58,12 +58,17 @@ Copyright (C) 2019 The noVNC Authors
     <link rel="preload" href="app/fonts/BrutalType-ExtraBold.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="app/fonts/BrutalType-Light.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="app/fonts/BrutalType-Bold.woff2" as="font" type="font/woff2" crossorigin>
-    <!-- Orbitron (latin woff2) — kept for monospace data/label use -->
-    <link rel="preload" href="app/fonts/orbitron-v35-latin.woff2" as="font" type="font/woff2" crossorigin>
+    <!-- Hanken Grotesk (body) + JetBrains Mono (data) — Google Fonts with graceful
+         system-font fallback if the CDN is unreachable (font-display: swap). -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
+        rel="stylesheet">
 
     <!-- Stylesheets -->
     <link rel="stylesheet" href="app/styles/base.css">
-    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=18.0&t=1749136004">
+    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=19.0&t=1751692000">
 
     <!-- Images that will later appear via CSS -->
     <link rel="preload" as="image" href="app/images/info.svg">
@@ -421,33 +426,72 @@ Copyright (C) 2019 The noVNC Authors
                     best experience, please open this page on a computer.</p>
             </div>
 
-            <!-- AxonOS Vision Header (Spans both columns) -->
-            <div class="axonos-vision-header">
-                <div class="axonos-particles"></div>
-                <h1 class="axonos-main-title">Axon<span class="axonos-highlight">OS</span> <span
-                        style="font-size:0.34em;font-weight:600;letter-spacing:0.14em;color:#e8a85a;vertical-align:middle;border:1px solid rgba(232,168,90,.5);border-radius:999px;padding:2px 10px;opacity:0.95;font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;text-transform:uppercase;">BETA</span>
-                </h1>
-                <p class="axonos-tagline">GPU-Native Scientific Computing Platform</p>
-                <!-- Network banner: filled by applyAxonosNetworkEnvironmentUi() from /api/config axgt_chain_id (server AXGT_CHAIN_ID). -->
-                <p id="axonos_landing_network" class="axonos-network-banner axonos-network-banner--hidden"
-                    aria-live="polite"></p>
-                <p id="axonos_session_storage_hint"
-                    style="font-size:0.72em;color:rgba(232,168,90,0.72);margin:0.4rem auto 0;max-width:min(96rem, 94%);line-height:1.5;text-align:center;font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.01em;">
-                    Sessions are <strong style="color:#e8a85a;margin-left:0.3em;">ephemeral</strong> — files and changes
-                    are NOT saved between sessions. Credits are consumed per GPU per wall-clock minute while active. Top
-                    up before expiry (or within 2 hours after) to keep your running session alive. Unused credits remain
-                    unspent for subsequent sessions. Persistent storage coming soon.</p>
-                <div class="axonos-dna-animation"></div>
+            <!-- Ambient background: radial glow + faded grid (decorative) -->
+            <div class="axonos-landing-bg" aria-hidden="true">
+                <div class="axonos-landing-bg__glow"></div>
+                <div class="axonos-landing-bg__grid"></div>
             </div>
 
-            <!-- Left column: Hero and Tabs content -->
+            <!-- Global top bar: brand + network pill -->
+            <header class="axonos-topbar">
+                <div class="axonos-topbar__brand">
+                    <img src="axon-x.png" alt="Axon" class="axonos-topbar__logo">
+                    <h1 class="axonos-main-title">Axon<span class="axonos-highlight">OS</span></h1>
+                    <span class="axonos-beta-chip">BETA</span>
+                </div>
+                <div class="axonos-topbar__meta">
+                </div>
+            </header>
+
+            <!-- Hero: headline + rotating dotted globe -->
+            <section class="axonos-hero">
+                <div class="axonos-hero__globe" aria-hidden="true">
+                    <canvas id="axonos_hero_globe"></canvas>
+                </div>
+                <div class="axonos-hero__copy">
+                    <div class="axonos-hero__badge"><span class="axonos-hero__badge-dot"></span><span
+                            class="axonos-tagline">GPU-Native Scientific Computing</span></div>
+                    <p class="axonos-hero__title">A real GPU desktop,<br>spun up in a minute.</p>
+                    <p class="axonos-hero__sub">Launch a full Linux workstation with dedicated GPU passthrough — no
+                        virtualization, no setup. Pick an environment, choose your hardware, and pay by the minute in
+                        crypto.</p>
+                    <div class="axonos-hero__ctas">
+                        <button type="button" id="axonos_hero_launch_btn" class="axonos-cta axonos-cta--primary">Launch
+                            GPU desktop<svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                <path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2"
+                                    stroke-linecap="round" stroke-linejoin="round" />
+                            </svg></button>
+                        <button type="button" id="axonos_hero_browse_btn" class="axonos-cta axonos-cta--ghost">Browse
+                            environments</button>
+                    </div>
+                    <p id="axonos_session_storage_hint" class="axonos-hero__note">
+                        Sessions are <strong>ephemeral</strong> — files and changes
+                        are NOT saved between sessions. Credits are consumed per GPU per wall-clock minute while active.
+                        Top up before expiry (or within 2 hours after) to keep your running session alive. Unused
+                        credits remain unspent for subsequent sessions. Persistent storage coming soon.</p>
+                </div>
+            </section>
+
+            <!-- Network banner: filled by applyAxonosNetworkEnvironmentUi() from /api/config axgt_chain_id (server AXGT_CHAIN_ID). -->
+            <p id="axonos_landing_network" class="axonos-network-banner axonos-network-banner--hidden"
+                aria-live="polite"></p>
+
+            <!-- Main: environment catalog (left) + session rail (right) -->
+            <div class="axonos-landing-main">
+
+            <!-- Left column: environments and About content -->
             <div class="axonos-hero-panel">
+
+                <div class="axonos-section-head">
+                    <div class="axonos-section-head__kick">READY-TO-RUN ENVIRONMENTS</div>
+                    <div class="axonos-section-head__title">Curated stacks. Zero setup.</div>
+                </div>
 
                 <!-- Tab Headers -->
                 <div class="axonos-tabs-nav">
                     <button type="button" class="axonos-tab-btn active" id="axonos_tab_btn_templates"
-                        data-tab="templates">🧬 Science Templates</button>
-                    <button type="button" class="axonos-tab-btn" id="axonos_tab_btn_about" data-tab="about">ℹ️ About
+                        data-tab="templates">Science Templates</button>
+                    <button type="button" class="axonos-tab-btn" id="axonos_tab_btn_about" data-tab="about">About
                         AxonOS</button>
                 </div>
 
@@ -512,41 +556,16 @@ Copyright (C) 2019 The noVNC Authors
                 </div>
             </div>
 
-            <!-- Right Column: Connect Pane -->
+            <!-- Right Column: Connect Pane (sticky session rail) -->
             <div class="axonos-connect-wrapper">
+                <div class="axonos-rail-kick">YOUR SESSION</div>
                 <!-- Selected template banner -->
                 <div class="axonos-selected-template-banner" id="axonos_selected_template_banner">
-                    <span class="axonos-selected-template-label">Selected Environment</span>
+                    <span class="axonos-selected-template-label">Environment</span>
                     <div class="axonos-selected-template-title-wrap">
                         <span class="axonos-selected-template-icon" id="axonos_selected_template_icon">🧬</span>
                         <span class="axonos-selected-template-title" id="axonos_selected_template_title">AxonOS Default
                             Desktop</span>
-                    </div>
-                </div>
-
-                <!-- Specs Overview Panel -->
-                <div class="axonos-specs-panel">
-                    <span class="axonos-selected-template-label">Environment Specs</span>
-                    <div class="axonos-spec-item">
-                        <span class="axonos-spec-icon">⚡</span>
-                        <div class="axonos-spec-details">
-                            <span class="axonos-spec-name">GPU Passthrough</span>
-                            <span class="axonos-spec-desc">Dedicated PCIe driver passthrough</span>
-                        </div>
-                    </div>
-                    <div class="axonos-spec-item">
-                        <span class="axonos-spec-icon">🖥️</span>
-                        <div class="axonos-spec-details">
-                            <span class="axonos-spec-name">Linux Desktop</span>
-                            <span class="axonos-spec-desc">XFCE4 with direct rendering</span>
-                        </div>
-                    </div>
-                    <div class="axonos-spec-item">
-                        <span class="axonos-spec-icon">📦</span>
-                        <div class="axonos-spec-details">
-                            <span class="axonos-spec-name">Storage Volume</span>
-                            <span class="axonos-spec-desc">Persistent host-backed home directory</span>
-                        </div>
                     </div>
                 </div>
 
@@ -573,7 +592,7 @@ Copyright (C) 2019 The noVNC Authors
                     <label class="axonos-ssh-toggle__row">
                         <input type="checkbox" id="axonos_ssh_toggle" class="axonos-ssh-toggle__input" />
                         <span class="axonos-ssh-toggle__text">
-                            <span class="axonos-ssh-toggle__title">⌨️ Direct SSH access</span>
+                            <span class="axonos-ssh-toggle__title">Direct SSH access</span>
                             <span class="axonos-ssh-toggle__desc">Headless GPU shell over SSH instead of the
                                 desktop — full scp/sftp and port forwarding, no browser viewer.</span>
                         </span>
@@ -587,6 +606,48 @@ Copyright (C) 2019 The noVNC Authors
                             Keep this tab open to keep the session alive.</p>
                     </div>
                 </div>
+
+                <!-- Specs Overview Panel -->
+                <div class="axonos-specs-panel">
+                    <span class="axonos-selected-template-label">Every session includes</span>
+                    <div class="axonos-spec-item">
+                        <span class="axonos-spec-icon" aria-hidden="true"><svg width="16" height="16"
+                                viewBox="0 0 24 24" fill="none">
+                                <path d="M12 2.5c3.4 3.4 5 6 5 9a5 5 0 0 1-10 0c0-2 1-3.6 2.6-5 0 1.8 1.2 2.6 1.9.8.6-1.4.1-3.1.5-4.8z"
+                                    stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
+                                    stroke-linejoin="round" />
+                            </svg></span>
+                        <div class="axonos-spec-details">
+                            <span class="axonos-spec-name">GPU Passthrough</span>
+                            <span class="axonos-spec-desc">Dedicated PCIe driver passthrough</span>
+                        </div>
+                    </div>
+                    <div class="axonos-spec-item">
+                        <span class="axonos-spec-icon" aria-hidden="true"><svg width="16" height="16"
+                                viewBox="0 0 24 24" fill="none">
+                                <rect x="3" y="5" width="18" height="13" rx="2.2" stroke="currentColor"
+                                    stroke-width="1.6" />
+                                <path d="M9 21h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                            </svg></span>
+                        <div class="axonos-spec-details">
+                            <span class="axonos-spec-name">Linux Desktop</span>
+                            <span class="axonos-spec-desc">XFCE4 with direct rendering</span>
+                        </div>
+                    </div>
+                    <div class="axonos-spec-item">
+                        <span class="axonos-spec-icon" aria-hidden="true"><svg width="16" height="16"
+                                viewBox="0 0 24 24" fill="none">
+                                <ellipse cx="12" cy="6.2" rx="7.2" ry="2.7" stroke="currentColor" stroke-width="1.5" />
+                                <path d="M4.8 6.2v11.6c0 1.5 3.2 2.7 7.2 2.7s7.2-1.2 7.2-2.7V6.2M4.8 12c0 1.5 3.2 2.7 7.2 2.7s7.2-1.2 7.2-2.7"
+                                    stroke="currentColor" stroke-width="1.5" />
+                            </svg></span>
+                        <div class="axonos-spec-details">
+                            <span class="axonos-spec-name">Storage Volume</span>
+                            <span class="axonos-spec-desc">Persistent host-backed home directory</span>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="noVNC_connect_button" class="axonos-enhanced-connect">
                     <div class="axonos-connect-content">
                         <div class="axonos-connect-icon">
@@ -613,6 +674,80 @@ Copyright (C) 2019 The noVNC Authors
                     <button type="button" id="axonos_ssh_end_btn" class="axonos-ssh-card__end">End session</button>
                 </div>
             </div>
+
+            </div><!-- /.axonos-landing-main -->
+
+            <!-- How it works -->
+            <section class="axonos-steps">
+                <div class="axonos-section-head axonos-section-head--center">
+                    <div class="axonos-section-head__kick">HOW IT WORKS</div>
+                    <div class="axonos-section-head__title">From idea to GPU in three steps.</div>
+                </div>
+                <div class="axonos-steps__grid">
+                    <div class="axonos-step-card">
+                        <div class="axonos-step-card__n">01</div>
+                        <div class="axonos-step-card__title">Pick your environment</div>
+                        <div class="axonos-step-card__body">Curated, ready-to-run stacks for ML, biology, physics and
+                            data. Everything is pre-installed and GPU-aware.</div>
+                    </div>
+                    <div class="axonos-step-card">
+                        <div class="axonos-step-card__n">02</div>
+                        <div class="axonos-step-card__title">Choose your hardware</div>
+                        <div class="axonos-step-card__body">From a single GPU to an 8-GPU box. You pay by the minute —
+                            bigger boxes just finish sooner.</div>
+                    </div>
+                    <div class="axonos-step-card">
+                        <div class="axonos-step-card__n">03</div>
+                        <div class="axonos-step-card__title">Launch &amp; connect</div>
+                        <div class="axonos-step-card__body">A full Linux desktop opens in your browser in under a
+                            minute. Prefer a shell? Switch on direct SSH.</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Trust strip -->
+            <section class="axonos-trust">
+                <div class="axonos-trust-item">
+                    <span class="axonos-trust-item__icon" aria-hidden="true"><svg width="18" height="18"
+                            viewBox="0 0 24 24" fill="none">
+                            <circle cx="12" cy="12" r="1.4" fill="currentColor" />
+                            <ellipse cx="12" cy="12" rx="9" ry="3.6" stroke="currentColor" stroke-width="1.5"
+                                transform="rotate(45 12 12)" />
+                            <ellipse cx="12" cy="12" rx="9" ry="3.6" stroke="currentColor" stroke-width="1.5"
+                                transform="rotate(-45 12 12)" />
+                        </svg></span>
+                    <div>
+                        <div class="axonos-trust-item__title">Non-custodial</div>
+                        <div class="axonos-trust-item__body">Connect with a one-time signature. No gas, no transaction —
+                            we never hold your funds.</div>
+                    </div>
+                </div>
+                <div class="axonos-trust-item">
+                    <span class="axonos-trust-item__icon" aria-hidden="true"><svg width="18" height="18"
+                            viewBox="0 0 24 24" fill="none">
+                            <path d="M12 2.5c3.4 3.4 5 6 5 9a5 5 0 0 1-10 0c0-2 1-3.6 2.6-5 0 1.8 1.2 2.6 1.9.8.6-1.4.1-3.1.5-4.8z"
+                                stroke="currentColor" stroke-width="1.7" stroke-linecap="round"
+                                stroke-linejoin="round" />
+                        </svg></span>
+                    <div>
+                        <div class="axonos-trust-item__title">Real GPUs</div>
+                        <div class="axonos-trust-item__body">Dedicated PCIe passthrough to physical hardware. No
+                            virtualization overhead, ever.</div>
+                    </div>
+                </div>
+                <div class="axonos-trust-item">
+                    <span class="axonos-trust-item__icon" aria-hidden="true"><svg width="18" height="18"
+                            viewBox="0 0 24 24" fill="none">
+                            <path d="M12 2 4 13h6l-1 9 9-12h-6l1-8z" stroke="currentColor" stroke-width="1.6"
+                                stroke-linejoin="round" />
+                        </svg></span>
+                    <div>
+                        <div class="axonos-trust-item__title">Pay as you go</div>
+                        <div class="axonos-trust-item__body">Pay in ETH, USDC or AXGT. Unused credits stay on your
+                            wallet for your next session.</div>
+                    </div>
+                </div>
+            </section>
 
             <!-- Scientific Quote (Footer) -->
             <div class="axonos-quote">
@@ -707,7 +842,7 @@ Copyright (C) 2019 The noVNC Authors
 
                         <!-- AXGT holder discount panel: server-quoted; client cannot manipulate. -->
                         <div id="axonos_discount_panel" class="axonos-discount-panel"
-                            style="margin:0.6rem auto 0.4rem;width:100%;max-width:30rem;border:1px solid rgba(140,200,220,.14);border-radius:12px;padding:0.7rem 0.9rem;background:rgba(10,20,36,0.55);text-align:left;font-size:0.9rem;line-height:1.45;">
+                            style="margin:0.6rem auto 0.4rem;width:100%;max-width:30rem;border:1px solid rgba(255, 255, 255, 0.087);border-radius:12px;padding:0.7rem 0.9rem;background:rgba(13, 14, 24, 0.55);text-align:left;font-size:0.9rem;line-height:1.45;">
                             <div
                                 style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:0.4rem;">
                                 <strong>AXGT discount tier</strong>
@@ -726,11 +861,11 @@ Copyright (C) 2019 The noVNC Authors
                                         id="axonos_discount_tier">—</strong></li>
                                 <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
                                         style="opacity:0.78;">Holder discount</span><strong id="axonos_discount_percent"
-                                        style="color:#7adf8a;">—</strong></li>
+                                        style="color:#4fe0c0;">—</strong></li>
                                 <li
-                                    style="display:flex;justify-content:space-between;gap:0.5rem;border-top:1px dashed rgba(140,200,220,.18);margin-top:0.35rem;padding-top:0.35rem;">
+                                    style="display:flex;justify-content:space-between;gap:0.5rem;border-top:1px dashed rgba(255, 255, 255, 0.112);margin-top:0.35rem;padding-top:0.35rem;">
                                     <span>Minimum ETH (your tier)</span><strong id="axonos_discount_min_eth"
-                                        style="color:#e8a85a;">—</strong>
+                                        style="color:#f2c14e;">—</strong>
                                 </li>
                                 <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
                                         style="opacity:0.78;">Minimum desktop time</span><strong
@@ -743,20 +878,20 @@ Copyright (C) 2019 The noVNC Authors
                                         id="axonos_discount_pay_eth">—</strong></li>
                                 <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
                                         style="opacity:0.78;">Estimated desktop time</span><strong
-                                        id="axonos_discount_preview_minutes" style="color:#7adf8a;">—</strong></li>
+                                        id="axonos_discount_preview_minutes" style="color:#4fe0c0;">—</strong></li>
                                 <li id="axonos_discount_preview_baseline_row"
                                     style="display:none;justify-content:space-between;gap:0.5rem;"><span
                                         style="opacity:0.78;">Without AXGT (same ETH)</span><strong
                                         id="axonos_discount_preview_baseline">—</strong></li>
                             </ul>
                             <p id="axonos_discount_warn" class="axonos-wallet-state__msg"
-                                style="font-size:0.78rem;min-height:0;margin:0.35rem 0 0;color:#f0a878;display:none;">
+                                style="font-size:0.78rem;min-height:0;margin:0.35rem 0 0;color:#f2c14e;display:none;">
                                 RPC balance check failed — paying full ETH price (no discount applied).</p>
                         </div>
 
                         <!-- AXGT holder discount panel for USDC (Base). Same tier; USDC-denominated. -->
                         <div id="axonos_usdc_discount_panel" class="axonos-discount-panel"
-                            style="display:none;margin:0.6rem auto 0.4rem;width:100%;max-width:30rem;border:1px solid rgba(140,200,220,.14);border-radius:12px;padding:0.7rem 0.9rem;background:rgba(10,20,36,0.55);text-align:left;font-size:0.9rem;line-height:1.45;">
+                            style="display:none;margin:0.6rem auto 0.4rem;width:100%;max-width:30rem;border:1px solid rgba(255, 255, 255, 0.087);border-radius:12px;padding:0.7rem 0.9rem;background:rgba(13, 14, 24, 0.55);text-align:left;font-size:0.9rem;line-height:1.45;">
                             <div
                                 style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:0.4rem;">
                                 <strong>AXGT discount tier · USDC (Base)</strong>
@@ -775,11 +910,11 @@ Copyright (C) 2019 The noVNC Authors
                                         id="axonos_usdc_discount_tier">—</strong></li>
                                 <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
                                         style="opacity:0.78;">Holder discount</span><strong id="axonos_usdc_discount_percent"
-                                        style="color:#7adf8a;">—</strong></li>
+                                        style="color:#4fe0c0;">—</strong></li>
                                 <li
-                                    style="display:flex;justify-content:space-between;gap:0.5rem;border-top:1px dashed rgba(140,200,220,.18);margin-top:0.35rem;padding-top:0.35rem;">
+                                    style="display:flex;justify-content:space-between;gap:0.5rem;border-top:1px dashed rgba(255, 255, 255, 0.112);margin-top:0.35rem;padding-top:0.35rem;">
                                     <span>Minimum USDC (your tier)</span><strong id="axonos_usdc_discount_min"
-                                        style="color:#e8a85a;">—</strong>
+                                        style="color:#f2c14e;">—</strong>
                                 </li>
                                 <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
                                         style="opacity:0.78;">Minimum desktop time</span><strong
@@ -792,21 +927,21 @@ Copyright (C) 2019 The noVNC Authors
                                         id="axonos_usdc_discount_pay">—</strong></li>
                                 <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
                                         style="opacity:0.78;">Estimated desktop time</span><strong
-                                        id="axonos_usdc_discount_preview_minutes" style="color:#7adf8a;">—</strong></li>
+                                        id="axonos_usdc_discount_preview_minutes" style="color:#4fe0c0;">—</strong></li>
                                 <li id="axonos_usdc_discount_preview_baseline_row"
                                     style="display:none;justify-content:space-between;gap:0.5rem;"><span
                                         style="opacity:0.78;">Without AXGT (same USDC)</span><strong
                                         id="axonos_usdc_discount_preview_baseline">—</strong></li>
                             </ul>
                             <p id="axonos_usdc_discount_warn" class="axonos-wallet-state__msg"
-                                style="font-size:0.78rem;min-height:0;margin:0.35rem 0 0;color:#f0a878;display:none;">
+                                style="font-size:0.78rem;min-height:0;margin:0.35rem 0 0;color:#f2c14e;display:none;">
                                 RPC balance check failed — paying full USDC price (no discount applied).</p>
                         </div>
 
                         <!-- AXGT holder discount panel for paying directly in AXGT. Tier is from
                              pre-payment balance; discount boosts minutes-per-AXGT. -->
                         <div id="axonos_axgt_discount_panel" class="axonos-discount-panel"
-                            style="display:none;margin:0.6rem auto 0.4rem;width:100%;max-width:30rem;border:1px solid rgba(140,200,220,.14);border-radius:12px;padding:0.7rem 0.9rem;background:rgba(10,20,36,0.55);text-align:left;font-size:0.9rem;line-height:1.45;">
+                            style="display:none;margin:0.6rem auto 0.4rem;width:100%;max-width:30rem;border:1px solid rgba(255, 255, 255, 0.087);border-radius:12px;padding:0.7rem 0.9rem;background:rgba(13, 14, 24, 0.55);text-align:left;font-size:0.9rem;line-height:1.45;">
                             <div
                                 style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:0.4rem;">
                                 <strong>Paying in AXGT · best rate</strong>
@@ -825,11 +960,11 @@ Copyright (C) 2019 The noVNC Authors
                                         id="axonos_axgt_discount_tier">—</strong></li>
                                 <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
                                         style="opacity:0.78;">AXGT bonus</span><strong id="axonos_axgt_discount_percent"
-                                        style="color:#7adf8a;">—</strong></li>
+                                        style="color:#4fe0c0;">—</strong></li>
                                 <li
-                                    style="display:flex;justify-content:space-between;gap:0.5rem;border-top:1px dashed rgba(140,200,220,.18);margin-top:0.35rem;padding-top:0.35rem;">
+                                    style="display:flex;justify-content:space-between;gap:0.5rem;border-top:1px dashed rgba(255, 255, 255, 0.112);margin-top:0.35rem;padding-top:0.35rem;">
                                     <span>Minimum AXGT</span><strong id="axonos_axgt_discount_min"
-                                        style="color:#e8a85a;">—</strong>
+                                        style="color:#f2c14e;">—</strong>
                                 </li>
                             </ul>
                             <ul id="axonos_axgt_discount_preview" class="axonos-discount-preview"
@@ -839,7 +974,7 @@ Copyright (C) 2019 The noVNC Authors
                                         id="axonos_axgt_discount_pay">—</strong></li>
                                 <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
                                         style="opacity:0.78;">Estimated desktop time</span><strong
-                                        id="axonos_axgt_discount_preview_minutes" style="color:#7adf8a;">—</strong></li>
+                                        id="axonos_axgt_discount_preview_minutes" style="color:#4fe0c0;">—</strong></li>
                             </ul>
                             <p style="font-size:0.74rem;opacity:0.6;margin:0.4rem 0 0;">Paying in AXGT is charged at
                                 live USD value and includes a bonus — the best per-dollar rate. (Holding AXGT also
@@ -892,7 +1027,7 @@ Copyright (C) 2019 The noVNC Authors
                             style="margin:0.5rem 0;display:flex;gap:0.5rem;align-items:center;justify-content:center;flex-wrap:nowrap;">
                             <input type="text" id="axonos_tx_hash_input" placeholder="0x… transaction hash"
                                 autocomplete="off" spellcheck="false"
-                                style="flex:1;min-width:6rem;padding:0.45rem 0.6rem;border-radius:8px;border:1px solid rgba(140,200,220,.18);background:rgba(7,16,26,0.7);color:inherit;font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:0.85rem;" />
+                                style="flex:1;min-width:6rem;padding:0.45rem 0.6rem;border-radius:8px;border:1px solid rgba(255, 255, 255, 0.112);background:rgba(8, 9, 16, 0.7);color:inherit;font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:0.85rem;" />
                             <button type="button" id="axonos_verify_deposit_btn" class="axonos-connect-wallet-btn"
                                 style="margin:0;white-space:nowrap;">Credit deposit</button>
                             <a id="axonos_get_axgt_btn"
@@ -991,18 +1126,6 @@ Copyright (C) 2019 The noVNC Authors
         <source src="app/sounds/bell.oga" type="audio/ogg">
         <source src="app/sounds/bell.mp3" type="audio/mpeg">
     </audio>
-    <!-- Space Elements -->
-    <div class="space-elements">
-        <div class="rocket rocket-1">🚀</div>
-        <div class="rocket rocket-2">🛸</div>
-        <div class="spaceship spaceship-1">🛰️</div>
-        <div class="spaceship spaceship-2">🌌</div>
-        <div class="planet planet-1">🪐</div>
-        <div class="planet planet-2">🌍</div>
-        <div class="comet comet-1">☄️</div>
-        <div class="satellite satellite-1">🛸</div>
-    </div>
-
     <!-- AxonOS Connection Loading Animation -->
     <div class="axonos-connection-loader" id="axonos-loader">
         <div class="axonos-loader-visual">
@@ -1058,20 +1181,20 @@ Copyright (C) 2019 The noVNC Authors
         </div>
     </div>
     <div class="axonos-footer-banner"
-        style="position:fixed;bottom:10px;left:0;right:0;text-align:center;font-size:11px;color:rgba(170,210,225,0.38);z-index:54;pointer-events:auto;font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.06em;">
+        style="position:fixed;bottom:10px;left:0;right:0;text-align:center;font-size:11px;color:rgba(166, 172, 194, 0.38);z-index:54;pointer-events:auto;font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;letter-spacing:0.06em;">
         <span id="axonos_session_timer" class="axonos-session-timer axonos-session-timer--hidden"
             title="Desktop time remaining on your prepaid credit"><span class="axonos-session-timer__label">Time
                 left</span>&nbsp;<span id="axonos_session_timer_value"
                 class="axonos-session-timer__value">—:—</span></span><span id="axonos_session_timer_sep"
             class="axonos-session-timer--hidden" style="margin:0 0.4em;opacity:0.4;">|</span>
         Built with<span
-            style="color:rgba(242,96,122,0.75);font-size:1.6em;margin:0 0.2em;vertical-align:middle;line-height:1;">♥</span>by<a
+            style="color:rgba(255, 95, 87, 0.75);font-size:1.6em;margin:0 0.2em;vertical-align:middle;line-height:1;">♥</span>by<a
             href="https://axondao.io" target="_blank" rel="noopener noreferrer"
-            style="color:rgba(78,195,212,0.72);text-decoration:none;margin-left:0.4em;font-weight:700;"><b>Axon</b>DAO</a><span
+            style="color:rgba(123, 108, 255, 0.72);text-decoration:none;margin-left:0.4em;font-weight:700;"><b>Axon</b>DAO</a><span
             style="margin:0 0.4em;opacity:0.4;">|</span><a href="https://github.com/AXDT-INC/AxonOS" target="_blank"
             rel="noopener noreferrer"
-            style="color:rgba(170,210,225,0.45);text-decoration:none;vertical-align:middle;"><svg height="16" width="16"
-                viewBox="0 0 16 16" fill="rgba(170,210,225,0.45)" style="vertical-align:middle;" aria-label="GitHub">
+            style="color:rgba(166, 172, 194, 0.45);text-decoration:none;vertical-align:middle;"><svg height="16" width="16"
+                viewBox="0 0 16 16" fill="rgba(166, 172, 194, 0.45)" style="vertical-align:middle;" aria-label="GitHub">
                 <path
                     d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
             </svg></a>
@@ -1136,7 +1259,7 @@ Copyright (C) 2019 The noVNC Authors
                 thumb.style.right = '3px';
                 thumb.style.width = '6px';
                 thumb.style.borderRadius = '3px';
-                thumb.style.background = 'linear-gradient(180deg, rgba(78, 195, 212, 0.7) 0%, rgba(157, 111, 217, 0.5) 100%)';
+                thumb.style.background = 'linear-gradient(180deg, rgba(123, 108, 255, 0.7) 0%, rgba(139, 124, 255, 0.5) 100%)';
                 thumb.style.zIndex = '9999';
                 thumb.style.pointerEvents = 'none';
                 thumb.style.opacity = '0';
@@ -1243,6 +1366,143 @@ Copyright (C) 2019 The noVNC Authors
                 }
             }
         }());
+
+        // Landing hero: rotating dotted globe (ported from the axonos-web design).
+        // Renders only while the landing is visible: paused when the tab is hidden,
+        // when the canvas is scrolled out of view, or once the desktop is connected.
+        (function () {
+            var canvas = null;
+            var raf = null;
+            var pts = null;
+            var angle = 0.6;
+            var inView = true;
+            var reducedMotion = false;
+
+            function isConnected() {
+                return document.documentElement.classList.contains('noVNC_connected');
+            }
+
+            function buildPoints() {
+                if (pts) return pts;
+                var N = 820, inc = Math.PI * (3 - Math.sqrt(5)), off = 2 / N;
+                pts = [];
+                for (var i = 0; i < N; i++) {
+                    var y = i * off - 1 + off / 2;
+                    var r = Math.sqrt(Math.max(0, 1 - y * y));
+                    var phi = i * inc;
+                    pts.push([Math.cos(phi) * r, y, Math.sin(phi) * r]);
+                }
+                return pts;
+            }
+
+            var tilt = -0.42, cosT = Math.cos(tilt), sinT = Math.sin(tilt);
+            function mix(a, b, t) { return Math.round(a + (b - a) * t); }
+
+            function drawFrame() {
+                var dpr = Math.min(window.devicePixelRatio || 1, 2);
+                var rect = canvas.getBoundingClientRect();
+                var w = rect.width || 560, h = rect.height || 560;
+                if (canvas.width !== Math.round(w * dpr)) {
+                    canvas.width = Math.round(w * dpr);
+                    canvas.height = Math.round(h * dpr);
+                }
+                var ctx = canvas.getContext('2d');
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                ctx.clearRect(0, 0, w, h);
+                var cx = w / 2, cy = h / 2, R = Math.min(w, h) * 0.40;
+                var g = ctx.createRadialGradient(cx, cy, R * 0.2, cx, cy, R * 1.35);
+                g.addColorStop(0, 'rgba(123, 108, 255, 0.16)');
+                g.addColorStop(0.55, 'rgba(79, 224, 192, 0.06)');
+                g.addColorStop(1, 'rgba(123, 108, 255, 0)');
+                ctx.fillStyle = g;
+                ctx.beginPath();
+                ctx.arc(cx, cy, R * 1.35, 0, Math.PI * 2);
+                ctx.fill();
+                var ca = Math.cos(angle), sa = Math.sin(angle);
+                var p = buildPoints();
+                for (var i = 0; i < p.length; i++) {
+                    var x = p[i][0] * ca - p[i][2] * sa;
+                    var z = p[i][0] * sa + p[i][2] * ca;
+                    var y = p[i][1];
+                    var y2 = y * cosT - z * sinT;
+                    var z2 = y * sinT + z * cosT;
+                    var sx = cx + x * R;
+                    var sy = cy - y2 * R;
+                    var depth = (z2 + 1) / 2;
+                    var t = (x + 1) / 2;
+                    ctx.beginPath();
+                    ctx.fillStyle = 'rgba(' + mix(123, 79, t) + ',' + mix(108, 224, t) + ',' +
+                        mix(255, 192, t) + ',' + (0.12 + depth * depth * 0.78) + ')';
+                    ctx.arc(sx, sy, 0.7 + depth * 1.7, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            function loop() {
+                raf = null;
+                if (!canvas || isConnected() || !inView || document.hidden) return;
+                drawFrame();
+                if (reducedMotion) return; // single static frame
+                angle += 0.0028;
+                raf = requestAnimationFrame(loop);
+            }
+
+            function start() {
+                if (!raf && canvas) raf = requestAnimationFrame(loop);
+            }
+            function stop() {
+                if (raf) { cancelAnimationFrame(raf); raf = null; }
+            }
+
+            function init() {
+                canvas = document.getElementById('axonos_hero_globe');
+                if (!canvas || typeof canvas.getContext !== 'function') return;
+                try {
+                    reducedMotion = window.matchMedia &&
+                        window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+                } catch (e) { reducedMotion = false; }
+
+                if (typeof IntersectionObserver !== 'undefined') {
+                    new IntersectionObserver(function (entries) {
+                        inView = entries[0] ? entries[0].isIntersecting : true;
+                        if (inView) start(); else stop();
+                    }, { threshold: 0 }).observe(canvas);
+                }
+                document.addEventListener('visibilitychange', function () {
+                    if (document.hidden) stop(); else start();
+                });
+                // Stop for good once the desktop connects; resume on return to landing.
+                new MutationObserver(function () {
+                    if (isConnected()) stop(); else start();
+                }).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+                start();
+
+                // Hero CTAs: scroll to the session rail / environment catalog.
+                var launchBtn = document.getElementById('axonos_hero_launch_btn');
+                var browseBtn = document.getElementById('axonos_hero_browse_btn');
+                var rail = document.querySelector('.axonos-connect-wrapper');
+                var main = document.querySelector('.axonos-landing-main');
+                if (launchBtn && rail) {
+                    launchBtn.addEventListener('click', function () {
+                        rail.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        rail.classList.remove('axonos-rail-pulse');
+                        void rail.offsetWidth; // restart the highlight animation
+                        rail.classList.add('axonos-rail-pulse');
+                    });
+                }
+                if (browseBtn && main) {
+                    browseBtn.addEventListener('click', function () {
+                        main.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    });
+                }
+            }
+
+            if (document.readyState === 'loading') {
+                window.addEventListener('DOMContentLoaded', init);
+            } else {
+                init();
+            }
+        }());
     </script>
 
     <!-- Beautiful AxonOS Confirmation Modal -->
@@ -1277,21 +1537,21 @@ Copyright (C) 2019 The noVNC Authors
     document.addEventListener("DOMContentLoaded", function () {
         const passwordInput = document.getElementById("noVNC_password_input");
         if (passwordInput) {
-            passwordInput.style.backgroundColor = "#07101a";
-            passwordInput.style.color = "#e8edf4";
-            passwordInput.style.border = "1px solid rgba(140,200,220,.18)";
+            passwordInput.style.backgroundColor = "#080910";
+            passwordInput.style.color = "#e9ebf2";
+            passwordInput.style.border = "1px solid rgba(255, 255, 255, 0.112)";
             passwordInput.style.borderRadius = "8px";
             passwordInput.style.padding = "8px";
             passwordInput.style.fontFamily = "ui-monospace,'SF Mono',Menlo,Consolas,monospace";
 
             passwordInput.addEventListener("focus", function () {
                 this.style.backgroundColor = "rgba(12,24,44,0.96)";
-                this.style.borderColor = "#4ec3d4";
+                this.style.borderColor = "#7b6cff";
             });
 
             passwordInput.addEventListener("blur", function () {
-                this.style.backgroundColor = "#07101a";
-                this.style.borderColor = "rgba(140,200,220,.18)";
+                this.style.backgroundColor = "#080910";
+                this.style.borderColor = "rgba(255, 255, 255, 0.112)";
             });
         }
 
@@ -1306,9 +1566,9 @@ Copyright (C) 2019 The noVNC Authors
         const settingsInputs = document.querySelectorAll("#noVNC_settings input, #noVNC_settings select");
         settingsInputs.forEach(function (input) {
             if (input.type === "text" || input.type === "number" || input.type === "password" || input.tagName === "SELECT") {
-                input.style.backgroundColor = "#07101a";
-                input.style.color = "#e8edf4";
-                input.style.border = "1px solid rgba(140,200,220,.16)";
+                input.style.backgroundColor = "#080910";
+                input.style.color = "#e9ebf2";
+                input.style.border = "1px solid rgba(255, 255, 255, 0.099)";
                 input.style.borderRadius = "8px";
                 input.style.padding = "6px 8px";
                 input.style.fontFamily = "ui-monospace,'SF Mono',Menlo,Consolas,monospace";
@@ -1320,9 +1580,9 @@ Copyright (C) 2019 The noVNC Authors
         problemSelects.forEach(function (id) {
             const element = document.getElementById(id);
             if (element) {
-                element.style.backgroundColor = "#07101a";
-                element.style.color = "#e8edf4";
-                element.style.border = "1px solid rgba(140,200,220,.16)";
+                element.style.backgroundColor = "#080910";
+                element.style.color = "#e9ebf2";
+                element.style.border = "1px solid rgba(255, 255, 255, 0.099)";
                 element.style.borderRadius = "8px";
                 element.style.padding = "6px 8px";
             }
@@ -1333,21 +1593,21 @@ Copyright (C) 2019 The noVNC Authors
         problemInputs.forEach(function (id) {
             const element = document.getElementById(id);
             if (element) {
-                element.style.backgroundColor = "#07101a";
-                element.style.color = "#e8edf4";
-                element.style.border = "1px solid rgba(140,200,220,.16)";
+                element.style.backgroundColor = "#080910";
+                element.style.color = "#e9ebf2";
+                element.style.border = "1px solid rgba(255, 255, 255, 0.099)";
                 element.style.borderRadius = "8px";
                 element.style.padding = "6px 8px";
                 element.style.fontFamily = "ui-monospace,'SF Mono',Menlo,Consolas,monospace";
 
                 element.addEventListener("focus", function () {
                     this.style.backgroundColor = "rgba(12,24,44,0.96)";
-                    this.style.borderColor = "#4ec3d4";
+                    this.style.borderColor = "#7b6cff";
                 });
 
                 element.addEventListener("blur", function () {
-                    this.style.backgroundColor = "#07101a";
-                    this.style.borderColor = "rgba(140,200,220,.16)";
+                    this.style.backgroundColor = "#080910";
+                    this.style.borderColor = "rgba(255, 255, 255, 0.099)";
                 });
             }
         });
@@ -1359,9 +1619,9 @@ Copyright (C) 2019 The noVNC Authors
                     const element = mutation.target;
                     if (element.tagName === "INPUT" || element.tagName === "SELECT") {
                         if (element.closest("#noVNC_settings")) {
-                            element.style.backgroundColor = "#07101a";
-                            element.style.color = "#e8edf4";
-                            element.style.border = "1px solid rgba(140,200,220,.16)";
+                            element.style.backgroundColor = "#080910";
+                            element.style.color = "#e9ebf2";
+                            element.style.border = "1px solid rgba(255, 255, 255, 0.099)";
                         }
                     }
                 }
@@ -2624,9 +2884,9 @@ Copyright (C) 2019 The noVNC Authors
                             var limitStr = (limitAbs % 60 === 0)
                                 ? limitHours + ' hour' + (limitHours !== 1 ? 's' : '')
                                 : limitAbs + ' minute' + (limitAbs !== 1 ? 's' : '');
-                            hintEl.innerHTML = 'Sessions feature <strong style="color:#e8a85a;margin-left:0.3em;">persistent storage</strong> (charged at ' + axonosConfig.persistent_storage_gb_hour_cost_minutes + ' minutes of compute credit per GB/hour) — files in your home folder are automatically saved for your wallet address. If your credit balance runs out, storage costs will accrue as debt. Your volume is deleted if your account debt exceeds ' + limitStr + '. Credits are consumed per GPU per wall-clock minute while active. Top up before expiry (or within 2 hours after) to keep your running session alive.';
+                            hintEl.innerHTML = 'Sessions feature <strong style="color:#f2c14e;margin-left:0.3em;">persistent storage</strong> (charged at ' + axonosConfig.persistent_storage_gb_hour_cost_minutes + ' minutes of compute credit per GB/hour) — files in your home folder are automatically saved for your wallet address. If your credit balance runs out, storage costs will accrue as debt. Your volume is deleted if your account debt exceeds ' + limitStr + '. Credits are consumed per GPU per wall-clock minute while active. Top up before expiry (or within 2 hours after) to keep your running session alive.';
                         } else {
-                            hintEl.innerHTML = 'Sessions are <strong style="color:#e8a85a;margin-left:0.3em;">ephemeral</strong> — files and changes are NOT saved between sessions. Credits are consumed per GPU per wall-clock minute while active. Top up before expiry (or within 2 hours after) to keep your running session alive. Unused credits remain unspent for subsequent sessions. Persistent storage coming soon.';
+                            hintEl.innerHTML = 'Sessions are <strong style="color:#f2c14e;margin-left:0.3em;">ephemeral</strong> — files and changes are NOT saved between sessions. Credits are consumed per GPU per wall-clock minute while active. Top up before expiry (or within 2 hours after) to keep your running session alive. Unused credits remain unspent for subsequent sessions. Persistent storage coming soon.';
                         }
                     }
                     axonosUpdateProfileBurnHint();
@@ -4188,8 +4448,8 @@ Copyright (C) 2019 The noVNC Authors
                     m.pill.style.display = shown ? '' : 'none';
                     m.pill.setAttribute('aria-selected', active ? 'true' : 'false');
                     m.pill.style.opacity = active ? '1' : '0.55';
-                    m.pill.style.borderColor = active ? 'rgba(122,223,138,.65)' : '';
-                    m.pill.style.background = active ? 'rgba(122,223,138,.12)' : '';
+                    m.pill.style.borderColor = active ? 'rgba(79, 224, 192, 0.65)' : '';
+                    m.pill.style.background = active ? 'rgba(79, 224, 192, 0.12)' : '';
                 }
                 if (m.row) m.row.style.display = (active && shown) ? '' : 'none';
                 if (m.panel) m.panel.style.display = (active && shown) ? '' : 'none';
