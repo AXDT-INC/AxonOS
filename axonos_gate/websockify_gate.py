@@ -95,6 +95,7 @@ try:
         resolve_x402_body_version,
         settle_x402_payment,
         discovery_document,
+        openapi_document,
         wallet_from_x_payment,
         unpaid_session_requires_402,
     )
@@ -108,6 +109,7 @@ except ImportError:
             resolve_x402_body_version,
             settle_x402_payment,
             discovery_document,
+            openapi_document,
             wallet_from_x_payment,
             unpaid_session_requires_402,
         )
@@ -119,6 +121,7 @@ except ImportError:
         resolve_x402_body_version = None
         settle_x402_payment = None
         discovery_document = None
+        openapi_document = None
         wallet_from_x_payment = None
         unpaid_session_requires_402 = None
 
@@ -832,6 +835,12 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             if discovery_document is None:
                 return self._send_json(503, {"error": "x402 unavailable"})
             return self._send_json(200, discovery_document())
+
+        if _up_cfg(self.path).path == '/openapi.json':
+            # Public OpenAPI descriptor for x402scan discovery (metadata only).
+            if openapi_document is None:
+                return self._send_json(503, {"error": "x402 unavailable"})
+            return self._send_json(200, openapi_document())
 
         if _up_cfg(self.path).path == '/api/x402/access':
             # Canonical x402 resource endpoint (works with generic x402 clients):

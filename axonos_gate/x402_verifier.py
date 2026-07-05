@@ -797,6 +797,140 @@ def discovery_document() -> Dict[str, Any]:
     }
 
 
+# Fixed advertised price for x402scan discovery. AxonOS charges per-minute in USDC
+# (6 decimals) with a 1 USDC minimum deposit, so the discovery listing advertises a
+# flat 1.000000 USD entry point. This is METADATA ONLY — it does not set or change the
+# runtime charge, which is computed by build_payment_requirements / the settle path.
+_OPENAPI_FIXED_USD_PRICE = "1.000000"
+
+
+def _public_base_url() -> str:
+    """Scheme://host[:port] for the OpenAPI `servers` entry (no path)."""
+    from urllib.parse import urlparse
+    base = (os.getenv("X402_RESOURCE_URL") or os.getenv("AXGT_PUBLIC_BASE_URL") or "").strip().rstrip("/")
+    if not base:
+        cors = (os.getenv("AXGT_CORS_ORIGINS") or "").split(",")[0].strip().rstrip("/")
+        if cors and cors != "*":
+            base = cors
+    if not base:
+        base = "https://app.axonos.io"
+    parsed = urlparse(base)
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}"
+    return base
+
+
+def openapi_document() -> Dict[str, Any]:
+    """
+    Minimal OpenAPI 3.1 descriptor served at /openapi.json for x402scan discovery.
+
+    Describes the agent-native paid endpoint POST /api/x402/session so an x402
+    indexer (e.g. x402scan) can surface AxonOS as a purchasable compute resource.
+    This is discovery metadata ONLY — it does not alter runtime x402 payment
+    behavior, which is governed by /api/x402/session and /.well-known/x402.
+    """
+    info: Dict[str, Any] = {
+        "title": "AxonOS GPU Compute (x402)",
+        "version": "1.0.0",
+    }
+    # Standard OpenAPI 3.x info.contact — used by x402 marketplaces (e.g. Poncho) to
+    # verify origin ownership, let users contact the merchant, and customize merchant
+    # pages. Set AXGT_CONTACT_EMAIL to the merchant email; omitted when unset so we
+    # never advertise a placeholder address.
+    contact_email = (os.getenv("AXGT_CONTACT_EMAIL") or "").strip()
+    if contact_email:
+        info["contact"] = {"email": contact_email}
+    info["description"] = (
+        "On-demand GPU Linux compute sessions with SSH access, rented by the "
+        "minute and paid in USDC on Base via x402."
+    )
+    return {
+        "openapi": "3.1.0",
+        "info": {
+            **info,
+            "x-guidance": (
+                "To rent an AxonOS GPU Linux compute session, call POST /api/x402/session "
+                "with a JSON body containing your wallet_address and ssh_pubkey (an SSH "
+                "public key, e.g. 'ssh-ed25519 AAAA...'). Include an X-PAYMENT header "
+                "carrying the x402 (EIP-3009 USDC-on-Base) payment authorization, or "
+                "pre-fund the wallet. On success you receive ssh_host, ssh_port, "
+                "remaining_minutes and an auth_token; if payment is required you receive "
+                "HTTP 402 with x402 payment requirements."
+            ),
+        },
+        "servers": [{"url": _public_base_url()}],
+        "paths": {
+            "/api/x402/session": {
+                "post": {
+                    "operationId": "rentGpuSession",
+                    "summary": "Pay via x402 and claim an AxonOS GPU Linux SSH compute session",
+                    "description": (
+                        "Agent-native one-shot: settle an x402 USDC payment (or use the "
+                        "wallet's prepaid minutes) and claim an SSH compute session in a "
+                        "single call."
+                    ),
+                    "x-payment-info": {
+                        "price": _OPENAPI_FIXED_USD_PRICE,
+                        "currency": "USD",
+                        "protocols": [{"x402": {}}],
+                    },
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["wallet_address", "ssh_pubkey"],
+                                    "properties": {
+                                        "wallet_address": {
+                                            "type": "string",
+                                            "description": "EVM wallet address that pays for and owns the session (0x...).",
+                                        },
+                                        "ssh_pubkey": {
+                                            "type": "string",
+                                            "description": "SSH public key authorized for the session (e.g. 'ssh-ed25519 AAAA...').",
+                                        },
+                                        "requested_profile": {
+                                            "type": "string",
+                                            "description": "Optional compute profile to request.",
+                                        },
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Session granted: SSH endpoint and auth token returned.",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "granted": {"type": "boolean"},
+                                            "ssh_host": {"type": "string"},
+                                            "ssh_port": {"type": "integer"},
+                                            "remaining_minutes": {"type": "number"},
+                                            "auth_token": {"type": "string"},
+                                        },
+                                    }
+                                }
+                            },
+                        },
+                        "402": {
+                            "description": (
+                                "Payment required: include an X-PAYMENT header or pre-fund "
+                                "the wallet. The body and PAYMENT-REQUIRED header carry the "
+                                "x402 payment requirements."
+                            ),
+                        },
+                    },
+                }
+            }
+        },
+    }
+
+
 def wallet_from_x_payment(x_payment: str) -> Optional[str]:
     """Extract the paying wallet (authorization.from) from an X-PAYMENT header.
 

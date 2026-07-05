@@ -397,6 +397,62 @@ class TestUnpaidSessionGate(unittest.TestCase):
         self.assertFalse(x.unpaid_session_requires_402(has_payment=False, wallet_prepaid=True))
 
 
+class TestOpenApiDocument(unittest.TestCase):
+    """
+    /openapi.json descriptor for x402scan discovery. Pure metadata — asserts the
+    shape the request pins down (paid POST /api/x402/session, request fields,
+    200/402 responses, fixed-USD x-payment-info, info.x-guidance).
+    """
+
+    def setUp(self):
+        self.patcher = patch.dict(os.environ, _env())
+        self.patcher.start()
+
+    def tearDown(self):
+        self.patcher.stop()
+
+    def test_document_is_json_serializable_openapi_3(self):
+        import x402_verifier as x
+        doc = x.openapi_document()
+        json.dumps(doc)  # must not raise
+        self.assertTrue(doc["openapi"].startswith("3."))
+
+    def test_session_endpoint_request_and_responses(self):
+        import x402_verifier as x
+        op = x.openapi_document()["paths"]["/api/x402/session"]["post"]
+        props = op["requestBody"]["content"]["application/json"]["schema"]["properties"]
+        for field in ("wallet_address", "ssh_pubkey", "requested_profile"):
+            self.assertIn(field, props)
+        self.assertIn("200", op["responses"])
+        self.assertIn("402", op["responses"])
+
+    def test_payment_info_fixed_usd_and_x402_protocol(self):
+        import x402_verifier as x
+        xpi = x.openapi_document()["paths"]["/api/x402/session"]["post"]["x-payment-info"]
+        self.assertEqual(xpi["price"], "1.000000")
+        self.assertEqual(xpi["currency"], "USD")
+        self.assertEqual(xpi["protocols"], [{"x402": {}}])
+
+    def test_info_x_guidance_mentions_session_call(self):
+        import x402_verifier as x
+        guidance = x.openapi_document()["info"]["x-guidance"]
+        self.assertIn("POST /api/x402/session", guidance)
+        self.assertIn("wallet_address", guidance)
+        self.assertIn("ssh_pubkey", guidance)
+
+    def test_contact_omitted_when_env_unset(self):
+        import x402_verifier as x
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("AXGT_CONTACT_EMAIL", None)
+            self.assertNotIn("contact", x.openapi_document()["info"])
+
+    def test_contact_email_from_env(self):
+        import x402_verifier as x
+        with patch.dict(os.environ, {"AXGT_CONTACT_EMAIL": "ops@axonos.io"}):
+            info = x.openapi_document()["info"]
+            self.assertEqual(info["contact"], {"email": "ops@axonos.io"})
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -81,6 +81,7 @@ try:
         resolve_x402_body_version,
         settle_x402_payment,
         discovery_document,
+        openapi_document,
         wallet_from_x_payment,
         unpaid_session_requires_402,
     )
@@ -94,6 +95,7 @@ except ImportError:
             resolve_x402_body_version,
             settle_x402_payment,
             discovery_document,
+            openapi_document,
             wallet_from_x_payment,
             unpaid_session_requires_402,
         )
@@ -105,6 +107,7 @@ except ImportError:
         resolve_x402_body_version = None
         settle_x402_payment = None
         discovery_document = None
+        openapi_document = None
         wallet_from_x_payment = None
         unpaid_session_requires_402 = None
 
@@ -553,6 +556,16 @@ def api_x402_discovery():
     if discovery_document is None:
         return jsonify({"error": "x402 unavailable"}), 503
     return jsonify(discovery_document())
+
+
+@app.route('/openapi.json', methods=['GET', 'OPTIONS'])
+def api_openapi():
+    """Public OpenAPI descriptor for x402scan discovery (metadata only)."""
+    if request.method == 'OPTIONS':
+        return '', 200
+    if openapi_document is None:
+        return jsonify({"error": "x402 unavailable"}), 503
+    return jsonify(openapi_document())
 
 
 @app.route('/api/x402/access', methods=['GET', 'OPTIONS'])
