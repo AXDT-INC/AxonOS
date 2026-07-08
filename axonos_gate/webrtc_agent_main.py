@@ -1502,6 +1502,20 @@ async def main_loop() -> None:
 
         asyncio.create_task(_prewarm_display())
 
+    active_task: asyncio.Task | None = None
+    current_session_id: str | None = None
+
+    async def run_job(j: dict[str, Any]) -> None:
+        try:
+            await _run_session(j)
+        except asyncio.CancelledError:
+            logger.info("session task cancelled: %s", str(j.get("session_id", ""))[:16])
+            raise
+        except Exception as e:
+            logger.exception("session error")
+            detail = f"exception:{type(e).__name__}:{str(e)[:500]}"
+            _agent_fail(str(j.get("session_id", "")), detail)
+
     while True:
         if not _truthy("WEBRTC_ENABLED"):
             await asyncio.sleep(5)
@@ -1511,17 +1525,26 @@ async def main_loop() -> None:
             await asyncio.sleep(0.75)
             continue
         if status == 204 or job is None:
-            await asyncio.sleep(0.35)
+            sleep_time = 1.0 if (active_task and not active_task.done()) else 0.35
+            await asyncio.sleep(sleep_time)
             continue
         if status != 200 or not job.get("session_id"):
             await asyncio.sleep(1.0)
             continue
-        try:
-            await _run_session(job)
-        except Exception as e:
-            logger.exception("session error")
-            detail = f"exception:{type(e).__name__}:{str(e)[:500]}"
-            _agent_fail(str(job.get("session_id", "")), detail)
+
+        new_sid = job["session_id"]
+        if active_task and not active_task.done():
+            logger.info("New WebRTC session %s arrived; cancelling existing session %s", new_sid[:16], (current_session_id or "unknown")[:16])
+            active_task.cancel()
+            try:
+                await active_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+
+        current_session_id = new_sid
+        active_task = asyncio.create_task(run_job(job))
 
 
 if __name__ == "__main__":

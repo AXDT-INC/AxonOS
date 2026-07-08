@@ -1213,6 +1213,9 @@ export async function connectAxonOSWebRTC(opts) {
 
     function onVideoMouseDown(ev) {
         ev.preventDefault();
+        if (typeof video.focus === 'function') {
+            video.focus();
+        }
         pendingPress = {
             button: ev.button,
             clientX: ev.clientX,
@@ -1495,6 +1498,7 @@ export async function connectAxonOSWebRTC(opts) {
     }
 
     window.axonosWebRtcTeardown = async () => {
+        try { stopMic(); } catch { /* ignore */ }
         _negotiationGeneration += 1;
         resetMouseInputState(null, true);
         releaseAllKeys();

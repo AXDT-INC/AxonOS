@@ -7785,3 +7785,9 @@ button.axonos-topbar__brand {
     grid-template-columns: repeat(4, 1fr);
   }
 }
+
+/* Workspace loading state modifications for axonos-connection-loader */
+.axonos-connection-loader.axonos-loader--workspace .axonos-prep-steps,
+.axonos-connection-loader.axonos-loader--workspace .axonos-loader-quote {
+  display: none !important;
+}

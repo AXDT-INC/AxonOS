@@ -108,7 +108,7 @@ Copyright (C) 2019 The noVNC Authors
     </script>
     <script src="app/error-handler.js"></script>
     <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
-    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260705a"></script>
+    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260708a"></script>
 </head>
 
 <body>
@@ -418,7 +418,10 @@ Copyright (C) 2019 The noVNC Authors
 
     <!-- Connect button -->
     <div class="noVNC_center">
-        <div id="noVNC_connect_dlg">
+        <!-- translate="no" on all AxonOS-custom roots: noVNC's l10n translateDOM trims
+             every text node (String.trim also eats &nbsp;), which was collapsing spaces
+             around inline elements ("Burning 1 cr/min" -> "Burning1cr/min"). -->
+        <div id="noVNC_connect_dlg" translate="no">
             <!-- Mobile notice: shown only on small viewports -->
             <div class="axonos-mobile-notice" aria-live="polite">
                 <p class="axonos-mobile-notice__title">Desktop experience recommended</p>
@@ -1292,7 +1295,7 @@ Copyright (C) 2019 The noVNC Authors
 
     <!-- AXGT Wallet Verification Dialog (replaces password dialog) -->
     <div class="noVNC_center noVNC_connect_layer">
-        <div id="noVNC_credentials_dlg" class="noVNC_panel axonos-wallet-card">
+        <div id="noVNC_credentials_dlg" class="noVNC_panel axonos-wallet-card" translate="no">
             <button type="button" id="axonos_wallet_close_btn" class="axonos-wallet-close-btn" title="Close"
                 aria-label="Close">&times;</button>
             <form id="axonos_wallet_form">
@@ -1624,7 +1627,7 @@ Copyright (C) 2019 The noVNC Authors
     </div>
 
     <!-- Session Telemetry Sidebar (visible when connected) -->
-    <div id="axonos_session_sidebar" class="axonos-session-sidebar">
+    <div id="axonos_session_sidebar" class="axonos-session-sidebar" translate="no">
         <!-- Section 1: Credits Remaining -->
         <div class="axonos-session-sidebar__section">
             <div class="axonos-session-sidebar__sec-header">
@@ -1783,7 +1786,7 @@ Copyright (C) 2019 The noVNC Authors
         <source src="app/sounds/bell.mp3" type="audio/mpeg">
     </audio>
     <!-- AxonOS Connection Loading Animation -->
-    <div class="axonos-connection-loader" id="axonos-loader">
+    <div class="axonos-connection-loader" id="axonos-loader" translate="no">
         <div class="axonos-loader-visual">
             <div class="axonos-spinner" aria-hidden="true">
                 <div class="axonos-progress-ring"></div>
@@ -1821,7 +1824,7 @@ Copyright (C) 2019 The noVNC Authors
 
 
     <!-- Session billing HUD — top-right corner, visible while the remote desktop is shown -->
-    <div id="axonos_session_hud" class="axonos-session-hud axonos-session-hud--hidden" aria-hidden="true"
+    <div id="axonos_session_hud" class="axonos-session-hud axonos-session-hud--hidden" aria-hidden="true" translate="no"
         title="Live billing status for this desktop session">
         <div class="axonos-session-hud__row"><span class="axonos-session-hud__label">Connected Wallet:</span>
             <span id="axonos_session_hud_wallet" class="axonos-session-hud__value">—</span>
@@ -2387,6 +2390,10 @@ Copyright (C) 2019 The noVNC Authors
             var _sshToggle = document.getElementById('axonos_ssh_toggle');
             var ssh = !reconnect && !!(_sshToggle && _sshToggle.checked);
             var phases = {
+                // Shown the moment a deposit tx is sent: instant confirmation that the
+                // payment went through + what happens next (tester feedback 2026-07-08:
+                // the on-chain wait used to look like a blank screen).
+                payment: ['Payment sent ✓', 'Waiting for on-chain confirmation — usually under 2 minutes. Keep this tab open; your desktop will continue automatically…'],
                 preparing: reconnect
                     ? ['Resuming session', 'Reconnecting to your running desktop…']
                     : ssh
@@ -2410,7 +2417,8 @@ Copyright (C) 2019 The noVNC Authors
 
             // Progressively check checklist steps
             if (typeof window.axonosBootOverlayNextStep === 'function') {
-                if (phase === 'preparing') window.axonosBootOverlayNextStep(1);
+                if (phase === 'payment') window.axonosBootOverlayNextStep(1);
+                else if (phase === 'preparing') window.axonosBootOverlayNextStep(1);
                 else if (phase === 'claiming') window.axonosBootOverlayNextStep(2);
                 else if (phase === 'webrtc') window.axonosBootOverlayNextStep(3);
                 else if (phase === 'vnc') window.axonosBootOverlayNextStep(4);
@@ -2428,6 +2436,9 @@ Copyright (C) 2019 The noVNC Authors
 
         function showConnectionLoader(phase) {
             const loader = document.getElementById('axonos-loader');
+            if (loader) {
+                loader.classList.remove('axonos-loader--workspace');
+            }
             if (typeof phase === 'string') {
                 axonosSetConnectionLoaderPhase(phase);
             }
@@ -2448,6 +2459,7 @@ Copyright (C) 2019 The noVNC Authors
                 console.log('Hiding connection loader in', remainingTime, 'ms');
                 setTimeout(() => {
                     loader.classList.remove('active');
+                    loader.classList.remove('axonos-loader--workspace');
                     console.log('Connection loader hidden');
                 }, remainingTime);
             }
@@ -4584,6 +4596,9 @@ Copyright (C) 2019 The noVNC Authors
                         }
                     }
                 }).catch(function () {
+                    if (typeof window.axonosHideConnectionLoader === 'function') {
+                        window.axonosHideConnectionLoader(true);
+                    }
                     if (msgEl) msgEl.textContent = 'Credited, but session claim failed. Try Resume again.';
                 });
             }
@@ -4600,6 +4615,9 @@ Copyright (C) 2019 The noVNC Authors
 
                 // Credit restored on an active stream — stay connected (low-credit warning path).
                 if (liveSession && !paused) {
+                    if (typeof window.axonosHideConnectionLoader === 'function') {
+                        window.axonosHideConnectionLoader(true);
+                    }
                     if (credDlg) credDlg.classList.remove('noVNC_open');
                     setWalletUIState('axonos_wallet_state_verified', {
                         address: wallet,
@@ -4670,6 +4688,15 @@ Copyright (C) 2019 The noVNC Authors
             var msgEl = document.getElementById('axonos_verify_deposit_msg');
             var attempts = 0;
             var maxAttempts = 180;
+            // Full-screen "Payment sent" overlay for the on-chain wait; without it this
+            // stretch looked like a dead blank page. Hidden again on every terminal
+            // failure path below so the dialog guidance stays reachable.
+            showConnectionLoader('payment');
+            function bailToDialog() {
+                if (typeof window.axonosHideConnectionLoader === 'function') {
+                    window.axonosHideConnectionLoader(true);
+                }
+            }
             function checkWalletStatusFallback() {
                 // If replay-protection says "already credited", confirm via wallet-status and proceed.
                 var ws = new URL('/api/auth/wallet-status', window.location.origin);
@@ -4704,6 +4731,7 @@ Copyright (C) 2019 The noVNC Authors
                         checkWalletStatusFallback().then(function (ok) {
                             if (ok) return;
                             setPayDepositButtonsBusy(false);
+                            bailToDialog();
                             if (msgEl) msgEl.textContent = err || ('Could not verify (HTTP ' + res.status + ').');
                         });
                         return;
@@ -4712,6 +4740,7 @@ Copyright (C) 2019 The noVNC Authors
                         if (msgEl) msgEl.textContent = err + (attempts < maxAttempts ? ' — checking again in ~12s…' : '');
                         if (attempts >= maxAttempts) {
                             setPayDepositButtonsBusy(false);
+                            bailToDialog();
                             if (msgEl) msgEl.textContent = 'Still confirming. Use Credit deposit with your tx hash, or wait and refresh.';
                             return;
                         }
@@ -4719,10 +4748,12 @@ Copyright (C) 2019 The noVNC Authors
                         return;
                     }
                     setPayDepositButtonsBusy(false);
+                    bailToDialog();
                     if (msgEl) msgEl.textContent = err || ('Could not verify (HTTP ' + res.status + ').');
                 }).catch(function () {
                     if (attempts >= maxAttempts) {
                         setPayDepositButtonsBusy(false);
+                        bailToDialog();
                         if (msgEl) msgEl.textContent = 'Network error while waiting. Try Credit deposit.';
                         return;
                     }
@@ -6058,6 +6089,20 @@ Copyright (C) 2019 The noVNC Authors
             var credentialsDialog = document.getElementById('noVNC_credentials_dlg');
             if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
 
+            // Show a generic workspace transition loader
+            const loader = document.getElementById('axonos-loader');
+            if (loader) {
+                loader.classList.add('axonos-loader--workspace');
+                const titleEl = loader.querySelector('.axonos-loading-text');
+                const subEl = loader.querySelector('.axonos-loading-subtext');
+                if (titleEl) titleEl.textContent = 'Loading workspace';
+                if (subEl) subEl.textContent = 'Retrieving your environments and active sessions…';
+                loader.classList.add('active');
+                if (typeof loaderStartTime !== 'undefined') {
+                    loaderStartTime = Date.now();
+                }
+            }
+
             // Sync topbar
             axonosSyncTopbar(walletAddress, data ? data.remaining_minutes : null);
 
@@ -6065,6 +6110,9 @@ Copyright (C) 2019 The noVNC Authors
             axonosRefreshPausedResumeStatus().then(function () {
                 if (window.axonosPausedResume) {
                     console.log('[AxonOS] Paused session detected, resuming desktop directly');
+                    if (loader) {
+                        loader.classList.remove('axonos-loader--workspace');
+                    }
                     axonosTryResumeDesktopAfterCredit();
                     return;
                 }
@@ -6202,21 +6250,28 @@ Copyright (C) 2019 The noVNC Authors
 
                 // Query credit balance
                 axonosFetchWalletAccessStatus(wallet).then(function (res) {
+                    const data = (res && res.data) || {};
                     const creditsValEl = document.getElementById('axonos_dashboard_credits');
-                    const creditsStr = (res.remaining_minutes != null) ? Math.round(res.remaining_minutes) : '—';
+                    const creditsStr = (data.remaining_minutes != null) ? Math.round(data.remaining_minutes) : '—';
                     if (creditsValEl) creditsValEl.textContent = creditsStr;
 
                     // Update global headers and topbar widget as well
                     var headerCredits = document.querySelector('.axonos-header-credits-val');
                     if (headerCredits) headerCredits.textContent = creditsStr;
-                    axonosSyncTopbar(wallet, res.remaining_minutes);
+                    axonosSyncTopbar(wallet, data.remaining_minutes);
                 });
 
                 axonosUpdateActiveScreen('dashboard');
+                if (typeof window.axonosHideConnectionLoader === 'function') {
+                    window.axonosHideConnectionLoader(true);
+                }
             }).catch(function (err) {
                 console.error('[AxonOS] Error fetching dashboard status:', err);
                 if (emptyEl) emptyEl.style.display = 'block';
                 axonosUpdateActiveScreen('dashboard');
+                if (typeof window.axonosHideConnectionLoader === 'function') {
+                    window.axonosHideConnectionLoader(true);
+                }
             });
         }
         window.axonosLoadDashboard = axonosLoadDashboard;
@@ -6484,7 +6539,8 @@ Copyright (C) 2019 The noVNC Authors
                     if (railBalanceRow) railBalanceRow.style.display = 'flex';
 
                     axonosFetchWalletAccessStatus(wallet).then(res => {
-                        const balStr = (res.remaining_minutes != null) ? Math.round(res.remaining_minutes) + ' cr' : '—';
+                        const data = (res && res.data) || {};
+                        const balStr = (data.remaining_minutes != null) ? Math.round(data.remaining_minutes) + ' cr' : '—';
                         if (railBalanceVal) railBalanceVal.textContent = balStr;
                     });
 
@@ -6647,7 +6703,8 @@ Copyright (C) 2019 The noVNC Authors
 
             // Check if they already have enough credits to proceed directly without depositing
             axonosFetchWalletAccessStatus(wallet).then(function (res) {
-                const remaining = res.remaining_minutes || 0;
+                const data = (res && res.data) || {};
+                const remaining = data.remaining_minutes || 0;
                 const required = axonosGpuCountForProfile(axonosSelectedGpuProfile);
 
                 if (remaining >= required) {
@@ -6817,9 +6874,13 @@ Copyright (C) 2019 The noVNC Authors
                 vramProgress.style.width = vram + '%';
             }
 
-            // Sync credits balance and remaining time
+            // Sync credits balance and remaining time.
+            // axonosFetchWalletAccessStatus resolves { ok, data } — the minutes live at
+            // res.data.remaining_minutes (reading res.remaining_minutes rendered "0
+            // credits / ≈0m" while the HUD correctly showed the real balance).
             axonosFetchWalletAccessStatus(wallet).then(res => {
-                const credits = res.remaining_minutes || 0;
+                const data = (res && res.data) || {};
+                const credits = typeof data.remaining_minutes === 'number' ? data.remaining_minutes : 0;
                 const creditsValEl = document.getElementById('axonos_sidebar_credits');
                 const creditsProgress = document.getElementById('axonos_sidebar_credits_progress');
                 const timeLeftEl = document.getElementById('axonos_sidebar_time_left');

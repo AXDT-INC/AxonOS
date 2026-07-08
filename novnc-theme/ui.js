@@ -2947,6 +2947,27 @@ const UI = {
                         } catch (weErr) {
                             Log.Warn('AxonOS WebRTC path failed: ' + weErr);
                         }
+                        if (!usedWebRtc && !window.axonosWebRtcConnectAborted) {
+                            // One automatic retry with a fresh module instance — identical
+                            // to a user clicking Resume again, which field testing showed
+                            // succeeds when the first negotiation dies during desktop boot.
+                            Log.Warn('AxonOS: WebRTC negotiation failed; retrying once in 3s…');
+                            if (typeof window.axonosSetConnectionLoaderPhase === 'function') {
+                                window.axonosSetConnectionLoaderPhase('webrtc');
+                            }
+                            await new Promise((res) => setTimeout(res, 3000));
+                            if (!window.axonosWebRtcConnectAborted) {
+                                try {
+                                    const mod2 = await import(`./webrtc/axonos-webrtc.js?v=${Date.now()}`);
+                                    if (typeof mod2.cancelAxonOSWebRTCNegotiation === 'function') {
+                                        window.axonosCancelWebRtcNegotiation = mod2.cancelAxonOSWebRTCNegotiation;
+                                    }
+                                    usedWebRtc = await mod2.connectAxonOSWebRTC({ UI });
+                                } catch (weErr2) {
+                                    Log.Warn('AxonOS WebRTC retry failed: ' + weErr2);
+                                }
+                            }
+                        }
                         if (window.axonosWebRtcConnectAborted) {
                             if (typeof window.axonosHideConnectionLoader === 'function') {
                                 window.axonosHideConnectionLoader(true);
@@ -2960,7 +2981,7 @@ const UI = {
                                 window.axonosHideConnectionLoader(true);
                             }
                             UI.updateVisualState('disconnected');
-                            UI.showStatus(_('WebRTC connection is required but failed. Check STUN/TURN or try again.'), 'error');
+                            UI.showStatus(_('Display connection failed — but your desktop is still running and paid. Click Resume on your session to try again (no new payment). If it keeps failing, disable VPN or switch networks.'), 'error');
                             UI.openConnectPanel();
                             return;
                         }
