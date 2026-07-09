@@ -2401,7 +2401,9 @@ Copyright (C) 2019 The noVNC Authors
                 // Shown the moment a deposit tx is sent: instant confirmation that the
                 // payment went through + what happens next (tester feedback 2026-07-08:
                 // the on-chain wait used to look like a blank screen).
-                payment: ['Payment sent ✓', 'Waiting for on-chain confirmation — usually under 2 minutes. Keep this tab open; your desktop will continue automatically…'],
+                payment: window.axonosIsWhitelisted
+                    ? ['Whitelist Bypass Active', 'Simulated transaction sent. Verifying test credit status…']
+                    : ['Payment sent ✓', 'Waiting for on-chain confirmation — usually under 2 minutes. Keep this tab open; your desktop will continue automatically…'],
                 preparing: reconnect
                     ? ['Resuming session', 'Reconnecting to your running desktop…']
                     : ssh
@@ -2659,7 +2661,14 @@ Copyright (C) 2019 The noVNC Authors
                 headers['X-AXGT-Auth-Token'] = window.verifiedWalletAuthToken;
             }
             return fetch(url.toString(), { method: 'GET', credentials: 'include', headers })
-                .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+                .then(function (r) {
+                    return r.json().then(function (data) {
+                        if (data && data.is_whitelisted !== undefined) {
+                            window.axonosIsWhitelisted = !!data.is_whitelisted;
+                        }
+                        return { ok: r.ok, data: data };
+                    });
+                })
                 .catch(function () { return { ok: false, data: {} }; });
         }
 
@@ -4514,6 +4523,7 @@ Copyright (C) 2019 The noVNC Authors
                         verifiedWalletAddress = walletAddress;
                         window.verifiedWalletAddress = walletAddress;
                         window.verifiedWalletAuthToken = data.auth_token || null;
+                        window.axonosIsWhitelisted = !!(data && data.is_whitelisted);
                         window.axonosAllowVncConnect = true;
                         try { localStorage.setItem('axonos_last_wallet', walletAddress); } catch (e) { }
                         if (typeof axonosOnWalletVerified === 'function') {
@@ -4535,6 +4545,7 @@ Copyright (C) 2019 The noVNC Authors
                         verifiedWalletAddress = null;
                         window.verifiedWalletAddress = null;
                         window.verifiedWalletAuthToken = null;
+                        window.axonosIsWhitelisted = false;
                         window.axonosAllowVncConnect = false;
                         setWalletUIState('axonos_wallet_state_connect_error', {
                             msg: data.error || 'Server could not issue a session (Postgres / AXGT_CHALLENGE_DB_URL required).'
@@ -4544,6 +4555,7 @@ Copyright (C) 2019 The noVNC Authors
                     verifiedWalletAddress = walletAddress;
                     window.verifiedWalletAddress = walletAddress;
                     window.verifiedWalletAuthToken = data.auth_token;
+                    window.axonosIsWhitelisted = !!(data && data.is_whitelisted);
                     window.axonosAllowVncConnect = false;
                     try { localStorage.setItem('axonos_last_wallet', walletAddress); } catch (e) { }
                     var errLower = String(data.error || data.reason || '').toLowerCase();
@@ -4583,6 +4595,7 @@ Copyright (C) 2019 The noVNC Authors
                     verifiedWalletAddress = null;
                     window.verifiedWalletAddress = null;
                     window.verifiedWalletAuthToken = null;
+                    window.axonosIsWhitelisted = false;
                     window.axonosAllowVncConnect = false;
                     if (error && error._axonosUi && error._connectErr) {
                         setWalletUIState('axonos_wallet_state_connect_error', { msg: error._connectErr });
@@ -4822,6 +4835,16 @@ Copyright (C) 2019 The noVNC Authors
                         axonosDepositVerifiedSuccess(d, wallet);
                         return;
                     }
+                    if (d.not_whitelisted) {
+                        // Server says this wallet may not use mock deposits (e.g. it
+                        // was removed from the whitelist). Clear the stale flag so the
+                        // next Pay click runs the real transaction flow.
+                        window.axonosIsWhitelisted = false;
+                        setPayDepositButtonsBusy(false);
+                        bailToDialog();
+                        if (msgEl) msgEl.textContent = 'This wallet is not on the whitelist — mock payment cancelled. Pay again to send a real transaction.';
+                        return;
+                    }
                     var err = axonosDepositVerifyPendingMessage(d) || String(d.error || d.message || '');
                     if (/already credited|duplicate tx_hash|already.*credited/i.test(err)) {
                         checkWalletStatusFallback().then(function (ok) {
@@ -4877,6 +4900,31 @@ Copyright (C) 2019 The noVNC Authors
             return '0xa9059cbb' + toPadded + amtHex.padStart(64, '0');
         }
 
+        // Mock whitelist deposits use a sentinel hash (0xffffffff + 56 random hex)
+        // so the backend can tell them from real transactions: real hashes always
+        // go through on-chain verification, even for whitelisted wallets.
+        function axonosMockWhitelistTxHash() {
+            var tail = Array.from({ length: 56 }, function () { return Math.floor(Math.random() * 16).toString(16); }).join('');
+            return '0xffffffff' + tail;
+        }
+
+        // Shared by all three pay rails: whitelisted wallets skip the wallet
+        // signature and resolve to a sentinel mock hash; everyone else runs the
+        // rail's real eth_sendTransaction flow.
+        function axonosSendOrMockTx(msgEl, realTxFn) {
+            if (window.axonosIsWhitelisted) {
+                if (msgEl) msgEl.textContent = 'Bypassing signature for whitelisted wallet…';
+                return Promise.resolve(axonosMockWhitelistTxHash());
+            }
+            return realTxFn();
+        }
+
+        function axonosTxSentMessage() {
+            return window.axonosIsWhitelisted
+                ? 'Mock transaction sent. Bypassing payment for whitelisted wallet…'
+                : 'Transaction sent. Waiting for confirmations…';
+        }
+
         function axonosPayAxgtFromWallet() {
             var eth = resolveEthereumProvider();
             var wallet = verifiedWalletAddress;
@@ -4913,14 +4961,16 @@ Copyright (C) 2019 The noVNC Authors
             }
             var data = axonosErc20TransferData(revenue, rawAmt, dec);
             setPayDepositButtonsBusy(true);
-            if (msgEl) msgEl.textContent = 'Confirm sending ' + rawAmt + ' AXGT in your wallet…';
-            eth.request({
-                method: 'eth_sendTransaction',
-                params: [{ from: wallet, to: contract, data: data }]
+            axonosSendOrMockTx(msgEl, function () {
+                if (msgEl) msgEl.textContent = 'Confirm sending ' + rawAmt + ' AXGT in your wallet…';
+                return eth.request({
+                    method: 'eth_sendTransaction',
+                    params: [{ from: wallet, to: contract, data: data }]
+                });
             }).then(function (txHash) {
                 var h = String(txHash || '').trim();
                 if (inp) inp.value = h;
-                if (msgEl) msgEl.textContent = 'Transaction sent. Waiting for confirmations…';
+                if (msgEl) msgEl.textContent = axonosTxSentMessage();
                 axonosPollVerifyDeposit(h);
             }).catch(function (e) {
                 setPayDepositButtonsBusy(false);
@@ -4971,15 +5021,17 @@ Copyright (C) 2019 The noVNC Authors
             if (h.length % 2) h = '0' + h;
             var valueHex = '0x' + h;
             setPayDepositButtonsBusy(true);
-            if (msgEl) msgEl.textContent = 'Confirm sending ' + rawEth + ' ETH in your wallet…';
-            // Explicit gas avoids wallets/RPC using a huge default (e.g. 21M) that fails cap 16777216.
-            eth.request({
-                method: 'eth_sendTransaction',
-                params: [{ from: wallet, to: revenue, value: valueHex, gas: '0x5208' }]
+            axonosSendOrMockTx(msgEl, function () {
+                // Explicit gas avoids wallets/RPC using a huge default (e.g. 21M) that fails cap 16777216.
+                if (msgEl) msgEl.textContent = 'Confirm sending ' + rawEth + ' ETH in your wallet…';
+                return eth.request({
+                    method: 'eth_sendTransaction',
+                    params: [{ from: wallet, to: revenue, value: valueHex, gas: '0x5208' }]
+                });
             }).then(function (txHash) {
                 var h = String(txHash || '').trim();
                 if (inp) inp.value = h;
-                if (msgEl) msgEl.textContent = 'Transaction sent. Waiting for confirmations…';
+                if (msgEl) msgEl.textContent = axonosTxSentMessage();
                 axonosPollVerifyDeposit(h);
             }).catch(function (e) {
                 setPayDepositButtonsBusy(false);
@@ -5075,17 +5127,19 @@ Copyright (C) 2019 The noVNC Authors
             // USDC is 6 decimals on Base.
             var data = axonosErc20TransferData(revenue, rawUsdc, 6);
             setPayDepositButtonsBusy(true);
-            if (msgEl) msgEl.textContent = 'Switching to Base and confirming ' + rawUsdc + ' USDC…';
-            axonosEnsureUsdcChain(eth).then(function () {
-                return eth.request({
-                    method: 'eth_sendTransaction',
-                    params: [{ from: wallet, to: contract, data: data }]
+            axonosSendOrMockTx(msgEl, function () {
+                if (msgEl) msgEl.textContent = 'Switching to Base and confirming ' + rawUsdc + ' USDC…';
+                return axonosEnsureUsdcChain(eth).then(function () {
+                    return eth.request({
+                        method: 'eth_sendTransaction',
+                        params: [{ from: wallet, to: contract, data: data }]
+                    });
                 });
             }).then(function (txHash) {
                 var h = String(txHash || '').trim();
                 if (inp) inp.value = h;
                 axonosVerifyDepositEndpoint = '/api/auth/verify-usdc-deposit';
-                if (msgEl) msgEl.textContent = 'Transaction sent. Waiting for confirmations…';
+                if (msgEl) msgEl.textContent = axonosTxSentMessage();
                 axonosPollVerifyDeposit(h);
             }).catch(function (e) {
                 setPayDepositButtonsBusy(false);

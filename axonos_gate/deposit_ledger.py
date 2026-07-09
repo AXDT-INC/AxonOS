@@ -201,14 +201,26 @@ def get_deposit_status(wallet_address: str) -> Dict[str, Any]:
 
 
 def tx_hash_already_credited(tx_hash: str) -> bool:
-    """True if tx_hash is already in axgt_verified_deposits (replay protection)."""
+    """True if tx_hash is already in axgt_verified_deposits (replay protection).
+
+    Fails closed: DB unavailability reads as "already credited" so a rail never
+    double-credits during an outage. Callers that must distinguish "duplicate"
+    from "can't tell right now" should use tx_hash_already_credited_strict.
+    """
+    result = tx_hash_already_credited_strict(tx_hash)
+    return True if result is None else result
+
+
+def tx_hash_already_credited_strict(tx_hash: str) -> Optional[bool]:
+    """Like tx_hash_already_credited, but returns None when the DB is unreachable
+    instead of failing closed, so callers can surface a retryable state."""
     if not (tx_hash or "").strip():
         return True
     if not init_once():
-        return True
+        return None
     conn = _get_connection()
     if not conn:
-        return True
+        return None
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -218,7 +230,7 @@ def tx_hash_already_credited(tx_hash: str) -> bool:
             return cur.fetchone() is not None
     except Exception as exc:
         logger.warning("tx_hash_already_credited failed: %s", exc)
-        return True
+        return None
     finally:
         conn.close()
 

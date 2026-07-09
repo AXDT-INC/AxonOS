@@ -13,6 +13,7 @@ import re
 import secrets
 import time
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
+from functools import lru_cache
 from typing import Any, Dict, Optional, Tuple
 
 import requests
@@ -742,6 +743,7 @@ def get_wallet_access_status(wallet_address: str, consume_usage: bool = False) -
     Returns verified, access_type, remaining_minutes, consumed_minutes, credited_minutes, etc.
     """
     warning_threshold = _get_warning_threshold_minutes()
+    is_whitelisted = is_wallet_whitelisted(wallet_address)
     base_response: Dict[str, Any] = {
         "verified": False,
         "access_type": None,
@@ -752,21 +754,14 @@ def get_wallet_access_status(wallet_address: str, consume_usage: bool = False) -
         "min_deposit": _get_min_deposit_display(),
         "credit_per_100_axgt_minutes": _get_credit_per_100_axgt_minutes(),
         "reason": "No deposit record or zero balance.",
+        "is_whitelisted": is_whitelisted,
     }
 
     if not validate_wallet_address(wallet_address):
         base_response["reason"] = "Invalid wallet address format."
         return base_response
 
-    # gate_server.py adds /axonos_gate to path and imports axgt_verifier as a top-level
-    # module — neither "from ." nor "axonos_gate" resolves deposit_ledger there.
-    try:
-        from . import deposit_ledger
-    except ImportError:
-        try:
-            from axonos_gate import deposit_ledger
-        except ImportError:
-            import deposit_ledger
+    deposit_ledger = _get_deposit_ledger()
 
     if not deposit_ledger.init_once():
         base_response["reason"] = "Ledger unavailable."
@@ -789,6 +784,7 @@ def get_wallet_access_status(wallet_address: str, consume_usage: bool = False) -
         "min_deposit": _get_min_deposit_display(),
         "credit_per_100_axgt_minutes": _get_credit_per_100_axgt_minutes(),
         "reason": None,
+        "is_whitelisted": is_whitelisted,
     }
     if not verified:
         if eth_deposits_enabled():
@@ -840,3 +836,162 @@ def has_access(wallet_address: str) -> Tuple[bool, Optional[str], Optional[float
     if status.get("verified"):
         return True, status.get("access_type"), status.get("remaining_minutes")
     return False, None, status.get("remaining_minutes")
+
+
+def _get_deposit_ledger():
+    # gate_server.py adds /axonos_gate to path and imports axgt_verifier as a top-level
+    # module — neither "from ." nor "axonos_gate" resolves deposit_ledger there.
+    try:
+        from . import deposit_ledger
+    except ImportError:
+        try:
+            from axonos_gate import deposit_ledger
+        except ImportError:
+            import deposit_ledger
+    return deposit_ledger
+
+
+# Mock whitelist deposits carry a sentinel hash (0xffffffff + 56 random hex) so the
+# backend can tell them from real transactions: real hashes always go through
+# on-chain verification, even for whitelisted wallets.
+_WHITELIST_MOCK_TX_RE = re.compile(r"^0xffffffff[0-9a-f]{56}$")
+
+DEFAULT_WHITELIST_CREDIT_MINUTES = 60.0
+
+
+@lru_cache(maxsize=4)
+def _parse_whitelisted_wallets(raw: str) -> frozenset:
+    return frozenset(w.strip().lower() for w in raw.split(",") if w.strip())
+
+
+def is_wallet_whitelisted(wallet_address: str) -> bool:
+    """True if the wallet is listed in AXONOS_WHITELISTED_WALLETS (comma-separated)."""
+    wallet = (wallet_address or "").strip().lower()
+    if not wallet:
+        return False
+    raw = (os.getenv("AXONOS_WHITELISTED_WALLETS") or "").strip()
+    if not raw:
+        return False
+    return wallet in _parse_whitelisted_wallets(raw)
+
+
+def is_mock_whitelist_tx_hash(tx_hash: str) -> bool:
+    """True for the sentinel mock hashes the UI mints for whitelisted wallets."""
+    return bool(_WHITELIST_MOCK_TX_RE.match((tx_hash or "").strip().lower()))
+
+
+def _get_whitelist_credit_minutes() -> float:
+    raw = (os.getenv("AXONOS_WHITELIST_AUTO_CREDIT_MINUTES") or "").strip()
+    if not raw:
+        return DEFAULT_WHITELIST_CREDIT_MINUTES
+    try:
+        minutes = float(raw)
+        if minutes > 0:
+            return minutes
+    except ValueError:
+        pass
+    logger.warning(
+        "Invalid AXONOS_WHITELIST_AUTO_CREDIT_MINUTES=%r; using %s",
+        raw, DEFAULT_WHITELIST_CREDIT_MINUTES,
+    )
+    return DEFAULT_WHITELIST_CREDIT_MINUTES
+
+
+def _get_whitelist_max_balance_minutes(credit_minutes: float) -> float:
+    """Mock credits are declined while the wallet still has at least this many
+    minutes remaining. Defaults to the credit amount: top up only when below one
+    credit's worth, which bounds a whitelisted wallet's balance instead of letting
+    repeated clicks mint unbounded minutes."""
+    raw = (os.getenv("AXONOS_WHITELIST_MAX_BALANCE_MINUTES") or "").strip()
+    if not raw:
+        return credit_minutes
+    try:
+        minutes = float(raw)
+        if minutes > 0:
+            return minutes
+    except ValueError:
+        pass
+    logger.warning(
+        "Invalid AXONOS_WHITELIST_MAX_BALANCE_MINUTES=%r; using %s", raw, credit_minutes
+    )
+    return credit_minutes
+
+
+def check_and_apply_whitelist_deposit_credit(wallet_address: str, tx_hash: str) -> Optional[Dict[str, Any]]:
+    """Handle a mock whitelist deposit (sentinel tx hash).
+
+    Returns None unless tx_hash is a sentinel mock hash, so real transactions —
+    including those from whitelisted wallets — always go through on-chain
+    verification. For mock hashes it always returns a verify_deposit-shaped dict;
+    falling through would poll the chain for a hash that does not exist.
+    """
+    wallet = (wallet_address or "").strip().lower()
+    tx = (tx_hash or "").strip().lower()
+    if not wallet or not is_mock_whitelist_tx_hash(tx):
+        return None
+    if not is_wallet_whitelisted(wallet):
+        logger.warning("Mock whitelist deposit %s denied: wallet %s is not whitelisted", tx, wallet)
+        return {
+            "verified": False,
+            "not_whitelisted": True,
+            "error": "Wallet is not whitelisted for mock deposits; submit a real payment.",
+        }
+    try:
+        deposit_ledger = _get_deposit_ledger()
+        if not deposit_ledger.init_once():
+            logger.warning("Whitelist auto-credit for %s: ledger unavailable, client will retry", wallet)
+            return {"verified": False, "pending": True, "error": "Ledger unavailable — retrying…"}
+
+        already = deposit_ledger.tx_hash_already_credited_strict(tx)
+        if already is None:
+            logger.warning("Whitelist auto-credit for %s: replay check unavailable, client will retry", wallet)
+            return {"verified": False, "pending": True, "error": "Ledger unavailable — retrying…"}
+        if already:
+            logger.info("Whitelist mock deposit %s already credited for %s", tx, wallet)
+            return {"verified": False, "error": "already credited"}
+
+        credit_minutes = _get_whitelist_credit_minutes()
+        max_balance = _get_whitelist_max_balance_minutes(credit_minutes)
+        remaining_now = deposit_ledger.get_remaining_minutes(wallet)
+        if remaining_now >= max_balance:
+            logger.info(
+                "Whitelist auto-credit for %s declined: %.1f min remaining >= cap %.1f",
+                wallet, remaining_now, max_balance,
+            )
+            return {
+                "verified": False,
+                "whitelist_capped": True,
+                "remaining_minutes": round(remaining_now, 2),
+                "error": (
+                    f"Whitelist credit declined: {remaining_now:.0f} minutes still "
+                    f"available (cap {max_balance:.0f})."
+                ),
+            }
+
+        logger.info(
+            "Crediting whitelisted wallet %s with %s minutes for mock deposit %s",
+            wallet, credit_minutes, tx,
+        )
+        success, remaining, err = deposit_ledger.credit_deposit(
+            wallet_address=wallet,
+            axgt_amount=Decimal("0"),
+            credited_minutes=credit_minutes,
+            tx_hash=tx,
+            block_number=0,
+        )
+        if not success:
+            logger.warning("Failed to credit whitelisted wallet %s: %s", wallet, err)
+            return {"verified": False, "error": f"Credit failed: {err}"}
+
+        return {
+            "verified": True,
+            "mock": True,
+            "access_type": "deposit_credit",
+            "credited_minutes": credit_minutes,
+            "remaining_minutes": remaining,
+            "tx_hash": tx,
+            "reason": None,
+        }
+    except Exception as exc:
+        logger.error("Error applying whitelist auto-credit for %s: %s", wallet, exc, exc_info=True)
+        return {"verified": False, "error": f"Internal error: {exc}"}
