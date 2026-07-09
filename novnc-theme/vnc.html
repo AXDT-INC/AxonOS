@@ -3185,8 +3185,22 @@ Copyright (C) 2019 The noVNC Authors
                 }
                 return claimSession().then(function (claim) {
                     if (claim && (claim.granted === true || claim.granted === 'true')) {
+                        window.axonosPausedResume = null;
+                        // A resumed headless SSH session has no desktop stream to
+                        // connect to — restore the connect-string card instead
+                        // (the server returns ssh fields on SSH resumes).
+                        if (claim.ssh_enabled) {
+                            if (typeof window.axonosHideConnectionLoader === 'function') {
+                                window.axonosHideConnectionLoader(true);
+                            }
+                            axonosRestoreSshSessionUi(Object.assign({}, claim, {
+                                owner_ssh_enabled: true,
+                                owner_hard_cap_remaining_seconds: claim.hard_cap_remaining_seconds,
+                                owner_remaining_seconds: claim.remaining_seconds
+                            }));
+                            return true;
+                        }
                         if (typeof window.axonosRefreshPausedResumeStatus === 'function') {
-                            window.axonosPausedResume = null;
                             window.axonosRefreshPausedResumeStatus();
                         }
                         tryConnectAfterClaim();

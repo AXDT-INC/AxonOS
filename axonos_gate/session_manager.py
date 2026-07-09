@@ -509,6 +509,16 @@ def _ensure_tables(conn) -> None:
             )
             if cur.fetchone() is None:
                 cur.execute(f"ALTER TABLE {_SESSION_TABLE} ADD COLUMN {col_name} {col_sql}")
+                if col_name == "ssh_enabled":
+                    # One-time backfill for rows that predate the column (they get
+                    # the FALSE default): hard_expires_at was only ever set for
+                    # requested_ssh claims, so it reliably marks old SSH sessions.
+                    # Without this, an SSH session active across the upgrade would
+                    # lose its connect-string recovery and cap renewal.
+                    cur.execute(
+                        f"UPDATE {_SESSION_TABLE} SET ssh_enabled = TRUE "
+                        f"WHERE hard_expires_at IS NOT NULL"
+                    )
         # Ensure no NULL last_billed_at: bill from session start (fixes pre-migration or old migrations)
         cur.execute(
             f"UPDATE {_SESSION_TABLE} SET last_billed_at = started_at WHERE last_billed_at IS NULL"
@@ -906,7 +916,7 @@ def _resume_paused_session(
         profile_name,
         assigned,
     )
-    return {
+    resp = {
         "granted": True,
         "resumed": True,
         "session_id": session_id,
@@ -916,6 +926,24 @@ def _resume_paused_session(
         "allocation_status": "allocated",
         "remaining_seconds": int(remaining),
     }
+    if paused.get("ssh_enabled"):
+        # Resume is an explicit owner action: renew the SSH hard cap (extend-only;
+        # an uncapped session stays uncapped) and return the connect fields so an
+        # agent or browser that lost state gets its endpoint back in the same
+        # shape as a fresh claim — the client must not attempt a desktop connect.
+        hard_expires_at = paused.get("hard_expires_at")
+        if hard_expires_at is not None:
+            cap_secs = _ssh_hard_cap_seconds(_remaining_minutes_for(wallet))
+            if cap_secs is not None and now + cap_secs > hard_expires_at:
+                cur.execute(
+                    f"""UPDATE {_SESSION_TABLE} SET hard_expires_at = %s
+                        WHERE id = %s AND status = 'active'""",
+                    (now + cap_secs, session_id),
+                )
+                hard_expires_at = now + cap_secs
+            resp["hard_cap_remaining_seconds"] = int(max(0, hard_expires_at - now))
+        resp.update(_ssh_connection_fields(session_id))
+    return resp
 
 
 def _cleanup_session_container(session_id: int) -> None:
