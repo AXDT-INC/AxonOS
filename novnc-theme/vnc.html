@@ -141,8 +141,9 @@ Copyright (C) 2019 The noVNC Authors
                             <strong>idle time</strong> if this tab stays open</span>
                         <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
                         <span class="axonos-prerequisites-ticker__chunk"><strong>Detach</strong> returns to home while
-                            your desktop keeps running (minutes still count). <strong>End session</strong> or
-                            <strong>close this tab</strong> stops billing and removes the desktop</span>
+                            your desktop keeps running (minutes still count) — closing the tab then pauses it for
+                            later resume. <strong>End session</strong> (or closing the tab while connected) stops
+                            billing and removes the desktop</span>
                     </div>
                     <div class="axonos-prerequisites-ticker__seg" data-ticker-mirror="1" aria-hidden="true"></div>
                 </div>
@@ -669,9 +670,16 @@ Copyright (C) 2019 The noVNC Authors
                                 title="Copy SSH command">Copy</button>
                         </div>
                         <p id="axonos_ssh_card_ttl" class="axonos-ssh-card__ttl"></p>
-                        <p class="axonos-ssh-card__note">Keep this tab open — the session is released when it closes.
+                        <p class="axonos-ssh-card__note">You can close this tab — the session keeps running while
+                            you're connected over SSH (its time cap renews automatically) or until the cap above is
+                            reached. Extend adds more time; End it here, from the dashboard, or by signing out.
                         </p>
-                        <button type="button" id="axonos_ssh_end_btn" class="axonos-ssh-card__end">End session</button>
+                        <div class="axonos-ssh-card__actions">
+                            <button type="button" id="axonos_ssh_extend_btn"
+                                class="axonos-ssh-card__extend">Extend session</button>
+                            <button type="button" id="axonos_ssh_end_btn" class="axonos-ssh-card__end">End
+                                session</button>
+                        </div>
                     </div>
                 </div>
 
@@ -1655,7 +1663,7 @@ Copyright (C) 2019 The noVNC Authors
                 <div class="axonos-telemetry-item">
                     <div class="axonos-telemetry-item__row">
                         <span class="axonos-telemetry-item__label">CPU Utilization</span>
-                        <span id="axonos_telemetry_cpu_val" class="axonos-telemetry-item__val">0%</span>
+                        <span id="axonos_telemetry_cpu_val" class="axonos-telemetry-item__val">—</span>
                     </div>
                     <div class="axonos-sidebar-progress-track">
                         <div id="axonos_telemetry_cpu_progress"
@@ -1666,7 +1674,7 @@ Copyright (C) 2019 The noVNC Authors
                 <div class="axonos-telemetry-item">
                     <div class="axonos-telemetry-item__row">
                         <span class="axonos-telemetry-item__label">System RAM</span>
-                        <span id="axonos_telemetry_ram_val" class="axonos-telemetry-item__val">0%</span>
+                        <span id="axonos_telemetry_ram_val" class="axonos-telemetry-item__val">—</span>
                     </div>
                     <div class="axonos-sidebar-progress-track">
                         <div id="axonos_telemetry_ram_progress"
@@ -1677,7 +1685,7 @@ Copyright (C) 2019 The noVNC Authors
                 <div class="axonos-telemetry-item">
                     <div class="axonos-telemetry-item__row">
                         <span class="axonos-telemetry-item__label">GPU Utilization</span>
-                        <span id="axonos_telemetry_gpu_val" class="axonos-telemetry-item__val">0%</span>
+                        <span id="axonos_telemetry_gpu_val" class="axonos-telemetry-item__val">—</span>
                     </div>
                     <div class="axonos-sidebar-progress-track">
                         <div id="axonos_telemetry_gpu_progress"
@@ -1688,7 +1696,7 @@ Copyright (C) 2019 The noVNC Authors
                 <div class="axonos-telemetry-item">
                     <div class="axonos-telemetry-item__row">
                         <span class="axonos-telemetry-item__label">VRAM Usage</span>
-                        <span id="axonos_telemetry_vram_val" class="axonos-telemetry-item__val">0%</span>
+                        <span id="axonos_telemetry_vram_val" class="axonos-telemetry-item__val">—</span>
                     </div>
                     <div class="axonos-sidebar-progress-track">
                         <div id="axonos_telemetry_vram_progress"
@@ -1703,10 +1711,10 @@ Copyright (C) 2019 The noVNC Authors
         <div class="axonos-session-sidebar__section">
             <div class="axonos-session-sidebar__sec-header">
                 <span class="axonos-session-sidebar__sec-label">Storage Volume</span>
-                <span class="axonos-session-sidebar__sec-val" id="axonos_sidebar_storage_quota">100 GB</span>
+                <span class="axonos-session-sidebar__sec-val" id="axonos_sidebar_storage_quota">—</span>
             </div>
             <div class="axonos-sidebar-progress-track">
-                <div id="axonos_sidebar_storage_progress" class="axonos-sidebar-progress-bar" style="width: 12%;"></div>
+                <div id="axonos_sidebar_storage_progress" class="axonos-sidebar-progress-bar" style="width: 0%;"></div>
             </div>
             <p class="axonos-session-sidebar__sec-hint" style="margin-top: 10px; font-size: 0.72rem;">Home storage
                 volume is mounted and synced to wallet.</p>
@@ -3004,8 +3012,63 @@ Copyright (C) 2019 The noVNC Authors
             document.body.classList.toggle('axonos-resume-mode', !!resumeActive);
         }
 
+        /** Re-enter the headless-SSH session view from a session-status payload
+         *  (page reload, dashboard "SSH details"). Mirrors the granted-SSH claim
+         *  path in ui.js: card + detached-home heartbeat loop, no desktop viewer. */
+        function axonosRestoreSshSessionUi(st) {
+            if (!st || !st.owner_ssh_enabled || !st.ssh_port) return false;
+            window.axonosOwnedSession = axonosSessionProfileContextFromPayload(st);
+            window.axonosSessionDetached = true;
+            window.axonosDetachedSession = window.axonosOwnedSession;
+            window.axonosSshEnabled = true;
+            window.axonosPausedResume = null;
+            axonosApplyResumeConnectUi(false);
+            axonosUpdateActiveScreen('landing');
+            if (typeof UI !== 'undefined') {
+                if (typeof UI.persistAxonosSshState === 'function') UI.persistAxonosSshState();
+                if (typeof UI.updateAxonosSshUi === 'function') UI.updateAxonosSshUi();
+                if (typeof UI.showAxonosSshCard === 'function') {
+                    UI.showAxonosSshCard({
+                        ssh_user: st.ssh_user,
+                        ssh_host: st.ssh_host,
+                        ssh_port: st.ssh_port,
+                        hard_cap_remaining_seconds: st.owner_hard_cap_remaining_seconds,
+                        remaining_seconds: (typeof st.owner_remaining_seconds === 'number')
+                            ? st.owner_remaining_seconds
+                            : st.session_remaining_seconds
+                    });
+                }
+                if (typeof UI._axgtStartSessionBillingPoll === 'function' && window.verifiedWalletAddress) {
+                    UI._axgtStartSessionBillingPoll();
+                }
+                if (typeof UI.updateSessionControlButtons === 'function') {
+                    UI.updateSessionControlButtons();
+                }
+            }
+            return true;
+        }
+        window.axonosRestoreSshSessionUi = axonosRestoreSshSessionUi;
+
         function axonosApplySessionStatusToResumeUi(st, walletHint) {
             var wallet = (walletHint || window.verifiedWalletAddress || '').trim().toLowerCase();
+            // Owned ACTIVE headless-SSH session: restore the SSH card instead of the
+            // desktop resume/launch UI — the container has no desktop stream to open.
+            // Skip the re-restore when the card is already up (periodic status
+            // refreshes must not yank the user back to the landing screen).
+            if (st && st.is_owner && st.owner_ssh_enabled && !st.paused) {
+                var sshCard = document.getElementById('axonos_ssh_connect_card');
+                var sshCardVisible = !!(sshCard && !sshCard.classList.contains('axonos-ssh-card--hidden'));
+                if (!sshCardVisible && !axonosDesktopSessionLive()) {
+                    axonosRestoreSshSessionUi(st);
+                } else if (sshCardVisible && typeof UI !== 'undefined' &&
+                    window.verifiedWalletAddress && !UI._axgtStatusPollId &&
+                    typeof UI._axgtStartSessionBillingPoll === 'function') {
+                    // Wallet verification can complete AFTER the card was restored
+                    // from the unverified probe — start the billing poll then.
+                    UI._axgtStartSessionBillingPoll();
+                }
+                return true;
+            }
             if (st && st.is_owner && st.owner_requested_profile && !st.paused) {
                 window.axonosOwnedSession = axonosSessionProfileContextFromPayload(st);
                 if (window.axonosSessionDetached) {
@@ -3189,6 +3252,10 @@ Copyright (C) 2019 The noVNC Authors
             if (!el) return;
             if (!axonosConfig.eth_deposits_enabled) {
                 el.textContent = 'ETH top-ups disabled';
+                return;
+            }
+            if (axonosConfig.min_eth_minutes == null) {
+                el.textContent = 'desktop time at the live ETH rate';
                 return;
             }
             el.textContent = axonosFormatDesktopTimeLabel(Number(axonosConfig.min_eth_minutes)) + ' desktop time';
@@ -3575,8 +3642,15 @@ Copyright (C) 2019 The noVNC Authors
                     var ethEnabled = !cfg || cfg.eth_deposits_enabled !== false;
                     var cp100 = (cfg && cfg.axgt_credit_per_100_axgt_minutes != null) ? Number(cfg.axgt_credit_per_100_axgt_minutes) : 60;
                     var cpe = (cfg && cfg.eth_credit_per_eth_minutes != null) ? Number(cfg.eth_credit_per_eth_minutes) : 120000;
-                    var maMin = (cfg && cfg.min_axgt_deposit_minutes != null) ? Number(cfg.min_axgt_deposit_minutes) : (Number(minDeposit) / 100) * cp100;
-                    var meMin = (cfg && cfg.min_eth_deposit_minutes != null) ? Number(cfg.min_eth_deposit_minutes) : (Number(minEth) * cpe);
+                    // Under dynamic pricing the server sends a LIVE oracle value here
+                    // (or null when the oracle is down) — never substitute the legacy
+                    // fixed 60/100-AXGT rate in that case, it overstates the credit.
+                    var maMin = (cfg && cfg.min_axgt_deposit_minutes != null)
+                        ? Number(cfg.min_axgt_deposit_minutes)
+                        : ((cfg && cfg.dynamic_pricing_enabled) ? null : (Number(minDeposit) / 100) * cp100);
+                    var meMin = (cfg && cfg.min_eth_deposit_minutes != null)
+                        ? Number(cfg.min_eth_deposit_minutes)
+                        : ((cfg && cfg.dynamic_pricing_enabled) ? null : (Number(minEth) * cpe));
                     axonosConfig.axgt_contract_address = addr;
                     axonosConfig.axgt_revenue_wallet = rev;
                     axonosConfig.axgt_chain_id = (cfg && cfg.axgt_chain_id) ? String(cfg.axgt_chain_id) : null;
@@ -3662,7 +3736,11 @@ Copyright (C) 2019 The noVNC Authors
                     if (prereqMin) prereqMin.textContent = minDeposit;
                     if (prereqMinEth) prereqMinEth.textContent = ethEnabled ? minEth : 'disabled';
                     var prereqAxgtMin = document.getElementById('axonos_prereq_axgt_min_label');
-                    if (prereqAxgtMin) prereqAxgtMin.textContent = formatCreditMinutes(maMin) + ' desktop time';
+                    if (prereqAxgtMin) {
+                        prereqAxgtMin.textContent = (maMin != null)
+                            ? (formatCreditMinutes(maMin) + ' desktop time')
+                            : 'desktop time at the live AXGT rate';
+                    }
                     axonosUpdatePrereqEthDesktopLabel();
                     var dlgHints = document.getElementById('axonos-dlg-credit-hints');
                     if (dlgHints) {
@@ -3684,7 +3762,7 @@ Copyright (C) 2019 The noVNC Authors
                             ? (' While connected, usage burns <strong>' + axonosGpuCountForProfile(getRequestedProfile()) + '×</strong> prepaid minutes per real minute for your selected GPU profile (idle counts if this tab stays open).')
                             : ' While connected, minutes count for your session (idle included if this tab stays open).';
                         dlgHints.innerHTML = rateHint + legacyHint + '. ' + discountHint +
-                            '<span class="axonos-wallet-card__hints-session">' + billingHint + ' Use <strong>Detach</strong> to leave the view (desktop keeps running) or <strong>End session</strong> / close this tab when finished.</span>';
+                            '<span class="axonos-wallet-card__hints-session">' + billingHint + ' Use <strong>Detach</strong> to leave the view (desktop keeps running; closing the tab then pauses it for resume) or <strong>End session</strong> when finished.</span>';
                     }
                     var insRates = document.getElementById('axonos_insufficient_credit_rates');
                     if (insRates) {
@@ -3760,8 +3838,8 @@ Copyright (C) 2019 The noVNC Authors
                     if (revenueShortEl) revenueShortEl.textContent = '(error)';
                     var dh = document.getElementById('axonos-dlg-credit-hints');
                     if (dh) {
-                        dh.innerHTML = 'Connect wallet to see live rates from server, or check operator docs (100 AXGT → 60 min typical).' +
-                            '<span class="axonos-wallet-card__hints-session">While connected or detached, minutes count (idle included if this tab stays open). Use <strong>End session</strong> or close this tab when finished.</span>';
+                        dh.innerHTML = 'Connect wallet to see live rates from the server — payments are valued at the live token price when they are credited.' +
+                            '<span class="axonos-wallet-card__hints-session">While connected or detached, minutes count (idle included if this tab stays open). Use <strong>End session</strong> when finished.</span>';
                     }
                     syncAxonosPrerequisiteTickerMirror();
                 });
@@ -4165,6 +4243,10 @@ Copyright (C) 2019 The noVNC Authors
         function axonosBaselineMinutesForAxgt(axgtStr) {
             var n = parseFloat(String(axgtStr || '').trim());
             if (!(n > 0)) return null;
+            // With dynamic pricing there is no meaningful static rate — show '—'
+            // until the live quote arrives instead of a legacy 60/100 estimate
+            // that overstates the credit.
+            if (axonosConfig.dynamic_pricing_enabled) return null;
             return n / 100 * Number(axonosConfig.credit_per_100_axgt || 60);
         }
 
@@ -5287,14 +5369,35 @@ Copyright (C) 2019 The noVNC Authors
         }
 
         function teardownSessionForWalletChange() {
-            if (!axonosDesktopSessionLive()) {
+            // A live viewer is NOT the only server-side state this wallet can hold:
+            // detached desktops, headless SSH sessions (both flagged via
+            // axonosSessionDetached / axonosDetachedSession / axonosOwnedSession) and
+            // credit-paused sessions (axonosPausedResume) all keep a container
+            // reserved under the old wallet. Sign-out / wallet switch must release
+            // them too, or they keep running and billing under an identity the
+            // browser has abandoned.
+            var ownedServerState = !!(window.axonosOwnedSession ||
+                window.axonosDetachedSession ||
+                window.axonosSessionDetached ||
+                window.axonosPausedResume);
+            if (!ownedServerState && !axonosDesktopSessionLive()) {
                 return;
+            }
+
+            // Headless SSH view: drop the connect-string card before identity clears.
+            if (typeof UI !== 'undefined' && typeof UI.hideAxonosSshCard === 'function') {
+                try {
+                    UI.hideAxonosSshCard();
+                } catch (err) {
+                    // Best-effort.
+                }
             }
 
             // Full teardown: UI.disconnect() cancels any in-flight negotiation, tears
             // down the WebRTC peer, and releases server-side ownership (default path,
-            // no skipRelease). Belt-and-suspenders: explicitly cancel negotiation too,
-            // since UI.disconnect() can short-circuit before connect completes.
+            // no skipRelease) for active AND paused sessions. Belt-and-suspenders:
+            // explicitly cancel negotiation too, since UI.disconnect() can
+            // short-circuit before connect completes.
             if (typeof UI !== 'undefined' && typeof UI.disconnect === 'function') {
                 try {
                     UI.disconnect();
@@ -6155,9 +6258,11 @@ Copyright (C) 2019 The noVNC Authors
                     // Fallback to single active session object mapping
                     activeSessionsList = [{
                         session_id: status.paused_session_id || 1,
+                        wallet_address: wallet,
                         requested_profile: status.owner_requested_profile || status.latest_requested_profile || 'small',
                         assigned_gpu_ids: status.owner_assigned_gpu_ids || status.latest_assigned_gpu_ids || [],
                         allocation_status: status.allocation_status || 'allocated',
+                        ssh_enabled: !!status.owner_ssh_enabled,
                         started_at: Date.now() / 1000 - 300 // mock 5 min ago
                     }];
                 }
@@ -6186,6 +6291,16 @@ Copyright (C) 2019 The noVNC Authors
                             if (template) {
                                 envTitle = template.title;
                                 envIcon = template.icon;
+                            }
+                            // Headless SSH sessions have no desktop to open — label the
+                            // card honestly and route its primary action to the SSH
+                            // connect details instead of a doomed viewer connect.
+                            const isOwnSsh = !!session.ssh_enabled &&
+                                String(session.wallet_address || '').toLowerCase() === wallet.toLowerCase() &&
+                                !!status.owner_ssh_enabled;
+                            if (session.ssh_enabled) {
+                                envTitle = 'Direct SSH Session';
+                                envIcon = '⌨️';
                             }
 
                             // Compute simple uptime
@@ -6217,7 +6332,7 @@ Copyright (C) 2019 The noVNC Authors
                                     <div class="axonos-session-card__actions">
                                         <button type="button" class="axonos-session-card__btn axonos-session-card__btn--danger end-btn">End</button>
                                         <button type="button" class="axonos-session-card__btn axonos-session-card__btn--primary reconnect-btn">
-                                            Open desktop
+                                            ${isOwnSsh ? 'SSH details' : 'Open desktop'}
                                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                                         </button>
                                     </div>
@@ -6234,6 +6349,10 @@ Copyright (C) 2019 The noVNC Authors
                             });
 
                             card.querySelector('.reconnect-btn').addEventListener('click', function () {
+                                if (isOwnSsh && typeof window.axonosRestoreSshSessionUi === 'function' &&
+                                    window.axonosRestoreSshSessionUi(status)) {
+                                    return;
+                                }
                                 tryConnectAfterClaim();
                             });
 
@@ -6288,15 +6407,32 @@ Copyright (C) 2019 The noVNC Authors
                 body: JSON.stringify({ wallet_address: wallet })
             }).then(function () {
                 console.log('[AxonOS] Session released successfully');
-                axonosLoadDashboard();
             }).catch(function (err) {
                 console.error('[AxonOS] Failed to release session:', err);
+            }).finally(function () {
+                // The released session may have been a detached desktop or headless
+                // SSH one — clear that client state so the home view and the tab
+                // close handler don't act on a session that no longer exists.
+                window.axonosSessionDetached = false;
+                if (typeof window.axonosClearDetachedSession === 'function') {
+                    window.axonosClearDetachedSession();
+                }
+                if (typeof UI !== 'undefined' && typeof UI.hideAxonosSshCard === 'function') {
+                    UI.hideAxonosSshCard();
+                }
                 axonosLoadDashboard();
             });
         }
         window.axonosEndSession = axonosEndSession;
 
         // Launch Wizard Init
+        // axonosStartWizard() runs on EVERY wizard open ("New session", "Top up",
+        // template card clicks). The listeners below live on static DOM nodes, so
+        // they must be wired exactly once — rebinding per open stacked duplicate
+        // handlers, and the SSH toggle card (a click-to-toggle) then flipped the
+        // checkbox N times per click: with an even count it visibly did nothing.
+        var axonosWizardEventsWired = false;
+
         function axonosStartWizard() {
             axonosCurrentWizardStep = 1;
 
@@ -6305,125 +6441,134 @@ Copyright (C) 2019 The noVNC Authors
             // container display:none, so "New session" / "Top up" would do nothing.
             axonosUpdateActiveScreen('wizard');
 
-            // Set Step 1 inputs search and categories
             const searchInput = document.getElementById('axonos_wizard_template_search');
             if (searchInput) {
                 searchInput.value = '';
-                searchInput.addEventListener('input', function (e) {
-                    UI.renderAxonosTemplates(e.target.value, 'all', '#axonos_wizard_templates_grid');
-                });
             }
-
-            // Sync categories pills
-            const filterPills = document.querySelectorAll('#axonos_wizard_filter_pills .axonos-filter-pill');
-            filterPills.forEach(pill => {
-                pill.addEventListener('click', () => {
-                    filterPills.forEach(p => p.classList.remove('active'));
-                    pill.classList.add('active');
-                    const cat = pill.getAttribute('data-category') || 'all';
-                    UI.renderAxonosTemplates(searchInput ? searchInput.value : '', cat, '#axonos_wizard_templates_grid');
-                });
-            });
 
             // Initial render of templates grid (redirected to wizard container grid)
             UI.renderAxonosTemplates('', 'all', '#axonos_wizard_templates_grid');
 
-            // Wire GPU cards selection click listener
-            const gpuCards = document.querySelectorAll('.axonos-gpu-card');
-            gpuCards.forEach(card => {
-                card.addEventListener('click', () => {
-                    gpuCards.forEach(c => c.classList.remove('selected'));
-                    card.classList.add('selected');
-                    axonosSelectedGpuProfile = card.getAttribute('data-gpu') || 'small';
-
-                    // Sync the hidden profiles select field
-                    const selectEl = document.getElementById('axonos_profile_select');
-                    if (selectEl) {
-                        selectEl.value = axonosSelectedGpuProfile;
-                        selectEl.dispatchEvent(new Event('change', { bubbles: true }));
-                    }
-
-                    axonosUpdateWizardSummaryRail();
-                    axonosUpdatePayCalculator();
-                });
-            });
-
-            // Wire storage slider listener
-            const slider = document.getElementById('axonos_wizard_storage_slider');
-            const sliderVal = document.getElementById('axonos_wizard_storage_val');
-            if (slider && sliderVal) {
-                slider.addEventListener('input', (e) => {
-                    sliderVal.textContent = e.target.value + ' GB';
-                    axonosUpdateWizardSummaryRail();
-                });
-            }
-
-            // Wire SSH Toggle option card
             const sshToggleCard = document.getElementById('axonos_wizard_ssh_toggle_card');
             const sshToggleInput = document.getElementById('axonos_ssh_toggle'); // reuse actual checkbox
             const sshKeyWrap = document.getElementById('axonos_wizard_ssh_key_wrap');
             const sshKeyTextarea = document.getElementById('axonos_wizard_ssh_pubkey');
 
+            // Ensure correct visual default on every open
             if (sshToggleCard && sshToggleInput) {
-                // Ensure correct visual default
                 sshToggleCard.classList.toggle('checked', !!sshToggleInput.checked);
                 if (sshKeyWrap) sshKeyWrap.classList.toggle('axonos-ssh-key--hidden', !sshToggleInput.checked);
-
-                sshToggleCard.addEventListener('click', () => {
-                    const newVal = !sshToggleInput.checked;
-                    sshToggleInput.checked = newVal;
-                    sshToggleInput.dispatchEvent(new Event('change', { bubbles: true }));
-
-                    sshToggleCard.classList.toggle('checked', newVal);
-                    if (sshKeyWrap) sshKeyWrap.classList.toggle('axonos-ssh-key--hidden', !newVal);
-                    if (newVal && sshKeyTextarea) sshKeyTextarea.focus();
-
-                    axonosUpdateWizardSummaryRail();
-                });
             }
 
-            // Sync SSH public key textarea changes
-            if (sshKeyTextarea && document.getElementById('axonos_ssh_pubkey')) {
-                sshKeyTextarea.addEventListener('input', (e) => {
-                    const realKey = document.getElementById('axonos_ssh_pubkey');
-                    if (realKey) {
-                        realKey.value = e.target.value;
-                        realKey.dispatchEvent(new Event('input', { bubbles: true }));
-                    }
+            if (!axonosWizardEventsWired) {
+                axonosWizardEventsWired = true;
+
+                // Step 1 template search
+                if (searchInput) {
+                    searchInput.addEventListener('input', function (e) {
+                        UI.renderAxonosTemplates(e.target.value, 'all', '#axonos_wizard_templates_grid');
+                    });
+                }
+
+                // Sync categories pills
+                const filterPills = document.querySelectorAll('#axonos_wizard_filter_pills .axonos-filter-pill');
+                filterPills.forEach(pill => {
+                    pill.addEventListener('click', () => {
+                        filterPills.forEach(p => p.classList.remove('active'));
+                        pill.classList.add('active');
+                        const cat = pill.getAttribute('data-category') || 'all';
+                        UI.renderAxonosTemplates(searchInput ? searchInput.value : '', cat, '#axonos_wizard_templates_grid');
+                    });
                 });
-            }
 
-            // Wire Step 3 payment tabs
-            const tokenTabs = document.querySelectorAll('.axonos-wizard-token-tab');
-            tokenTabs.forEach(tab => {
-                tab.addEventListener('click', () => {
-                    tokenTabs.forEach(t => t.classList.remove('active'));
-                    tab.classList.add('active');
-                    axonosSelectedPaymentToken = tab.getAttribute('data-token') || 'usdc';
+                // Wire GPU cards selection click listener
+                const gpuCards = document.querySelectorAll('.axonos-gpu-card');
+                gpuCards.forEach(card => {
+                    card.addEventListener('click', () => {
+                        gpuCards.forEach(c => c.classList.remove('selected'));
+                        card.classList.add('selected');
+                        axonosSelectedGpuProfile = card.getAttribute('data-gpu') || 'small';
 
-                    // Update pay calculator UI
-                    axonosUpdatePayCalculator();
-                });
-            });
+                        // Sync the hidden profiles select field
+                        const selectEl = document.getElementById('axonos_profile_select');
+                        if (selectEl) {
+                            selectEl.value = axonosSelectedGpuProfile;
+                            selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
 
-            // Wire amount input changes
-            const amountInput = document.getElementById('axonos_wizard_pay_amount');
-            if (amountInput) {
-                amountInput.addEventListener('input', () => {
-                    axonosUpdatePayCalculator();
-                });
-            }
-
-            // Wire quick-deposit buttons click
-            const quickBtns = document.querySelectorAll('#axonos_wizard_quick_amounts .axonos-deposit-quick-btn');
-            quickBtns.forEach(btn => {
-                btn.addEventListener('click', () => {
-                    if (amountInput) {
-                        amountInput.value = btn.getAttribute('data-value');
+                        axonosUpdateWizardSummaryRail();
                         axonosUpdatePayCalculator();
-                    }
+                    });
                 });
-            });
+
+                // Wire storage slider listener
+                const slider = document.getElementById('axonos_wizard_storage_slider');
+                const sliderVal = document.getElementById('axonos_wizard_storage_val');
+                if (slider && sliderVal) {
+                    slider.addEventListener('input', (e) => {
+                        sliderVal.textContent = e.target.value + ' GB';
+                        axonosUpdateWizardSummaryRail();
+                    });
+                }
+
+                // Wire SSH Toggle option card
+                if (sshToggleCard && sshToggleInput) {
+                    sshToggleCard.addEventListener('click', () => {
+                        const newVal = !sshToggleInput.checked;
+                        sshToggleInput.checked = newVal;
+                        sshToggleInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+                        sshToggleCard.classList.toggle('checked', newVal);
+                        if (sshKeyWrap) sshKeyWrap.classList.toggle('axonos-ssh-key--hidden', !newVal);
+                        if (newVal && sshKeyTextarea) sshKeyTextarea.focus();
+
+                        axonosUpdateWizardSummaryRail();
+                    });
+                }
+
+                // Sync SSH public key textarea changes
+                if (sshKeyTextarea && document.getElementById('axonos_ssh_pubkey')) {
+                    sshKeyTextarea.addEventListener('input', (e) => {
+                        const realKey = document.getElementById('axonos_ssh_pubkey');
+                        if (realKey) {
+                            realKey.value = e.target.value;
+                            realKey.dispatchEvent(new Event('input', { bubbles: true }));
+                        }
+                    });
+                }
+
+                // Wire Step 3 payment tabs
+                const tokenTabs = document.querySelectorAll('.axonos-wizard-token-tab');
+                tokenTabs.forEach(tab => {
+                    tab.addEventListener('click', () => {
+                        tokenTabs.forEach(t => t.classList.remove('active'));
+                        tab.classList.add('active');
+                        axonosSelectedPaymentToken = tab.getAttribute('data-token') || 'usdc';
+
+                        // Update pay calculator UI
+                        axonosUpdatePayCalculator();
+                    });
+                });
+
+                // Wire amount input changes
+                const amountInput = document.getElementById('axonos_wizard_pay_amount');
+                if (amountInput) {
+                    amountInput.addEventListener('input', () => {
+                        axonosUpdatePayCalculator();
+                    });
+                }
+
+                // Wire quick-deposit buttons click
+                const quickBtns = document.querySelectorAll('#axonos_wizard_quick_amounts .axonos-deposit-quick-btn');
+                quickBtns.forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        if (amountInput) {
+                            amountInput.value = btn.getAttribute('data-value');
+                            axonosUpdatePayCalculator();
+                        }
+                    });
+                });
+            }
 
             // Primary actions wiring
             const primaryBtn = document.getElementById('axonos_wizard_primary_btn');
@@ -6664,31 +6809,84 @@ Copyright (C) 2019 The noVNC Authors
             const amount = parseFloat(amountInput.value) || 0;
             if (descEl) descEl.textContent = `~${amount} ${token.toUpperCase()}`;
 
-            // Calculate credit conversions
-            let receivedCredits = 0;
-            if (token === 'usdc') {
-                receivedCredits = amount * 120; // 1 USDC = 120 credits
-            } else if (token === 'eth') {
-                receivedCredits = amount * 120000; // 1 ETH = 120,000 credits
-            } else if (token === 'axgt') {
-                receivedCredits = amount * 0.6; // 100 AXGT = 60 credits (0.6 multiplier)
-                // Add AXGT 25% bonus
-                receivedCredits = receivedCredits * 1.25;
+            // Credit conversion — the SERVER's rates, never invented ones. USDC is
+            // fixed-rate; ETH/AXGT are fixed only when dynamic pricing is off. Under
+            // dynamic pricing the real number comes from /api/discount/quote (same
+            // endpoint that prices the actual deposit), so show '—' until it lands —
+            // a hardcoded estimate here once promised 75 credits for 100 AXGT that
+            // credited 23, which testers read as "credits disappearing".
+            const dyn = !!axonosConfig.dynamic_pricing_enabled;
+            let receivedCredits = null;
+            if (amount > 0) {
+                if (token === 'usdc') {
+                    receivedCredits = amount * Number(axonosConfig.usdc_credit_per_usdc || 60);
+                } else if (!dyn) {
+                    if (token === 'eth') {
+                        receivedCredits = amount * Number(axonosConfig.eth_credit_per_eth || 120000);
+                    } else if (token === 'axgt') {
+                        receivedCredits = amount / 100 * Number(axonosConfig.credit_per_100_axgt || 60)
+                            * (1 + Number(axonosConfig.axgt_bonus_percent || 25) / 100);
+                    }
+                }
             }
 
-            if (creditsVal) creditsVal.textContent = Math.round(receivedCredits) + ' credits';
+            axonosWizardApplyCalculatorCredits(receivedCredits);
             if (bonusRow) bonusRow.style.display = (token === 'axgt') ? 'flex' : 'none';
-
-            // Calculate estimated runtime
-            const burnRate = axonosGpuCountForProfile(axonosSelectedGpuProfile);
-            const runMins = receivedCredits / Math.max(1, burnRate);
-            const hours = Math.floor(runMins / 60);
-            const mins = Math.floor(runMins % 60);
-
-            if (runtimeVal) runtimeVal.textContent = `${hours}h ${mins}m`;
             if (gpuLabel) gpuLabel.textContent = axonosProfileLabel(axonosSelectedGpuProfile);
+
+            if (amount > 0 && dyn && token !== 'usdc') {
+                axonosWizardScheduleQuote(token, amount);
+            }
         }
         window.axonosUpdatePayCalculator = axonosUpdatePayCalculator;
+
+        /** Render credits + estimated runtime in the wizard rail (null → '—'). */
+        function axonosWizardApplyCalculatorCredits(receivedCredits) {
+            const creditsVal = document.getElementById('axonos_wizard_pay_credits');
+            const runtimeVal = document.getElementById('axonos_wizard_pay_runtime');
+            if (creditsVal) {
+                creditsVal.textContent = (receivedCredits == null)
+                    ? '—' : Math.round(receivedCredits) + ' credits';
+            }
+            if (runtimeVal) {
+                if (receivedCredits == null) {
+                    runtimeVal.textContent = '—';
+                } else {
+                    const burnRate = axonosGpuCountForProfile(axonosSelectedGpuProfile);
+                    const runMins = receivedCredits / Math.max(1, burnRate);
+                    const hours = Math.floor(runMins / 60);
+                    const mins = Math.floor(runMins % 60);
+                    runtimeVal.textContent = `${hours}h ${mins}m`;
+                }
+            }
+        }
+
+        /** Debounced live quote for the wizard calculator (dynamic-priced rails). */
+        var axonosWizardQuoteTimer = null;
+        var axonosWizardQuoteSeq = 0;
+        function axonosWizardScheduleQuote(token, amount) {
+            if (axonosWizardQuoteTimer) clearTimeout(axonosWizardQuoteTimer);
+            var wallet = window.verifiedWalletAddress || '';
+            if (!/^0x[a-fA-F0-9]{40}$/.test(wallet)) return;
+            axonosWizardQuoteTimer = setTimeout(function () {
+                axonosWizardQuoteTimer = null;
+                var seq = ++axonosWizardQuoteSeq;
+                var url = new URL('/api/discount/quote', window.location.origin);
+                url.searchParams.set('wallet_address', wallet);
+                url.searchParams.set('currency', token);
+                url.searchParams.set('base_amount', String(amount));
+                fetch(url.toString(), { credentials: 'include', headers: { 'X-Wallet-Address': wallet } })
+                    .then(function (r) { return r.json(); })
+                    .then(function (d) {
+                        if (seq !== axonosWizardQuoteSeq || !d || !d.ok || d.estimated_minutes == null) return;
+                        // Drop stale responses: only apply if the input still matches.
+                        var cur = document.getElementById('axonos_wizard_pay_amount');
+                        if (!cur || (parseFloat(cur.value) || 0) !== amount || axonosSelectedPaymentToken !== token) return;
+                        axonosWizardApplyCalculatorCredits(Number(d.estimated_minutes));
+                    })
+                    .catch(function () { /* leave '—' */ });
+            }, 350);
+        }
 
         // Perform session deposit & launch from within wizard Step 3
         function axonosTriggerLaunchFromWizard() {
@@ -6813,7 +7011,14 @@ Copyright (C) 2019 The noVNC Authors
             });
         }
 
-        // Live Telemetry Simulation Loop when Connected
+        // Live Telemetry Loop when Connected — REAL values only:
+        //   GPU / VRAM  — /api/public/telemetry/live (nvidia-smi cache on the gate),
+        //                 filtered to this session's assigned GPUs;
+        //   CPU / RAM / storage — /api/files/stats (file agent inside the session
+        //                 container reads its own cgroup + disk usage);
+        //   credits     — /api/auth/wallet-status (as before).
+        // Rows render "—" when a source is unavailable (e.g. an older container
+        // image without the /stats route) instead of showing invented numbers.
         function axonosStartTelemetryLoop() {
             if (axonosTelemetryInterval) clearInterval(axonosTelemetryInterval);
 
@@ -6822,7 +7027,7 @@ Copyright (C) 2019 The noVNC Authors
 
             axonosTelemetryInterval = setInterval(() => {
                 axonosTickTelemetry();
-            }, 3000);
+            }, 5000);
         }
 
         function axonosStopTelemetryLoop() {
@@ -6832,47 +7037,91 @@ Copyright (C) 2019 The noVNC Authors
             }
         }
 
+        function axonosSetTelemetryRow(valId, progressId, pct, warnAbove) {
+            const valEl = document.getElementById(valId);
+            const progressEl = document.getElementById(progressId);
+            if (!valEl || !progressEl) return;
+            if (pct == null || isNaN(pct)) {
+                valEl.textContent = '—';
+                progressEl.style.width = '0%';
+                return;
+            }
+            const clamped = Math.max(0, Math.min(100, pct));
+            valEl.textContent = Math.round(clamped) + '%';
+            progressEl.style.width = clamped + '%';
+            if (warnAbove != null) {
+                progressEl.classList.toggle('axonos-sidebar-progress-bar--orange', clamped > warnAbove);
+            }
+        }
+
+        function axonosRenderStorageUsage(freeBytes, totalBytes) {
+            const quotaEl = document.getElementById('axonos_sidebar_storage_quota');
+            const progressEl = document.getElementById('axonos_sidebar_storage_progress');
+            if (typeof freeBytes !== 'number' || typeof totalBytes !== 'number' || totalBytes <= 0) {
+                if (quotaEl) quotaEl.textContent = '—';
+                if (progressEl) progressEl.style.width = '0%';
+                return;
+            }
+            const gib = 1024 * 1024 * 1024;
+            const usedBytes = Math.max(0, totalBytes - freeBytes);
+            const usedGb = usedBytes / gib;
+            const totalGb = totalBytes / gib;
+            const fmt = (v) => (v >= 100 ? Math.round(v) : Math.round(v * 10) / 10);
+            if (quotaEl) quotaEl.textContent = fmt(usedGb) + ' / ' + fmt(totalGb) + ' GB';
+            if (progressEl) progressEl.style.width = Math.min(100, (usedBytes / totalBytes) * 100) + '%';
+        }
+
         function axonosTickTelemetry() {
             const wallet = window.verifiedWalletAddress || verifiedWalletAddress;
             if (!wallet) return;
 
-            // Generate slightly fluctuating mock utilization stats
-            const cpu = Math.floor(15 + Math.random() * 25);
-            const ram = Math.floor(42 + Math.random() * 5);
-            const gpu = Math.floor(5 + Math.random() * 85);
-            const vram = Math.floor(50 + Math.random() * 8);
+            // GPU utilization + VRAM for the GPUs assigned to this session.
+            fetch(new URL('/api/public/telemetry/live', window.location.origin).toString(), { credentials: 'include' })
+                .then(r => r.json())
+                .then(data => {
+                    const owned = window.axonosOwnedSession || window.axonosDetachedSession;
+                    const ids = (owned && owned.gpuIds && owned.gpuIds.length)
+                        ? owned.gpuIds.map(Number) : null;
+                    let gpus = (data && data.gpus) || [];
+                    if (ids && ids.length) {
+                        const mine = gpus.filter(g => ids.indexOf(Number(g.index)) !== -1);
+                        if (mine.length) gpus = mine;
+                    }
+                    const utils = gpus.map(g => g.utilization_pct).filter(v => typeof v === 'number');
+                    const gpuPct = utils.length ? utils.reduce((a, b) => a + b, 0) / utils.length : null;
+                    let vramUsed = 0, vramTotal = 0;
+                    gpus.forEach(g => {
+                        if (typeof g.memory_used_mb === 'number' && typeof g.memory_total_mb === 'number') {
+                            vramUsed += g.memory_used_mb;
+                            vramTotal += g.memory_total_mb;
+                        }
+                    });
+                    const vramPct = vramTotal > 0 ? (vramUsed / vramTotal) * 100 : null;
+                    axonosSetTelemetryRow('axonos_telemetry_gpu_val', 'axonos_telemetry_gpu_progress', gpuPct, 80);
+                    axonosSetTelemetryRow('axonos_telemetry_vram_val', 'axonos_telemetry_vram_progress', vramPct, 90);
+                })
+                .catch(() => {
+                    axonosSetTelemetryRow('axonos_telemetry_gpu_val', 'axonos_telemetry_gpu_progress', null);
+                    axonosSetTelemetryRow('axonos_telemetry_vram_val', 'axonos_telemetry_vram_progress', null);
+                });
 
-            // Bind values
-            const cpuVal = document.getElementById('axonos_telemetry_cpu_val');
-            const cpuProgress = document.getElementById('axonos_telemetry_cpu_progress');
-            if (cpuVal && cpuProgress) {
-                cpuVal.textContent = cpu + '%';
-                cpuProgress.style.width = cpu + '%';
-            }
-
-            const ramVal = document.getElementById('axonos_telemetry_ram_val');
-            const ramProgress = document.getElementById('axonos_telemetry_ram_progress');
-            if (ramVal && ramProgress) {
-                ramVal.textContent = ram + '%';
-                ramProgress.style.width = ram + '%';
-            }
-
-            const gpuVal = document.getElementById('axonos_telemetry_gpu_val');
-            const gpuProgress = document.getElementById('axonos_telemetry_gpu_progress');
-            if (gpuVal && gpuProgress) {
-                gpuVal.textContent = gpu + '%';
-                gpuProgress.style.width = gpu + '%';
-
-                // Color warn if utilization is super high
-                gpuProgress.classList.toggle('axonos-sidebar-progress-bar--orange', gpu > 80);
-            }
-
-            const vramVal = document.getElementById('axonos_telemetry_vram_val');
-            const vramProgress = document.getElementById('axonos_telemetry_vram_progress');
-            if (vramVal && vramProgress) {
-                vramVal.textContent = vram + '%';
-                vramProgress.style.width = vram + '%';
-            }
+            // Container CPU / RAM + home-volume storage from the in-container agent.
+            axonosFetch({ url: new URL('/api/files/stats', window.location.origin).toString() })
+                .then(st => {
+                    if (!st || st.ok !== true) throw new Error('stats unavailable');
+                    axonosSetTelemetryRow('axonos_telemetry_cpu_val', 'axonos_telemetry_cpu_progress',
+                        typeof st.cpu_pct === 'number' ? st.cpu_pct : null, 90);
+                    const ramPct = (typeof st.mem_used_bytes === 'number' &&
+                        typeof st.mem_total_bytes === 'number' && st.mem_total_bytes > 0)
+                        ? (st.mem_used_bytes / st.mem_total_bytes) * 100 : null;
+                    axonosSetTelemetryRow('axonos_telemetry_ram_val', 'axonos_telemetry_ram_progress', ramPct, 90);
+                    axonosRenderStorageUsage(st.disk_free_bytes, st.disk_total_bytes);
+                })
+                .catch(() => {
+                    axonosSetTelemetryRow('axonos_telemetry_cpu_val', 'axonos_telemetry_cpu_progress', null);
+                    axonosSetTelemetryRow('axonos_telemetry_ram_val', 'axonos_telemetry_ram_progress', null);
+                    axonosRenderStorageUsage(null, null);
+                });
 
             // Sync credits balance and remaining time.
             // axonosFetchWalletAccessStatus resolves { ok, data } — the minutes live at

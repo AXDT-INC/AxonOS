@@ -29,6 +29,7 @@ STREAM_CHUNK = 256 * 1024
 
 # browser route suffix -> (HTTP method, agent route)
 ROUTES = {
+    "stats": ("GET", "/stats"),
     "list": ("GET", "/list"),
     "download": ("GET", "/download"),
     "upload-status": ("GET", "/upload-status"),

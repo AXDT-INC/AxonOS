@@ -572,26 +572,66 @@ def _get_axgt_balance_display(wallet_address: str) -> Optional[str]:
         return None
 
 
-def _min_axgt_deposit_credit_minutes() -> float:
-    """Minutes credited for a deposit of exactly AXGT_MIN_DEPOSIT (linear per 100 AXGT)."""
+def _import_price_oracle():
+    """Works when loaded as package, as axonos_gate.*, or flat on sys.path."""
+    try:
+        from . import price_oracle
+    except ImportError:
+        try:
+            from axonos_gate import price_oracle
+        except ImportError:
+            import price_oracle
+    return price_oracle
+
+
+def _dynamic_pricing_enabled_flag() -> bool:
+    return (os.getenv("AXGT_DYNAMIC_PRICING") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _min_axgt_deposit_credit_minutes() -> Optional[float]:
+    """Minutes credited for a deposit of exactly AXGT_MIN_DEPOSIT.
+
+    With dynamic pricing enabled this MUST come from the live oracle: the
+    legacy fixed rate (60 min / 100 AXGT) overstated the credit ~2.5x at
+    current AXGT prices, and users read the resulting shortfall as "credits
+    disappearing" after a top-up. When the oracle has no usable price we
+    return None (UI shows a live-rate hint) rather than a wrong number.
+    """
     try:
         min_axgt = Decimal(_get_min_deposit_display())
         if min_axgt <= 0:
             min_axgt = Decimal(DEFAULT_MIN_DEPOSIT)
     except (InvalidOperation, ValueError, TypeError):
         min_axgt = Decimal(DEFAULT_MIN_DEPOSIT)
+    if _dynamic_pricing_enabled_flag():
+        try:
+            live = _import_price_oracle().minutes_for_axgt(min_axgt)
+        except Exception as exc:  # noqa: BLE001 — policy must never 500 on oracle issues
+            logger.warning("live min-AXGT quote failed: %s", exc)
+            live = None
+        return round(live, 4) if live is not None and live > 0 else None
     per_100 = Decimal(str(_get_credit_per_100_axgt_minutes()))
     return float(min_axgt / Decimal("100") * per_100)
 
 
-def _min_eth_deposit_credit_minutes() -> float:
-    """Minutes credited for a deposit of exactly ETH_MIN_DEPOSIT."""
+def _min_eth_deposit_credit_minutes() -> Optional[float]:
+    """Minutes credited for a deposit of exactly ETH_MIN_DEPOSIT.
+
+    Same live-oracle rule as _min_axgt_deposit_credit_minutes.
+    """
     try:
         eth = Decimal(_get_eth_min_deposit_display())
         if eth <= 0:
             eth = Decimal(str(DEFAULT_ETH_MIN_DEPOSIT))
     except (InvalidOperation, ValueError, TypeError):
         eth = Decimal(str(DEFAULT_ETH_MIN_DEPOSIT))
+    if _dynamic_pricing_enabled_flag():
+        try:
+            live = _import_price_oracle().minutes_for_eth(eth)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("live min-ETH quote failed: %s", exc)
+            live = None
+        return round(live, 4) if live is not None and live > 0 else None
     rate = Decimal(str(_get_eth_credit_per_eth_minutes()))
     return float(eth * rate)
 
@@ -637,7 +677,8 @@ def get_credit_policy() -> Dict[str, Any]:
     eth_enabled = eth_deposits_enabled()
     eth_min = _get_eth_min_deposit_display()
     eth_rate = _get_eth_credit_per_eth_minutes()
-    eth_min_minutes = round(_min_eth_deposit_credit_minutes(), 4) if eth_enabled else None
+    eth_min_minutes = _min_eth_deposit_credit_minutes() if eth_enabled else None
+    eth_min_minutes = round(eth_min_minutes, 4) if eth_min_minutes is not None else None
     axgt_direct = _axgt_direct_deposits_enabled_flag()
     discount_tiers: Any = []
     try:
@@ -679,7 +720,7 @@ def get_credit_policy() -> Dict[str, Any]:
         "eth_min_deposit": eth_min,
         "eth_credit_per_eth_minutes": eth_rate,
         "warning_threshold_minutes": _get_warning_threshold_minutes(),
-        "min_axgt_deposit_minutes": round(_min_axgt_deposit_credit_minutes(), 4),
+        "min_axgt_deposit_minutes": _min_axgt_deposit_credit_minutes(),
         "min_eth_deposit_minutes": eth_min_minutes,
         "axgt_direct_deposits_enabled": axgt_direct,
         "usdc_deposits_enabled": usdc_enabled,

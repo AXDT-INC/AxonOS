@@ -1548,9 +1548,11 @@ def api_session_heartbeat():
         return jsonify({"ok": False, "error": "Valid wallet_address required"}), 400
     # Auth: normal wallet auth token (browser) OR the per-session files_key
     # (headless/SSH in-container heartbeat daemon, no browser sign-in).
+    # ssh_active: daemon-reported live sshd connection -> renews the SSH hard cap.
+    ssh_active = bool(data.get('ssh_active'))
     session_key = (request.headers.get('X-AXGT-Session-Key') or data.get('session_key') or '').strip()
     if session_key and validate_session_files_key(wallet_address, session_key):
-        return jsonify(session_heartbeat(wallet_address))
+        return jsonify(session_heartbeat(wallet_address, ssh_active=ssh_active))
     auth_err = _require_auth_token(wallet_address)
     if auth_err:
         logger.warning(
@@ -1558,7 +1560,7 @@ def api_session_heartbeat():
             mask_wallet_address(wallet_address),
         )
         return auth_err
-    return jsonify(session_heartbeat(wallet_address))
+    return jsonify(session_heartbeat(wallet_address, ssh_active=ssh_active))
 
 
 @app.route('/api/session/release', methods=['POST', 'OPTIONS'])

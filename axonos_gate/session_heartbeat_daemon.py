@@ -11,6 +11,11 @@ from inside the session container.
 Auth: the session's per-session secret (AXGT_SESSION_FILES_KEY), validated by the
 gate against the active session row — no browser wallet token needed.
 
+Each heartbeat also reports ``ssh_active`` — whether an ESTABLISHED TCP
+connection to the container's sshd (:22) exists — which the gate uses to renew
+the SSH hard billing cap while a user is actually connected (presence-based
+extension; see session_manager.heartbeat).
+
 Env (injected at session launch):
   AXGT_WALLET_ADDRESS       the session's wallet
   AXGT_SESSION_FILES_KEY    per-session secret (heartbeat credential)
@@ -49,8 +54,40 @@ def _desktop_enabled() -> bool:
     return (os.getenv("AXGT_DESKTOP_ENABLED") or "true").strip().lower() not in ("0", "false", "no", "off")
 
 
+def _ssh_connection_active() -> bool:
+    """True when at least one ESTABLISHED TCP connection to local port 22 exists.
+
+    Read straight from /proc/net/tcp{,6} (hex local_address:port, state 01 =
+    ESTABLISHED) so no external tools are needed. This is the "user present"
+    signal: the gate renews the SSH hard billing cap while someone is actually
+    connected and lets it lapse when nobody is.
+    """
+    for path in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                next(f, None)  # header row
+                for line in f:
+                    parts = line.split()
+                    if len(parts) < 4 or parts[3] != "01":
+                        continue
+                    try:
+                        local_port = int(parts[1].rsplit(":", 1)[1], 16)
+                    except (ValueError, IndexError):
+                        continue
+                    if local_port == 22:
+                        return True
+        except OSError:
+            continue
+    return False
+
+
 def _send_heartbeat() -> dict:
-    body = json.dumps({"wallet_address": WALLET}).encode()
+    payload = {"wallet_address": WALLET}
+    try:
+        payload["ssh_active"] = _ssh_connection_active()
+    except Exception:  # noqa: BLE001 — presence is best-effort, never block the heartbeat
+        pass
+    body = json.dumps(payload).encode()
     req = urllib.request.Request(
         GATE + "/api/session/heartbeat", data=body, method="POST",
         headers={"Content-Type": "application/json", "X-AXGT-Session-Key": FILES_KEY},

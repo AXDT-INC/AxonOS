@@ -1560,13 +1560,15 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             if not wallet_address or not validate_wallet_address(wallet_address):
                 return self._send_json(400, {'ok': False, 'error': 'Valid wallet_address required'})
             # Auth: wallet token (browser) OR per-session files_key (headless/SSH daemon).
+            # ssh_active: daemon-reported live sshd connection -> renews the SSH hard cap.
+            ssh_active = bool(data.get('ssh_active'))
             session_key = (self.headers.get('X-AXGT-Session-Key') or data.get('session_key') or '').strip()
             if session_key and validate_session_files_key and validate_session_files_key(wallet_address, session_key):
-                return self._send_json(200, session_heartbeat(wallet_address))
+                return self._send_json(200, session_heartbeat(wallet_address, ssh_active=ssh_active))
             auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
             if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
                 return self._send_json(401, {'ok': False, 'error': 'Valid auth token required'})
-            result = session_heartbeat(wallet_address)
+            result = session_heartbeat(wallet_address, ssh_active=ssh_active)
             return self._send_json(200, result)
 
         if _session_mgr_available and self.path.startswith('/api/session/release'):

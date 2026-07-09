@@ -475,7 +475,8 @@ def _ensure_tables(conn) -> None:
                 last_billed_at DOUBLE PRECISION,
                 expires_at  DOUBLE PRECISION NOT NULL,
                 status      TEXT NOT NULL DEFAULT 'active',
-                files_key   TEXT
+                files_key   TEXT,
+                ssh_enabled BOOLEAN NOT NULL DEFAULT FALSE
             )
         """)
         # Add last_billed_at if table existed from before migration
@@ -495,6 +496,9 @@ def _ensure_tables(conn) -> None:
             # Set for headless/SSH sessions so an abandoned session can't drain the
             # whole prepaid balance. NULL = no cap (e.g. desktop, legacy rows).
             ("hard_expires_at", "DOUBLE PRECISION"),
+            # Persisted SSH mode so a page reload / status query can tell a headless
+            # SSH session from a desktop one without the client re-asserting intent.
+            ("ssh_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
         ):
             cur.execute(
                 """
@@ -541,12 +545,19 @@ def _init_once() -> bool:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _pause_stale_zero_credit_sessions(cur, now: float, hb_cutoff: float) -> List[tuple]:
-    """Pause (not kill) active sessions that timed out with no prepaid credit left."""
+def _pause_stale_sessions(cur, now: float, hb_cutoff: float) -> List[tuple]:
+    """Pause (not kill) active sessions whose heartbeats stopped.
+
+    Originally this only applied to zero-credit timeouts, but a heartbeat
+    timeout with credit left just means the browser went away (tab closed
+    while detached, crash, network loss) — killing the container there
+    destroyed the user's session storage. With preserve enabled, ALL
+    heartbeat-stale sessions pause instead: the container keeps running,
+    billing stops (billing is heartbeat-driven), and the owner can resume
+    within AXGT_SESSION_PAUSED_MAX_MINUTES; after that TTL —
+    or at an SSH session's hard cap — _expire_stale_paused_sessions ends it.
+    """
     if not _preserve_session_on_credit_exhaust():
-        return []
-    deposit_ledger = _import_deposit_ledger()
-    if not deposit_ledger.init_once():
         return []
     cur.execute(
         f"""SELECT id, wallet_address FROM {_SESSION_TABLE}
@@ -556,8 +567,6 @@ def _pause_stale_zero_credit_sessions(cur, now: float, hb_cutoff: float) -> List
     rows = cur.fetchall() or []
     paused: List[tuple] = []
     for session_id, wallet in rows:
-        if deposit_ledger.get_remaining_minutes(wallet) > 0:
-            continue
         cur.execute(
             f"""UPDATE {_SESSION_TABLE}
                 SET status = 'paused', last_heartbeat = %s
@@ -585,13 +594,15 @@ def session_grace_seconds() -> int:
 def _expire_stale_session(cur, now: float) -> Tuple[Optional[tuple], List[tuple]]:
     """End or pause stale active sessions.
 
-    Zero-credit heartbeat timeouts become ``paused`` when preserve is enabled (container kept).
-    Stale ``expires_at`` (no heartbeat within ``AXGT_SESSION_MAX_MINUTES``) or heartbeat timeout end the session.
+    Heartbeat timeouts become ``paused`` when preserve is enabled (container kept,
+    resumable by the owner within the paused TTL). With preserve disabled — or when
+    ``expires_at`` itself lapsed (no heartbeat within ``AXGT_SESSION_MAX_MINUTES``)
+    or an SSH hard cap passed — the session ends and the container is removed.
 
-    Returns (ended_session_or_none, paused_zero_credit_sessions).
+    Returns (ended_session_or_none, paused_sessions).
     """
     hb_cutoff = now - _heartbeat_timeout_seconds()
-    paused = _pause_stale_zero_credit_sessions(cur, now, hb_cutoff)
+    paused = _pause_stale_sessions(cur, now, hb_cutoff)
     grace = session_grace_seconds()
     cur.execute(
         f"""UPDATE {_SESSION_TABLE}
@@ -663,13 +674,15 @@ def _session_row_to_dict(row) -> Dict[str, Any]:
         "expires_at": row[9],
         "files_key": row[10] if len(row) > 10 else None,
         "hard_expires_at": row[11] if len(row) > 11 else None,
+        "ssh_enabled": bool(row[12]) if len(row) > 12 else False,
     }
 
 
 def _get_active_rows(cur) -> List[Dict[str, Any]]:
     cur.execute(
         f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
-                   started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at
+                   started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at,
+                   ssh_enabled
             FROM {_SESSION_TABLE}
             WHERE status = 'active'
             ORDER BY started_at ASC""",
@@ -683,7 +696,8 @@ def _get_paused_rows(cur, now: float) -> List[Dict[str, Any]]:
     cutoff = now - _session_paused_max_seconds()
     cur.execute(
         f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
-                   started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at
+                   started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at,
+                   ssh_enabled
             FROM {_SESSION_TABLE}
             WHERE status = 'paused' AND last_heartbeat >= %s
             ORDER BY started_at ASC""",
@@ -701,7 +715,8 @@ def _get_gpu_reserved_rows(cur, now: float) -> List[Dict[str, Any]]:
 def _paused_session_for_wallet(cur, wallet: str, now: float) -> Optional[Dict[str, Any]]:
     cur.execute(
         f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
-                   started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at
+                   started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at,
+                   ssh_enabled
             FROM {_SESSION_TABLE}
             WHERE status = 'paused' AND wallet_address = %s AND last_heartbeat >= %s
             ORDER BY started_at DESC
@@ -722,7 +737,8 @@ def _get_active_row(cur) -> Optional[Dict[str, Any]]:
 def _active_session_for_wallet(cur, wallet: str) -> Optional[Dict[str, Any]]:
     cur.execute(
         f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
-                   started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at
+                   started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at,
+                   ssh_enabled
             FROM {_SESSION_TABLE}
             WHERE status = 'active' AND wallet_address = %s
             ORDER BY started_at DESC
@@ -1080,6 +1096,28 @@ def try_claim_session(
             owned = _active_session_for_wallet(cur, wallet)
             if owned:
                 remaining = max(0, owned["expires_at"] - now)
+                # An explicit owner re-claim of an SSH session RENEWS its hard
+                # billing cap: extend-only to max(current, now + min(affordable,
+                # ceiling)). This is the deliberate "extend session" signal for
+                # browsers (Extend button) and agents (re-POST claim / pay more
+                # via x402) — a forgotten session has nobody to renew it, so the
+                # anti-drain property of the cap is preserved. Sessions with no
+                # cap (legacy rows / no ceiling configured) are left uncapped.
+                hard_expires_at = owned.get("hard_expires_at")
+                if owned.get("ssh_enabled") and hard_expires_at is not None:
+                    cap_secs = _ssh_hard_cap_seconds(_remaining_minutes_for(wallet))
+                    if cap_secs is not None and now + cap_secs > hard_expires_at:
+                        cur.execute(
+                            f"""UPDATE {_SESSION_TABLE}
+                                SET hard_expires_at = %s
+                                WHERE id = %s AND status = 'active'""",
+                            (now + cap_secs, owned["id"]),
+                        )
+                        hard_expires_at = now + cap_secs
+                        logger.info(
+                            "session_manager: SSH hard cap renewed for session %s (%s): +%ds",
+                            owned["id"], _mask(wallet), int(cap_secs),
+                        )
                 conn.commit()
                 owned_resp = {
                     "granted": True,
@@ -1090,9 +1128,13 @@ def try_claim_session(
                     "allocation_status": "allocated",
                     "remaining_seconds": int(remaining),
                 }
-                # The SSH port is deterministic from the session id, so a reload that
-                # re-asserts ssh intent can recover the connect-string without a DB column.
-                if requested_ssh:
+                if hard_expires_at is not None:
+                    owned_resp["hard_cap_remaining_seconds"] = int(max(0, hard_expires_at - now))
+                # The stored ssh_enabled flag (not the client's requested_ssh) decides
+                # whether SSH connect fields are returned: a reload with a stale SSH
+                # toggle must not present an ssh connect-string for a desktop container,
+                # and a reload that lost the toggle must still recover the SSH card.
+                if owned.get("ssh_enabled"):
                     owned_resp.update(_ssh_connection_fields(owned["id"]))
                 return owned_resp
 
@@ -1143,8 +1185,9 @@ def try_claim_session(
                 cur.execute(
                     f"""INSERT INTO {_SESSION_TABLE}
                         (wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
-                         started_at, last_heartbeat, last_billed_at, expires_at, status, files_key, hard_expires_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s, %s)
+                         started_at, last_heartbeat, last_billed_at, expires_at, status, files_key, hard_expires_at,
+                         ssh_enabled)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s, %s, %s)
                         RETURNING id""",
                     (
                         wallet,
@@ -1158,6 +1201,7 @@ def try_claim_session(
                         now + max_secs,
                         files_key,
                         hard_expires_at,
+                        bool(requested_ssh),
                     ),
                 )
                 session_id = cur.fetchone()[0]
@@ -1225,6 +1269,8 @@ def try_claim_session(
                     "allocation_status": "allocated",
                     "remaining_seconds": max_secs,
                 }
+                if hard_expires_at is not None:
+                    granted["hard_cap_remaining_seconds"] = int(max(0, hard_expires_at - now))
                 if requested_ssh:
                     granted.update(_ssh_connection_fields(session_id))
                 return granted
@@ -1254,8 +1300,16 @@ def try_claim_session(
         conn.close()
 
 
-def heartbeat(wallet_address: str) -> Dict[str, Any]:
-    """Update heartbeat for the active session owner; bill elapsed time from last_billed_at."""
+def heartbeat(wallet_address: str, ssh_active: bool = False) -> Dict[str, Any]:
+    """Update heartbeat for the active session owner; bill elapsed time from last_billed_at.
+
+    ``ssh_active`` is reported by the in-container heartbeat daemon when at
+    least one ESTABLISHED connection to the container's sshd exists. A present
+    user renews the SSH hard billing cap exactly like an explicit re-claim
+    (extend-only, still bounded by min(affordable, ceiling)), so interactive
+    sessions never die under the operator ceiling while someone is connected,
+    and abandoned ones still do.
+    """
     wallet = wallet_address.lower()
     if not _init_once():
         return {"ok": False, "reason": "Session DB unavailable"}
@@ -1277,7 +1331,8 @@ def heartbeat(wallet_address: str) -> Dict[str, Any]:
             ended, paused_credit = _expire_stale_session(cur, now)
             paused_ended = _expire_stale_paused_sessions(cur, now)
             cur.execute(
-                f"""SELECT id, last_billed_at, expires_at, started_at, requested_profile, gpu_ids, container_id
+                f"""SELECT id, last_billed_at, expires_at, started_at, requested_profile, gpu_ids, container_id,
+                           hard_expires_at
                     FROM {_SESSION_TABLE}
                     WHERE status = 'active' AND wallet_address = %s
                     FOR UPDATE""",
@@ -1302,6 +1357,7 @@ def heartbeat(wallet_address: str) -> Dict[str, Any]:
             req_profile = row[4] or "small"
             assigned_gpu_ids = _parse_gpu_ids(row[5])
             container_id = row[6]
+            hard_expires_at = row[7]
             # Bill from last checkpoint, or from session start if never billed (e.g. pre-migration row)
             bill_from = last_billed_at if last_billed_at is not None else started_at
             elapsed_seconds = max(0.0, now - bill_from)
@@ -1370,12 +1426,21 @@ def heartbeat(wallet_address: str) -> Dict[str, Any]:
             last_billed_at_value = now if billed_this_heartbeat else bill_from
             # Slide expires_at so AXGT_SESSION_MAX_MINUTES is idle timeout, not a fixed wall-clock cap.
             new_expires_at = now + _session_max_seconds()
+            # Presence-based SSH hard-cap renewal: a live sshd connection reported
+            # by the in-container daemon slides the cap forward (extend-only,
+            # min(affordable, ceiling) from now). Sessions without a cap stay
+            # uncapped; absence of the flag (old daemons, browser heartbeats)
+            # changes nothing.
+            if ssh_active and hard_expires_at is not None:
+                cap_secs = _ssh_hard_cap_seconds(_remaining_minutes_for(wallet))
+                if cap_secs is not None and now + cap_secs > hard_expires_at:
+                    hard_expires_at = now + cap_secs
             cur.execute(
                 f"""UPDATE {_SESSION_TABLE}
-                    SET last_heartbeat = %s, last_billed_at = %s, expires_at = %s
+                    SET last_heartbeat = %s, last_billed_at = %s, expires_at = %s, hard_expires_at = %s
                     WHERE status = 'active' AND wallet_address = %s AND id = %s
                     RETURNING expires_at""",
-                (now, last_billed_at_value, new_expires_at, wallet, session_id),
+                (now, last_billed_at_value, new_expires_at, hard_expires_at, wallet, session_id),
             )
             row2 = cur.fetchone()
             # Single commit: persists both deposit_ledger updates (from _deduct_usage_on_cursor) and session row.
@@ -1395,6 +1460,8 @@ def heartbeat(wallet_address: str) -> Dict[str, Any]:
                 "gpu_billing_enabled": _gpu_billing_enabled(),
                 "billing_gpu_count": billing_gpu_count,
             }
+            if hard_expires_at is not None:
+                result["hard_cap_remaining_seconds"] = int(max(0, hard_expires_at - now))
             if wall_minutes > 0 and _gpu_billing_enabled():
                 result["wall_minutes_billed"] = round(wall_minutes, 4)
                 result["minutes_billed"] = round(minutes_delta, 4)
@@ -1537,6 +1604,7 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
                         "started_at": row.get("started_at"),
                         "expires_at": row.get("expires_at"),
                         "last_heartbeat": row.get("last_heartbeat"),
+                        "ssh_enabled": bool(row.get("ssh_enabled")),
                     }
                     for row in active_rows
                 ]
@@ -1554,6 +1622,17 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
                         if owner_gpu_ids
                         else _billing_gpu_count(owner_gpu_ids, owner_profile)
                     )
+                    result["owner_remaining_seconds"] = int(max(0, owned["expires_at"] - now))
+                    if owned.get("hard_expires_at") is not None:
+                        result["owner_hard_cap_remaining_seconds"] = int(
+                            max(0, owned["hard_expires_at"] - now)
+                        )
+                    # Headless SSH session: tell the client so a reload restores the
+                    # SSH connect card instead of offering a desktop viewer that the
+                    # container cannot serve.
+                    result["owner_ssh_enabled"] = bool(owned.get("ssh_enabled"))
+                    if owned.get("ssh_enabled"):
+                        result.update(_ssh_connection_fields(owned["id"]))
                 paused_owned = _paused_session_for_wallet(cur, wallet, now)
                 if paused_owned and _preserve_session_on_credit_exhaust():
                     paused_profile = paused_owned.get("requested_profile") or "small"

@@ -442,6 +442,21 @@ def _get_volume_size_kb(volume_name: str) -> float:
     return 0.0
 
 
+def _volume_created_at_epoch(volume_name: str):
+    """Volume creation time (epoch seconds), or None if it can't be determined."""
+    try:
+        out = subprocess.check_output(
+            ["docker", "volume", "inspect", "-f", "{{.CreatedAt}}", volume_name],
+            stderr=subprocess.STDOUT, text=True, timeout=10
+        ).strip()
+        if out:
+            from datetime import datetime
+            return datetime.fromisoformat(out.replace("Z", "+00:00")).timestamp()
+    except Exception as exc:
+        logger.warning("volume inspect CreatedAt failed for %s: %s", volume_name, exc)
+    return None
+
+
 def _run_volume_cleanup() -> None:
     db_url = os.getenv("AXGT_CHALLENGE_DB_URL")
     if not db_url:
@@ -515,6 +530,18 @@ def _run_volume_cleanup() -> None:
         conn = psycopg2.connect(db_url)
         conn.autocommit = False
         with conn.cursor() as cur:
+            # Anchor each wallet's storage charge to its LAST ledger charge (or the
+            # volume's creation) and bill actual elapsed hours. The old code billed a
+            # fixed `interval/3600` hours per sweep regardless of elapsed time, so the
+            # sweep that runs 30s after every launcher restart charged a full hour —
+            # frequent deploys silently over-billed every wallet with a volume.
+            cur.execute(
+                """SELECT wallet_address, MAX(created_at) FROM axgt_ledger
+                   WHERE created_by = 'volume_billing_daemon'
+                   GROUP BY wallet_address"""
+            )
+            last_charges = {row[0]: float(row[1]) for row in cur.fetchall() or []}
+
             for volume_name in volume_names:
                 safe_wallet = volume_name[len(prefix):]
                 if safe_wallet not in db_wallets:
@@ -531,9 +558,27 @@ def _run_volume_cleanup() -> None:
                         logger.warning("Auto volume prune: Failed to remove volume %s: %s", volume_name, rm_res.stderr.strip())
                     continue
 
+                # Later of last ledger charge / volume creation, so a volume recreated
+                # after its wallet's last charge doesn't inherit the old anchor.
+                anchor = last_charges.get(original_wallet)
+                created_at = _volume_created_at_epoch(volume_name)
+                if created_at is not None:
+                    anchor = max(anchor, created_at) if anchor is not None else created_at
+                if anchor is None:
+                    # No ledger history and no readable creation time: bill one
+                    # interval (legacy behavior) so storage is never free forever.
+                    anchor = now - interval
+                elapsed_hours = max(0.0, (now - anchor) / 3600.0)
+                # Guard against clock skew / bad CreatedAt producing a monster charge.
+                elapsed_hours = min(elapsed_hours, 24.0 * 7)
+                if elapsed_hours * 3600.0 < 60.0:
+                    # Sweep re-ran right after a charge (e.g. daemon restart) — the
+                    # elapsed time rides over to the next sweep instead of rounding up.
+                    continue
+
                 size_kb = _get_volume_size_kb(volume_name)
                 size_gb = size_kb / (1024.0 * 1024.0)
-                charge = size_gb * cost_per_gb_hour * (interval / 3600.0)
+                charge = size_gb * cost_per_gb_hour * elapsed_hours
 
                 if charge > 0:
                     new_remaining = remaining - charge
@@ -546,9 +591,9 @@ def _run_volume_cleanup() -> None:
                         INSERT INTO axgt_ledger (wallet_address, event_type, minutes_delta, axgt_delta, balance_after_minutes, notes, created_at, created_by)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                         """,
-                        (original_wallet, "usage_deduction", -charge, 0, new_remaining, f"Offline storage charge for volume size: {size_gb:.4f} GB", now, "volume_billing_daemon")
+                        (original_wallet, "usage_deduction", -charge, 0, new_remaining, f"Offline storage charge: {size_gb:.4f} GB x {elapsed_hours:.3f} h", now, "volume_billing_daemon")
                     )
-                    logger.info("Auto volume prune: Charged %s for %s offline storage: %s remaining minutes", original_wallet, f"{size_gb:.4f} GB", new_remaining)
+                    logger.info("Auto volume prune: Charged %s for %s offline storage over %.3f h: %s remaining minutes", original_wallet, f"{size_gb:.4f} GB", elapsed_hours, new_remaining)
 
                     if new_remaining < min_balance_limit:
                         logger.info("Auto volume prune: Pruning volume %s after charge pushed balance (%s) below debt limit (%s)", volume_name, new_remaining, min_balance_limit)

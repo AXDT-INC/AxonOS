@@ -7,6 +7,7 @@ single-instance image) as the desktop user and exposes a small HTTP API that
 the gate proxies browser file transfers to over the docker network:
 
   GET  /healthz                            liveness (no auth)
+  GET  /stats                              container CPU/RAM/disk telemetry
   GET  /list?path=REL                      directory listing inside the root
   GET  /download?path=REL                  stream a file (Range / If-Range)
   GET  /upload-status?path=REL&total=N     resume offset for a partial upload
@@ -110,6 +111,133 @@ def _lock_for(path: str) -> threading.Lock:
 
 class PathError(Exception):
     pass
+
+
+# ---------------------------------------------------------------------------
+# Container telemetry (/stats) — real values for the session sidebar
+# ---------------------------------------------------------------------------
+# CPU% is a delta between successive /stats calls, so the first call after
+# startup reports cpu_pct=None and the poller's own interval sets the window.
+_cpu_sample_guard = threading.Lock()
+_cpu_last_sample = {"usage_usec": None, "ts": None}
+
+
+def _read_first_file(paths) -> str:
+    for p in paths:
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                return f.read()
+        except OSError:
+            continue
+    return ""
+
+
+def _cgroup_cpu_usage_usec():
+    """Cumulative CPU usage of this container in microseconds (cgroup v2/v1)."""
+    raw = _read_first_file(["/sys/fs/cgroup/cpu.stat"])
+    for line in raw.splitlines():
+        if line.startswith("usage_usec"):
+            try:
+                return float(line.split()[1])
+            except (IndexError, ValueError):
+                return None
+    raw = _read_first_file([
+        "/sys/fs/cgroup/cpuacct/cpuacct.usage",
+        "/sys/fs/cgroup/cpu,cpuacct/cpuacct.usage",
+    ])
+    try:
+        return float(raw.strip()) / 1000.0  # ns -> usec
+    except ValueError:
+        return None
+
+
+def _cgroup_cpu_limit_count() -> float:
+    """CPUs available to this container (quota if set, else host count)."""
+    raw = _read_first_file(["/sys/fs/cgroup/cpu.max"]).split()
+    if len(raw) == 2 and raw[0] != "max":
+        try:
+            return max(1.0, float(raw[0]) / float(raw[1]))
+        except (ValueError, ZeroDivisionError):
+            pass
+    quota = _read_first_file(["/sys/fs/cgroup/cpu/cpu.cfs_quota_us",
+                              "/sys/fs/cgroup/cpu,cpuacct/cpu.cfs_quota_us"]).strip()
+    period = _read_first_file(["/sys/fs/cgroup/cpu/cpu.cfs_period_us",
+                               "/sys/fs/cgroup/cpu,cpuacct/cpu.cfs_period_us"]).strip()
+    try:
+        q, p = float(quota), float(period)
+        if q > 0 and p > 0:
+            return max(1.0, q / p)
+    except ValueError:
+        pass
+    return float(os.cpu_count() or 1)
+
+
+def _host_mem_total_bytes():
+    for line in _read_first_file(["/proc/meminfo"]).splitlines():
+        if line.startswith("MemTotal:"):
+            try:
+                return float(line.split()[1]) * 1024.0
+            except (IndexError, ValueError):
+                return None
+    return None
+
+
+def _cgroup_memory_bytes():
+    """(used, total) bytes for this container; total falls back to host RAM."""
+    used = None
+    raw = _read_first_file(["/sys/fs/cgroup/memory.current",
+                            "/sys/fs/cgroup/memory/memory.usage_in_bytes"]).strip()
+    try:
+        used = float(raw)
+    except ValueError:
+        pass
+    total = None
+    raw = _read_first_file(["/sys/fs/cgroup/memory.max",
+                            "/sys/fs/cgroup/memory/memory.limit_in_bytes"]).strip()
+    if raw and raw != "max":
+        try:
+            total = float(raw)
+        except ValueError:
+            total = None
+    # v1 reports an absurd number when unlimited; treat >= 1 PiB as "no limit".
+    if total is None or total >= float(1 << 50):
+        total = _host_mem_total_bytes()
+    return used, total
+
+
+def collect_container_stats() -> dict:
+    import time as _time
+
+    now = _time.time()
+    cpu_pct = None
+    usage = _cgroup_cpu_usage_usec()
+    if usage is not None:
+        with _cpu_sample_guard:
+            last_usage = _cpu_last_sample["usage_usec"]
+            last_ts = _cpu_last_sample["ts"]
+            _cpu_last_sample["usage_usec"] = usage
+            _cpu_last_sample["ts"] = now
+        if last_usage is not None and last_ts is not None and now > last_ts:
+            wall_usec = (now - last_ts) * 1_000_000.0
+            cpu_pct = max(0.0, (usage - last_usage) / wall_usec * 100.0
+                          / _cgroup_cpu_limit_count())
+
+    mem_used, mem_total = _cgroup_memory_bytes()
+    disk_free = disk_total = None
+    try:
+        disk = shutil.disk_usage(files_root())
+        disk_free, disk_total = disk.free, disk.total
+    except OSError:
+        pass
+    return {
+        "ok": True,
+        "cpu_pct": round(cpu_pct, 1) if cpu_pct is not None else None,
+        "cpu_count": _cgroup_cpu_limit_count(),
+        "mem_used_bytes": int(mem_used) if mem_used is not None else None,
+        "mem_total_bytes": int(mem_total) if mem_total is not None else None,
+        "disk_free_bytes": disk_free,
+        "disk_total_bytes": disk_total,
+    }
 
 
 def resolve_rel(rel: str, for_write: bool = False) -> str:
@@ -239,6 +367,8 @@ class FileAgentHandler(BaseHTTPRequestHandler):
             return self._send_json(200, {"ok": True})
         if not self._authorized():
             return self._send_json(403, {"ok": False, "error": "forbidden"})
+        if route == "/stats":
+            return self._handle_stats()
         if route == "/list":
             return self._handle_list()
         if route == "/download":
@@ -270,6 +400,13 @@ class FileAgentHandler(BaseHTTPRequestHandler):
         return self._send_json(404, {"ok": False, "error": "unknown route"})
 
     # -- handlers ----------------------------------------------------------
+
+    def _handle_stats(self):
+        try:
+            return self._send_json(200, collect_container_stats())
+        except Exception as exc:  # never let telemetry take the agent down
+            logger.warning("stats failed: %s", exc)
+            return self._send_json(500, {"ok": False, "error": "stats unavailable"})
 
     def _handle_list(self):
         q = self._query()

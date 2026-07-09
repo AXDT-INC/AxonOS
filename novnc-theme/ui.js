@@ -558,7 +558,8 @@ const UI = {
         }
     },
 
-    /** Tab close → release; F5/Ctrl+R → keep session (reload). */
+    /** Tab close on a CONNECTED viewer → release; F5/Ctrl+R → keep session
+     *  (reload); detached/SSH sessions are never released by tab close. */
     addAxonosSessionLifecycleHandlers() {
         if (window.axonosSessionLifecycleHandlersInstalled) {
             return;
@@ -1124,6 +1125,38 @@ const UI = {
                 UI.disconnect();
             });
         }
+        const extendBtn = document.getElementById('axonos_ssh_extend_btn');
+        if (extendBtn) {
+            // Extend = owner re-claim: the gate renews the hard billing cap to
+            // now + min(affordable, ceiling) and returns the fresh deadline.
+            extendBtn.addEventListener('click', () => {
+                if (extendBtn.disabled) return;
+                const restoreLabel = extendBtn.textContent;
+                extendBtn.disabled = true;
+                extendBtn.textContent = 'Extending…';
+                UI._axonosFetchSessionClaim().then((claim) => {
+                    const granted = claim && (claim.granted === true || claim.granted === 'true');
+                    if (granted && typeof claim.hard_cap_remaining_seconds === 'number') {
+                        UI._axonosUpdateSshCardCap(claim);
+                        extendBtn.textContent = 'Extended ✓';
+                    } else if (granted) {
+                        extendBtn.textContent = 'Extended ✓';
+                    } else {
+                        const reason = (claim && claim.reason) ? String(claim.reason) : 'Could not extend the session.';
+                        UI.showStatus(reason, 'error');
+                        extendBtn.textContent = restoreLabel;
+                    }
+                }).catch(() => {
+                    UI.showStatus(_('Could not extend the session.'), 'error');
+                    extendBtn.textContent = restoreLabel;
+                }).finally(() => {
+                    setTimeout(() => {
+                        extendBtn.disabled = false;
+                        extendBtn.textContent = restoreLabel;
+                    }, 1600);
+                });
+            });
+        }
         UI.updateAxonosSshUi();
     },
 
@@ -1154,17 +1187,44 @@ const UI = {
         // Keep the landing dialog open (the card lives inside it) but hide the
         // launch controls while the session is active.
         UI.openConnectPanel();
+        // The card lives in the LANDING screen section. A launch from the v2
+        // wizard leaves the dialog in the wizard screen state (landing section
+        // display:none), which rendered the connect-string invisibly — force
+        // the landing screen whenever the card must be shown.
+        if (typeof window.axonosUpdateActiveScreen === 'function') {
+            window.axonosUpdateActiveScreen('landing');
+        }
         const user = claim.ssh_user || 'aXonian';
         const host = claim.ssh_host || window.location.hostname;
         const port = claim.ssh_port;
         cmdEl.textContent = `ssh -p ${port} ${user}@${host}`;
-        const ttlEl = document.getElementById('axonos_ssh_card_ttl');
-        if (ttlEl && typeof claim.remaining_seconds === 'number') {
-            const mins = Math.max(0, Math.round(claim.remaining_seconds / 60));
-            ttlEl.textContent = `Session time remaining: ~${mins} min`;
-        }
+        UI._axonosUpdateSshCardCap(claim);
         UI._axonosToggleSshLaunchControls(true);
         card.classList.remove('axonos-ssh-card--hidden');
+    },
+
+    /** Update the SSH card deadline line from any payload that carries
+     *  hard_cap_remaining_seconds (claim/status/heartbeat). The HARD cap is the
+     *  real end time — it renews while an SSH connection is live and on Extend;
+     *  the sliding idle TTL (remaining_seconds) is only a fallback for older
+     *  gates that don't report the cap. Turns amber under 30 minutes. */
+    _axonosUpdateSshCardCap(payload) {
+        const ttlEl = document.getElementById('axonos_ssh_card_ttl');
+        if (!ttlEl || !payload) return;
+        const capSecs = (typeof payload.hard_cap_remaining_seconds === 'number')
+            ? payload.hard_cap_remaining_seconds
+            : null;
+        const secs = capSecs !== null
+            ? capSecs
+            : (typeof payload.remaining_seconds === 'number' ? payload.remaining_seconds : null);
+        if (secs === null) return;
+        const mins = Math.max(0, Math.round(secs / 60));
+        const h = Math.floor(mins / 60);
+        const label = h > 0 ? `${h}h ${mins % 60}m` : `${mins} min`;
+        ttlEl.textContent = capSecs !== null
+            ? `Session ends in ~${label} — renews while you're connected over SSH, or press Extend.`
+            : `Session time remaining: ~${label}`;
+        ttlEl.style.color = mins <= 30 ? 'var(--warm, #f2c14e)' : '';
     },
 
     hideAxonosSshCard() {
@@ -2198,7 +2258,7 @@ const UI = {
         }
         const confirmed = await UI.showConfirm(
             _("Detach from the remote view?"),
-            _("You return to the home screen. Your desktop keeps running and prepaid minutes keep counting while this tab stays open.\n\nUse End session or close this tab when you are fully done."),
+            _("You return to the home screen. Your desktop keeps running and prepaid minutes keep counting while this tab stays open. If you close the tab, the desktop pauses shortly after and can be resumed with the same wallet.\n\nUse End session when you are fully done."),
             {
                 confirmText: _("Detach"),
                 confirmType: 'primary'
@@ -2540,9 +2600,17 @@ const UI = {
     },
 
     _axonosSessionOwnsServerSlot() {
-        return !!(window.axonosSessionDetached ||
-            UI.connected ||
-            UI._axgtStatusPollId);
+        // Detached desktops and headless SSH sessions (which reuse the detached
+        // flag) must SURVIVE tab close: that is the whole point of detaching, and
+        // SSH sessions are used from a terminal with the in-container heartbeat
+        // daemon keeping them alive. The server pauses a detached desktop for
+        // resume once browser heartbeats stop; only End session / sign-out
+        // releases it. Note the billing poll keeps running while detached, so
+        // _axgtStatusPollId alone must not be treated as slot ownership here.
+        if (window.axonosSessionDetached) {
+            return false;
+        }
+        return !!(UI.connected || UI._axgtStatusPollId);
     },
 
     /** Fire-and-forget release for tab close (pagehide). */
@@ -3582,6 +3650,12 @@ const UI = {
                         typeof window.axonosApplyDetachedSessionUi === 'function') {
                         window.axonosApplyDetachedSessionUi(true);
                     }
+                }
+                // Live SSH-card deadline: heartbeats carry the (possibly
+                // presence-renewed) hard-cap remaining time.
+                if (hb && hb.ok === true && window.axonosSessionDetached &&
+                    typeof hb.hard_cap_remaining_seconds === 'number') {
+                    UI._axonosUpdateSshCardCap(hb);
                 }
                 if (hb && hb.ok === false) {
                     const hbReason = String(hb.reason || '');

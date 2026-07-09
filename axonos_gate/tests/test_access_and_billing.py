@@ -109,7 +109,7 @@ class TestBillingAndSession(unittest.TestCase):
         cur = MagicMock()
         cur.fetchone.side_effect = [
             None,                          # _expire_stale_session RETURNING
-            (1, 1000.0, 2000.0, 500.0, "small", "0", "shared-desktop"),   # SELECT session row
+            (1, 1000.0, 2000.0, 500.0, "small", "0", "shared-desktop", None),   # SELECT session row
             (2000.0,),                     # UPDATE RETURNING expires_at
         ]
         conn.cursor.return_value = cur
@@ -139,7 +139,7 @@ class TestBillingAndSession(unittest.TestCase):
         cur = MagicMock()
         cur.fetchone.side_effect = [
             None,
-            (1, 1000.0, 2000.0, 500.0, "small", "0", "axgt-session-1"),
+            (1, 1000.0, 2000.0, 500.0, "small", "0", "axgt-session-1", None),
             (5100.0,),
         ]
         conn.cursor.return_value = cur
@@ -160,6 +160,60 @@ class TestBillingAndSession(unittest.TestCase):
         self.assertEqual(update_calls[0][0][1][2], 1500.0 + 60 * 60)
 
     @patch("axonos_gate.deposit_ledger._deduct_usage_on_cursor")
+    @patch("axonos_gate.deposit_ledger.init_once", return_value=True)
+    @patch("axonos_gate.session_manager.time.time", return_value=1500.0)
+    @patch("axonos_gate.session_manager._get_connection")
+    def test_heartbeat_ssh_active_renews_hard_cap(
+        self, mock_conn, _mock_time, _mock_init, mock_deduct
+    ):
+        """A daemon-reported live SSH connection slides hard_expires_at forward
+        (extend-only, min(affordable, ceiling)); without the flag it must not move."""
+        from axonos_gate import session_manager
+
+        session_manager._pg_init_done = True
+
+        def run(ssh_active, hard):
+            conn = MagicMock()
+            cur = MagicMock()
+            cur.fetchone.side_effect = [
+                None,
+                (1, 1000.0, 2000.0, 500.0, "small", "0", "axgt-session-1", hard),
+                (5100.0,),
+            ]
+            conn.cursor.return_value = cur
+            mock_conn.return_value = conn
+            with patch.dict(
+                os.environ, {"AXGT_SSH_MAX_SESSION_MINUTES": "240"}, clear=False
+            ), patch(
+                "axonos_gate.session_manager._remaining_minutes_for", return_value=999.0
+            ):
+                result = session_manager.heartbeat(
+                    "0x1234567890123456789012345678901234567890", ssh_active=ssh_active
+                )
+            update = [
+                c for c in cur.execute.call_args_list
+                if c[0] and "SET last_heartbeat" in str(c[0][0]) and "hard_expires_at" in str(c[0][0])
+            ][0]
+            return result, update[0][1][3]  # (now, last_billed, expires, hard, ...)
+
+        mock_deduct.return_value = (True, 58.5, None)
+
+        # Presence renews: cap 100s away -> now + 240 min.
+        result, new_hard = run(ssh_active=True, hard=1600.0)
+        self.assertEqual(new_hard, 1500.0 + 240 * 60)
+        self.assertEqual(result.get("hard_cap_remaining_seconds"), 240 * 60)
+
+        # No presence: cap untouched, still reported.
+        result, new_hard = run(ssh_active=False, hard=1600.0)
+        self.assertEqual(new_hard, 1600.0)
+        self.assertEqual(result.get("hard_cap_remaining_seconds"), 100)
+
+        # Uncapped session stays uncapped even with a (spoofed) presence flag.
+        result, new_hard = run(ssh_active=True, hard=None)
+        self.assertIsNone(new_hard)
+        self.assertNotIn("hard_cap_remaining_seconds", result)
+
+    @patch("axonos_gate.deposit_ledger._deduct_usage_on_cursor")
     @patch("axonos_gate.deposit_ledger.get_remaining_minutes", return_value=50.0)
     @patch("axonos_gate.deposit_ledger.init_once", return_value=True)
     @patch("axonos_gate.session_manager.time.time", return_value=1500.0)
@@ -174,7 +228,7 @@ class TestBillingAndSession(unittest.TestCase):
         cur = MagicMock()
         cur.fetchone.side_effect = [
             None,
-            (1, 1000.0, 2000.0, 1000.0, "large", "0,1,2,3", "cid"),
+            (1, 1000.0, 2000.0, 1000.0, "large", "0,1,2,3", "cid", None),
             (2000.0,),
         ]
         conn.cursor.return_value = cur
@@ -243,7 +297,7 @@ class TestBillingAndSession(unittest.TestCase):
         cur.fetchall.return_value = []
         cur.fetchone.side_effect = [
             None,  # _expire_stale_session
-            (1, 1000.0, 2000.0, 1000.0, "small", "0", "axgt-session-1"),  # active session
+            (1, 1000.0, 2000.0, 1000.0, "small", "0", "axgt-session-1", None),  # active session
             ("0x1234567890123456789012345678901234567890",),  # pause UPDATE RETURNING
         ]
         conn.cursor.return_value = cur
@@ -282,7 +336,7 @@ class TestBillingAndSession(unittest.TestCase):
         cur.fetchall.return_value = []
         cur.fetchone.side_effect = [
             None,
-            (1, 1000.0, 2000.0, 1000.0, "small", "0", "axgt-session-1"),
+            (1, 1000.0, 2000.0, 1000.0, "small", "0", "axgt-session-1", None),
             ("0x1234567890123456789012345678901234567890",),
         ]
         conn.cursor.return_value = cur

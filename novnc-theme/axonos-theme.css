@@ -4882,7 +4882,8 @@ html.axonos-mic-live::after {
 }
 
 .axonos-ssh-card__copy,
-.axonos-ssh-card__end {
+.axonos-ssh-card__end,
+.axonos-ssh-card__extend {
   cursor: pointer;
   border-radius: 8px;
   border: 1px solid var(--rule-strong);
@@ -4893,9 +4894,15 @@ html.axonos-mic-live::after {
 }
 
 .axonos-ssh-card__copy:hover,
-.axonos-ssh-card__end:hover {
+.axonos-ssh-card__end:hover,
+.axonos-ssh-card__extend:hover {
   border-color: var(--cyan);
   color: var(--cyan);
+}
+
+.axonos-ssh-card__extend:disabled {
+  cursor: default;
+  opacity: 0.7;
 }
 
 .axonos-ssh-card__ttl {
@@ -4911,8 +4918,14 @@ html.axonos-mic-live::after {
   line-height: 1.35;
 }
 
-.axonos-ssh-card__end {
-  width: 100%;
+.axonos-ssh-card__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.axonos-ssh-card__end,
+.axonos-ssh-card__extend {
+  flex: 1 1 50%;
   padding: 9px 0;
 }
 
