@@ -1617,14 +1617,14 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
                 result["session_remaining_seconds"] = int(remaining)
                 result["latest_requested_profile"] = active.get("requested_profile") or "small"
                 result["latest_assigned_gpu_ids"] = active.get("gpu_ids", [])
-                if wallet and active["wallet_address"] == wallet:
+                if wallet and active["wallet_address"].lower() == wallet.lower():
                     result["is_owner"] = True
 
             if _multi_session_enabled():
                 result["active_sessions"] = [
                     {
                         "session_id": row["id"],
-                        "wallet_address": row["wallet_address"] if wallet and wallet == row["wallet_address"] else _mask(row["wallet_address"]),
+                        "wallet_address": row["wallet_address"] if wallet and wallet.lower() == row["wallet_address"].lower() else _mask(row["wallet_address"]),
                         "requested_profile": row.get("requested_profile") or "small",
                         "assigned_gpu_ids": row.get("gpu_ids", []),
                         "container_id": row.get("container_id"),

@@ -6380,10 +6380,24 @@ Copyright (C) 2019 The noVNC Authors
                                 uptimeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
                             }
 
+                            let sshCmdRow = '';
+                            if (session.ssh_enabled && status.ssh_port) {
+                                const sshUser = status.ssh_user || 'aXonian';
+                                const sshHost = status.ssh_host || window.location.hostname;
+                                const sshPort = status.ssh_port;
+                                const sshCmd = `ssh -p ${sshPort} ${sshUser}@${sshHost}`;
+                                sshCmdRow = `
+                                    <div class="axonos-session-card__ssh-cmd-row" style="margin-top: 10px; display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 6px 10px; width: 100%; box-sizing: border-box;">
+                                        <code style="font-family: var(--font-mono); font-size: 0.8rem; color: #b7a6ff; white-space: nowrap; overflow-x: auto; flex: 1; scrollbar-width: none;">${sshCmd}</code>
+                                        <button type="button" class="copy-ssh-btn" data-cmd="${sshCmd}" style="background: rgba(123, 108, 255, 0.15); border: 1px solid rgba(123, 108, 255, 0.3); border-radius: 6px; color: var(--axonos-light); font-size: 0.72rem; padding: 3px 8px; cursor: pointer; font-family: var(--font-body); font-weight: 500; transition: background 0.15s; flex: 0 0 auto;">Copy</button>
+                                    </div>
+                                `;
+                            }
+
                             card.innerHTML = `
                                 <div class="axonos-session-card__top">
                                     <div class="axonos-session-card__icon-wrap">${envIcon}</div>
-                                    <div class="axonos-session-card__details">
+                                    <div class="axonos-session-card__details" style="flex: 1; min-width: 0;">
                                         <div class="axonos-session-card__name-row">
                                             <span class="axonos-session-card__name">${envTitle}</span>
                                             <span class="axonos-session-card__status">
@@ -6393,6 +6407,7 @@ Copyright (C) 2019 The noVNC Authors
                                         <div class="axonos-session-card__specs">
                                             ${axonosProfileLabel(profile)} (${gpuCount} GPU${gpuCount > 1 ? 's' : ''}) · up ${uptimeStr}
                                         </div>
+                                        ${sshCmdRow}
                                     </div>
                                 </div>
                                 <div class="axonos-session-card__bottom">
@@ -6423,6 +6438,41 @@ Copyright (C) 2019 The noVNC Authors
                                 }
                                 tryConnectAfterClaim();
                             });
+
+                            const copyBtn = card.querySelector('.copy-ssh-btn');
+                            if (copyBtn) {
+                                copyBtn.addEventListener('click', function (e) {
+                                    e.stopPropagation();
+                                    const cmd = copyBtn.getAttribute('data-cmd');
+                                    const writeText = function() {
+                                        copyBtn.textContent = 'Copied';
+                                        setTimeout(function () { copyBtn.textContent = 'Copy'; }, 2000);
+                                    };
+                                    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+                                        navigator.clipboard.writeText(cmd).then(writeText).catch(function () {
+                                            fallback();
+                                        });
+                                    } else {
+                                        fallback();
+                                    }
+                                    function fallback() {
+                                        const inp = document.createElement('input');
+                                        inp.value = cmd;
+                                        inp.style.position = 'absolute';
+                                        inp.style.left = '-9999px';
+                                        document.body.appendChild(inp);
+                                        inp.select();
+                                        try {
+                                            document.execCommand('copy');
+                                            copyBtn.textContent = 'Copied';
+                                        } catch (err) {
+                                            copyBtn.textContent = 'Failed';
+                                        }
+                                        document.body.removeChild(inp);
+                                        setTimeout(function () { copyBtn.textContent = 'Copy'; }, 2000);
+                                    }
+                                });
+                            }
 
                             listEl.appendChild(card);
                         });

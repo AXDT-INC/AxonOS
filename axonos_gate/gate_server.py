@@ -1502,7 +1502,7 @@ def api_session_status():
         return '', 200
     if not _session_mgr_available:
         return jsonify({"error": "Session manager unavailable"}), 503
-    wallet_address = (request.args.get('wallet_address') or request.headers.get('X-Wallet-Address') or '').strip() or None
+    wallet_address = (request.args.get('wallet_address') or request.args.get('wallet') or request.headers.get('X-Wallet-Address') or '').strip() or None
     return jsonify(session_status(wallet_address))
 
 

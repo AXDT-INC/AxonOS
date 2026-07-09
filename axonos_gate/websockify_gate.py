@@ -673,7 +673,7 @@ def _extract_wallet_from_path_and_headers(path: str, headers) -> str | None:
     try:
         parsed = urlparse(path if path else '/')
         query_params = parse_qs(parsed.query)
-        wallet_address = query_params.get('wallet', [None])[0]
+        wallet_address = query_params.get('wallet', [None])[0] or query_params.get('wallet_address', [None])[0]
     except Exception:
         wallet_address = None
 
