@@ -8,6 +8,7 @@ remains for authentication. No hold-based balance checks.
 """
 
 import logging
+import math
 import os
 import re
 import secrets
@@ -743,7 +744,7 @@ def get_wallet_access_status(wallet_address: str, consume_usage: bool = False) -
     Returns verified, access_type, remaining_minutes, consumed_minutes, credited_minutes, etc.
     """
     warning_threshold = _get_warning_threshold_minutes()
-    is_whitelisted = is_wallet_whitelisted(wallet_address)
+    test_credit_eligible = is_wallet_whitelisted(wallet_address)
     base_response: Dict[str, Any] = {
         "verified": False,
         "access_type": None,
@@ -754,7 +755,8 @@ def get_wallet_access_status(wallet_address: str, consume_usage: bool = False) -
         "min_deposit": _get_min_deposit_display(),
         "credit_per_100_axgt_minutes": _get_credit_per_100_axgt_minutes(),
         "reason": "No deposit record or zero balance.",
-        "is_whitelisted": is_whitelisted,
+        "test_credit_eligible": test_credit_eligible,
+        "is_whitelisted": test_credit_eligible,
     }
 
     if not validate_wallet_address(wallet_address):
@@ -784,7 +786,8 @@ def get_wallet_access_status(wallet_address: str, consume_usage: bool = False) -
         "min_deposit": _get_min_deposit_display(),
         "credit_per_100_axgt_minutes": _get_credit_per_100_axgt_minutes(),
         "reason": None,
-        "is_whitelisted": is_whitelisted,
+        "test_credit_eligible": test_credit_eligible,
+        "is_whitelisted": test_credit_eligible,
     }
     if not verified:
         if eth_deposits_enabled():
@@ -851,147 +854,170 @@ def _get_deposit_ledger():
     return deposit_ledger
 
 
-# Mock whitelist deposits carry a sentinel hash (0xffffffff + 56 random hex) so the
-# backend can tell them from real transactions: real hashes always go through
-# on-chain verification, even for whitelisted wallets.
-_WHITELIST_MOCK_TX_RE = re.compile(r"^0xffffffff[0-9a-f]{56}$")
-
-DEFAULT_WHITELIST_CREDIT_MINUTES = 60.0
+DEFAULT_TEST_CREDIT_GRANT_MINUTES = 60.0
+DEFAULT_TEST_CREDIT_MAX_BALANCE_MINUTES = 60.0
+MAX_TEST_CREDIT_GRANT_MINUTES = 1440.0
+MAX_TEST_CREDIT_BALANCE_MINUTES = 10080.0
+_TEST_CREDIT_RAILS = frozenset({"axgt", "eth", "usdc"})
+_TEST_CREDIT_REQUEST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
 
 
 @lru_cache(maxsize=4)
-def _parse_whitelisted_wallets(raw: str) -> frozenset:
+def _parse_test_credit_wallets(raw: str) -> frozenset:
     return frozenset(w.strip().lower() for w in raw.split(",") if w.strip())
 
 
+def test_credits_enabled() -> bool:
+    """Explicit fail-closed switch for token-free test credits."""
+    return (os.getenv("AXONOS_TEST_CREDITS_ENABLED") or "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _test_credit_wallet_list_raw() -> str:
+    # AXONOS_WHITELISTED_WALLETS is a wallet-list compatibility alias only.
+    # Its presence must never turn the feature on by itself.
+    preferred = (os.getenv("AXONOS_TEST_CREDIT_WALLETS") or "").strip()
+    if preferred:
+        return preferred
+    return (os.getenv("AXONOS_WHITELISTED_WALLETS") or "").strip()
+
+
 def is_wallet_whitelisted(wallet_address: str) -> bool:
-    """True if the wallet is listed in AXONOS_WHITELISTED_WALLETS (comma-separated)."""
+    """Compatibility field: true only when test credits are enabled and eligible."""
     wallet = (wallet_address or "").strip().lower()
-    if not wallet:
+    if not test_credits_enabled() or not validate_wallet_address(wallet):
         return False
-    raw = (os.getenv("AXONOS_WHITELISTED_WALLETS") or "").strip()
+    raw = _test_credit_wallet_list_raw()
     if not raw:
         return False
-    return wallet in _parse_whitelisted_wallets(raw)
+    return wallet in _parse_test_credit_wallets(raw)
 
 
-def is_mock_whitelist_tx_hash(tx_hash: str) -> bool:
-    """True for the sentinel mock hashes the UI mints for whitelisted wallets."""
-    return bool(_WHITELIST_MOCK_TX_RE.match((tx_hash or "").strip().lower()))
-
-
-def _get_whitelist_credit_minutes() -> float:
-    raw = (os.getenv("AXONOS_WHITELIST_AUTO_CREDIT_MINUTES") or "").strip()
+def _bounded_test_credit_float(
+    primary_env: str,
+    default: float,
+    hard_max: float,
+) -> float:
+    raw = (os.getenv(primary_env) or "").strip()
     if not raw:
-        return DEFAULT_WHITELIST_CREDIT_MINUTES
+        return default
     try:
-        minutes = float(raw)
-        if minutes > 0:
-            return minutes
-    except ValueError:
+        value = float(raw)
+        if math.isfinite(value) and 0 < value <= hard_max:
+            return value
+    except (TypeError, ValueError):
         pass
     logger.warning(
-        "Invalid AXONOS_WHITELIST_AUTO_CREDIT_MINUTES=%r; using %s",
-        raw, DEFAULT_WHITELIST_CREDIT_MINUTES,
+        "Invalid %s=%r; expected a finite value in (0, %s], using %s",
+        primary_env,
+        raw,
+        hard_max,
+        default,
     )
-    return DEFAULT_WHITELIST_CREDIT_MINUTES
+    return default
 
 
-def _get_whitelist_max_balance_minutes(credit_minutes: float) -> float:
-    """Mock credits are declined while the wallet still has at least this many
-    minutes remaining. Defaults to the credit amount: top up only when below one
-    credit's worth, which bounds a whitelisted wallet's balance instead of letting
-    repeated clicks mint unbounded minutes."""
-    raw = (os.getenv("AXONOS_WHITELIST_MAX_BALANCE_MINUTES") or "").strip()
-    if not raw:
-        return credit_minutes
-    try:
-        minutes = float(raw)
-        if minutes > 0:
-            return minutes
-    except ValueError:
-        pass
-    logger.warning(
-        "Invalid AXONOS_WHITELIST_MAX_BALANCE_MINUTES=%r; using %s", raw, credit_minutes
+def get_test_credit_grant_minutes() -> float:
+    return _bounded_test_credit_float(
+        "AXONOS_TEST_CREDIT_GRANT_MINUTES",
+        DEFAULT_TEST_CREDIT_GRANT_MINUTES,
+        MAX_TEST_CREDIT_GRANT_MINUTES,
     )
-    return credit_minutes
 
 
-def check_and_apply_whitelist_deposit_credit(wallet_address: str, tx_hash: str) -> Optional[Dict[str, Any]]:
-    """Handle a mock whitelist deposit (sentinel tx hash).
+def get_test_credit_max_balance_minutes() -> float:
+    return _bounded_test_credit_float(
+        "AXONOS_TEST_CREDIT_MAX_BALANCE_MINUTES",
+        DEFAULT_TEST_CREDIT_MAX_BALANCE_MINUTES,
+        MAX_TEST_CREDIT_BALANCE_MINUTES,
+    )
 
-    Returns None unless tx_hash is a sentinel mock hash, so real transactions —
-    including those from whitelisted wallets — always go through on-chain
-    verification. For mock hashes it always returns a verify_deposit-shaped dict;
-    falling through would poll the chain for a hash that does not exist.
-    """
+
+def grant_test_credit(wallet_address: str, payment_rail: str, request_id: str) -> Dict[str, Any]:
+    """Grant an eligible wallet bounded test credit through the dedicated rail."""
     wallet = (wallet_address or "").strip().lower()
-    tx = (tx_hash or "").strip().lower()
-    if not wallet or not is_mock_whitelist_tx_hash(tx):
-        return None
-    if not is_wallet_whitelisted(wallet):
-        logger.warning("Mock whitelist deposit %s denied: wallet %s is not whitelisted", tx, wallet)
+    rail = (payment_rail or "").strip().lower()
+    request_norm = (request_id or "").strip().lower()
+    eligible = is_wallet_whitelisted(wallet)
+    base: Dict[str, Any] = {
+        "verified": False,
+        "test_credit": True,
+        "test_credit_eligible": eligible,
+        "is_whitelisted": eligible,
+        "credit_source": "test_credit",
+        "payment_rail": rail,
+        "request_id": request_norm,
+    }
+    if not test_credits_enabled():
         return {
-            "verified": False,
-            "not_whitelisted": True,
-            "error": "Wallet is not whitelisted for mock deposits; submit a real payment.",
+            **base,
+            "error_code": "test_credits_disabled",
+            "test_credits_disabled": True,
+            "error": "Test credits are disabled",
         }
+    if not validate_wallet_address(wallet):
+        return {**base, "error_code": "invalid_wallet", "error": "Invalid wallet address"}
+    if not eligible:
+        return {
+            **base,
+            "error_code": "not_test_credit_eligible",
+            "not_whitelisted": True,
+            "error": "Wallet is not eligible for test credits",
+        }
+    if rail not in _TEST_CREDIT_RAILS:
+        return {**base, "error_code": "invalid_rail", "error": "rail must be axgt, eth, or usdc"}
+    if not _TEST_CREDIT_REQUEST_RE.fullmatch(request_norm):
+        return {
+            **base,
+            "error_code": "invalid_request_id",
+            "error": "request_id must be 8-128 safe characters",
+        }
+
     try:
         deposit_ledger = _get_deposit_ledger()
-        if not deposit_ledger.init_once():
-            logger.warning("Whitelist auto-credit for %s: ledger unavailable, client will retry", wallet)
-            return {"verified": False, "pending": True, "error": "Ledger unavailable — retrying…"}
-
-        already = deposit_ledger.tx_hash_already_credited_strict(tx)
-        if already is None:
-            logger.warning("Whitelist auto-credit for %s: replay check unavailable, client will retry", wallet)
-            return {"verified": False, "pending": True, "error": "Ledger unavailable — retrying…"}
-        if already:
-            logger.info("Whitelist mock deposit %s already credited for %s", tx, wallet)
-            return {"verified": False, "error": "already credited"}
-
-        credit_minutes = _get_whitelist_credit_minutes()
-        max_balance = _get_whitelist_max_balance_minutes(credit_minutes)
-        remaining_now = deposit_ledger.get_remaining_minutes(wallet)
-        if remaining_now >= max_balance:
-            logger.info(
-                "Whitelist auto-credit for %s declined: %.1f min remaining >= cap %.1f",
-                wallet, remaining_now, max_balance,
-            )
-            return {
-                "verified": False,
-                "whitelist_capped": True,
-                "remaining_minutes": round(remaining_now, 2),
-                "error": (
-                    f"Whitelist credit declined: {remaining_now:.0f} minutes still "
-                    f"available (cap {max_balance:.0f})."
-                ),
-            }
-
-        logger.info(
-            "Crediting whitelisted wallet %s with %s minutes for mock deposit %s",
-            wallet, credit_minutes, tx,
-        )
-        success, remaining, err = deposit_ledger.credit_deposit(
+        result = deposit_ledger.credit_test_grant(
             wallet_address=wallet,
-            axgt_amount=Decimal("0"),
-            credited_minutes=credit_minutes,
-            tx_hash=tx,
-            block_number=0,
+            grant_minutes=get_test_credit_grant_minutes(),
+            max_balance_minutes=get_test_credit_max_balance_minutes(),
+            request_id=request_norm,
+            payment_rail=rail,
         )
-        if not success:
-            logger.warning("Failed to credit whitelisted wallet %s: %s", wallet, err)
-            return {"verified": False, "error": f"Credit failed: {err}"}
-
-        return {
-            "verified": True,
-            "mock": True,
-            "access_type": "deposit_credit",
-            "credited_minutes": credit_minutes,
-            "remaining_minutes": remaining,
-            "tx_hash": tx,
-            "reason": None,
-        }
     except Exception as exc:
-        logger.error("Error applying whitelist auto-credit for %s: %s", wallet, exc, exc_info=True)
-        return {"verified": False, "error": f"Internal error: {exc}"}
+        logger.error("Test-credit grant failed for %s: %s", mask_wallet_address(wallet), exc, exc_info=True)
+        return {**base, "error_code": "credit_failed", "error": "Test credit failed"}
+
+    if not result.get("ok"):
+        response = {**base, **result}
+        response.pop("ok", None)
+        if result.get("capped"):
+            response["whitelist_capped"] = True  # frontend compatibility
+        return response
+
+    return {
+        **base,
+        "verified": True,
+        "access_type": "deposit_credit",
+        "credited_minutes": result.get("credited_minutes"),
+        "remaining_minutes": result.get("remaining_minutes"),
+        "replayed": bool(result.get("replayed")),
+        "capped": bool(result.get("capped")),
+        "no_op": bool(result.get("no_op")),
+        "reason": None,
+    }
+
+
+def test_credit_http_status(result: Dict[str, Any]) -> int:
+    """Map a grant result to a stable HTTP status for both gate implementations."""
+    if result.get("verified"):
+        return 200
+    code = result.get("error_code")
+    if code in ("test_credits_disabled", "not_test_credit_eligible"):
+        return 403
+    if code in ("test_credit_capped", "request_mismatch"):
+        return 409
+    if code == "ledger_unavailable":
+        return 503
+    if code == "credit_failed":
+        return 500
+    return 400

@@ -259,6 +259,8 @@ const UI = {
     inhibitReconnect: true,
     reconnectCallback: null,
     reconnectPassword: null,
+    /** Monotonic identity for the active Launch/Resume connection pipeline. */
+    _axonosConnectGeneration: 0,
     clipboardAutoSyncEnabled: false,
     clipboardAutoPollId: null,
     clipboardLastRemoteText: "",
@@ -1025,14 +1027,12 @@ const UI = {
     },
 
     persistAxonosSshState() {
-        // localStorage (not sessionStorage) so the choice survives any page reload
-        // the wallet-connect flow may trigger, not just same-tab reloads.
+        // SSH mode is an explicit, per-launch opt-in. Never persist the toggle:
+        // carrying a previous choice into a later launch can silently create a
+        // headless session when the user expects a desktop. The public key alone
+        // is safe to retain as a convenience for a future explicit opt-in.
         try {
-            if (window.axonosSshEnabled) {
-                window.localStorage.setItem('axonosSshEnabled', '1');
-            } else {
-                window.localStorage.removeItem('axonosSshEnabled');
-            }
+            window.localStorage.removeItem('axonosSshEnabled');
             const key = (window.axonosSshPubkey || '').trim();
             if (key) {
                 window.localStorage.setItem('axonosSshPubkey', key);
@@ -1040,6 +1040,15 @@ const UI = {
                 window.localStorage.removeItem('axonosSshPubkey');
             }
         } catch (e) { /* localStorage unavailable; selection just won't persist */ }
+    },
+
+    /** Reset SSH launch intent without discarding the user's saved public key. */
+    resetAxonosSshLaunchIntent() {
+        window.axonosSshEnabled = false;
+        const toggle = document.getElementById('axonos_ssh_toggle');
+        if (toggle) toggle.checked = false;
+        UI.persistAxonosSshState();
+        UI.updateAxonosSshUi();
     },
 
     /** Show/hide the key textarea and relabel the launch button to match the mode. */
@@ -1076,10 +1085,11 @@ const UI = {
     },
 
     initAxonosSshToggle() {
-        // Restore prior choice from localStorage (survives reloads incl. those the
-        // wallet-connect flow may trigger).
+        // Always begin in desktop mode. A stale toggle saved by older builds is
+        // removed so SSH must be selected explicitly for each new launch.
         try {
-            window.axonosSshEnabled = window.localStorage.getItem('axonosSshEnabled') === '1';
+            window.localStorage.removeItem('axonosSshEnabled');
+            window.axonosSshEnabled = false;
             window.axonosSshPubkey = window.localStorage.getItem('axonosSshPubkey') || '';
         } catch (e) {
             window.axonosSshEnabled = false;
@@ -2498,6 +2508,71 @@ const UI = {
             .classList.remove("noVNC_open");
     },
 
+    _axonosInvalidateConnectAttempt() {
+        UI._axonosConnectGeneration += 1;
+        return UI._axonosConnectGeneration;
+    },
+
+    _axonosConnectAttemptIsCurrent(generation) {
+        return generation === UI._axonosConnectGeneration;
+    },
+
+    /**
+     * Return the connect overlay to the wallet-appropriate workspace. vnc.html owns
+     * the full dashboard state machine; the local fallback keeps older theme copies
+     * usable and, importantly, changes screen synchronously before any status fetch.
+     */
+    _axonosReturnToWorkspace(options) {
+        const opts = options && typeof options === 'object' ? options : {};
+        if (typeof window.axonosReturnToWorkspace === 'function') {
+            try {
+                const result = window.axonosReturnToWorkspace(opts);
+                if (result && typeof result.catch === 'function') {
+                    return result.catch((err) => {
+                        Log.Warn('AxonOS workspace return hook failed: ' + err);
+                    });
+                }
+                return result;
+            } catch (err) {
+                Log.Warn('AxonOS workspace return hook failed: ' + err);
+            }
+        }
+
+        const wallet = window.verifiedWalletAddress;
+        try {
+            if (typeof window.axonosUpdateActiveScreen === 'function') {
+                window.axonosUpdateActiveScreen(wallet ? 'dashboard' : 'landing');
+            }
+            if (wallet && opts.refresh !== false && typeof window.axonosLoadDashboard === 'function') {
+                return window.axonosLoadDashboard();
+            }
+        } catch (err) {
+            Log.Warn('AxonOS fallback workspace return failed: ' + err);
+        }
+        return undefined;
+    },
+
+    /** Await WebRTC cleanup, but never strand the UI on a hung close request. */
+    _axonosAwaitWebRtcCleanup(cleanupPromise, timeoutMs = 2000) {
+        if (!cleanupPromise || typeof cleanupPromise.then !== 'function') {
+            return Promise.resolve();
+        }
+        let timeoutId = null;
+        const timeout = new Promise((resolve) => {
+            timeoutId = setTimeout(resolve, timeoutMs);
+        });
+        return Promise.race([
+            Promise.resolve(cleanupPromise).catch((err) => {
+                Log.Warn('AxonOS WebRTC cleanup failed: ' + err);
+            }),
+            timeout,
+        ]).finally(() => {
+            if (timeoutId !== null) {
+                clearTimeout(timeoutId);
+            }
+        });
+    },
+
     /**
      * Clear error banner, pending reconnect timer, and reconnect inhibition so the next
      * "Launch GPU-Native Desktop" can proceed. Mirrors the intent of the credit-exhaustion
@@ -2505,6 +2580,7 @@ const UI = {
      * when recovering from a failed WS (e.g. 1006) before retrying.
      */
     axonosResetDesktopGateForRetry() {
+        UI._axonosInvalidateConnectAttempt();
         UI._axonosCancelWebRtcClient();
         UI.hideStatus();
         if (UI.reconnectCallback !== null) {
@@ -2671,15 +2747,20 @@ const UI = {
     _axonosCancelWebRtcClient() {
         if (typeof window.axonosCancelWebRtcNegotiation === 'function') {
             try {
-                window.axonosCancelWebRtcNegotiation();
+                return Promise.resolve(window.axonosCancelWebRtcNegotiation())
+                    .catch((err) => {
+                        Log.Warn('AxonOS WebRTC cancel failed: ' + err);
+                    });
             } catch (err) {
                 Log.Warn('AxonOS WebRTC cancel failed: ' + err);
             }
         }
+        return Promise.resolve();
     },
 
     _axonosReturnToHomeAfterDisconnect(options) {
         const opts = options && typeof options === 'object' ? options : {};
+        UI._axonosInvalidateConnectAttempt();
         if (opts.resetWebRtc !== false) {
             UI._axonosCancelWebRtcClient();
         }
@@ -2694,6 +2775,10 @@ const UI = {
         document.title = PAGE_TITLE;
         UI.openControlbar();
         UI.openConnectPanel();
+        UI._axonosReturnToWorkspace({
+            refresh: true,
+            reason: opts.creditExhausted ? 'credit-exhausted' : 'disconnect',
+        });
         // Clear any SSH connect card and restore the launch controls.
         if (typeof UI.hideAxonosSshCard === 'function') {
             UI.hideAxonosSshCard();
@@ -2745,6 +2830,7 @@ const UI = {
 
     _axonosCompleteDetachUI(options) {
         const opts = options && typeof options === 'object' ? options : {};
+        UI._axonosInvalidateConnectAttempt();
         UI._axonosCancelWebRtcClient();
         UI.connected = false;
         UI.hideStatus();
@@ -2766,6 +2852,10 @@ const UI = {
         document.title = PAGE_TITLE;
         UI.openControlbar();
         UI.openConnectPanel();
+        UI._axonosReturnToWorkspace({
+            refresh: true,
+            reason: opts.creditExhausted ? 'credit-exhausted' : 'detach',
+        });
         if (!UI._axgtStatusPollId && !opts.creditExhausted) {
             UI._axgtStartSessionBillingPoll();
         }
@@ -2778,7 +2868,7 @@ const UI = {
         }
     },
 
-    _axonosCreateRfbConnection(password, includeQueryAuthToken) {
+    _axonosCreateRfbConnection(password, includeQueryAuthToken, connectGeneration) {
         let url;
         url = UI.getSetting('encrypt') ? 'wss' : 'ws';
         url += '://' + UI.getSetting('host');
@@ -2797,24 +2887,35 @@ const UI = {
             }
         }
 
-        UI.rfb = new RFB(document.getElementById('noVNC_container'), url,
+        const rfb = new RFB(document.getElementById('noVNC_container'), url,
             { shared: UI.getSetting('shared'),
                 repeaterID: UI.getSetting('repeaterID'),
                 credentials: { password: password } });
-        UI.rfb.addEventListener("connect", UI.connectFinished);
-        UI.rfb.addEventListener("disconnect", UI.disconnectFinished);
-        UI.rfb.addEventListener("credentialsrequired", UI.credentials);
-        UI.rfb.addEventListener("securityfailure", UI.securityFailed);
-        UI.rfb.addEventListener("capabilities", UI.updatePowerButton);
-        UI.rfb.addEventListener("clipboard", UI.clipboardReceive);
-        UI.rfb.addEventListener("bell", UI.bell);
-        UI.rfb.addEventListener("desktopname", UI.updateDesktopName);
-        UI.rfb.clipViewport = UI.getSetting('view_clip');
-        UI.rfb.scaleViewport = UI.getSetting('resize') === 'scale';
-        UI.rfb.resizeSession = UI.getSetting('resize') === 'remote';
-        UI.rfb.qualityLevel = parseInt(UI.getSetting('quality'));
-        UI.rfb.compressionLevel = parseInt(UI.getSetting('compression'));
-        UI.rfb.showDotCursor = UI.getSetting('show_dot');
+        UI.rfb = rfb;
+        rfb.addEventListener("connect", (e) => {
+            if (UI.rfb === rfb && UI._axonosConnectAttemptIsCurrent(connectGeneration)) {
+                UI.connectFinished(e);
+            }
+        });
+        rfb.addEventListener("disconnect", (e) => {
+            // A hard-reset RFB can emit after a replacement has already started.
+            // Only the instance still owned by UI may finalize the disconnect UI.
+            if (UI.rfb === rfb) {
+                UI.disconnectFinished(e);
+            }
+        });
+        rfb.addEventListener("credentialsrequired", UI.credentials);
+        rfb.addEventListener("securityfailure", UI.securityFailed);
+        rfb.addEventListener("capabilities", UI.updatePowerButton);
+        rfb.addEventListener("clipboard", UI.clipboardReceive);
+        rfb.addEventListener("bell", UI.bell);
+        rfb.addEventListener("desktopname", UI.updateDesktopName);
+        rfb.clipViewport = UI.getSetting('view_clip');
+        rfb.scaleViewport = UI.getSetting('resize') === 'scale';
+        rfb.resizeSession = UI.getSetting('resize') === 'remote';
+        rfb.qualityLevel = parseInt(UI.getSetting('quality'));
+        rfb.compressionLevel = parseInt(UI.getSetting('compression'));
+        rfb.showDotCursor = UI.getSetting('show_dot');
 
         UI.updateViewOnly();
     },
@@ -2839,6 +2940,12 @@ const UI = {
             window.axonosHideQueueOverlay();
         }
 
+        // Every asynchronous continuation below belongs to this exact Launch/Resume.
+        // Disconnect, Cancel, or a newer connect invalidates it before it can touch UI.
+        const connectGeneration = UI._axonosInvalidateConnectAttempt();
+        const connectAttemptIsCurrent = () =>
+            UI._axonosConnectAttemptIsCurrent(connectGeneration);
+
         // Stale RFB from a failed WebSocket (1006): disconnect may not always fire before
         // retry — hard-reset client state and recurse (short delay lets the stack unwind).
         if (typeof UI.rfb !== 'undefined' && UI.rfb) {
@@ -2857,7 +2964,11 @@ const UI = {
             }
             UI.rfb = undefined;
             UI.connected = false;
-            setTimeout(() => UI.connect(event, passwordArg), 50);
+            setTimeout(() => {
+                if (connectAttemptIsCurrent()) {
+                    UI.connect(event, passwordArg);
+                }
+            }, 50);
             return;
         }
 
@@ -2916,6 +3027,9 @@ const UI = {
         // (see websockify_gate / gate_server). Launch previously skipped claim if the user
         // left the queue and clicked connect — server returned 403 / abnormal close (1006).
         const runSessionClaim = () => {
+            if (!connectAttemptIsCurrent()) {
+                return;
+            }
             // Fail fast on a missing/invalid SSH key so the user gets a precise
             // message instead of a generic claim rejection round-trip.
             if (UI.axonosSshEnabled() && !UI.axonosSshKeyLooksValid(UI.axonosSshPubkey())) {
@@ -2939,6 +3053,9 @@ const UI = {
                 return;
             }
             UI._axonosFetchSessionClaim().then((claim) => {
+                if (!connectAttemptIsCurrent()) {
+                    return;
+                }
                 const granted = claim && (claim.granted === true || claim.granted === 'true');
                 if (!granted) {
                     if (typeof window.axonosHideConnectionLoader === 'function') {
@@ -3002,66 +3119,74 @@ const UI = {
                     const cfgPeek = await fetch('./api/config', { credentials: 'include' })
                         .then((r) => r.json())
                         .catch(() => ({}));
+                    if (!connectAttemptIsCurrent()) {
+                        return;
+                    }
                     if (cfgPeek.webrtc_enabled) {
                         if (typeof window.axonosSetConnectionLoaderPhase === 'function') {
                             window.axonosSetConnectionLoaderPhase('webrtc');
                         }
+                        let webRtcModule = null;
                         try {
-                            const mod = await import(`./webrtc/axonos-webrtc.js?v=${Date.now()}`);
-                            if (typeof mod.cancelAxonOSWebRTCNegotiation === 'function') {
-                                window.axonosCancelWebRtcNegotiation = mod.cancelAxonOSWebRTCNegotiation;
+                            // A stable module URL keeps negotiation generation/cancellation
+                            // state shared across retries and rapid user reconnects.
+                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260716a');
+                            if (!connectAttemptIsCurrent()) {
+                                return;
                             }
-                            usedWebRtc = await mod.connectAxonOSWebRTC({ UI });
+                            if (typeof webRtcModule.cancelAxonOSWebRTCNegotiation === 'function') {
+                                window.axonosCancelWebRtcNegotiation = webRtcModule.cancelAxonOSWebRTCNegotiation;
+                            }
+                            usedWebRtc = await webRtcModule.connectAxonOSWebRTC({ UI });
                         } catch (weErr) {
                             Log.Warn('AxonOS WebRTC path failed: ' + weErr);
                         }
-                        if (!usedWebRtc && !window.axonosWebRtcConnectAborted) {
-                            // One automatic retry with a fresh module instance — identical
-                            // to a user clicking Resume again, which field testing showed
-                            // succeeds when the first negotiation dies during desktop boot.
+                        if (!connectAttemptIsCurrent()) {
+                            return;
+                        }
+                        if (!usedWebRtc && !window.axonosWebRtcConnectAborted && webRtcModule) {
+                            // One automatic retry on the same module instance. Clear a
+                            // provisional ICE error so a later success is not masked by
+                            // showStatus()'s intentional "first error wins" behavior.
                             Log.Warn('AxonOS: WebRTC negotiation failed; retrying once in 3s…');
+                            UI.hideStatus();
                             if (typeof window.axonosSetConnectionLoaderPhase === 'function') {
                                 window.axonosSetConnectionLoaderPhase('webrtc');
                             }
                             await new Promise((res) => setTimeout(res, 3000));
-                            if (!window.axonosWebRtcConnectAborted) {
+                            if (connectAttemptIsCurrent() && !window.axonosWebRtcConnectAborted) {
                                 try {
-                                    const mod2 = await import(`./webrtc/axonos-webrtc.js?v=${Date.now()}`);
-                                    if (typeof mod2.cancelAxonOSWebRTCNegotiation === 'function') {
-                                        window.axonosCancelWebRtcNegotiation = mod2.cancelAxonOSWebRTCNegotiation;
-                                    }
-                                    usedWebRtc = await mod2.connectAxonOSWebRTC({ UI });
+                                    usedWebRtc = await webRtcModule.connectAxonOSWebRTC({ UI });
                                 } catch (weErr2) {
                                     Log.Warn('AxonOS WebRTC retry failed: ' + weErr2);
                                 }
                             }
                         }
+                        if (!connectAttemptIsCurrent()) {
+                            return;
+                        }
                         if (window.axonosWebRtcConnectAborted) {
                             if (typeof window.axonosHideConnectionLoader === 'function') {
                                 window.axonosHideConnectionLoader(true);
                             }
-                            UI.updateVisualState('disconnected');
-                            UI.openConnectPanel();
                             return;
                         }
                         if (!usedWebRtc && cfgPeek.webrtc_fallback_enabled === false) {
-                            if (typeof window.axonosHideConnectionLoader === 'function') {
-                                window.axonosHideConnectionLoader(true);
-                            }
-                            UI.updateVisualState('disconnected');
-                            UI.showStatus(_('Display connection failed — but your desktop is still running and paid. Click Resume on your session to try again (no new payment). If it keeps failing, disable VPN or switch networks.'), 'error');
-                            UI.openConnectPanel();
+                            UI._axonosReturnToHomeAfterDisconnect();
                             return;
                         }
                     }
-                    if (!usedWebRtc) {
+                    if (!usedWebRtc && connectAttemptIsCurrent()) {
                         if (typeof window.axonosSetConnectionLoaderPhase === 'function') {
                             window.axonosSetConnectionLoaderPhase('vnc');
                         }
-                        UI._axonosCreateRfbConnection(password, includeQueryAuthToken);
+                        UI._axonosCreateRfbConnection(password, includeQueryAuthToken, connectGeneration);
                     }
                 })();
             }).catch((err) => {
+                if (!connectAttemptIsCurrent()) {
+                    return;
+                }
                 Log.Error('AxonOS session claim failed: ' + err);
                 if (typeof window.axonosHideConnectionLoader === 'function') {
                     window.axonosHideConnectionLoader(true);
@@ -3080,6 +3205,9 @@ const UI = {
         // preflight tears down + clears identity and returns false; we abort so claim/WebRTC
         // never run under a stale account.
         const proceedAfterPreflight = () => {
+            if (!connectAttemptIsCurrent()) {
+                return;
+            }
             if (typeof window.axonosRefreshPausedResumeStatus === 'function') {
                 window.axonosRefreshPausedResumeStatus()
                     .catch(() => null)
@@ -3092,6 +3220,9 @@ const UI = {
         if (typeof window.axonosEnsureWalletSessionCurrent === 'function') {
             window.axonosEnsureWalletSessionCurrent({ requestPermission: true })
                 .then((ok) => {
+                    if (!connectAttemptIsCurrent()) {
+                        return;
+                    }
                     if (!ok) {
                         if (typeof window.axonosHideConnectionLoader === 'function') {
                             window.axonosHideConnectionLoader(true);
@@ -3106,6 +3237,9 @@ const UI = {
                     proceedAfterPreflight();
                 })
                 .catch(() => {
+                    if (!connectAttemptIsCurrent()) {
+                        return;
+                    }
                     // Preflight infrastructure error: fail safe (block).
                     if (typeof window.axonosHideConnectionLoader === 'function') {
                         window.axonosHideConnectionLoader(true);
@@ -3132,7 +3266,11 @@ const UI = {
             UI._axgtEndingSession = false;
         }
 
-        UI._axonosCancelWebRtcClient();
+        // Set this before closing peer channels so their close handlers cannot race
+        // an intentional End/Detach with an automatic reconnect.
+        UI.inhibitReconnect = true;
+        const disconnectGeneration = UI._axonosInvalidateConnectAttempt();
+        const webRtcCancelPromise = UI._axonosCancelWebRtcClient();
         if (typeof window.axonosHideConnectionLoader === 'function') {
             window.axonosHideConnectionLoader(true);
         }
@@ -3167,9 +3305,6 @@ const UI = {
             }
         }
 
-        // Disable automatic reconnecting
-        UI.inhibitReconnect = true;
-
         UI.updateVisualState('disconnecting');
 
         // Clear any stale queue overlay/poller immediately on explicit disconnect.
@@ -3187,17 +3322,41 @@ const UI = {
             }
         }
 
-        const doDisconnect = () => {
-            if (typeof window.axonosWebRtcTeardown === 'function') {
-                Promise.resolve(window.axonosWebRtcTeardown()).finally(() => {
-                    doDisconnectRfb();
-                });
+        const disconnectIsCurrent = () =>
+            UI._axonosConnectAttemptIsCurrent(disconnectGeneration);
+
+        const finishWebRtcTeardown = () => {
+            if (!disconnectIsCurrent()) {
                 return;
             }
-            doDisconnectRfb();
+            if (typeof window.axonosWebRtcTeardown !== 'function') {
+                doDisconnectRfb();
+                return;
+            }
+            let teardownPromise;
+            try {
+                teardownPromise = window.axonosWebRtcTeardown();
+            } catch (err) {
+                Log.Warn('AxonOS WebRTC teardown failed: ' + err);
+                doDisconnectRfb();
+                return;
+            }
+            UI._axonosAwaitWebRtcCleanup(teardownPromise).finally(() => {
+                if (disconnectIsCurrent()) {
+                    doDisconnectRfb();
+                }
+            });
+        };
+
+        const doDisconnect = () => {
+            UI._axonosAwaitWebRtcCleanup(webRtcCancelPromise)
+                .finally(finishWebRtcTeardown);
         };
 
         const doDisconnectRfb = () => {
+            if (!disconnectIsCurrent()) {
+                return;
+            }
             if (UI.rfb && typeof UI.rfb.disconnect === 'function') {
                 try {
                     UI.rfb.disconnect();
@@ -3299,6 +3458,9 @@ const UI = {
     },
 
     cancelReconnect() {
+        UI.inhibitReconnect = true;
+        UI._axonosInvalidateConnectAttempt();
+        UI._axonosCancelWebRtcClient();
         if (UI.reconnectCallback !== null) {
             clearTimeout(UI.reconnectCallback);
             UI.reconnectCallback = null;
@@ -3308,6 +3470,7 @@ const UI = {
 
         UI.openControlbar();
         UI.openConnectPanel();
+        UI._axonosReturnToWorkspace({ refresh: true, reason: 'reconnect-cancelled' });
     },
 
     connectFinished(e) {
@@ -3343,6 +3506,7 @@ const UI = {
         // when the disconnection isn't clean or if it is initiated by
         // the server, we need to do it here as well since
         // UI.disconnect() won't be used in those cases.
+        UI._axonosInvalidateConnectAttempt();
         UI._axonosCancelWebRtcClient();
         UI.connected = false;
         UI.stopClipboardAutoSync();
@@ -3614,9 +3778,13 @@ const UI = {
             UI.disconnect({ skipRelease: true });
             return;
         }
+        UI.inhibitReconnect = true;
+        UI._axonosInvalidateConnectAttempt();
+        UI._axonosCancelWebRtcClient();
         UI.updateVisualState('disconnected');
         UI.openControlbar();
         UI.openConnectPanel();
+        UI._axonosReturnToWorkspace({ refresh: true, reason: 'usage-overlay-exit' });
     },
 
     _axgtPollWalletStatus() {

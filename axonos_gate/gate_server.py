@@ -41,7 +41,9 @@ try:
         get_challenge_ttl_seconds,
         get_credit_policy,
         get_wallet_access_status,
+        grant_test_credit,
         mask_wallet_address,
+        test_credit_http_status,
         validate_ssh_public_key,
         validate_wallet_address,
         verify_signed_challenge,
@@ -54,7 +56,9 @@ except ImportError:
             get_challenge_ttl_seconds,
             get_credit_policy,
             get_wallet_access_status,
+            grant_test_credit,
             mask_wallet_address,
+            test_credit_http_status,
             validate_ssh_public_key,
             validate_wallet_address,
             verify_signed_challenge,
@@ -439,6 +443,38 @@ def wallet_status():
     if not status.get('verified'):
         status['error'] = status.get('reason') or 'Access denied for this wallet.'
     return jsonify(status)
+
+
+@app.route('/api/auth/test-credit', methods=['POST', 'OPTIONS'])
+def api_test_credit():
+    """Issue bounded, auditable test credit to an authenticated eligible wallet."""
+    if request.method == 'OPTIONS':
+        return '', 200
+    data = request.get_json(silent=True) or {}
+    wallet_address = (data.get("wallet_address") or "").strip()
+    rail = (data.get("rail") or "").strip().lower()
+    request_id = (data.get("request_id") or "").strip()
+    if not wallet_address or not validate_wallet_address(wallet_address):
+        return jsonify({"verified": False, "error": "Valid wallet_address required"}), 400
+    auth_err = _require_auth_token(wallet_address)
+    if auth_err:
+        return auth_err
+
+    result = grant_test_credit(wallet_address, rail, request_id)
+    status_code = test_credit_http_status(result)
+    if result.get("verified"):
+        try:
+            token, ttl = _issue_gate_auth_token(wallet_address)
+            result = dict(result)
+            result["auth_token"] = token
+            result["auth_token_expires_in_seconds"] = ttl
+        except Exception as ex:
+            logger.warning(
+                "Auth token refresh failed for %s: %s",
+                mask_wallet_address(wallet_address),
+                ex,
+            )
+    return jsonify(result), status_code
 
 
 @app.route('/api/auth/verify-deposit', methods=['POST', 'OPTIONS'])
@@ -1316,7 +1352,17 @@ def api_admin_telemetry_summary():
         SELECT
             COALESCE(SUM(credited_minutes_total), 0) AS total_credited,
             COALESCE(SUM(consumed_minutes_total), 0) AS total_consumed,
-            COALESCE(SUM(remaining_minutes), 0) AS total_remaining
+            COALESCE(SUM(remaining_minutes), 0) AS total_remaining,
+            (SELECT COALESCE(SUM(minutes_delta), 0) FROM axgt_ledger
+             WHERE event_type = 'deposit_credit'
+               AND COALESCE(reference_tx_hash, '') !~
+                   '^0xffffffff[0-9A-Fa-f]{56}$') AS paid_credited,
+            (SELECT COALESCE(SUM(minutes_delta), 0) FROM axgt_ledger
+             WHERE event_type = 'test_credit') AS test_credited,
+            (SELECT COALESCE(SUM(minutes_delta), 0) FROM axgt_ledger
+             WHERE event_type = 'deposit_credit'
+               AND COALESCE(reference_tx_hash, '') ~
+                   '^0xffffffff[0-9A-Fa-f]{56}$') AS legacy_test_credited
         FROM axgt_deposits
     """)
     d = (dep or [{}])[0]
@@ -1341,6 +1387,9 @@ def api_admin_telemetry_summary():
         },
         "deposits": {
             "total_credited_minutes": float(d.get("total_credited") or 0),
+            "paid_credited_minutes": float(d.get("paid_credited") or 0),
+            "test_credited_minutes": float(d.get("test_credited") or 0),
+            "legacy_test_credited_minutes": float(d.get("legacy_test_credited") or 0),
             "total_consumed_minutes": float(d.get("total_consumed") or 0),
             "total_remaining_minutes": float(d.get("total_remaining") or 0),
         },
@@ -1516,7 +1565,9 @@ def api_session_claim():
     wallet_address = (data.get('wallet_address') or '').strip()
     requested_profile = (data.get('requested_profile') or '').strip() or None
     requested_template = (data.get('requested_template') or '').strip() or None
-    requested_ssh = bool(data.get('requested_ssh'))
+    # Fail closed: only an explicit JSON boolean true opts into a headless SSH
+    # session. In particular, bool("false") is True in Python.
+    requested_ssh = data.get('requested_ssh') is True
     ssh_pubkey = None
     if requested_ssh:
         ssh_pubkey = validate_ssh_public_key(data.get('ssh_pubkey'))

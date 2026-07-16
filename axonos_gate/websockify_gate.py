@@ -55,7 +55,9 @@ try:
         get_challenge_ttl_seconds,
         get_credit_policy,
         get_wallet_access_status,
+        grant_test_credit,
         mask_wallet_address,
+        test_credit_http_status,
         validate_ssh_public_key,
         validate_wallet_address,
         verify_signed_challenge,
@@ -68,7 +70,9 @@ except ImportError:
             get_challenge_ttl_seconds,
             get_credit_policy,
             get_wallet_access_status,
+            grant_test_credit,
             mask_wallet_address,
+            test_credit_http_status,
             validate_ssh_public_key,
             validate_wallet_address,
             verify_signed_challenge,
@@ -307,7 +311,17 @@ def _telemetry_summary():
     dep, _ = _telemetry_query("""
         SELECT COALESCE(SUM(credited_minutes_total), 0) AS total_credited,
                COALESCE(SUM(consumed_minutes_total), 0) AS total_consumed,
-               COALESCE(SUM(remaining_minutes), 0) AS total_remaining
+               COALESCE(SUM(remaining_minutes), 0) AS total_remaining,
+               (SELECT COALESCE(SUM(minutes_delta), 0) FROM axgt_ledger
+                WHERE event_type = 'deposit_credit'
+                  AND COALESCE(reference_tx_hash, '') !~
+                      '^0xffffffff[0-9A-Fa-f]{56}$') AS paid_credited,
+               (SELECT COALESCE(SUM(minutes_delta), 0) FROM axgt_ledger
+                WHERE event_type = 'test_credit') AS test_credited,
+               (SELECT COALESCE(SUM(minutes_delta), 0) FROM axgt_ledger
+                WHERE event_type = 'deposit_credit'
+                  AND COALESCE(reference_tx_hash, '') ~
+                      '^0xffffffff[0-9A-Fa-f]{56}$') AS legacy_test_credited
         FROM axgt_deposits
     """)
     d = (dep or [{}])[0]
@@ -331,6 +345,9 @@ def _telemetry_summary():
         },
         "deposits": {
             "total_credited_minutes": float(d.get("total_credited") or 0),
+            "paid_credited_minutes": float(d.get("paid_credited") or 0),
+            "test_credited_minutes": float(d.get("test_credited") or 0),
+            "legacy_test_credited_minutes": float(d.get("legacy_test_credited") or 0),
             "total_consumed_minutes": float(d.get("total_consumed") or 0),
             "total_remaining_minutes": float(d.get("total_remaining") or 0),
         },
@@ -1534,7 +1551,9 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             wallet_address = (data.get('wallet_address') or '').strip()
             requested_profile = (data.get('requested_profile') or '').strip() or None
             requested_template = (data.get('requested_template') or '').strip() or None
-            requested_ssh = bool(data.get('requested_ssh'))
+            # Fail closed: only an explicit JSON boolean true opts into a
+            # headless SSH session (the string "false" must remain false).
+            requested_ssh = data.get('requested_ssh') is True
             ssh_pubkey = None
             if requested_ssh:
                 ssh_pubkey = validate_ssh_public_key(data.get('ssh_pubkey'))
@@ -1596,7 +1615,40 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             result = restart_desktop_session(wallet_address)
             return self._send_json(200, result)
 
-        if self.path.startswith('/api/auth/verify-deposit'):
+        if ponly == '/api/auth/test-credit':
+            data = self._read_json_body()
+            wallet_address = (data.get("wallet_address") or "").strip()
+            rail = (data.get("rail") or "").strip().lower()
+            request_id = (data.get("request_id") or "").strip()
+            if not wallet_address or not validate_wallet_address(wallet_address):
+                return self._send_json(
+                    400, {"verified": False, "error": "Valid wallet_address required"}
+                )
+            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+            if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
+                return self._send_json(
+                    401, {"verified": False, "error": "Valid auth token required"}
+                )
+            result = grant_test_credit(wallet_address, rail, request_id)
+            set_cookie = None
+            if result.get("verified"):
+                try:
+                    token, ttl = _issue_auth_token(wallet_address)
+                    result = dict(result)
+                    result["auth_token"] = token
+                    result["auth_token_expires_in_seconds"] = ttl
+                    set_cookie = _build_auth_cookie(token, ttl)
+                except Exception as ex:
+                    logger.warning(
+                        "Auth token refresh failed for %s: %s",
+                        mask_wallet_address(wallet_address),
+                        ex,
+                    )
+            return self._send_json(
+                test_credit_http_status(result), result, set_cookie=set_cookie
+            )
+
+        if ponly == '/api/auth/verify-deposit':
             if verify_deposit is None:
                 return self._send_json(
                     503, {"verified": False, "error": "Deposit verification unavailable"}
@@ -1620,7 +1672,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 return self._send_json(200, result)
             return self._send_json(400, result)
 
-        if self.path.startswith('/api/auth/verify-usdc-deposit'):
+        if ponly == '/api/auth/verify-usdc-deposit':
             if verify_usdc_deposit is None:
                 return self._send_json(
                     503, {"verified": False, "error": "USDC deposit verification unavailable"}
@@ -1644,7 +1696,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 return self._send_json(200, result)
             return self._send_json(400, result)
 
-        if self.path.startswith('/api/auth/verify-deposit-auto'):
+        if ponly == '/api/auth/verify-deposit-auto':
             if verify_deposit_auto is None:
                 return self._send_json(
                     503, {"verified": False, "error": "Deposit verification unavailable"}

@@ -9,7 +9,9 @@ Access rule: wallet allowed only if remaining_minutes > 0.
 """
 
 import logging
+import math
 import os
+import re
 import time
 from decimal import Decimal
 from threading import Lock
@@ -23,6 +25,7 @@ _VERIFIED_TABLE = "axgt_verified_deposits"
 
 _ALLOWED_EVENT_TYPES = frozenset({
     "deposit_credit",
+    "test_credit",
     "usage_deduction",
     "refund",
     "admin_adjustment",
@@ -99,11 +102,39 @@ def _ensure_tables(conn) -> None:
                 axgt_amount NUMERIC NOT NULL,
                 credited_minutes DOUBLE PRECISION NOT NULL,
                 block_number BIGINT NOT NULL,
+                credit_source TEXT NOT NULL DEFAULT 'onchain',
+                payment_rail TEXT NOT NULL DEFAULT 'unknown',
                 created_at DOUBLE PRECISION NOT NULL
             )
         """)
+        # Safe in-place migration for databases created before test-credit
+        # provenance existed. Existing deposits remain explicitly "unknown" rail
+        # rather than being guessed from amount/chain data.
+        cur.execute(
+            f"ALTER TABLE {_VERIFIED_TABLE} "
+            "ADD COLUMN IF NOT EXISTS credit_source TEXT NOT NULL DEFAULT 'onchain'"
+        )
+        cur.execute(
+            f"ALTER TABLE {_VERIFIED_TABLE} "
+            "ADD COLUMN IF NOT EXISTS payment_rail TEXT NOT NULL DEFAULT 'unknown'"
+        )
+        # Rows created by the retired whitelist/sentinel mechanism predate the
+        # provenance columns. Tag only its exact shape so they are never reported
+        # as paid on-chain deposits after inheriting the migration default.
+        cur.execute(
+            f"""UPDATE {_VERIFIED_TABLE}
+                SET credit_source = 'legacy_test_credit', payment_rail = 'unknown'
+                WHERE credit_source = 'onchain'
+                  AND tx_hash ~ '^0xffffffff[0-9A-Fa-f]{{56}}$'
+                  AND block_number = 0
+                  AND axgt_amount = 0"""
+        )
         cur.execute(
             f"CREATE INDEX IF NOT EXISTS idx_verified_wallet ON {_VERIFIED_TABLE}(wallet_address)"
+        )
+        cur.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_verified_credit_source "
+            f"ON {_VERIFIED_TABLE}(credit_source)"
         )
     conn.commit()
 
@@ -296,8 +327,9 @@ def credit_deposit(
             cur.execute(
                 f"""INSERT INTO {_VERIFIED_TABLE}
                     (tx_hash, wallet_address, sender_wallet, recipient_wallet,
-                     axgt_amount, credited_minutes, block_number, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                     axgt_amount, credited_minutes, block_number, credit_source,
+                     payment_rail, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (
                     tx_hash_norm,
                     wallet,
@@ -306,6 +338,8 @@ def credit_deposit(
                     axgt_amount,
                     credited_minutes,
                     block_number,
+                    "onchain",
+                    "axgt",
                     now,
                 ),
             )
@@ -347,6 +381,243 @@ def credit_deposit(
         conn.close()
 
 
+_TEST_CREDIT_REQUEST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
+_TEST_CREDIT_WALLET_RE = re.compile(r"^0x[a-f0-9]{40}$")
+_TEST_CREDIT_RAILS = frozenset({"axgt", "eth", "usdc"})
+_MAX_TEST_CREDIT_GRANT_MINUTES = 1440.0
+_MAX_TEST_CREDIT_BALANCE_MINUTES = 10080.0
+
+
+def credit_test_grant(
+    wallet_address: str,
+    grant_minutes: float,
+    max_balance_minutes: float,
+    request_id: str,
+    payment_rail: str,
+) -> Dict[str, Any]:
+    """Atomically grant bounded test credit with replay and provenance tracking.
+
+    The wallet balance row is locked before the cap is checked and remains locked
+    through the credit update. Concurrent requests for one wallet therefore cannot
+    all observe a stale pre-credit balance. ``request_id`` is globally idempotent;
+    replaying it for another wallet or rail is rejected rather than reinterpreted.
+    """
+    wallet = (wallet_address or "").strip().lower()
+    request_norm = (request_id or "").strip().lower()
+    rail = (payment_rail or "").strip().lower()
+    try:
+        grant = float(grant_minutes)
+        cap = float(max_balance_minutes)
+    except (TypeError, ValueError):
+        grant = 0.0
+        cap = 0.0
+
+    if not _TEST_CREDIT_WALLET_RE.fullmatch(wallet):
+        return {"ok": False, "error_code": "invalid_wallet", "error": "Invalid wallet"}
+    if rail not in _TEST_CREDIT_RAILS:
+        return {"ok": False, "error_code": "invalid_rail", "error": "Invalid test-credit rail"}
+    if not _TEST_CREDIT_REQUEST_RE.fullmatch(request_norm):
+        return {
+            "ok": False,
+            "error_code": "invalid_request_id",
+            "error": "request_id must be 8-128 safe characters",
+        }
+    if (
+        not math.isfinite(grant)
+        or grant <= 0
+        or grant > _MAX_TEST_CREDIT_GRANT_MINUTES
+        or not math.isfinite(cap)
+        or cap <= 0
+        or cap > _MAX_TEST_CREDIT_BALANCE_MINUTES
+    ):
+        return {
+            "ok": False,
+            "error_code": "invalid_credit_config",
+            "error": "Test-credit grant or cap is outside the allowed bounds",
+        }
+    if not init_once():
+        return {
+            "ok": False,
+            "error_code": "ledger_unavailable",
+            "retryable": True,
+            "error": "Ledger unavailable",
+        }
+    conn = _get_connection()
+    if not conn:
+        return {
+            "ok": False,
+            "error_code": "ledger_unavailable",
+            "retryable": True,
+            "error": "Ledger unavailable",
+        }
+
+    reference = f"test-credit:{request_norm}"
+    try:
+        now = time.time()
+        with conn.cursor() as cur:
+            # Serialize a request ID globally (including malicious cross-wallet
+            # reuse) and serialize all grants for this wallet via its balance row.
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (reference,))
+            cur.execute(
+                f"""INSERT INTO {_DEPOSITS_TABLE}
+                    (wallet_address, deposited_amount_axgt, credited_minutes_total,
+                     consumed_minutes_total, remaining_minutes, last_billed_at,
+                     created_at, updated_at)
+                    VALUES (%s, 0, 0, 0, 0, NULL, %s, %s)
+                    ON CONFLICT (wallet_address) DO NOTHING""",
+                (wallet, now, now),
+            )
+            cur.execute(
+                f"SELECT remaining_minutes FROM {_DEPOSITS_TABLE} "
+                "WHERE wallet_address = %s FOR UPDATE",
+                (wallet,),
+            )
+            balance_row = cur.fetchone()
+            if not balance_row:
+                conn.rollback()
+                return {
+                    "ok": False,
+                    "error_code": "ledger_unavailable",
+                    "retryable": True,
+                    "error": "Could not lock wallet balance",
+                }
+            remaining_now = float(balance_row[0])
+
+            cur.execute(
+                f"""SELECT wallet_address, credited_minutes, credit_source, payment_rail
+                    FROM {_VERIFIED_TABLE} WHERE tx_hash = %s""",
+                (reference,),
+            )
+            previous = cur.fetchone()
+            if previous:
+                previous_wallet = str(previous[0] or "").lower()
+                previous_source = str(previous[2] or "").lower()
+                previous_rail = str(previous[3] or "").lower()
+                if (
+                    previous_wallet != wallet
+                    or previous_source != "test_credit"
+                    or previous_rail != rail
+                ):
+                    conn.commit()
+                    return {
+                        "ok": False,
+                        "error_code": "request_mismatch",
+                        "request_mismatch": True,
+                        "remaining_minutes": remaining_now,
+                        "error": "request_id was already used for a different wallet or rail",
+                    }
+                conn.commit()
+                previous_credited = float(previous[1])
+                return {
+                    "ok": True,
+                    "replayed": True,
+                    "capped": previous_credited == 0.0,
+                    "no_op": previous_credited == 0.0,
+                    "request_id": request_norm,
+                    "payment_rail": rail,
+                    "credited_minutes": previous_credited,
+                    "remaining_minutes": remaining_now,
+                }
+
+            available = max(0.0, cap - remaining_now)
+            if available <= 0:
+                # Record even a no-op request so retries are idempotent. A wallet
+                # already holding credit at the configured cap is still allowed
+                # to continue; it simply receives no additional minutes.
+                cur.execute(
+                    f"""INSERT INTO {_VERIFIED_TABLE}
+                        (tx_hash, wallet_address, sender_wallet, recipient_wallet,
+                         axgt_amount, credited_minutes, block_number, credit_source,
+                         payment_rail, created_at)
+                        VALUES (%s, %s, %s, %s, 0, 0, 0, %s, %s, %s)""",
+                    (
+                        reference,
+                        wallet,
+                        wallet,
+                        _revenue_wallet().lower(),
+                        "test_credit",
+                        rail,
+                        now,
+                    ),
+                )
+                _ledger_write(
+                    cur,
+                    wallet,
+                    "test_credit",
+                    0.0,
+                    Decimal("0"),
+                    remaining_now,
+                    reference_tx_hash=reference,
+                    notes=f"Test credit no-op at cap rail={rail} request_id={request_norm}",
+                    created_by="test_credit_api",
+                )
+                conn.commit()
+                return {
+                    "ok": True,
+                    "capped": True,
+                    "no_op": True,
+                    "replayed": False,
+                    "request_id": request_norm,
+                    "payment_rail": rail,
+                    "credited_minutes": 0.0,
+                    "remaining_minutes": remaining_now,
+                }
+
+            credited = min(grant, available)
+            remaining_after = remaining_now + credited
+            cur.execute(
+                f"""INSERT INTO {_VERIFIED_TABLE}
+                    (tx_hash, wallet_address, sender_wallet, recipient_wallet,
+                     axgt_amount, credited_minutes, block_number, credit_source,
+                     payment_rail, created_at)
+                    VALUES (%s, %s, %s, %s, 0, %s, 0, %s, %s, %s)""",
+                (
+                    reference,
+                    wallet,
+                    wallet,
+                    _revenue_wallet().lower(),
+                    credited,
+                    "test_credit",
+                    rail,
+                    now,
+                ),
+            )
+            cur.execute(
+                f"""UPDATE {_DEPOSITS_TABLE}
+                    SET credited_minutes_total = credited_minutes_total + %s,
+                        remaining_minutes = %s,
+                        updated_at = %s
+                    WHERE wallet_address = %s""",
+                (credited, remaining_after, now, wallet),
+            )
+            _ledger_write(
+                cur,
+                wallet,
+                "test_credit",
+                credited,
+                Decimal("0"),
+                remaining_after,
+                reference_tx_hash=reference,
+                notes=f"Test credit rail={rail} request_id={request_norm}",
+                created_by="test_credit_api",
+            )
+        conn.commit()
+        return {
+            "ok": True,
+            "replayed": False,
+            "request_id": request_norm,
+            "payment_rail": rail,
+            "credited_minutes": credited,
+            "remaining_minutes": remaining_after,
+        }
+    except Exception as exc:
+        conn.rollback()
+        logger.warning("credit_test_grant failed: %s", exc)
+        return {"ok": False, "error_code": "credit_failed", "error": "Test credit failed"}
+    finally:
+        conn.close()
+
+
 def _revenue_wallet() -> str:
     return (os.getenv("AXGT_REVENUE_WALLET") or "").strip() or ""
 
@@ -377,8 +648,9 @@ def credit_eth_deposit(
             cur.execute(
                 f"""INSERT INTO {_VERIFIED_TABLE}
                     (tx_hash, wallet_address, sender_wallet, recipient_wallet,
-                     axgt_amount, credited_minutes, block_number, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                     axgt_amount, credited_minutes, block_number, credit_source,
+                     payment_rail, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (
                     tx_hash_norm,
                     wallet,
@@ -387,6 +659,8 @@ def credit_eth_deposit(
                     Decimal("0"),
                     credited_minutes,
                     block_number,
+                    "onchain",
+                    "eth",
                     now,
                 ),
             )
@@ -454,8 +728,9 @@ def credit_usdc_deposit(
             cur.execute(
                 f"""INSERT INTO {_VERIFIED_TABLE}
                     (tx_hash, wallet_address, sender_wallet, recipient_wallet,
-                     axgt_amount, credited_minutes, block_number, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                     axgt_amount, credited_minutes, block_number, credit_source,
+                     payment_rail, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (
                     tx_hash_norm,
                     wallet,
@@ -464,6 +739,8 @@ def credit_usdc_deposit(
                     Decimal("0"),
                     credited_minutes,
                     block_number,
+                    "onchain",
+                    "usdc",
                     now,
                 ),
             )

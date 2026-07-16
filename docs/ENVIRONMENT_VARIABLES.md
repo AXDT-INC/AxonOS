@@ -102,6 +102,21 @@ Read by [`axonos_gate/deposit_verifier.py`](../axonos_gate/deposit_verifier.py),
 | `AXGT_REVENUE_WALLET` | *(none)* | Lowercase-normalized deposit destination for ETH and AXGT transfers. |
 | `AXGT_TOKEN_DECIMALS` | `18` | ERC-20 decimals for in-page “Send min AXGT” UI when not fetched on-chain. |
 
+### Test credits (non-payment release rail)
+
+Test credit is issued only by authenticated `POST /api/auth/test-credit`; the real
+ETH, USDC, and AXGT payment controls always submit on-chain transactions. Grants are
+recorded with separate ledger/provenance fields and are disabled unless both the
+feature flag and wallet eligibility list permit them.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AXONOS_TEST_CREDITS_ENABLED` | `false` | Explicit fail-closed switch for token-free test credit. A wallet list alone never enables it. |
+| `AXONOS_TEST_CREDIT_WALLETS` | *(none)* | Comma-separated wallets eligible to request test credit. |
+| `AXONOS_TEST_CREDIT_GRANT_MINUTES` | `60` | Minutes requested per grant; finite hard maximum `1440`. |
+| `AXONOS_TEST_CREDIT_MAX_BALANCE_MINUTES` | `60` | Atomic wallet-balance cap; finite hard maximum `10080`. Partial grants stop exactly at the cap. |
+| `AXONOS_WHITELISTED_WALLETS` | *(none)* | Legacy wallet-list alias only. It does not enable test credits. |
+
 ### ETH deposits (primary payment rail)
 
 | Variable | Default | Description |
@@ -310,7 +325,7 @@ Set by session launcher on `axgt-session-*` containers (not operator `.env`):
 | `AXGT_HOST_SESSION_ENV_PASSTHROUGH` | *(see compose)* | Comma-separated env names copied from launcher into session containers. |
 
 **Default passthrough (compose):**  
-`AXGT_CHAIN_ID`, `AXGT_RPC_URL`, `AXGT_CONTRACT_ADDRESS`, `AXGT_REVENUE_WALLET`, `AXGT_CHALLENGE_DB_URL`, `AXGT_MIN_DEPOSIT`, `AXGT_CREDIT_PER_100_AXGT_MINUTES`, `ETH_MIN_DEPOSIT`, `ETH_CREDIT_PER_ETH_MINUTES`, `AXGT_ENABLE_ETH_DEPOSITS`, `WEBRTC_ENABLED`, `WEBRTC_AGENT_ENABLED`, `WEBRTC_AGENT_INTERNAL_KEY`, `WEBRTC_DISPLAY_WAIT_SECONDS`, `WEBRTC_ANSWER_WAIT_MS`, `WEBRTC_STUN_URLS`, `WEBRTC_TURN_URLS`, `WEBRTC_TURN_USERNAME`, `WEBRTC_TURN_CREDENTIAL`, `WEBRTC_FALLBACK_ENABLED`
+`AXGT_CHAIN_ID`, `AXGT_RPC_URL`, `AXGT_CONTRACT_ADDRESS`, `AXGT_REVENUE_WALLET`, `AXGT_CHALLENGE_DB_URL`, `AXONOS_TEST_CREDITS_ENABLED`, `AXONOS_TEST_CREDIT_WALLETS`, `AXONOS_TEST_CREDIT_GRANT_MINUTES`, `AXONOS_TEST_CREDIT_MAX_BALANCE_MINUTES`, `AXONOS_WHITELISTED_WALLETS`, `AXGT_MIN_DEPOSIT`, `AXGT_CREDIT_PER_100_AXGT_MINUTES`, `ETH_MIN_DEPOSIT`, `ETH_CREDIT_PER_ETH_MINUTES`, `AXGT_ENABLE_ETH_DEPOSITS`, `WEBRTC_ENABLED`, `WEBRTC_AGENT_ENABLED`, `WEBRTC_AGENT_INTERNAL_KEY`, `WEBRTC_DISPLAY_WAIT_SECONDS`, `WEBRTC_ANSWER_WAIT_MS`, `WEBRTC_STUN_URLS`, `WEBRTC_TURN_URLS`, `WEBRTC_TURN_USERNAME`, `WEBRTC_TURN_CREDENTIAL`, `WEBRTC_FALLBACK_ENABLED`
 
 **Note:** Launcher always forces `AXGT_DESKTOP_ENABLED=true` and `WEBRTC_AGENT_ENABLED=true` on session containers. Do not add `AXGT_DESKTOP_ENABLED` to passthrough.
 

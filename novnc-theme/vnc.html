@@ -68,7 +68,7 @@ Copyright (C) 2019 The noVNC Authors
 
     <!-- Stylesheets -->
     <link rel="stylesheet" href="app/styles/base.css">
-    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=19.0&t=1751692000">
+    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.0&t=20260716">
 
     <!-- Images that will later appear via CSS -->
     <link rel="preload" as="image" href="app/images/info.svg">
@@ -108,7 +108,7 @@ Copyright (C) 2019 The noVNC Authors
     </script>
     <script src="app/error-handler.js"></script>
     <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
-    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260708a"></script>
+    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260716a"></script>
 </head>
 
 <body>
@@ -830,7 +830,7 @@ Copyright (C) 2019 The noVNC Authors
                 </div>
 
                 <div class="axonos-dashboard-section-label">YOUR SESSIONS</div>
-                <div id="axonos_dashboard_sessions_list">
+                <div id="axonos_dashboard_sessions_list" class="axonos-session-cards-grid">
                     <!-- Session cards populated by script -->
                 </div>
                 <div id="axonos_dashboard_empty_state" class="axonos-dashboard-empty" style="display: none;">
@@ -1160,6 +1160,18 @@ Copyright (C) 2019 The noVNC Authors
                                     <p class="axonos-pay-banner__text">Ready to pay <span id="axonos_wizard_pay_desc"
                                             class="axonos-pay-banner__highlight">~5 USDC</span> from your wallet.
                                         Already holding AXGT? Your discount is applied automatically.</p>
+                                </div>
+
+                                <div id="axonos_wizard_test_credit_panel" class="axonos-test-credit-panel" hidden>
+                                    <div>
+                                        <strong>Release-test credit</strong>
+                                        <p>Issue bounded test credit to this signed-in wallet without sending a
+                                            transaction. The payment buttons above always submit real payments.</p>
+                                    </div>
+                                    <button type="button" id="axonos_wizard_test_credit_btn"
+                                        class="axonos-test-credit-btn">Use test credit</button>
+                                    <p id="axonos_wizard_test_credit_msg" class="axonos-test-credit-msg" role="status"
+                                        aria-live="polite"></p>
                                 </div>
                             </div>
                         </div>
@@ -1560,6 +1572,15 @@ Copyright (C) 2019 The noVNC Authors
                                         class="axonos-connect-wallet-btn axonos-pay-send-btn">Pay with USDC</button>
                                 </div>
                             </div>
+                        </div>
+                        <div id="axonos_test_credit_panel" class="axonos-test-credit-panel" hidden>
+                            <div>
+                                <strong>Release-test credit</strong>
+                                <p>Issue bounded test credit to this signed-in wallet without sending a transaction.
+                                    Pay with ETH, USDC, and AXGT always remain real on-chain actions.</p>
+                            </div>
+                            <button type="button" id="axonos_test_credit_btn"
+                                class="axonos-test-credit-btn">Use test credit</button>
                         </div>
                         <p id="axonos_pay_eth_hint" class="axonos-pay-eth-hint" role="status" aria-live="polite"></p>
                         <p class="axonos-wallet-state__help" style="margin:0.35rem 0;font-size:0.82em;opacity:0.75;">
@@ -2155,7 +2176,9 @@ Copyright (C) 2019 The noVNC Authors
                     launchBtn.addEventListener('click', function () {
                         var wallet = window.verifiedWalletAddress;
                         if (wallet) {
-                            if (typeof axonosLoadDashboard === 'function') axonosLoadDashboard();
+                            if (typeof window.axonosReturnToWorkspace === 'function') {
+                                window.axonosReturnToWorkspace();
+                            }
                         } else {
                             // Open the credentials dialog popup, then trigger wallet connect
                             var dlg = document.getElementById('noVNC_credentials_dlg');
@@ -2179,8 +2202,8 @@ Copyright (C) 2019 The noVNC Authors
                 if (brandBtn) {
                     brandBtn.addEventListener('click', function () {
                         var wallet = window.verifiedWalletAddress;
-                        if (wallet && typeof axonosLoadDashboard === 'function') {
-                            axonosLoadDashboard();
+                        if (wallet && typeof window.axonosReturnToWorkspace === 'function') {
+                            window.axonosReturnToWorkspace();
                         } else if (typeof axonosUpdateActiveScreen === 'function') {
                             axonosUpdateActiveScreen('landing');
                         }
@@ -2401,9 +2424,8 @@ Copyright (C) 2019 The noVNC Authors
                 // Shown the moment a deposit tx is sent: instant confirmation that the
                 // payment went through + what happens next (tester feedback 2026-07-08:
                 // the on-chain wait used to look like a blank screen).
-                payment: window.axonosIsWhitelisted
-                    ? ['Whitelist Bypass Active', 'Simulated transaction sent. Verifying test credit status…']
-                    : ['Payment sent ✓', 'Waiting for on-chain confirmation — usually under 2 minutes. Keep this tab open; your desktop will continue automatically…'],
+                payment: ['Payment sent ✓', 'Waiting for on-chain confirmation — usually under 2 minutes. Keep this tab open; your desktop will continue automatically…'],
+                'test-credit': ['Issuing test credit', 'Applying bounded release-test credit — no wallet transaction is being sent…'],
                 preparing: reconnect
                     ? ['Resuming session', 'Reconnecting to your running desktop…']
                     : ssh
@@ -2651,6 +2673,39 @@ Copyright (C) 2019 The noVNC Authors
                 .then(function (r) { return r.json(); });
         }
 
+        function axonosSyncTestCreditControls() {
+            var eligible = !!window.axonosTestCreditEligible;
+            ['axonos_test_credit_panel', 'axonos_wizard_test_credit_panel'].forEach(function (id) {
+                var panel = document.getElementById(id);
+                if (panel) panel.hidden = !eligible;
+            });
+        }
+
+        function axonosPaymentIdentityIsCurrent(wallet) {
+            var current = String(window.verifiedWalletAddress || verifiedWalletAddress || '')
+                .trim().toLowerCase();
+            return !!current && current === String(wallet || '').trim().toLowerCase();
+        }
+
+        function axonosSetTestCreditEligibility(dataOrEligible) {
+            var eligible = false;
+            if (typeof dataOrEligible === 'boolean') {
+                eligible = dataOrEligible;
+            } else if (dataOrEligible && typeof dataOrEligible === 'object') {
+                if (dataOrEligible.test_credit_eligible !== undefined) {
+                    eligible = !!dataOrEligible.test_credit_eligible;
+                } else if (dataOrEligible.is_whitelisted !== undefined) {
+                    // Compatibility with gates deployed before the explicit field name.
+                    eligible = !!dataOrEligible.is_whitelisted;
+                } else {
+                    return;
+                }
+            }
+            window.axonosTestCreditEligible = eligible;
+            axonosSyncTestCreditControls();
+        }
+        window.axonosSetTestCreditEligibility = axonosSetTestCreditEligibility;
+
         function axonosFetchWalletAccessStatus(wallet) {
             const w = (wallet || window.verifiedWalletAddress || '').trim();
             if (!w) return Promise.resolve({ verified: false, remaining_minutes: 0 });
@@ -2663,17 +2718,30 @@ Copyright (C) 2019 The noVNC Authors
             return fetch(url.toString(), { method: 'GET', credentials: 'include', headers })
                 .then(function (r) {
                     return r.json().then(function (data) {
-                        if (data && data.is_whitelisted !== undefined) {
-                            window.axonosIsWhitelisted = !!data.is_whitelisted;
+                        if (!axonosPaymentIdentityIsCurrent(w)) {
+                            return { ok: false, data: {}, stale: true };
                         }
+                        axonosSetTestCreditEligibility(data);
                         return { ok: r.ok, data: data };
                     });
                 })
-                .catch(function () { return { ok: false, data: {} }; });
+                .catch(function () {
+                    return {
+                        ok: false,
+                        data: {},
+                        stale: !axonosPaymentIdentityIsCurrent(w)
+                    };
+                });
         }
 
         function axonosSyncWalletAccessForResume(wallet) {
+            if (!axonosPaymentIdentityIsCurrent(wallet)) {
+                return Promise.resolve({ verified: false, remaining: 0, data: {}, stale: true });
+            }
             return axonosFetchWalletAccessStatus(wallet).then(function (res) {
+                if (!axonosPaymentIdentityIsCurrent(wallet)) {
+                    return { verified: false, remaining: 0, data: {}, stale: true };
+                }
                 var data = res.data || {};
                 var remaining = typeof data.remaining_minutes === 'number' ? data.remaining_minutes : 0;
                 var verified = !!(res.ok && data.verified === true && remaining > 0);
@@ -3123,18 +3191,25 @@ Copyright (C) 2019 The noVNC Authors
             return false;
         }
 
-        function axonosRefreshPausedResumeStatus() {
-            var wallet = window.verifiedWalletAddress;
+        function axonosRefreshPausedResumeStatus(expectedWallet) {
+            var wallet = String(expectedWallet || window.verifiedWalletAddress || '').trim();
             if (!wallet) {
                 return axonosProbePausedResumeOnLoad();
             }
+            if (!axonosPaymentIdentityIsCurrent(wallet)) {
+                return Promise.resolve(null);
+            }
             return sessionStatusForWallet(wallet).then(function (st) {
+                if (!axonosPaymentIdentityIsCurrent(wallet)) return null;
                 var active = axonosApplySessionStatusToResumeUi(st, wallet);
                 if (active) {
-                    return axonosSyncWalletAccessForResume(wallet).then(function () { return st; });
+                    return axonosSyncWalletAccessForResume(wallet).then(function () {
+                        return axonosPaymentIdentityIsCurrent(wallet) ? st : null;
+                    });
                 }
                 return st;
             }).catch(function () {
+                if (!axonosPaymentIdentityIsCurrent(wallet)) return null;
                 window.axonosPausedResume = null;
                 axonosApplyResumeConnectUi(false);
                 return null;
@@ -3157,8 +3232,15 @@ Copyright (C) 2019 The noVNC Authors
             });
         }
 
-        function axonosTryResumeDesktopAfterCredit() {
+        function axonosTryResumeDesktopAfterCredit(paymentOperation) {
             var wallet = window.verifiedWalletAddress;
+            var resumeIsCurrent = function () {
+                return axonosPaymentIdentityIsCurrent(wallet) &&
+                    (!paymentOperation || axonosPaymentOperationIsCurrent(paymentOperation));
+            };
+            if (paymentOperation && !resumeIsCurrent()) {
+                return Promise.resolve(false);
+            }
             if (!wallet) {
                 if (typeof UI !== 'undefined' && typeof UI.credentials === 'function') {
                     UI.credentials({ detail: { types: ['password'] } });
@@ -3166,6 +3248,7 @@ Copyright (C) 2019 The noVNC Authors
                 return Promise.resolve(false);
             }
             return axonosSyncWalletAccessForResume(wallet).then(function (access) {
+                if (!resumeIsCurrent()) return false;
                 if (!access.verified) {
                     if (typeof window.axonosHideConnectionLoader === 'function') {
                         window.axonosHideConnectionLoader(true);
@@ -3193,6 +3276,7 @@ Copyright (C) 2019 The noVNC Authors
                     showConnectionLoader();
                 }
                 return claimSession().then(function (claim) {
+                    if (!resumeIsCurrent()) return false;
                     if (claim && (claim.granted === true || claim.granted === 'true')) {
                         window.axonosPausedResume = null;
                         // A resumed headless SSH session has no desktop stream to
@@ -3210,7 +3294,7 @@ Copyright (C) 2019 The noVNC Authors
                             return true;
                         }
                         if (typeof window.axonosRefreshPausedResumeStatus === 'function') {
-                            window.axonosRefreshPausedResumeStatus();
+                            window.axonosRefreshPausedResumeStatus(wallet);
                         }
                         tryConnectAfterClaim();
                         return true;
@@ -4468,6 +4552,11 @@ Copyright (C) 2019 The noVNC Authors
         }
 
         function runVerify(walletAddress, provider) {
+            // A new authentication attempt supersedes any payment/test-credit work
+            // captured under the previous wallet identity.
+            axonosPaymentOperationGeneration += 1;
+            axonosTestCreditBusy = false;
+            setPayDepositButtonsBusy(false);
             var eth = resolveEthereumProvider(provider);
             if (!eth) {
                 setWalletUIState('axonos_wallet_state_no_wallet');
@@ -4523,7 +4612,7 @@ Copyright (C) 2019 The noVNC Authors
                         verifiedWalletAddress = walletAddress;
                         window.verifiedWalletAddress = walletAddress;
                         window.verifiedWalletAuthToken = data.auth_token || null;
-                        window.axonosIsWhitelisted = !!(data && data.is_whitelisted);
+                        axonosSetTestCreditEligibility(data);
                         window.axonosAllowVncConnect = true;
                         try { localStorage.setItem('axonos_last_wallet', walletAddress); } catch (e) { }
                         if (typeof axonosOnWalletVerified === 'function') {
@@ -4545,7 +4634,7 @@ Copyright (C) 2019 The noVNC Authors
                         verifiedWalletAddress = null;
                         window.verifiedWalletAddress = null;
                         window.verifiedWalletAuthToken = null;
-                        window.axonosIsWhitelisted = false;
+                        axonosSetTestCreditEligibility(false);
                         window.axonosAllowVncConnect = false;
                         setWalletUIState('axonos_wallet_state_connect_error', {
                             msg: data.error || 'Server could not issue a session (Postgres / AXGT_CHALLENGE_DB_URL required).'
@@ -4555,7 +4644,7 @@ Copyright (C) 2019 The noVNC Authors
                     verifiedWalletAddress = walletAddress;
                     window.verifiedWalletAddress = walletAddress;
                     window.verifiedWalletAuthToken = data.auth_token;
-                    window.axonosIsWhitelisted = !!(data && data.is_whitelisted);
+                    axonosSetTestCreditEligibility(data);
                     window.axonosAllowVncConnect = false;
                     try { localStorage.setItem('axonos_last_wallet', walletAddress); } catch (e) { }
                     var errLower = String(data.error || data.reason || '').toLowerCase();
@@ -4563,6 +4652,7 @@ Copyright (C) 2019 The noVNC Authors
                         verifiedWalletAddress = null;
                         window.verifiedWalletAddress = null;
                         window.verifiedWalletAuthToken = null;
+                        axonosSetTestCreditEligibility(false);
                         window.axonosAllowVncConnect = false;
                         setWalletUIState('axonos_wallet_state_connect_error', {
                             msg: data.error || data.reason || ('Server error HTTP ' + st + '. Set AXGT_CHALLENGE_DB_URL / run Postgres (e.g. docker compose).')
@@ -4573,6 +4663,7 @@ Copyright (C) 2019 The noVNC Authors
                         verifiedWalletAddress = null;
                         window.verifiedWalletAddress = null;
                         window.verifiedWalletAuthToken = null;
+                        axonosSetTestCreditEligibility(false);
                         window.axonosAllowVncConnect = false;
                         setWalletUIState('axonos_wallet_state_connect_error', { msg: data.error || 'Rate limited. Wait and try again.' });
                         return;
@@ -4581,6 +4672,7 @@ Copyright (C) 2019 The noVNC Authors
                         verifiedWalletAddress = null;
                         window.verifiedWalletAddress = null;
                         window.verifiedWalletAuthToken = null;
+                        axonosSetTestCreditEligibility(false);
                         window.axonosAllowVncConnect = false;
                         setWalletUIState('axonos_wallet_state_connect_error', { msg: data.error || 'Signature did not verify. Request a new challenge and try again.' });
                         return;
@@ -4595,7 +4687,7 @@ Copyright (C) 2019 The noVNC Authors
                     verifiedWalletAddress = null;
                     window.verifiedWalletAddress = null;
                     window.verifiedWalletAuthToken = null;
-                    window.axonosIsWhitelisted = false;
+                    axonosSetTestCreditEligibility(false);
                     window.axonosAllowVncConnect = false;
                     if (error && error._axonosUi && error._connectErr) {
                         setWalletUIState('axonos_wallet_state_connect_error', { msg: error._connectErr });
@@ -4613,8 +4705,35 @@ Copyright (C) 2019 The noVNC Authors
                 });
         }
 
+        var axonosPaymentOperationGeneration = 0;
+
+        function axonosBeginPaymentOperation(wallet, token) {
+            // Starting a new rail explicitly supersedes any older poll/test-credit
+            // owner, including its loader and one-shot busy guard.
+            axonosTestCreditBusy = false;
+            if (typeof window.axonosHideConnectionLoader === 'function') {
+                window.axonosHideConnectionLoader(true);
+            }
+            return {
+                generation: ++axonosPaymentOperationGeneration,
+                wallet: String(wallet || '').trim(),
+                token: token || null
+            };
+        }
+
+        function axonosPaymentOperationIsCurrent(operation) {
+            return !!operation &&
+                operation.generation === axonosPaymentOperationGeneration &&
+                axonosPaymentIdentityIsCurrent(operation.wallet);
+        }
+
         function setPayDepositButtonsBusy(busy) {
-            var ids = ['axonos_pay_axgt_btn', 'axonos_pay_eth_btn', 'axonos_pay_usdc_btn', 'axonos_pay_axgt_min_btn'];
+            var ids = [
+                'axonos_pay_axgt_btn', 'axonos_pay_eth_btn', 'axonos_pay_usdc_btn',
+                'axonos_pay_axgt_min_btn', 'axonos_test_credit_btn',
+                'axonos_wizard_test_credit_btn', 'axonos_wizard_primary_btn',
+                'axonos_verify_deposit_btn'
+            ];
             ids.forEach(function (id) {
                 var btn = document.getElementById(id);
                 if (btn) {
@@ -4622,9 +4741,15 @@ Copyright (C) 2019 The noVNC Authors
                     btn.style.opacity = busy ? '0.55' : '';
                 }
             });
-            ['axonos_pay_axgt_amount', 'axonos_pay_eth_amount', 'axonos_pay_usdc_amount'].forEach(function (id) {
+            [
+                'axonos_pay_axgt_amount', 'axonos_pay_eth_amount',
+                'axonos_pay_usdc_amount', 'axonos_tx_hash_input'
+            ].forEach(function (id) {
                 var el = document.getElementById(id);
                 if (el) el.disabled = !!busy;
+            });
+            document.querySelectorAll('.axonos-wizard-token-tab').forEach(function (tab) {
+                tab.disabled = !!busy;
             });
         }
 
@@ -4662,20 +4787,31 @@ Copyright (C) 2019 The noVNC Authors
             }
         }
 
-        function axonosDepositVerifiedSuccess(d, wallet) {
+        function axonosDepositVerifiedSuccess(d, wallet, operation) {
+            var successIsCurrent = function () {
+                return operation
+                    ? axonosPaymentOperationIsCurrent(operation)
+                    : axonosPaymentIdentityIsCurrent(wallet);
+            };
+            if (!successIsCurrent()) return;
             var msgEl = document.getElementById('axonos_verify_deposit_msg');
             var inp = document.getElementById('axonos_tx_hash_input');
             if (msgEl) {
-                var creditedLabel = (d.credited_minutes != null)
-                    ? axonosFormatDesktopTimeLabel(d.credited_minutes)
-                    : '?';
-                msgEl.textContent = 'Credited ' + creditedLabel + '.';
+                if (d.test_credit && Number(d.credited_minutes) === 0) {
+                    msgEl.textContent = 'Test-credit balance is already at its configured cap.';
+                } else {
+                    var creditedLabel = (d.credited_minutes != null)
+                        ? axonosFormatDesktopTimeLabel(d.credited_minutes)
+                        : '?';
+                    msgEl.textContent = (d.test_credit ? 'Test credit applied: ' : 'Credited ') + creditedLabel + '.';
+                }
             }
             window.axonosAllowVncConnect = true;
             var balanceDisplay = (typeof d.remaining_minutes === 'number') ? (d.remaining_minutes + ' min prepaid') : '—';
             var credDlg = document.getElementById('noVNC_credentials_dlg');
 
             function finishAfterCreditRefresh() {
+                if (!successIsCurrent()) return;
                 if (window.axonosPausedResume && msgEl) {
                     msgEl.textContent += ' Resuming your saved desktop…';
                 } else if (msgEl) {
@@ -4693,10 +4829,11 @@ Copyright (C) 2019 The noVNC Authors
                 if (inp) inp.value = '';
                 if (credDlg) credDlg.classList.remove('noVNC_open');
                 if (window.axonosPausedResume) {
-                    axonosTryResumeDesktopAfterCredit();
+                    axonosTryResumeDesktopAfterCredit(operation);
                     return;
                 }
                 claimSession().then(function (claim) {
+                    if (!successIsCurrent()) return;
                     if (claim.granted) tryConnectAfterClaim();
                     else {
                         handleSessionClaimDenied(claim, 'Session claim denied.');
@@ -4705,6 +4842,7 @@ Copyright (C) 2019 The noVNC Authors
                         }
                     }
                 }).catch(function () {
+                    if (!successIsCurrent()) return;
                     if (typeof window.axonosHideConnectionLoader === 'function') {
                         window.axonosHideConnectionLoader(true);
                     }
@@ -4712,7 +4850,8 @@ Copyright (C) 2019 The noVNC Authors
                 });
             }
 
-            axonosRefreshPausedResumeStatus().then(function () {
+            axonosRefreshPausedResumeStatus(wallet).then(function () {
+                if (!successIsCurrent()) return;
                 var liveSession = (typeof UI !== 'undefined' && UI.connected &&
                     typeof UI._axgtSessionDesktopActive === 'function' && UI._axgtSessionDesktopActive()) ||
                     document.documentElement.classList.contains("noVNC_connected");
@@ -4744,25 +4883,28 @@ Copyright (C) 2019 The noVNC Authors
                     if (typeof UI !== 'undefined' && typeof UI.disconnect === 'function' &&
                         (liveSession || typeof window.axonosWebRtcTeardown === 'function')) {
                         UI.disconnect({ skipRelease: true });
-                        setTimeout(finishAfterCreditRefresh, 450);
+                        setTimeout(function () {
+                            if (successIsCurrent()) finishAfterCreditRefresh();
+                        }, 450);
                         return;
                     }
                 }
 
                 finishAfterCreditRefresh();
             }).catch(function () {
-                finishAfterCreditRefresh();
+                if (successIsCurrent()) finishAfterCreditRefresh();
             });
         }
 
-        // Endpoint used by the verify/poll machinery. Defaults to the AXGT/ETH
-        // rail; switched to the USDC rail by axonosPayUsdcFromWallet().
-        var axonosVerifyDepositEndpoint = '/api/auth/verify-deposit';
+        var AXONOS_VERIFY_DEPOSIT_ENDPOINT = '/api/auth/verify-deposit';
+        var AXONOS_VERIFY_USDC_ENDPOINT = '/api/auth/verify-usdc-deposit';
+        var AXONOS_VERIFY_AUTO_ENDPOINT = '/api/auth/verify-deposit-auto';
 
-        function axonosVerifyDepositFetch(txHash) {
-            var wallet = verifiedWalletAddress;
-            var tok = window.verifiedWalletAuthToken;
-            return fetch(new URL(axonosVerifyDepositEndpoint, window.location.origin).toString(), {
+        function axonosVerifyDepositFetch(txHash, verifyEndpoint, operation) {
+            var wallet = operation ? operation.wallet : verifiedWalletAddress;
+            var tok = operation ? operation.token : window.verifiedWalletAuthToken;
+            var endpoint = verifyEndpoint || AXONOS_VERIFY_DEPOSIT_ENDPOINT;
+            return fetch(new URL(endpoint, window.location.origin).toString(), {
                 method: 'POST',
                 credentials: 'include',
                 headers: {
@@ -4792,11 +4934,17 @@ Copyright (C) 2019 The noVNC Authors
             return /not found yet|pending|Insufficient confirmations/i.test(err);
         }
 
-        function axonosPollVerifyDeposit(txHash) {
-            var wallet = verifiedWalletAddress;
+        function axonosPollVerifyDeposit(txHash, verifyEndpoint, paymentOperation) {
+            var operation = paymentOperation || axonosBeginPaymentOperation(
+                verifiedWalletAddress,
+                window.verifiedWalletAuthToken
+            );
+            var wallet = operation.wallet;
+            var endpoint = verifyEndpoint || AXONOS_VERIFY_DEPOSIT_ENDPOINT;
             var msgEl = document.getElementById('axonos_verify_deposit_msg');
             var attempts = 0;
             var maxAttempts = 180;
+            if (!axonosPaymentOperationIsCurrent(operation)) return;
             // Full-screen "Payment sent" overlay for the on-chain wait; without it this
             // stretch looked like a dead blank page. Hidden again on every terminal
             // failure path below so the dialog guidance stays reachable.
@@ -4807,47 +4955,47 @@ Copyright (C) 2019 The noVNC Authors
                 }
             }
             function checkWalletStatusFallback() {
+                if (!axonosPaymentOperationIsCurrent(operation)) return Promise.resolve(false);
                 // If replay-protection says "already credited", confirm via wallet-status and proceed.
                 var ws = new URL('/api/auth/wallet-status', window.location.origin);
                 ws.searchParams.set('wallet_address', wallet);
                 return fetch(ws.toString(), {
                     method: 'GET',
-                    headers: { 'X-Wallet-Address': wallet, 'X-AXGT-Auth-Token': window.verifiedWalletAuthToken || '' },
+                    headers: { 'X-Wallet-Address': wallet, 'X-AXGT-Auth-Token': operation.token || '' },
                     credentials: 'include'
                 }).then(axonosReadFetchJson).then(function (res) {
+                    if (!axonosPaymentOperationIsCurrent(operation)) return false;
                     var d = res.data || {};
                     if (typeof d.remaining_minutes === 'number' && d.remaining_minutes > 0) {
-                        axonosDepositVerifiedSuccess({ verified: true, credited_minutes: null, remaining_minutes: d.remaining_minutes }, wallet);
+                        axonosDepositVerifiedSuccess(
+                            { verified: true, credited_minutes: null, remaining_minutes: d.remaining_minutes },
+                            wallet,
+                            operation
+                        );
                         return true;
                     }
                     return false;
                 }).catch(function () { return false; });
             }
             function tick() {
+                if (!axonosPaymentOperationIsCurrent(operation)) return;
                 attempts += 1;
-                axonosVerifyDepositFetch(txHash).then(function (res) {
+                axonosVerifyDepositFetch(txHash, endpoint, operation).then(function (res) {
+                    if (!axonosPaymentOperationIsCurrent(operation)) return;
                     var d = res.data || {};
                     if (d.auth_token) {
                         window.verifiedWalletAuthToken = d.auth_token;
+                        operation.token = d.auth_token;
                     }
                     if (d.verified) {
                         setPayDepositButtonsBusy(false);
-                        axonosDepositVerifiedSuccess(d, wallet);
-                        return;
-                    }
-                    if (d.not_whitelisted) {
-                        // Server says this wallet may not use mock deposits (e.g. it
-                        // was removed from the whitelist). Clear the stale flag so the
-                        // next Pay click runs the real transaction flow.
-                        window.axonosIsWhitelisted = false;
-                        setPayDepositButtonsBusy(false);
-                        bailToDialog();
-                        if (msgEl) msgEl.textContent = 'This wallet is not on the whitelist — mock payment cancelled. Pay again to send a real transaction.';
+                        axonosDepositVerifiedSuccess(d, wallet, operation);
                         return;
                     }
                     var err = axonosDepositVerifyPendingMessage(d) || String(d.error || d.message || '');
                     if (/already credited|duplicate tx_hash|already.*credited/i.test(err)) {
                         checkWalletStatusFallback().then(function (ok) {
+                            if (!axonosPaymentOperationIsCurrent(operation)) return;
                             if (ok) return;
                             setPayDepositButtonsBusy(false);
                             bailToDialog();
@@ -4870,6 +5018,7 @@ Copyright (C) 2019 The noVNC Authors
                     bailToDialog();
                     if (msgEl) msgEl.textContent = err || ('Could not verify (HTTP ' + res.status + ').');
                 }).catch(function () {
+                    if (!axonosPaymentOperationIsCurrent(operation)) return;
                     if (attempts >= maxAttempts) {
                         setPayDepositButtonsBusy(false);
                         bailToDialog();
@@ -4900,29 +5049,8 @@ Copyright (C) 2019 The noVNC Authors
             return '0xa9059cbb' + toPadded + amtHex.padStart(64, '0');
         }
 
-        // Mock whitelist deposits use a sentinel hash (0xffffffff + 56 random hex)
-        // so the backend can tell them from real transactions: real hashes always
-        // go through on-chain verification, even for whitelisted wallets.
-        function axonosMockWhitelistTxHash() {
-            var tail = Array.from({ length: 56 }, function () { return Math.floor(Math.random() * 16).toString(16); }).join('');
-            return '0xffffffff' + tail;
-        }
-
-        // Shared by all three pay rails: whitelisted wallets skip the wallet
-        // signature and resolve to a sentinel mock hash; everyone else runs the
-        // rail's real eth_sendTransaction flow.
-        function axonosSendOrMockTx(msgEl, realTxFn) {
-            if (window.axonosIsWhitelisted) {
-                if (msgEl) msgEl.textContent = 'Bypassing signature for whitelisted wallet…';
-                return Promise.resolve(axonosMockWhitelistTxHash());
-            }
-            return realTxFn();
-        }
-
         function axonosTxSentMessage() {
-            return window.axonosIsWhitelisted
-                ? 'Mock transaction sent. Bypassing payment for whitelisted wallet…'
-                : 'Transaction sent. Waiting for confirmations…';
+            return 'Transaction sent. Waiting for confirmations…';
         }
 
         function axonosPayAxgtFromWallet() {
@@ -4960,19 +5088,20 @@ Copyright (C) 2019 The noVNC Authors
                 return;
             }
             var data = axonosErc20TransferData(revenue, rawAmt, dec);
+            var operation = axonosBeginPaymentOperation(wallet, tok);
             setPayDepositButtonsBusy(true);
-            axonosSendOrMockTx(msgEl, function () {
-                if (msgEl) msgEl.textContent = 'Confirm sending ' + rawAmt + ' AXGT in your wallet…';
-                return eth.request({
-                    method: 'eth_sendTransaction',
-                    params: [{ from: wallet, to: contract, data: data }]
-                });
+            if (msgEl) msgEl.textContent = 'Confirm sending ' + rawAmt + ' AXGT in your wallet…';
+            eth.request({
+                method: 'eth_sendTransaction',
+                params: [{ from: wallet, to: contract, data: data }]
             }).then(function (txHash) {
+                if (!axonosPaymentOperationIsCurrent(operation)) return;
                 var h = String(txHash || '').trim();
                 if (inp) inp.value = h;
                 if (msgEl) msgEl.textContent = axonosTxSentMessage();
-                axonosPollVerifyDeposit(h);
+                axonosPollVerifyDeposit(h, AXONOS_VERIFY_DEPOSIT_ENDPOINT, operation);
             }).catch(function (e) {
+                if (!axonosPaymentOperationIsCurrent(operation)) return;
                 setPayDepositButtonsBusy(false);
                 if (e && (e.code === 4001 || /user rejected|denied/i.test(String(e.message || '')))) {
                     if (msgEl) msgEl.textContent = 'Cancelled.';
@@ -5020,20 +5149,21 @@ Copyright (C) 2019 The noVNC Authors
             var h = amtW.toString(16);
             if (h.length % 2) h = '0' + h;
             var valueHex = '0x' + h;
+            var operation = axonosBeginPaymentOperation(wallet, tok);
             setPayDepositButtonsBusy(true);
-            axonosSendOrMockTx(msgEl, function () {
-                // Explicit gas avoids wallets/RPC using a huge default (e.g. 21M) that fails cap 16777216.
-                if (msgEl) msgEl.textContent = 'Confirm sending ' + rawEth + ' ETH in your wallet…';
-                return eth.request({
-                    method: 'eth_sendTransaction',
-                    params: [{ from: wallet, to: revenue, value: valueHex, gas: '0x5208' }]
-                });
+            // Explicit gas avoids wallets/RPC using a huge default (e.g. 21M) that fails cap 16777216.
+            if (msgEl) msgEl.textContent = 'Confirm sending ' + rawEth + ' ETH in your wallet…';
+            eth.request({
+                method: 'eth_sendTransaction',
+                params: [{ from: wallet, to: revenue, value: valueHex, gas: '0x5208' }]
             }).then(function (txHash) {
+                if (!axonosPaymentOperationIsCurrent(operation)) return;
                 var h = String(txHash || '').trim();
                 if (inp) inp.value = h;
                 if (msgEl) msgEl.textContent = axonosTxSentMessage();
-                axonosPollVerifyDeposit(h);
+                axonosPollVerifyDeposit(h, AXONOS_VERIFY_DEPOSIT_ENDPOINT, operation);
             }).catch(function (e) {
+                if (!axonosPaymentOperationIsCurrent(operation)) return;
                 setPayDepositButtonsBusy(false);
                 if (e && (e.code === 4001 || /user rejected|denied/i.test(String(e.message || '')))) {
                     if (msgEl) msgEl.textContent = 'Cancelled.';
@@ -5126,22 +5256,25 @@ Copyright (C) 2019 The noVNC Authors
             }
             // USDC is 6 decimals on Base.
             var data = axonosErc20TransferData(revenue, rawUsdc, 6);
+            var operation = axonosBeginPaymentOperation(wallet, tok);
             setPayDepositButtonsBusy(true);
-            axonosSendOrMockTx(msgEl, function () {
-                if (msgEl) msgEl.textContent = 'Switching to Base and confirming ' + rawUsdc + ' USDC…';
-                return axonosEnsureUsdcChain(eth).then(function () {
-                    return eth.request({
-                        method: 'eth_sendTransaction',
-                        params: [{ from: wallet, to: contract, data: data }]
-                    });
+            if (msgEl) msgEl.textContent = 'Switching to Base and confirming ' + rawUsdc + ' USDC…';
+            axonosEnsureUsdcChain(eth).then(function () {
+                if (!axonosPaymentOperationIsCurrent(operation)) {
+                    throw { _axonosStalePayment: true };
+                }
+                return eth.request({
+                    method: 'eth_sendTransaction',
+                    params: [{ from: wallet, to: contract, data: data }]
                 });
             }).then(function (txHash) {
+                if (!axonosPaymentOperationIsCurrent(operation)) return;
                 var h = String(txHash || '').trim();
                 if (inp) inp.value = h;
-                axonosVerifyDepositEndpoint = '/api/auth/verify-usdc-deposit';
                 if (msgEl) msgEl.textContent = axonosTxSentMessage();
-                axonosPollVerifyDeposit(h);
+                axonosPollVerifyDeposit(h, AXONOS_VERIFY_USDC_ENDPOINT, operation);
             }).catch(function (e) {
+                if ((e && e._axonosStalePayment) || !axonosPaymentOperationIsCurrent(operation)) return;
                 setPayDepositButtonsBusy(false);
                 if (e && (e.code === 4001 || /user rejected|denied/i.test(String(e.message || '')))) {
                     if (msgEl) msgEl.textContent = 'Cancelled.';
@@ -5155,7 +5288,6 @@ Copyright (C) 2019 The noVNC Authors
             // Manual tx-hash paste: the backend auto-detects the rail (ETH/AXGT or
             // USDC) server-side, so the client just hits one endpoint. This avoids
             // polling the wrong rail while a tx is briefly unconfirmed.
-            axonosVerifyDepositEndpoint = '/api/auth/verify-deposit-auto';
             var wallet = verifiedWalletAddress;
             var tok = window.verifiedWalletAuthToken;
             var inp = document.getElementById('axonos_tx_hash_input');
@@ -5169,26 +5301,145 @@ Copyright (C) 2019 The noVNC Authors
                 if (msgEl) msgEl.textContent = 'Paste a full tx hash (0x + 64 hex characters).';
                 return;
             }
+            var operation = axonosBeginPaymentOperation(wallet, tok);
+            setPayDepositButtonsBusy(true);
             if (msgEl) msgEl.textContent = 'Verifying on-chain…';
-            axonosVerifyDepositFetch(tx).then(function (res) {
+            axonosVerifyDepositFetch(tx, AXONOS_VERIFY_AUTO_ENDPOINT, operation).then(function (res) {
+                if (!axonosPaymentOperationIsCurrent(operation)) return;
                 var d = res.data || {};
+                if (d.auth_token) {
+                    window.verifiedWalletAuthToken = d.auth_token;
+                    operation.token = d.auth_token;
+                }
                 if (d.verified) {
-                    axonosDepositVerifiedSuccess(d, wallet);
+                    setPayDepositButtonsBusy(false);
+                    axonosDepositVerifiedSuccess(d, wallet, operation);
                 } else if (/already credited|duplicate tx_hash|already.*credited/i.test(String(d.error || ''))) {
                     if (msgEl) msgEl.textContent = 'Already credited — syncing balance…';
-                    setPayDepositButtonsBusy(true);
-                    axonosPollVerifyDeposit(tx);
+                    axonosPollVerifyDeposit(tx, AXONOS_VERIFY_AUTO_ENDPOINT, operation);
                 } else if (axonosDepositVerifyShouldPoll(d)) {
                     if (msgEl) msgEl.textContent = axonosDepositVerifyPendingMessage(d) + ' — auto-retrying…';
-                    setPayDepositButtonsBusy(true);
-                    axonosPollVerifyDeposit(tx);
+                    axonosPollVerifyDeposit(tx, AXONOS_VERIFY_AUTO_ENDPOINT, operation);
                 } else {
+                    setPayDepositButtonsBusy(false);
                     if (msgEl) msgEl.textContent = d.error || d.message || ('Could not verify' + (res.status !== 200 ? ' (HTTP ' + res.status + ')' : '') + '.');
                 }
             }).catch(function () {
+                if (!axonosPaymentOperationIsCurrent(operation)) return;
+                setPayDepositButtonsBusy(false);
                 if (msgEl) msgEl.textContent = 'Request failed. Check network.';
             });
         }
+
+        var axonosTestCreditBusy = false;
+
+        function axonosNewTestCreditRequestId() {
+            var randomPart = '';
+            try {
+                var bytes = new Uint8Array(12);
+                window.crypto.getRandomValues(bytes);
+                randomPart = Array.from(bytes, function (b) {
+                    return b.toString(16).padStart(2, '0');
+                }).join('');
+            } catch (e) {
+                randomPart = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+            }
+            return 'ui-' + Date.now().toString(36) + '-' + randomPart;
+        }
+
+        function axonosRequestTestCredit(rail, messageEl) {
+            var wallet = (verifiedWalletAddress || window.verifiedWalletAddress || '').trim();
+            var tok = window.verifiedWalletAuthToken;
+            var selectedRail = String(rail || '').trim().toLowerCase();
+            var msgEl = messageEl || document.getElementById('axonos_verify_deposit_msg');
+            if (axonosTestCreditBusy) return;
+            if (!wallet || !tok) {
+                if (msgEl) msgEl.textContent = 'Connect and sign in first.';
+                return;
+            }
+            if (!window.axonosTestCreditEligible) {
+                if (msgEl) msgEl.textContent = 'This wallet is not eligible for release-test credit.';
+                axonosSyncTestCreditControls();
+                return;
+            }
+            if (['axgt', 'eth', 'usdc'].indexOf(selectedRail) < 0) selectedRail = 'eth';
+
+            var operation = axonosBeginPaymentOperation(wallet, tok);
+            axonosTestCreditBusy = true;
+            setPayDepositButtonsBusy(true);
+            if (msgEl) msgEl.textContent = 'Issuing bounded test credit — no transaction will be sent…';
+            showConnectionLoader('test-credit');
+
+            return fetch(new URL('/api/auth/test-credit', window.location.origin).toString(), {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Wallet-Address': wallet,
+                    'X-AXGT-Auth-Token': tok
+                },
+                body: JSON.stringify({
+                    wallet_address: wallet,
+                    rail: selectedRail,
+                    request_id: axonosNewTestCreditRequestId()
+                })
+            }).then(axonosReadFetchJson).then(function (res) {
+                if (!axonosPaymentOperationIsCurrent(operation)) return null;
+                var d = res.data || {};
+                if (d.auth_token) {
+                    window.verifiedWalletAuthToken = d.auth_token;
+                    operation.token = d.auth_token;
+                }
+                if (d.error_code === 'not_test_credit_eligible' || d.test_credits_disabled) {
+                    axonosSetTestCreditEligibility(false);
+                }
+
+                // A no-op at the configured cap is still usable when the wallet has
+                // positive credit. Treat it like a successful refresh, not a payment.
+                var usableAtCap = d.error_code === 'test_credit_capped' &&
+                    typeof d.remaining_minutes === 'number' && d.remaining_minutes > 0;
+                if (d.verified || usableAtCap) {
+                    axonosTestCreditBusy = false;
+                    setPayDepositButtonsBusy(false);
+                    if (msgEl) {
+                        msgEl.textContent = usableAtCap
+                            ? 'Test-credit cap already available. Continuing…'
+                            : 'Test credit issued. Continuing…';
+                    }
+                    axonosDepositVerifiedSuccess({
+                        verified: true,
+                        test_credit: true,
+                        credit_source: 'test_credit',
+                        payment_rail: selectedRail,
+                        credited_minutes: d.credited_minutes,
+                        remaining_minutes: d.remaining_minutes
+                    }, wallet, operation);
+                    return d;
+                }
+
+                axonosTestCreditBusy = false;
+                setPayDepositButtonsBusy(false);
+                if (typeof window.axonosHideConnectionLoader === 'function') {
+                    window.axonosHideConnectionLoader(true);
+                }
+                if (msgEl) msgEl.textContent = d.error || d.message || ('Test credit failed (HTTP ' + res.status + ').');
+                return d;
+            }).catch(function (error) {
+                if (!axonosPaymentOperationIsCurrent(operation)) return null;
+                axonosTestCreditBusy = false;
+                setPayDepositButtonsBusy(false);
+                if (typeof window.axonosHideConnectionLoader === 'function') {
+                    window.axonosHideConnectionLoader(true);
+                }
+                if (msgEl) {
+                    msgEl.textContent = (error && error.message)
+                        ? String(error.message)
+                        : 'Test-credit request failed. Check the connection.';
+                }
+                return null;
+            });
+        }
+        window.axonosRequestTestCredit = axonosRequestTestCredit;
 
         function onConnectWalletClick(provider) {
             if (provider) {
@@ -5286,9 +5537,17 @@ Copyright (C) 2019 The noVNC Authors
         var payEthBtn = document.getElementById('axonos_pay_eth_btn');
         var payAxgtMinBtn = document.getElementById('axonos_pay_axgt_min_btn');
         var payUsdcBtn = document.getElementById('axonos_pay_usdc_btn');
+        var testCreditBtn = document.getElementById('axonos_test_credit_btn');
+        var wizardTestCreditBtn = document.getElementById('axonos_wizard_test_credit_btn');
         if (payAxgtBtn) payAxgtBtn.addEventListener('click', function () { axonosPayAxgtFromWallet(); });
         if (payEthBtn) payEthBtn.addEventListener('click', function () { axonosPayEthFromWallet(); });
         if (payUsdcBtn) payUsdcBtn.addEventListener('click', function () { axonosPayUsdcFromWallet(); });
+        if (testCreditBtn) testCreditBtn.addEventListener('click', function () {
+            axonosRequestTestCredit(axonosActivePayRail || 'eth', document.getElementById('axonos_verify_deposit_msg'));
+        });
+        if (wizardTestCreditBtn) wizardTestCreditBtn.addEventListener('click', function () {
+            axonosRequestTestCredit(axonosSelectedPaymentToken || 'usdc', document.getElementById('axonos_wizard_test_credit_msg'));
+        });
         ['axonos_pay_rail_eth', 'axonos_pay_rail_usdc', 'axonos_pay_rail_axgt'].forEach(function (id) {
             var pill = document.getElementById(id);
             if (pill) pill.addEventListener('click', function () { axonosSelectPayRail(pill.getAttribute('data-rail')); });
@@ -5411,9 +5670,16 @@ Copyright (C) 2019 The noVNC Authors
         // ownership so the credited session pauses cleanly and isn't trapped behind a
         // now-departed browser; the new wallet must re-authenticate to get its own.
         function clearWalletIdentityAndUi() {
+            axonosPaymentOperationGeneration += 1;
+            axonosTestCreditBusy = false;
+            setPayDepositButtonsBusy(false);
+            if (typeof window.axonosHideConnectionLoader === 'function') {
+                window.axonosHideConnectionLoader(true);
+            }
             verifiedWalletAddress = null;
             window.verifiedWalletAddress = null;
             window.verifiedWalletAuthToken = null;
+            axonosSetTestCreditEligibility(false);
             window.axonosAllowVncConnect = false;
             window.axonosPausedResume = null;
             axonosApplyResumeConnectUi(false);
@@ -6207,6 +6473,9 @@ Copyright (C) 2019 The noVNC Authors
         let axonosSelectedGpuProfile = 'small'; // small, medium, large, max
         let axonosSelectedPaymentToken = 'usdc'; // usdc, eth, axgt
         let axonosTelemetryInterval = null;
+        let axonosDashboardRequestGeneration = 0;
+        let axonosDashboardRefreshTimer = null;
+        const axonosDashboardEndingSessions = new Map();
 
         // Screen states toggler
         function axonosUpdateActiveScreen(screen) {
@@ -6235,6 +6504,138 @@ Copyright (C) 2019 The noVNC Authors
         }
         window.axonosUpdateActiveScreen = axonosUpdateActiveScreen;
 
+        function axonosNormalizeWalletAddress(wallet) {
+            return String(wallet || '').trim().toLowerCase();
+        }
+
+        function axonosCurrentVerifiedWallet() {
+            return String(window.verifiedWalletAddress || verifiedWalletAddress || '').trim();
+        }
+
+        function axonosDashboardRequestIsCurrent(generation, wallet) {
+            return generation === axonosDashboardRequestGeneration &&
+                axonosNormalizeWalletAddress(axonosCurrentVerifiedWallet()) === axonosNormalizeWalletAddress(wallet);
+        }
+
+        /**
+         * Canonical disconnected-home route. Switching the pane is synchronous so a
+         * slow status request can never leave the previous wizard step on screen.
+         * axonosLoadDashboard owns the guarded asynchronous refresh only.
+         */
+        function axonosReturnToWorkspace() {
+            const wallet = axonosCurrentVerifiedWallet();
+            if (!wallet) {
+                // Invalidate any response that was issued for the wallet we just left.
+                axonosDashboardRequestGeneration += 1;
+                axonosUpdateActiveScreen('landing');
+                return Promise.resolve(null);
+            }
+            axonosUpdateActiveScreen('dashboard');
+            return axonosLoadDashboard();
+        }
+        window.axonosReturnToWorkspace = axonosReturnToWorkspace;
+
+        function axonosDashboardSessionKey(session) {
+            if (!session || session.session_id === undefined || session.session_id === null) return '';
+            return String(session.session_id);
+        }
+
+        /** Build the wallet-owned dashboard rows from the host-global status schema. */
+        function axonosOwnedDashboardSessions(status, wallet) {
+            const walletNorm = axonosNormalizeWalletAddress(wallet);
+            const rows = Array.isArray(status && status.active_sessions)
+                ? status.active_sessions
+                : [];
+            const sessions = rows
+                .filter(function (session) {
+                    return axonosNormalizeWalletAddress(session && session.wallet_address) === walletNorm;
+                })
+                .map(function (session) {
+                    return Object.assign({}, session, { dashboard_state: 'active' });
+                });
+
+            // Single-session deployments omit active_sessions. This is also a
+            // compatibility fallback while older gates roll forward to owner_session_id.
+            if (sessions.length === 0 && status && status.is_owner && status.owner_requested_profile) {
+                sessions.push({
+                    session_id: status.owner_session_id || null,
+                    wallet_address: wallet,
+                    requested_profile: status.owner_requested_profile || status.latest_requested_profile || 'small',
+                    assigned_gpu_ids: status.owner_assigned_gpu_ids || status.latest_assigned_gpu_ids || [],
+                    gpu_count: status.owner_gpu_count,
+                    allocation_status: status.owner_allocation_status || 'allocated',
+                    ssh_enabled: !!status.owner_ssh_enabled,
+                    started_at: status.owner_started_at || null,
+                    dashboard_state: 'active'
+                });
+            }
+
+            // Paused fields are already scoped to the requested wallet and are not
+            // included in active_sessions (nor in active_sessions_count).
+            if (status && status.paused === true && status.can_resume === true &&
+                status.paused_session_id !== undefined && status.paused_session_id !== null) {
+                const pausedId = String(status.paused_session_id);
+                const duplicate = sessions.some(function (session) {
+                    return axonosDashboardSessionKey(session) === pausedId;
+                });
+                if (!duplicate) {
+                    sessions.push({
+                        session_id: status.paused_session_id,
+                        wallet_address: wallet,
+                        requested_profile: status.paused_requested_profile || 'small',
+                        assigned_gpu_ids: status.paused_assigned_gpu_ids || [],
+                        gpu_count: status.paused_gpu_count,
+                        allocation_status: 'paused',
+                        ssh_enabled: !!status.paused_ssh_enabled,
+                        resume_seconds: status.paused_resume_seconds,
+                        dashboard_state: 'paused'
+                    });
+                }
+            }
+            return sessions;
+        }
+
+        function axonosSyncDashboardPausedResume(status, wallet) {
+            if (status && status.paused === true && status.can_resume === true) {
+                axonosApplySessionStatusToResumeUi(status, wallet);
+                return;
+            }
+            window.axonosPausedResume = null;
+            axonosApplyResumeConnectUi(false);
+        }
+
+        function axonosScheduleDashboardRefresh(delayMs) {
+            if (axonosDashboardRefreshTimer) return;
+            axonosDashboardRefreshTimer = setTimeout(function () {
+                axonosDashboardRefreshTimer = null;
+                if (axonosCurrentVerifiedWallet()) {
+                    axonosLoadDashboard();
+                }
+            }, Math.max(250, Number(delayMs) || 750));
+        }
+
+        /** Hide a just-ended row briefly if a status read races release propagation. */
+        function axonosWithoutEndingDashboardSessions(sessions) {
+            const now = Date.now();
+            const present = new Set(sessions.map(axonosDashboardSessionKey).filter(Boolean));
+            axonosDashboardEndingSessions.forEach(function (expiresAt, key) {
+                if (!present.has(key) || expiresAt <= now) {
+                    axonosDashboardEndingSessions.delete(key);
+                }
+            });
+            let hidEndingRow = false;
+            const visible = sessions.filter(function (session) {
+                const key = axonosDashboardSessionKey(session);
+                if (key && axonosDashboardEndingSessions.has(key)) {
+                    hidEndingRow = true;
+                    return false;
+                }
+                return true;
+            });
+            if (hidEndingRow) axonosScheduleDashboardRefresh(750);
+            return visible;
+        }
+
         // Sync topbar state elements
         function axonosSyncTopbar(wallet, credits) {
             const connectBtn = document.getElementById('axonos_topbar_connect_btn');
@@ -6260,43 +6661,86 @@ Copyright (C) 2019 The noVNC Authors
             var credentialsDialog = document.getElementById('noVNC_credentials_dlg');
             if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
 
-            // Show a generic workspace transition loader
-            const loader = document.getElementById('axonos-loader');
-            if (loader) {
-                loader.classList.add('axonos-loader--workspace');
-                const titleEl = loader.querySelector('.axonos-loading-text');
-                const subEl = loader.querySelector('.axonos-loading-subtext');
-                if (titleEl) titleEl.textContent = 'Loading workspace';
-                if (subEl) subEl.textContent = 'Retrieving your environments and active sessions…';
-                loader.classList.add('active');
-                if (typeof loaderStartTime !== 'undefined') {
-                    loaderStartTime = Date.now();
-                }
-            }
-
             // Sync topbar
             axonosSyncTopbar(walletAddress, data ? data.remaining_minutes : null);
 
-            // Refresh paused/resume state first
-            axonosRefreshPausedResumeStatus().then(function () {
-                if (window.axonosPausedResume) {
-                    console.log('[AxonOS] Paused session detected, resuming desktop directly');
-                    if (loader) {
-                        loader.classList.remove('axonos-loader--workspace');
-                    }
-                    axonosTryResumeDesktopAfterCredit();
+            // Enter the workspace synchronously. Session/credit reads can take tens
+            // of seconds when the gate or its database is busy; they must not hold a
+            // full-screen transition modal in front of an otherwise usable dashboard.
+            // axonosLoadDashboard keeps its own wallet + generation guards, so this
+            // refresh is safe to let finish in the background after a wallet switch.
+            var dashboardRefresh = axonosReturnToWorkspace();
+            var expectedDashboardGeneration = axonosDashboardRequestGeneration;
+            if (typeof window.axonosHideConnectionLoader === 'function') {
+                window.axonosHideConnectionLoader(true);
+            }
+
+            // The verify response already contains the balance. Paint it immediately
+            // instead of waiting for the background wallet-status refresh.
+            if (data && data.remaining_minutes != null) {
+                var credits = Math.round(data.remaining_minutes);
+                var dashboardCredits = document.getElementById('axonos_dashboard_credits');
+                var headerCredits = document.querySelector('.axonos-header-credits-val');
+                if (dashboardCredits) dashboardCredits.textContent = String(credits);
+                if (headerCredits) headerCredits.textContent = String(credits);
+            }
+
+            // Preserve the existing paused-session auto-resume behavior, but only
+            // after the guarded dashboard read identifies a paused session for the
+            // same wallet. The dashboard remains visible while that read is pending.
+            Promise.resolve(dashboardRefresh).then(function (status) {
+                if (!status ||
+                    expectedDashboardGeneration !== axonosDashboardRequestGeneration ||
+                    axonosNormalizeWalletAddress(axonosCurrentVerifiedWallet()) !==
+                    axonosNormalizeWalletAddress(walletAddress) ||
+                    !window.axonosPausedResume) {
                     return;
                 }
-                // Check if they already have active sessions running
-                axonosLoadDashboard();
+                // If the user opened the launch wizard while the background read was
+                // pending, do not unexpectedly pull them out of that newer workflow.
+                var connectDialog = document.getElementById('noVNC_connect_dlg');
+                if (connectDialog && !connectDialog.classList.contains('axonos-state-dashboard')) {
+                    return;
+                }
+                console.log('[AxonOS] Paused session detected, resuming desktop directly');
+                axonosTryResumeDesktopAfterCredit();
             });
         }
         window.axonosOnWalletVerified = axonosOnWalletVerified;
 
         // Load and render the dashboard workspace
         function axonosLoadDashboard() {
-            const wallet = window.verifiedWalletAddress || verifiedWalletAddress;
-            if (!wallet) return;
+            const wallet = axonosCurrentVerifiedWallet();
+            if (!wallet) {
+                axonosDashboardRequestGeneration += 1;
+                return Promise.resolve(null);
+            }
+            const requestGeneration = ++axonosDashboardRequestGeneration;
+            const walletNorm = axonosNormalizeWalletAddress(wallet);
+
+            // Hoisted for both the success and rejection paths. The old catch block
+            // referenced emptyEl outside the .then scope and threw a second error.
+            const listEl = document.getElementById('axonos_dashboard_sessions_list');
+            const emptyEl = document.getElementById('axonos_dashboard_empty_state');
+            const activeCountEl = document.getElementById('axonos_dashboard_active_count');
+            const combinedRateEl = document.getElementById('axonos_dashboard_burn_rate');
+            const addrEl = document.getElementById('axonos_dashboard_wallet_addr');
+            const creditsValEl = document.getElementById('axonos_dashboard_credits');
+
+            // Never leave another wallet's cards visible while this wallet loads.
+            const previousWallet = listEl ? (listEl.dataset.wallet || '') : '';
+            if (previousWallet !== walletNorm) {
+                if (listEl) {
+                    listEl.dataset.wallet = walletNorm;
+                    listEl.innerHTML = '';
+                    listEl.style.display = 'none';
+                }
+                if (emptyEl) emptyEl.style.display = 'none';
+                if (activeCountEl) activeCountEl.textContent = '0';
+                if (combinedRateEl) combinedRateEl.textContent = '—';
+                if (creditsValEl) creditsValEl.textContent = '—';
+            }
+            if (listEl) listEl.setAttribute('aria-busy', 'true');
 
             if (typeof UI !== 'undefined' && typeof UI.renderDashboardQuickLaunch === 'function') {
                 UI.renderDashboardQuickLaunch();
@@ -6305,51 +6749,56 @@ Copyright (C) 2019 The noVNC Authors
             console.log('[AxonOS] Loading dashboard workspace for:', wallet);
 
             // Set wallet address display
-            const addrEl = document.getElementById('axonos_dashboard_wallet_addr');
             if (addrEl) {
                 addrEl.textContent = wallet.slice(0, 6) + '…' + wallet.slice(-4);
             }
 
             // Fetch session status
-            sessionStatusForWallet(wallet).then(function (status) {
+            return sessionStatusForWallet(wallet).then(function (status) {
+                if (!axonosDashboardRequestIsCurrent(requestGeneration, wallet)) return null;
                 console.log('[AxonOS] Dashboard status fetch:', status);
 
-                const listEl = document.getElementById('axonos_dashboard_sessions_list');
-                const emptyEl = document.getElementById('axonos_dashboard_empty_state');
-                const activeCountEl = document.getElementById('axonos_dashboard_active_count');
-                const combinedRateEl = document.getElementById('axonos_dashboard_burn_rate');
+                axonosSyncDashboardPausedResume(status || {}, wallet);
+                let dashboardSessions = axonosOwnedDashboardSessions(status || {}, wallet);
+                dashboardSessions = axonosWithoutEndingDashboardSessions(dashboardSessions);
+                const activeOwnedSessions = dashboardSessions.filter(function (session) {
+                    return session.dashboard_state !== 'paused' && session.allocation_status !== 'paused';
+                });
+                const gpuCountForSession = function (session) {
+                    const explicit = Number(session && session.gpu_count);
+                    if (Number.isFinite(explicit) && explicit > 0) return explicit;
+                    const ids = Array.isArray(session && session.assigned_gpu_ids)
+                        ? session.assigned_gpu_ids
+                        : [];
+                    if (ids.length > 0) return ids.length;
+                    return axonosGpuCountForProfile((session && session.requested_profile) || 'small');
+                };
+                const totalRate = activeOwnedSessions.reduce(function (sum, session) {
+                    return sum + gpuCountForSession(session);
+                }, 0);
 
-                if (activeCountEl) activeCountEl.textContent = status.active_sessions_count || 0;
+                if (activeCountEl) activeCountEl.textContent = String(activeOwnedSessions.length);
+                if (combinedRateEl) combinedRateEl.textContent = String(totalRate);
+                if (listEl) listEl.dataset.wallet = walletNorm;
 
-                let activeSessionsList = status.active_sessions || [];
-                if (!status.multi_session_enabled && status.active && status.is_owner) {
-                    // Fallback to single active session object mapping
-                    activeSessionsList = [{
-                        session_id: status.paused_session_id || 1,
-                        wallet_address: wallet,
-                        requested_profile: status.owner_requested_profile || status.latest_requested_profile || 'small',
-                        assigned_gpu_ids: status.owner_assigned_gpu_ids || status.latest_assigned_gpu_ids || [],
-                        allocation_status: status.allocation_status || 'allocated',
-                        ssh_enabled: !!status.owner_ssh_enabled,
-                        started_at: Date.now() / 1000 - 300 // mock 5 min ago
-                    }];
-                }
-
-                if (activeSessionsList.length > 0) {
+                if (dashboardSessions.length > 0) {
                     if (emptyEl) emptyEl.style.display = 'none';
                     if (listEl) {
                         listEl.style.display = 'grid';
                         listEl.innerHTML = '';
 
-                        let totalRate = 0;
-                        activeSessionsList.forEach(function (session) {
+                        dashboardSessions.forEach(function (session) {
+                            const isPaused = session.dashboard_state === 'paused' ||
+                                session.allocation_status === 'paused';
                             const profile = session.requested_profile || 'small';
-                            const gpuCount = axonosGpuCountForProfile(profile);
+                            const gpuCount = gpuCountForSession(session);
                             const rate = gpuCount; // credits per min
-                            totalRate += rate;
 
                             const card = document.createElement('div');
-                            card.className = 'axonos-session-card';
+                            card.className = 'axonos-session-card' +
+                                (isPaused ? ' axonos-session-card--paused' : '');
+                            const sessionKey = axonosDashboardSessionKey(session);
+                            if (sessionKey) card.dataset.sessionId = sessionKey;
 
                             // Environment icon/name lookup
                             let envTitle = 'AxonOS Desktop';
@@ -6363,9 +6812,7 @@ Copyright (C) 2019 The noVNC Authors
                             // Headless SSH sessions have no desktop to open — label the
                             // card honestly and route its primary action to the SSH
                             // connect details instead of a doomed viewer connect.
-                            const isOwnSsh = !!session.ssh_enabled &&
-                                String(session.wallet_address || '').toLowerCase() === wallet.toLowerCase() &&
-                                !!status.owner_ssh_enabled;
+                            const isOwnSsh = !!session.ssh_enabled;
                             if (session.ssh_enabled) {
                                 envTitle = 'Direct SSH Session';
                                 envIcon = '⌨️';
@@ -6381,7 +6828,7 @@ Copyright (C) 2019 The noVNC Authors
                             }
 
                             let sshCmdRow = '';
-                            if (session.ssh_enabled && status.ssh_port) {
+                            if (!isPaused && session.ssh_enabled && status.ssh_port) {
                                 const sshUser = status.ssh_user || 'aXonian';
                                 const sshHost = status.ssh_host || window.location.hostname;
                                 const sshPort = status.ssh_port;
@@ -6394,28 +6841,37 @@ Copyright (C) 2019 The noVNC Authors
                                 `;
                             }
 
+                            const statusText = isPaused
+                                ? 'Paused'
+                                : (session.allocation_status === 'allocating' ? 'Allocating' : 'Running');
+                            const pausedTtl = isPaused ? axonosFormatResumeTtl(session.resume_seconds) : '';
+                            const specsSuffix = isPaused
+                                ? (' · ' + (pausedTtl || 'Saved for resume'))
+                                : (' · up ' + uptimeStr);
+                            const actionText = isPaused ? 'Resume' : (isOwnSsh ? 'SSH details' : 'Open desktop');
+
                             card.innerHTML = `
                                 <div class="axonos-session-card__top">
                                     <div class="axonos-session-card__icon-wrap">${envIcon}</div>
                                     <div class="axonos-session-card__details" style="flex: 1; min-width: 0;">
                                         <div class="axonos-session-card__name-row">
                                             <span class="axonos-session-card__name">${envTitle}</span>
-                                            <span class="axonos-session-card__status">
-                                                <span class="axonos-session-card__status-dot"></span>${session.allocation_status === 'allocating' ? 'Allocating' : 'Running'}
+                                            <span class="axonos-session-card__status${isPaused ? ' axonos-session-card__status--paused' : ''}">
+                                                <span class="axonos-session-card__status-dot"></span>${statusText}
                                             </span>
                                         </div>
                                         <div class="axonos-session-card__specs">
-                                            ${axonosProfileLabel(profile)} (${gpuCount} GPU${gpuCount > 1 ? 's' : ''}) · up ${uptimeStr}
+                                            ${axonosProfileLabel(profile)} (${gpuCount} GPU${gpuCount > 1 ? 's' : ''})${specsSuffix}
                                         </div>
                                         ${sshCmdRow}
                                     </div>
                                 </div>
                                 <div class="axonos-session-card__bottom">
-                                    <div class="axonos-session-card__rate-desc">Burning <b>${rate}</b> cr/min</div>
+                                    <div class="axonos-session-card__rate-desc">${isPaused ? 'Compute billing paused' : `Burning <b>${rate}</b> cr/min`}</div>
                                     <div class="axonos-session-card__actions">
                                         <button type="button" class="axonos-session-card__btn axonos-session-card__btn--danger end-btn">End</button>
                                         <button type="button" class="axonos-session-card__btn axonos-session-card__btn--primary reconnect-btn">
-                                            ${isOwnSsh ? 'SSH details' : 'Open desktop'}
+                                            ${actionText}
                                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                                         </button>
                                     </div>
@@ -6424,14 +6880,31 @@ Copyright (C) 2019 The noVNC Authors
 
                             // Bind events
                             card.querySelector('.end-btn').addEventListener('click', function () {
-                                UI.showConfirm('End Desktop Session?', 'Ending this session will stop billing and release the GPU hardware. All unsaved changes outside your persistent volume will be lost.', 'End Session').then(function (ok) {
+                                const title = isPaused ? 'End Saved Session?' : 'End Desktop Session?';
+                                const detail = isPaused
+                                    ? 'Ending this saved session will release its GPU hardware and remove the resumable desktop container.'
+                                    : 'Ending this session will stop billing and release the GPU hardware. All unsaved changes outside your persistent volume will be lost.';
+                                UI.showConfirm(title, detail, 'End Session').then(function (ok) {
                                     if (ok) {
+                                        card.classList.add('axonos-session-card--ending');
+                                        card.querySelectorAll('button').forEach(function (button) {
+                                            button.disabled = true;
+                                        });
+                                        const statusEl = card.querySelector('.axonos-session-card__status');
+                                        if (statusEl) statusEl.textContent = 'Ending…';
                                         axonosEndSession(session.session_id);
                                     }
                                 });
                             });
 
                             card.querySelector('.reconnect-btn').addEventListener('click', function () {
+                                if (isPaused) {
+                                    // Re-apply the status snapshot immediately so the resume
+                                    // claim cannot inherit stale profile/credit requirements.
+                                    axonosApplySessionStatusToResumeUi(status, wallet);
+                                    axonosTryResumeDesktopAfterCredit();
+                                    return;
+                                }
                                 if (isOwnSsh && typeof window.axonosRestoreSshSessionUi === 'function' &&
                                     window.axonosRestoreSshSessionUi(status)) {
                                     return;
@@ -6476,19 +6949,19 @@ Copyright (C) 2019 The noVNC Authors
 
                             listEl.appendChild(card);
                         });
-
-                        if (combinedRateEl) combinedRateEl.textContent = totalRate;
                     }
                 } else {
-                    if (listEl) listEl.style.display = 'none';
+                    if (listEl) {
+                        listEl.innerHTML = '';
+                        listEl.style.display = 'none';
+                    }
                     if (emptyEl) emptyEl.style.display = 'block';
-                    if (combinedRateEl) combinedRateEl.textContent = '0';
                 }
 
                 // Query credit balance
-                axonosFetchWalletAccessStatus(wallet).then(function (res) {
+                return axonosFetchWalletAccessStatus(wallet).then(function (res) {
+                    if (!axonosDashboardRequestIsCurrent(requestGeneration, wallet)) return status;
                     const data = (res && res.data) || {};
-                    const creditsValEl = document.getElementById('axonos_dashboard_credits');
                     const creditsStr = (data.remaining_minutes != null) ? Math.round(data.remaining_minutes) : '—';
                     if (creditsValEl) creditsValEl.textContent = creditsStr;
 
@@ -6496,16 +6969,23 @@ Copyright (C) 2019 The noVNC Authors
                     var headerCredits = document.querySelector('.axonos-header-credits-val');
                     if (headerCredits) headerCredits.textContent = creditsStr;
                     axonosSyncTopbar(wallet, data.remaining_minutes);
+                    return status;
+                }).catch(function (err) {
+                    console.warn('[AxonOS] Could not refresh dashboard credit balance:', err);
+                    return status;
                 });
-
-                axonosUpdateActiveScreen('dashboard');
-                if (typeof window.axonosHideConnectionLoader === 'function') {
-                    window.axonosHideConnectionLoader(true);
-                }
             }).catch(function (err) {
+                if (!axonosDashboardRequestIsCurrent(requestGeneration, wallet)) return null;
                 console.error('[AxonOS] Error fetching dashboard status:', err);
-                if (emptyEl) emptyEl.style.display = 'block';
-                axonosUpdateActiveScreen('dashboard');
+                if (listEl && listEl.children.length === 0) listEl.style.display = 'none';
+                if (emptyEl && (!listEl || listEl.children.length === 0)) emptyEl.style.display = 'block';
+                if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                    UI.showStatus('Could not refresh workspace sessions. Retrying is safe.', 'warn', 4000);
+                }
+                return null;
+            }).finally(function () {
+                if (!axonosDashboardRequestIsCurrent(requestGeneration, wallet)) return;
+                if (listEl) listEl.setAttribute('aria-busy', 'false');
                 if (typeof window.axonosHideConnectionLoader === 'function') {
                     window.axonosHideConnectionLoader(true);
                 }
@@ -6516,21 +6996,43 @@ Copyright (C) 2019 The noVNC Authors
         // End session helper
         function axonosEndSession(sessionId) {
             console.log('[AxonOS] Releasing session:', sessionId);
-            const wallet = window.verifiedWalletAddress || verifiedWalletAddress;
-            if (!wallet) return;
+            const wallet = axonosCurrentVerifiedWallet();
+            if (!wallet) return Promise.resolve(false);
+            const sessionKey = (sessionId === undefined || sessionId === null)
+                ? ''
+                : String(sessionId);
+            if (sessionKey) {
+                // A short tombstone prevents a release/status propagation race from
+                // flashing a clickable stale card back into the dashboard.
+                axonosDashboardEndingSessions.set(sessionKey, Date.now() + 10000);
+            }
 
-            axonosFetch({
+            return axonosFetch({
                 method: 'POST',
                 url: new URL('/api/session/release', window.location.origin).toString(),
                 body: JSON.stringify({ wallet_address: wallet })
-            }).then(function () {
+            }).then(function (result) {
+                if (!result || result.released !== true) {
+                    if (sessionKey) axonosDashboardEndingSessions.delete(sessionKey);
+                    const reason = (result && result.reason) || 'The session could not be ended.';
+                    console.error('[AxonOS] Failed to release session:', reason);
+                    if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                        UI.showStatus(String(reason), 'error', 5000);
+                    }
+                    if (axonosNormalizeWalletAddress(axonosCurrentVerifiedWallet()) ===
+                        axonosNormalizeWalletAddress(wallet)) {
+                        return axonosLoadDashboard().then(function () { return false; });
+                    }
+                    return false;
+                }
                 console.log('[AxonOS] Session released successfully');
-            }).catch(function (err) {
-                console.error('[AxonOS] Failed to release session:', err);
-            }).finally(function () {
+                if (axonosNormalizeWalletAddress(axonosCurrentVerifiedWallet()) !==
+                    axonosNormalizeWalletAddress(wallet)) {
+                    return true;
+                }
+
                 // The released session may have been a detached desktop or headless
-                // SSH one — clear that client state so the home view and the tab
-                // close handler don't act on a session that no longer exists.
+                // SSH one — clear that client state only after the server confirms.
                 window.axonosSessionDetached = false;
                 if (typeof window.axonosClearDetachedSession === 'function') {
                     window.axonosClearDetachedSession();
@@ -6538,7 +7040,18 @@ Copyright (C) 2019 The noVNC Authors
                 if (typeof UI !== 'undefined' && typeof UI.hideAxonosSshCard === 'function') {
                     UI.hideAxonosSshCard();
                 }
-                axonosLoadDashboard();
+                return axonosLoadDashboard().then(function () { return true; });
+            }).catch(function (err) {
+                if (sessionKey) axonosDashboardEndingSessions.delete(sessionKey);
+                console.error('[AxonOS] Failed to release session:', err);
+                if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                    UI.showStatus('Could not end the session. It is still available to retry.', 'error', 5000);
+                }
+                if (axonosNormalizeWalletAddress(axonosCurrentVerifiedWallet()) ===
+                    axonosNormalizeWalletAddress(wallet)) {
+                    return axonosLoadDashboard().then(function () { return false; });
+                }
+                return false;
             });
         }
         window.axonosEndSession = axonosEndSession;
@@ -6553,6 +7066,13 @@ Copyright (C) 2019 The noVNC Authors
 
         function axonosStartWizard() {
             axonosCurrentWizardStep = 1;
+
+            // Direct SSH is a per-launch opt-in. Opening a fresh launch wizard
+            // must always start in desktop mode, even if this tab previously
+            // launched or restored an SSH session. Keep only the saved key.
+            if (typeof UI !== 'undefined' && typeof UI.resetAxonosSshLaunchIntent === 'function') {
+                UI.resetAxonosSshLaunchIntent();
+            }
 
             // Reveal the wizard screen (hides landing + dashboard). Without this the
             // dialog stays in its previous state class and the CSS keeps the wizard
@@ -6721,7 +7241,7 @@ Copyright (C) 2019 The noVNC Authors
                 newBack.addEventListener('click', () => {
                     if (axonosCurrentWizardStep === 1) {
                         // Go back to Dashboard
-                        axonosLoadDashboard();
+                        axonosReturnToWorkspace();
                     } else {
                         axonosGoToWizardStep(axonosCurrentWizardStep - 1);
                     }
@@ -6802,6 +7322,7 @@ Copyright (C) 2019 The noVNC Authors
                     if (railBalanceRow) railBalanceRow.style.display = 'flex';
 
                     axonosFetchWalletAccessStatus(wallet).then(res => {
+                        if (!res || res.stale || !axonosPaymentIdentityIsCurrent(wallet)) return;
                         const data = (res && res.data) || {};
                         const balStr = (data.remaining_minutes != null) ? Math.round(data.remaining_minutes) + ' cr' : '—';
                         if (railBalanceVal) railBalanceVal.textContent = balStr;
@@ -7019,6 +7540,7 @@ Copyright (C) 2019 The noVNC Authors
 
             // Check if they already have enough credits to proceed directly without depositing
             axonosFetchWalletAccessStatus(wallet).then(function (res) {
+                if (!res || res.stale || !axonosPaymentIdentityIsCurrent(wallet)) return;
                 const data = (res && res.data) || {};
                 const remaining = data.remaining_minutes || 0;
                 const required = axonosGpuCountForProfile(axonosSelectedGpuProfile);
@@ -7027,6 +7549,7 @@ Copyright (C) 2019 The noVNC Authors
                     console.log('[AxonOS] Sufficient credits already available, bypassing deposit');
                     // Claim directly
                     claimSession().then(function (claim) {
+                        if (!axonosPaymentIdentityIsCurrent(wallet)) return;
                         if (claim.granted) {
                             tryConnectAfterClaim();
                         } else {
@@ -7034,6 +7557,7 @@ Copyright (C) 2019 The noVNC Authors
                         }
                     });
                 } else {
+                    if (!axonosPaymentIdentityIsCurrent(wallet)) return;
                     // Trigger MetaMask payment modal or dynamic deposit flow
                     // Sync inputs on original recharge modal elements so the core payment methods receive the values correctly
                     if (token === 'usdc') {
@@ -7246,6 +7770,7 @@ Copyright (C) 2019 The noVNC Authors
             // res.data.remaining_minutes (reading res.remaining_minutes rendered "0
             // credits / ≈0m" while the HUD correctly showed the real balance).
             axonosFetchWalletAccessStatus(wallet).then(res => {
+                if (!res || res.stale || !axonosPaymentIdentityIsCurrent(wallet)) return;
                 const data = (res && res.data) || {};
                 const credits = typeof data.remaining_minutes === 'number' ? data.remaining_minutes : 0;
                 const creditsValEl = document.getElementById('axonos_sidebar_credits');
@@ -7332,7 +7857,7 @@ Copyright (C) 2019 The noVNC Authors
         setTimeout(() => {
             const wallet = window.verifiedWalletAddress || verifiedWalletAddress;
             if (wallet && !document.documentElement.classList.contains('noVNC_connected')) {
-                axonosLoadDashboard();
+                axonosReturnToWorkspace();
             } else {
                 axonosSyncTopbar(null, null);
             }

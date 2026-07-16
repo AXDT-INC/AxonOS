@@ -1643,8 +1643,11 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
                     result["is_owner"] = True
                     owner_profile = (owned.get("requested_profile") or "small").strip().lower()
                     owner_gpu_ids = owned.get("gpu_ids", [])
+                    result["owner_session_id"] = owned["id"]
                     result["owner_requested_profile"] = owner_profile
                     result["owner_assigned_gpu_ids"] = owner_gpu_ids
+                    result["owner_allocation_status"] = owned.get("allocation_status") or "allocated"
+                    result["owner_started_at"] = owned.get("started_at")
                     result["owner_gpu_count"] = (
                         len(owner_gpu_ids)
                         if owner_gpu_ids
@@ -1677,6 +1680,7 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
                     result["paused_requested_profile"] = paused_profile
                     result["paused_assigned_gpu_ids"] = paused_gpus
                     result["paused_gpu_count"] = len(paused_gpus) if paused_gpus else billing_count
+                    result["paused_ssh_enabled"] = bool(paused_owned.get("ssh_enabled"))
                     result["paused_resume_seconds"] = int(pause_remaining)
                     result["resume_minutes_required"] = (
                         billing_count if _gpu_billing_enabled() else 1
@@ -1850,5 +1854,4 @@ def perform_session_cleanup() -> None:
         logger.warning("perform_session_cleanup failed: %s", exc, exc_info=True)
     finally:
         conn.close()
-
 

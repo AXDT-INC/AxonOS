@@ -6548,6 +6548,74 @@ html.noVNC_connected .axonos-landing-bg {
   font-weight: 600;
 }
 
+/* Explicitly separate release-test credit from real payment controls. */
+.axonos-test-credit-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px 16px;
+  margin: 12px 0 16px;
+  padding: 13px 14px;
+  border: 1px dashed rgba(123, 108, 255, 0.42);
+  border-radius: 13px;
+  background: rgba(123, 108, 255, 0.07);
+  text-align: left;
+}
+
+.axonos-test-credit-panel[hidden] {
+  display: none !important;
+}
+
+.axonos-test-credit-panel strong {
+  color: #d7d2ff;
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+}
+
+.axonos-test-credit-panel p {
+  margin: 3px 0 0;
+  color: #9299b1;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.axonos-test-credit-btn {
+  padding: 9px 13px;
+  border: 1px solid rgba(123, 108, 255, 0.55);
+  border-radius: 9px;
+  background: rgba(123, 108, 255, 0.15);
+  color: #e2deff;
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.axonos-test-credit-btn:hover {
+  background: rgba(123, 108, 255, 0.24);
+}
+
+.axonos-test-credit-btn:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.axonos-test-credit-msg {
+  grid-column: 1 / -1;
+  min-height: 0;
+}
+
+@media (max-width: 560px) {
+  .axonos-test-credit-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .axonos-test-credit-btn {
+    width: 100%;
+  }
+}
+
 /* Wizard summary rail elements */
 .axonos-wizard-rail {
   position: sticky;
@@ -6962,6 +7030,16 @@ html.noVNC_connected .axonos-landing-bg {
   gap: 16px;
 }
 
+.axonos-session-card--paused {
+  border-color: rgba(183, 166, 255, 0.24);
+  background: linear-gradient(180deg, rgba(123, 108, 255, 0.07), rgba(255, 255, 255, 0.012));
+}
+
+.axonos-session-card--ending {
+  opacity: 0.62;
+  pointer-events: none;
+}
+
 .axonos-session-card__top {
   display: flex;
   align-items: flex-start;
@@ -7022,6 +7100,16 @@ html.noVNC_connected .axonos-landing-bg {
   height: 5px;
   border-radius: 50%;
   background: var(--green);
+}
+
+.axonos-session-card__status--paused {
+  color: #cfc9ff;
+  background: rgba(123, 108, 255, 0.12);
+  border-color: rgba(183, 166, 255, 0.28);
+}
+
+.axonos-session-card__status--paused .axonos-session-card__status-dot {
+  background: #b7a6ff;
 }
 
 .axonos-session-card__specs {
@@ -7548,6 +7636,25 @@ html.noVNC_connected .axonos-session-sidebar {
 
 html.noVNC_connected .axonos-sidebar-toggle {
   display: flex !important;
+}
+
+/* The fullscreen control in the left noVNC deck expands the document element.
+ * Keep the remote desktop completely unobstructed in that mode; the telemetry
+ * sidebar itself retains its state and this handle returns on fullscreen exit. */
+html.noVNC_connected:fullscreen .axonos-sidebar-toggle {
+  display: none !important;
+}
+
+html.noVNC_connected:-webkit-full-screen .axonos-sidebar-toggle {
+  display: none !important;
+}
+
+html.noVNC_connected:-moz-full-screen .axonos-sidebar-toggle {
+  display: none !important;
+}
+
+html.noVNC_connected:-ms-fullscreen .axonos-sidebar-toggle {
+  display: none !important;
 }
 
 /* Landing screen session rail and layout alignment */

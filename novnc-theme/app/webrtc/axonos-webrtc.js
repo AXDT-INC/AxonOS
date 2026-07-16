@@ -89,11 +89,33 @@ function _hideBanner() {
 
 /** Bumped on cancel and at each new connect attempt — stale loops must not touch UI. */
 let _negotiationGeneration = 0;
-/** @type {{ pc: RTCPeerConnection, video: HTMLVideoElement, sessionId: string, wallet: string, generation: number } | null} */
+/** @type {{ pc: RTCPeerConnection, video: HTMLVideoElement, sessionId: string, wallet: string, generation: number, pasteClipboard?: Function, releasePointer?: Function } | null} */
 let _inFlightNegotiation = null;
 
 function _negotiationCancelled(generation) {
     return generation !== _negotiationGeneration;
+}
+
+/** Clear only globals still owned by this peer; a replacement may already exist. */
+function _clearOwnedPeerGlobals(owner) {
+    if (typeof window === 'undefined' || !owner) {
+        return;
+    }
+    if (owner.pc && window.axonosWebRtcPc === owner.pc) {
+        window.axonosWebRtcPc = null;
+    }
+    if (owner.video && window.axonosWebRtcVideo === owner.video) {
+        window.axonosWebRtcVideo = null;
+    }
+    if (owner.pasteClipboard && window.axonosWebRtcPasteClipboard === owner.pasteClipboard) {
+        window.axonosWebRtcPasteClipboard = null;
+    }
+    if (owner.releasePointer && window.axonosWebRtcReleasePointerState === owner.releasePointer) {
+        window.axonosWebRtcReleasePointerState = null;
+    }
+    if (owner.teardown && window.axonosWebRtcTeardown === owner.teardown) {
+        window.axonosWebRtcTeardown = null;
+    }
 }
 
 /**
@@ -107,19 +129,25 @@ export function cancelAxonOSWebRTCNegotiation() {
     }
     const snap = _inFlightNegotiation;
     _inFlightNegotiation = null;
+    const cleanupPromises = [];
     if (snap && snap.pc) {
-        _cleanup(snap.pc, snap.video, snap.sessionId, snap.wallet).catch(() => {});
+        cleanupPromises.push(
+            _cleanup(snap.pc, snap.video, snap.sessionId, snap.wallet)
+                .finally(() => _clearOwnedPeerGlobals(snap))
+        );
     }
-    window.axonosWebRtcPc = null;
-    window.axonosWebRtcVideo = null;
-    window.axonosWebRtcPasteClipboard = null;
-    window.axonosWebRtcReleasePointerState = null;
     if (typeof window.axonosWebRtcTeardown === 'function') {
         const teardown = window.axonosWebRtcTeardown;
-        window.axonosWebRtcTeardown = null;
-        Promise.resolve(teardown()).catch(() => {});
+        try {
+            cleanupPromises.push(Promise.resolve(teardown()));
+        } catch (err) {
+            cleanupPromises.push(Promise.reject(err));
+        }
     }
     _hideBanner();
+    // Existing callers may remain fire-and-forget; disconnect() can now await this
+    // result so the workspace is not reopened in the middle of peer cleanup.
+    return Promise.allSettled(cleanupPromises);
 }
 
 async function _finishNegotiationCancelled(generation, pc, video, sessionId, wallet) {
@@ -128,6 +156,7 @@ async function _finishNegotiationCancelled(generation, pc, video, sessionId, wal
     }
     if (pc) {
         await _cleanup(pc, video, sessionId, wallet);
+        _clearOwnedPeerGlobals({ pc, video });
     } else {
         _hideBanner();
     }
@@ -184,9 +213,6 @@ export async function connectAxonOSWebRTC(opts) {
         return false;
     }
 
-    window.axonosWebRtcConnectAborted = false;
-    const negotiationGeneration = ++_negotiationGeneration;
-
     if (typeof window.axonosWebRtcTeardown === 'function') {
         try {
             await window.axonosWebRtcTeardown();
@@ -194,6 +220,11 @@ export async function connectAxonOSWebRTC(opts) {
             console.warn('AxonOS WebRTC prior session teardown failed', e);
         }
     }
+
+    // Start this attempt only after the previous peer's single-flight teardown;
+    // that teardown advances the generation to cancel its own stale callbacks.
+    window.axonosWebRtcConnectAborted = false;
+    const negotiationGeneration = ++_negotiationGeneration;
 
     let cfgRes;
     try {
@@ -273,6 +304,7 @@ export async function connectAxonOSWebRTC(opts) {
         ].join(';');
         cursor.innerHTML = '<svg width="18" height="24" viewBox="0 0 18 24" xmlns="http://www.w3.org/2000/svg"><path d="M1 1v18l5-5 3 8 3-1-3-8h7z" fill="white" stroke="black" stroke-width="1"/></svg>';
     }
+    video._axonosWebRtcCursor = cursor;
 
     if (container) {
         container.appendChild(video);
@@ -336,9 +368,13 @@ export async function connectAxonOSWebRTC(opts) {
             return false;
         }
     }
-    window.axonosWebRtcPasteClipboard = (text, pasteNow) => {
+    const pasteClipboard = (text, pasteNow) => {
         return sendClipboard({ t: pasteNow ? 'paste' : 'clipboard', text });
     };
+    window.axonosWebRtcPasteClipboard = pasteClipboard;
+    if (_inFlightNegotiation && _inFlightNegotiation.generation === negotiationGeneration) {
+        _inFlightNegotiation.pasteClipboard = pasteClipboard;
+    }
 
     const videoTx = pc.addTransceiver('video', { direction: 'recvonly' });
     try {
@@ -854,6 +890,70 @@ export async function connectAxonOSWebRTC(opts) {
         queueMove(payload, urgent);
     }
 
+    // Connection-state, data-channel close, and health timeout often arrive for
+    // the same outage. Funnel them through one bounded recovery so they cannot
+    // tear down/reconnect the peer multiple times concurrently.
+    let recoveryTimer = null;
+    let recoveryStarted = false;
+    function returnToWorkspaceAfterRecoveryFailure() {
+        UI.connected = false;
+        if (typeof UI._axonosReturnToHomeAfterDisconnect === 'function') {
+            UI._axonosReturnToHomeAfterDisconnect();
+            return;
+        }
+        if (typeof UI.updateVisualState === 'function') {
+            UI.updateVisualState('disconnected');
+        }
+        if (typeof UI.openConnectPanel === 'function') {
+            UI.openConnectPanel();
+        }
+    }
+
+    function scheduleWebRtcRecovery(reason) {
+        if (!UI.connected || UI.inhibitReconnect || recoveryStarted || recoveryTimer !== null) {
+            return;
+        }
+        _setBanner(`${reason} — reconnecting…`, 'reconnecting');
+        recoveryTimer = setTimeout(async () => {
+            recoveryTimer = null;
+            if (!UI.connected || UI.inhibitReconnect || recoveryStarted) {
+                return;
+            }
+            recoveryStarted = true;
+            try {
+                if (typeof window.axonosWebRtcTeardown === 'function') {
+                    await window.axonosWebRtcTeardown();
+                } else {
+                    await _cleanup(pc, video, sessionId, wallet);
+                    _clearOwnedPeerGlobals({
+                        pc,
+                        video,
+                        pasteClipboard,
+                        releasePointer: releaseMouseOnFocusLoss,
+                    });
+                }
+            } catch (err) {
+                console.warn('AxonOS WebRTC recovery teardown failed', err);
+            }
+            if (UI.inhibitReconnect) {
+                return;
+            }
+            UI.connected = false;
+            try {
+                if (typeof UI.connect === 'function') {
+                    // UI.connect owns wallet preflight, claim, the one bounded
+                    // negotiation retry, fallback, and final workspace routing.
+                    UI.connect();
+                } else {
+                    returnToWorkspaceAfterRecoveryFailure();
+                }
+            } catch (err) {
+                console.warn('AxonOS WebRTC recovery connect failed', err);
+                returnToWorkspaceAfterRecoveryFailure();
+            }
+        }, 1000);
+    }
+
     dcInput.addEventListener('open', () => {
         inputChannelOpen = true;
         currentMouseButtons = 0;
@@ -871,21 +971,7 @@ export async function connectAxonOSWebRTC(opts) {
         // Only auto-reconnect on an unexpected channel loss. Intentional teardowns
         // (account switch, user disconnect, credit exhaustion) set UI.inhibitReconnect,
         // and must drop to the landing/connect screen — not show "reconnecting…".
-        if (UI.connected && !UI.inhibitReconnect) {
-            _setBanner('Input channel lost — reconnecting…', 'reconnecting');
-            // Attempt an automatic full session reconnect after a brief delay
-            // so the user doesn't have to manually click anything.
-            setTimeout(() => {
-                if (typeof window.axonosWebRtcTeardown === 'function' && UI.connected && !UI.inhibitReconnect) {
-                    console.warn('AxonOS WebRTC: dcInput closed, triggering reconnect');
-                    if (typeof UI.reconnect_webrtc === 'function') {
-                        UI.reconnect_webrtc();
-                    } else if (typeof UI.connect === 'function') {
-                        window.axonosWebRtcTeardown().then(() => UI.connect()).catch(() => {});
-                    }
-                }
-            }, 1500);
-        }
+        scheduleWebRtcRecovery('Input channel lost');
     });
 
     // --- Input health check (ping/pong) --------------------------------
@@ -924,12 +1010,7 @@ export async function connectAxonOSWebRTC(opts) {
                 if (UI.inhibitReconnect) {
                     return;
                 }
-                _setBanner('Input stalled — reconnecting…', 'reconnecting');
-                if (typeof UI.reconnect_webrtc === 'function') {
-                    UI.reconnect_webrtc();
-                } else if (typeof window.axonosWebRtcTeardown === 'function' && typeof UI.connect === 'function') {
-                    window.axonosWebRtcTeardown().then(() => UI.connect()).catch(() => {});
-                }
+                scheduleWebRtcRecovery('Input stalled');
                 return;
             }
             inputPingPending += 1;
@@ -1297,6 +1378,9 @@ export async function connectAxonOSWebRTC(opts) {
     video.addEventListener('focusout', onVideoFocusOut, { signal: inputSignal });
 
     window.axonosWebRtcReleasePointerState = releaseMouseOnFocusLoss;
+    if (_inFlightNegotiation && _inFlightNegotiation.generation === negotiationGeneration) {
+        _inFlightNegotiation.releasePointer = releaseMouseOnFocusLoss;
+    }
 
     function onVisibilityChange() {
         if (document.visibilityState === 'visible') {
@@ -1413,6 +1497,7 @@ export async function connectAxonOSWebRTC(opts) {
             }
             disconnectBannerShown = true;
             _setBanner('WebRTC disconnected.', 'failed');
+            scheduleWebRtcRecovery('WebRTC disconnected');
         } else if (st === 'disconnected') {
             // Transient by spec (missed consent checks); usually self-heals in
             // seconds. Escalate to the red banner only if it persists.
@@ -1423,6 +1508,7 @@ export async function connectAxonOSWebRTC(opts) {
                     disconnectGraceTimer = null;
                     if (pc.connectionState === 'disconnected') {
                         _setBanner('WebRTC disconnected.', 'failed');
+                        scheduleWebRtcRecovery('WebRTC disconnected');
                     }
                 }, 5000);
             }
@@ -1448,10 +1534,12 @@ export async function connectAxonOSWebRTC(opts) {
             return false;
         }
         await _cleanup(pc, video, sessionId, wallet);
-        window.axonosWebRtcPasteClipboard = null;
-        window.axonosWebRtcPc = null;
-        window.axonosWebRtcVideo = null;
-        window.axonosWebRtcReleasePointerState = null;
+        _clearOwnedPeerGlobals({
+            pc,
+            video,
+            pasteClipboard,
+            releasePointer: releaseMouseOnFocusLoss,
+        });
         if (webrtcFallbackOk) {
             _setBanner('WebRTC ICE failed — falling back.', 'fallback');
         } else {
@@ -1497,39 +1585,60 @@ export async function connectAxonOSWebRTC(opts) {
         UI.updateSessionControlButtons();
     }
 
-    window.axonosWebRtcTeardown = async () => {
-        try { stopMic(); } catch { /* ignore */ }
-        _negotiationGeneration += 1;
-        resetMouseInputState(null, true);
-        releaseAllKeys();
-        inputAbort.abort();
-        clearMoveFlushTimer();
-        pendingMovePayload = null;
-        if (metricsTimer) {
-            clearInterval(metricsTimer);
-        }
-        if (inputHealthTimer) {
-            clearInterval(inputHealthTimer);
-            inputHealthTimer = null;
-        }
-        if (disconnectGraceTimer) {
-            clearTimeout(disconnectGraceTimer);
-            disconnectGraceTimer = null;
-        }
-        if (typeof UI.stopClipboardAutoSync === 'function') {
-            try { UI.stopClipboardAutoSync(); } catch { /* ignore */ }
-        }
-        if (container) {
-            container.style.cursor = prevContainerCursor;
-        }
-        await _cleanup(pc, video, sessionId, wallet);
-        window.axonosWebRtcPasteClipboard = null;
-        window.axonosWebRtcPc = null;
-        window.axonosWebRtcVideo = null;
-        window.axonosWebRtcReleasePointerState = null;
-        window.axonosWebRtcTeardown = null;
-        _inFlightNegotiation = null;
+    const connectedPeerOwner = {
+        pc,
+        video,
+        pasteClipboard,
+        releasePointer: releaseMouseOnFocusLoss,
+        teardown: null,
     };
+    let connectedTeardownPromise = null;
+    const teardownWebRtcSession = () => {
+        if (connectedTeardownPromise) {
+            return connectedTeardownPromise;
+        }
+        connectedTeardownPromise = (async () => {
+            try {
+                try { stopMic(); } catch { /* ignore */ }
+                _negotiationGeneration += 1;
+                resetMouseInputState(null, true);
+                releaseAllKeys();
+                inputAbort.abort();
+                clearMoveFlushTimer();
+                pendingMovePayload = null;
+                if (metricsTimer) {
+                    clearInterval(metricsTimer);
+                }
+                if (inputHealthTimer) {
+                    clearInterval(inputHealthTimer);
+                    inputHealthTimer = null;
+                }
+                if (disconnectGraceTimer) {
+                    clearTimeout(disconnectGraceTimer);
+                    disconnectGraceTimer = null;
+                }
+                if (recoveryTimer) {
+                    clearTimeout(recoveryTimer);
+                    recoveryTimer = null;
+                }
+                if (typeof UI.stopClipboardAutoSync === 'function') {
+                    try { UI.stopClipboardAutoSync(); } catch { /* ignore */ }
+                }
+                if (container) {
+                    container.style.cursor = prevContainerCursor;
+                }
+                await _cleanup(pc, video, sessionId, wallet);
+            } finally {
+                _clearOwnedPeerGlobals(connectedPeerOwner);
+                if (_inFlightNegotiation && _inFlightNegotiation.pc === pc) {
+                    _inFlightNegotiation = null;
+                }
+            }
+        })();
+        return connectedTeardownPromise;
+    };
+    connectedPeerOwner.teardown = teardownWebRtcSession;
+    window.axonosWebRtcTeardown = teardownWebRtcSession;
 
     return true;
 }
@@ -1558,13 +1667,17 @@ async function _cleanup(pc, video, sessionId, wallet) {
             /* ignore */
         }
     }
+    const ownsPageState = typeof window === 'undefined' ||
+        window.axonosWebRtcPc === pc || window.axonosWebRtcVideo === video;
     if (video && video.parentNode) {
         video.parentNode.removeChild(video);
     }
-    const cursor = document.getElementById('axonos_webrtc_cursor');
+    const cursor = video && video._axonosWebRtcCursor;
     if (cursor && cursor.parentNode) {
         cursor.parentNode.removeChild(cursor);
     }
-    document.documentElement.classList.remove('axonos-webrtc-active', 'axonos-mic-live');
-    _hideBanner();
+    if (ownsPageState) {
+        document.documentElement.classList.remove('axonos-webrtc-active', 'axonos-mic-live');
+        _hideBanner();
+    }
 }

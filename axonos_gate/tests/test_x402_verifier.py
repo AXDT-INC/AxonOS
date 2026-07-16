@@ -138,9 +138,11 @@ class TestSettleX402Gates(unittest.TestCase):
         authorization, sig = _sign_authorization(1_000_000)
         header = _x_payment_header(authorization, sig)
         with patch.object(x, "_submit_transfer_with_authorization", return_value=("0x" + "ab" * 32, None)) as submit, \
+             patch.object(x, "_wait_for_confirmations", return_value=True) as wait, \
              patch.object(x, "verify_usdc_deposit", return_value={"verified": True, "credited_minutes": 60.0, "remaining_minutes": 60.0}) as verify:
             result = self._settle(_SIGNER, header)
         submit.assert_called_once()
+        wait.assert_called_once_with("https://base.example.com", "0x" + "ab" * 32, 6)
         verify.assert_called_once()
         self.assertTrue(result["verified"])
         self.assertTrue(result["x402"])
@@ -251,11 +253,15 @@ class TestSettleX402Gates(unittest.TestCase):
             with patch.object(fac, "facilitator_enabled", return_value=True), \
                  patch.object(fac, "facilitator_verify", return_value=(True, None, None, {})) as mock_verify, \
                  patch.object(fac, "facilitator_settle", return_value=("0x" + "ab" * 32, None, None, {})) as mock_settle, \
+                 patch.object(x, "_wait_for_confirmations", return_value=True) as mock_wait, \
                  patch.object(x, "verify_usdc_deposit", return_value={"verified": True, "credited_minutes": 60}):
 
                 result = self._settle(_SIGNER, header)
 
         self.assertTrue(result.get("verified"))
+        mock_wait.assert_called_once_with(
+            "https://base.example.com", "0x" + "ab" * 32, 6
+        )
 
         verify_payload = mock_verify.call_args.args[0]
         settle_payload = mock_settle.call_args.args[0]

@@ -313,21 +313,6 @@ def verify_deposit(
         tx = "0x" + tx
     tx = tx.lower()
 
-    # Whitelisted-wallet mock deposits (sentinel tx hash) are handled here, before
-    # any chain/config work, so every caller — both gate servers and the
-    # auto-detect router — inherits the bypass. Real hashes return None and
-    # continue through on-chain verification below.
-    try:
-        from . import axgt_verifier as _axgt
-    except ImportError:
-        try:
-            from axonos_gate import axgt_verifier as _axgt
-        except ImportError:
-            import axgt_verifier as _axgt
-    mock_result = _axgt.check_and_apply_whitelist_deposit_credit(wallet, tx)
-    if mock_result is not None:
-        return mock_result
-
     revenue = _get_revenue_wallet()
     contract = _get_contract_address()
     rpc_url = _get_rpc_url()
