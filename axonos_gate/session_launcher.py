@@ -556,6 +556,11 @@ def _central_gate_container() -> str:
     return raw if raw and all(c.isalnum() or c in "-_." for c in raw) else "axonos"
 
 
+def _central_gate_network_alias() -> str:
+    """Collision-proof DNS name used only inside isolated tenant networks."""
+    return "axonos-gate"
+
+
 def _inspect_central_gate_container_id_direct() -> Tuple[str, Optional[str], str]:
     ok, output = _run_docker_direct(
         ["docker", "inspect", "--format", "{{.Id}}", _central_gate_container()]
@@ -723,7 +728,7 @@ def _ensure_session_network_direct(
             "network",
             "connect",
             "--alias",
-            "axonos",
+            _central_gate_network_alias(),
             network,
             _central_gate_container(),
         ]
@@ -1065,8 +1070,8 @@ def _launch_via_docker_cli(
         "-e", f"AXGT_WALLET_ADDRESS={wallet}",
         "-e", f"AXGT_REQUESTED_PROFILE={profile}",
         "-e", f"AXGT_ASSIGNED_GPU_IDS={gpu_spec}",
-        "-e", "WEBRTC_GATE_INTERNAL_URL=http://axonos:8890",
-        "-e", "AXGT_GATE_HEARTBEAT_URL=http://axonos:8889",
+        "-e", "WEBRTC_GATE_INTERNAL_URL=http://axonos-gate:8890",
+        "-e", "AXGT_GATE_HEARTBEAT_URL=http://axonos-gate:8889",
     ])
     cmd.extend(_mode_env_args(session_id, ssh_enabled, ssh_pubkey))
     if template:

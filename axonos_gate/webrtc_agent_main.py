@@ -108,7 +108,7 @@ def _gate_url() -> str:
         # deliberately overrides stale pre-split deployments that still carry
         # WEBRTC_GATE_INTERNAL_URL=http://127.0.0.1:8889 in an env file.
         return "http://127.0.0.1:8890"
-    return (os.getenv("WEBRTC_GATE_INTERNAL_URL") or "http://axonos:8890").rstrip("/")
+    return (os.getenv("WEBRTC_GATE_INTERNAL_URL") or "http://axonos-gate:8890").rstrip("/")
 
 
 def _agent_key() -> str:

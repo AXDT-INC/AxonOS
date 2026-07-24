@@ -196,6 +196,16 @@ class WebRtcRouteScopeContractTests(unittest.TestCase):
         )
         self.assertEqual(ast.literal_eval(assignment.value), expected_paths)
 
+    def test_internal_listener_delegates_schema_initialization(self) -> None:
+        initializer = _function(self.flask_tree, "_initialize_listener_tables")
+        initializer_source = (
+            ast.get_source_segment(self.flask_source, initializer) or ""
+        )
+        self.assertIn('_env_truthy("GATE_AGENT_ONLY")', initializer_source)
+        self.assertEqual(len(_calls(initializer, "_init_all_tables")), 1)
+        main = _function(self.flask_tree, "main")
+        self.assertEqual(len(_calls(main, "_initialize_listener_tables")), 1)
+
 
 class WebRtcBrowserScopeContractTests(unittest.TestCase):
     @classmethod

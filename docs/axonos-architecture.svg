@@ -391,7 +391,7 @@
 <rect x="576" y="916" width="1154" height="66" rx="7" fill="rgba(0,0,0,0.24)" stroke="rgba(140,200,220,0.07)" stroke-width="1"/>
 <text x="596" y="932" font-size="8.5" fill="rgba(78,195,212,0.38)" font-family="'SF Mono',Menlo,Consolas,monospace">ENV -&gt;  AXGT_SESSION_ID  AXGT_WALLET_ADDRESS  AXGT_REQUESTED_PROFILE  AXGT_ASSIGNED_GPU_IDS  AXGT_DESKTOP_ENABLED=true</text>
 <text x="596" y="948" font-size="8.5" fill="rgba(170,210,225,0.30)" font-family="'SF Mono',Menlo,Consolas,monospace">WEBRTC_AGENT_ENABLED=true  WEBRTC_CAPTURE_BACKEND=nvfbc  WEBRTC_CAPTURE_FPS=60  WEBRTC_CAPTURE_BITRATE=18000000</text>
-<text x="596" y="964" font-size="8.5" fill="rgba(170,210,225,0.26)" font-family="'SF Mono',Menlo,Consolas,monospace">WEBRTC_STUN/TURN=turn.axondao.io:3478  /  WEBRTC_FALLBACK_ENABLED=false  /  WEBRTC_GATE_INTERNAL_URL=http://axonos:8890</text>
+<text x="596" y="964" font-size="8.5" fill="rgba(170,210,225,0.26)" font-family="'SF Mono',Menlo,Consolas,monospace">WEBRTC_STUN/TURN=turn.axondao.io:3478  /  WEBRTC_FALLBACK_ENABLED=false  /  WEBRTC_GATE_INTERNAL_URL=http://axonos-gate:8890</text>
 <text x="596" y="980" font-size="8" fill="rgba(170,210,225,0.20)" font-family="'SF Mono',Menlo,Consolas,monospace">AXGT_WEBRTC_AGENT_TOKEN=&lt;scoped&gt;  /  AXGT_SESSION_FILES_KEY=&lt;per-session&gt;  /  no database or fleet credentials</text>
 
 <!-- ═══ DOCKER HOST FOOTER ═══ -->

@@ -902,8 +902,8 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
         self.assertIn("AXGT_SESSION_FILES_KEY=session-files-key", assignments)
         self.assertIn("AXGT_WEBRTC_AGENT_TOKEN=signed-session-capability", assignments)
         self.assertIn("WEBRTC_ENABLED=true", assignments)
-        self.assertIn("WEBRTC_GATE_INTERNAL_URL=http://axonos:8890", assignments)
-        self.assertIn("AXGT_GATE_HEARTBEAT_URL=http://axonos:8889", assignments)
+        self.assertIn("WEBRTC_GATE_INTERNAL_URL=http://axonos-gate:8890", assignments)
+        self.assertIn("AXGT_GATE_HEARTBEAT_URL=http://axonos-gate:8889", assignments)
         self.assertIn("WEBRTC_CAPTURE_FPS=24", assignments)
 
         protected_names = (
@@ -987,7 +987,7 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
                 "network",
                 "connect",
                 "--alias",
-                "axonos",
+                "axonos-gate",
                 "axgt-session-net-91",
                 "axonos",
             ],
@@ -1110,8 +1110,8 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
         self.assertEqual(command[command.index("--network") + 1], "axgt-session-net-64")
         self.assertEqual(command[command.index("--cap-drop") + 1], "NET_RAW")
         self.assertIn("AXGT_WEBRTC_AGENT_TOKEN=signed-session-capability", assignments)
-        self.assertIn("WEBRTC_GATE_INTERNAL_URL=http://axonos:8890", assignments)
-        self.assertIn("AXGT_GATE_HEARTBEAT_URL=http://axonos:8889", assignments)
+        self.assertIn("WEBRTC_GATE_INTERNAL_URL=http://axonos-gate:8890", assignments)
+        self.assertIn("AXGT_GATE_HEARTBEAT_URL=http://axonos-gate:8889", assignments)
 
 
 class StaticTenantBoundaryTests(unittest.TestCase):

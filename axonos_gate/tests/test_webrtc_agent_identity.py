@@ -102,11 +102,11 @@ class WebrtcAgentIdentityTests(unittest.TestCase):
             os.environ,
             {
                 "AXGT_SESSION_ID": "248",
-                "WEBRTC_GATE_INTERNAL_URL": "http://axonos:8890/",
+                "WEBRTC_GATE_INTERNAL_URL": "http://axonos-gate:8890/",
             },
             clear=True,
         ):
-            self.assertEqual(self.agent._gate_url(), "http://axonos:8890")
+            self.assertEqual(self.agent._gate_url(), "http://axonos-gate:8890")
 
     def test_multi_session_identity_does_not_require_fleet_or_files_secret(self) -> None:
         with mock.patch.dict(os.environ, _IDENTITY_ENV, clear=True):
@@ -147,7 +147,7 @@ class WebrtcAgentIdentityTests(unittest.TestCase):
              mock.patch("urllib.request.urlopen", return_value=_Response()) as urlopen:
             current = self.agent._agent_headers()
             updated = self.agent._refresh_agent_capability(
-                "http://axonos:8890",
+                "http://axonos-gate:8890",
                 current,
             )
             dynamic = self.agent._agent_headers()
@@ -167,7 +167,7 @@ class WebrtcAgentIdentityTests(unittest.TestCase):
         )
         self.assertEqual(state_mode, 0o600)
         request = urlopen.call_args.args[0]
-        self.assertEqual(request.full_url, "http://axonos:8890/api/webrtc/agent/refresh")
+        self.assertEqual(request.full_url, "http://axonos-gate:8890/api/webrtc/agent/refresh")
         self.assertEqual(request.method, "POST")
 
         foreign_token = self._scheduled_token(

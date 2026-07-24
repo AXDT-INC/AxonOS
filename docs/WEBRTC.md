@@ -5,7 +5,7 @@ video + optional data channel input). **noVNC over WebSockets** remains a
 fallback only for the legacy single-container deployment. Signaling and ICE
 configuration are served by the central gate; each launcher-managed streaming
 agent runs **inside its owning desktop container** and reaches the agent-only
-central listener at `http://axonos:8890` through that session's isolated bridge.
+central listener at `http://axonos-gate:8890` through that session's isolated bridge.
 The legacy single-container agent uses `http://127.0.0.1:8890`.
 
 ## Feature flags
@@ -82,7 +82,7 @@ For **WebSocket-only** proxies, signaling still uses **HTTPS fetch** on the same
 | Multi-user mode shows a WebRTC connection error | Check the same WebRTC prerequisites plus STUN/TURN reachability. This mode intentionally has no tenant VNC fallback. |
 | Stuck on “Connecting” | STUN/TURN reachability; restrictive NAT → configure TURN. |
 | 403 on signaling | Auth token or session claim missing/expired. |
-| Agent idle | In user-container mode, confirm the claim returned a compute ID, the tenant has `AXGT_WEBRTC_AGENT_TOKEN`, and it can resolve `axonos:8890`. Keep `WEBRTC_AGENT_INTERNAL_KEY` only on the central gate. |
+| Agent idle | In user-container mode, confirm the claim returned a compute ID, the tenant has `AXGT_WEBRTC_AGENT_TOKEN`, and it can resolve `axonos-gate:8890`. Keep `WEBRTC_AGENT_INTERNAL_KEY` only on the central gate. |
 | Scroll blur / hazy video | Default H.264 capture is tuned for **lowest-latency 1080p desktop** (`p1`/`llhp`, 12 Mbps, one-frame buffer). If latency is clean, try `WEBRTC_CAPTURE_BITRATE=14000000`; if loss appears, use `WEBRTC_CAPTURE_MAX_WIDTH=1600` or `1280` rather than pushing bitrate higher. |
 | Lag / clicks stop / jitter buffer climbs | Path saturated or buffering. Confirm `packetsLost`, `nackCount`, and jitter buffer delay in `chrome://webrtc-internals`. Keep `WEBRTC_CAPTURE_NVENC_PRESET=p1` and `WEBRTC_CAPTURE_LOW_LATENCY=true`, then try `WEBRTC_CAPTURE_BITRATE=8000000` or `WEBRTC_CAPTURE_MAX_WIDTH=1600`; reconnect after deploy and hard-refresh the page. |
 | Black screen, ICE connected | In `chrome://webrtc-internals`, if **inbound video codec is VP8** while the agent runs H.264 capture, SDP negotiated the wrong codec. Agent + browser must prefer **H.264** (fixed in `capture.prefer_h264_for_pc` and `axonos-webrtc.js`). Hard-refresh the page after deploy. |

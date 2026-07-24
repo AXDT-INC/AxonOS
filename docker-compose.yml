@@ -135,7 +135,7 @@ services:
       AXGT_SSH_PUBLIC_HOST: ${AXGT_SSH_PUBLIC_HOST:-}
       AXGT_SSH_USER: ${AXGT_SSH_USER:-aXonian}
 
-      # Gate must listen on all interfaces so axgt-session-* agents can reach :8889 via http://axonos:8889.
+      # Gate must listen on all interfaces so isolated agents can reach http://axonos-gate:8889.
       GATE_HOST: ${GATE_HOST:-0.0.0.0}
       GATE_PORT: ${GATE_PORT:-8889}
       # Central WebRTC capability signing key. Never forwarded to tenant sessions.

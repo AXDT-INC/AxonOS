@@ -2232,6 +2232,17 @@ def _init_all_tables():
     _gate_pg_init_once()
 
 
+def _initialize_listener_tables() -> None:
+    """Initialize shared schema once, from the public control listener."""
+    # The public listener owns schema initialization. Running the same migration
+    # concurrently in the internal agent listener can lock both processes long
+    # enough for the supervisor readiness watchdog to restart a healthy cold boot.
+    if _env_truthy("GATE_AGENT_ONLY"):
+        logger.info("DB init delegated to the public control listener")
+    else:
+        _init_all_tables()
+
+
 def main():
     """Run the gate server (HTTP + WebSocket on same port)."""
     host = os.getenv('GATE_HOST', '127.0.0.1')
@@ -2252,7 +2263,7 @@ def main():
     logger.info(f"Starting AxonOS AXGT Gate Server on {host}:{port}")
     logger.info(f"AXGT Contract: {(os.getenv('AXGT_CONTRACT_ADDRESS') or '<unset>').strip()}")
     logger.info(f"RPC URL: {(os.getenv('AXGT_RPC_URL') or '<unset>').strip()}")
-    _init_all_tables()
+    _initialize_listener_tables()
 
     # Start one cleanup thread on the public/control listener only. The
     # internal agent-only process shares the DB but must not duplicate billing.

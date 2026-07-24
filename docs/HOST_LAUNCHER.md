@@ -68,8 +68,8 @@ workload:
 - Each session gets a dedicated Docker bridge named
   `axgt-session-net-<session-id>`. Only that tenant and the central `axonos`
   container join it. The network is removed when the session stops.
-- The tenant agent reaches heartbeat on `http://axonos:8889` and the internal-only
-  WebRTC agent API on `http://axonos:8890`. Port 8890 is not published on the host.
+- The tenant agent reaches heartbeat on `http://axonos-gate:8889` and the internal-only
+  WebRTC agent API on `http://axonos-gate:8890`. Port 8890 is not published on the host.
 - Identity, file-transfer key, and signed WebRTC capability are injected explicitly
   for that session. The capability is checked against its signature and active
   database row; it is not a fleet-wide credential.
