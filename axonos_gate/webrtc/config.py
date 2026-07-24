@@ -63,6 +63,27 @@ def answer_wait_ms() -> int:
     return max(90_000, min(300_000, n))
 
 
+def agent_claim_lease_seconds() -> int:
+    """Bound recovery time for offers claimed by an agent that disappears.
+
+    The default exceeds both the browser answer deadline and the configured
+    display-readiness wait. Once the agent starts polling its scoped row the
+    lease is refreshed, so healthy slow negotiations are not reclaimed.
+    """
+    raw = (os.getenv("WEBRTC_AGENT_CLAIM_LEASE_SECONDS") or "").strip()
+    if raw:
+        try:
+            return max(30, min(540, int(raw)))
+        except ValueError:
+            pass
+    display_raw = (os.getenv("WEBRTC_DISPLAY_WAIT_SECONDS") or "120").strip()
+    try:
+        display_wait = max(5, min(300, int(float(display_raw))))
+    except ValueError:
+        display_wait = 120
+    return min(540, max(answer_wait_ms() // 1000, display_wait) + 30)
+
+
 def rate_limit_per_minute() -> int:
     raw = (os.getenv("WEBRTC_SIGNAL_RATE_LIMIT_PER_MIN") or "60").strip()
     try:

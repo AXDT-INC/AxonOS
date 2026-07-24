@@ -1731,6 +1731,157 @@ def is_session_owner(wallet_address: str) -> bool:
         conn.close()
 
 
+def get_active_desktop_session_for_wallet(wallet_address: str) -> Optional[Dict[str, Any]]:
+    """Resolve the wallet's exact active WebRTC-capable compute session.
+
+    The returned identity is intentionally minimal and never includes the
+    per-session ``files_key``.  Only fully allocated, unexpired desktop rows are
+    eligible; SSH, paused, allocating, failed, ended, and stale sessions must
+    not receive browser WebRTC signaling.
+    """
+    wallet = (wallet_address or "").strip().lower()
+    if not wallet or not _init_once():
+        return None
+    conn = _get_connection()
+    if not conn:
+        return None
+    try:
+        now = time.time()
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""SELECT id, wallet_address
+                    FROM {_SESSION_TABLE}
+                    WHERE wallet_address = %s
+                      AND status = 'active'
+                      AND allocation_status = 'allocated'
+                      AND ssh_enabled = FALSE
+                      AND expires_at > %s
+                    ORDER BY started_at DESC
+                    LIMIT 1""",
+                (wallet, now),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": int(row[0]),
+            "wallet_address": (row[1] or "").strip().lower(),
+        }
+    except Exception as exc:
+        logger.warning("get_active_desktop_session_for_wallet failed: %s", exc)
+        return None
+    finally:
+        conn.close()
+
+
+def get_single_active_desktop_session() -> Optional[Dict[str, Any]]:
+    """Resolve the sole legacy shared desktop, never a multi-session tenant.
+
+    The documented single-container deployment has no injected per-container
+    identity. Compatibility is safe only while multi-session scheduling is
+    explicitly disabled and exactly one eligible desktop row exists.
+    """
+    if _multi_session_enabled() or not _init_once():
+        return None
+    conn = _get_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""SELECT id, wallet_address
+                    FROM {_SESSION_TABLE}
+                    WHERE status = 'active'
+                      AND allocation_status = 'allocated'
+                      AND ssh_enabled = FALSE
+                      AND expires_at > %s
+                    ORDER BY started_at DESC
+                    LIMIT 2""",
+                (time.time(),),
+            )
+            rows = cur.fetchall()
+        if len(rows) != 1:
+            return None
+        return {
+            "id": int(rows[0][0]),
+            "wallet_address": (rows[0][1] or "").strip().lower(),
+        }
+    except Exception as exc:
+        logger.warning("get_single_active_desktop_session failed: %s", exc)
+        return None
+    finally:
+        conn.close()
+
+
+def _numeric_session_id(session_id: Any) -> Optional[int]:
+    """Return a positive integer session ID accepted from an HTTP header."""
+    if isinstance(session_id, bool):
+        return None
+    if isinstance(session_id, int):
+        parsed = session_id
+    elif isinstance(session_id, str):
+        raw = session_id.strip()
+        if not raw or not raw.isascii() or not raw.isdigit():
+            return None
+        parsed = int(raw)
+    else:
+        return None
+    return parsed if parsed > 0 else None
+
+
+def validate_webrtc_agent_identity(
+    session_id: Any,
+    wallet_address: str,
+    files_key: str,
+) -> Optional[Dict[str, Any]]:
+    """Validate one session container as the exact active desktop compute row.
+
+    Unlike :func:`validate_session_files_key`, this never resolves by "latest
+    session for wallet".  The numeric compute-session ID, normalized wallet,
+    active allocation state, desktop mode, expiry, and per-session secret must
+    all match the same database row.
+    """
+    sid = _numeric_session_id(session_id)
+    wallet = (wallet_address or "").strip().lower()
+    key = (files_key or "").strip()
+    if sid is None or not wallet or not key or not _init_once():
+        return None
+    conn = _get_connection()
+    if not conn:
+        return None
+    try:
+        now = time.time()
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""SELECT id, wallet_address, files_key
+                    FROM {_SESSION_TABLE}
+                    WHERE id = %s
+                      AND wallet_address = %s
+                      AND status = 'active'
+                      AND allocation_status = 'allocated'
+                      AND ssh_enabled = FALSE
+                      AND expires_at > %s
+                    LIMIT 1""",
+                (sid, wallet, now),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None
+        trusted_id = int(row[0])
+        trusted_wallet = (row[1] or "").strip().lower()
+        stored_key = row[2] if isinstance(row[2], str) else ""
+        if trusted_id != sid or trusted_wallet != wallet:
+            return None
+        if not stored_key or not secrets.compare_digest(stored_key, key):
+            return None
+        return {"id": trusted_id, "wallet_address": trusted_wallet}
+    except Exception as exc:
+        logger.warning("validate_webrtc_agent_identity failed: %s", exc)
+        return None
+    finally:
+        conn.close()
+
+
 def validate_session_files_key(wallet_address: str, files_key: str) -> bool:
     """True if *files_key* matches the active session's per-session secret for *wallet*.
 
@@ -1854,4 +2005,3 @@ def perform_session_cleanup() -> None:
         logger.warning("perform_session_cleanup failed: %s", exc, exc_info=True)
     finally:
         conn.close()
-

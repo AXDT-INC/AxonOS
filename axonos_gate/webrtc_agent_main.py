@@ -76,6 +76,9 @@ except Exception as e:
     logger.error("Failed to inject asyncio create_datagram_endpoint monkey-patch: %s", e)
 
 _AXT = "X-AxonOS-WebRTC-Agent-Key"
+_SESSION_ID_HEADER = "X-AXGT-Session-ID"
+_WALLET_HEADER = "X-Wallet-Address"
+_SESSION_KEY_HEADER = "X-AXGT-Session-Key"
 _clipboard_owners: dict[str, subprocess.Popen[bytes]] = {}
 # RFB-style pressed buttons: 1=left, 2=middle, 4=right.
 _mouse_button_mask: int = 0
@@ -98,6 +101,109 @@ def _gate_url() -> str:
 
 def _agent_key() -> str:
     return (os.getenv("WEBRTC_AGENT_INTERNAL_KEY") or "").strip()
+
+
+def _legacy_single_container_mode() -> bool:
+    """True only for the documented shared-desktop deployment."""
+    raw = (os.getenv("AXGT_MULTI_SESSION_ENABLED") or "true").strip().lower()
+    return raw in ("0", "false", "no", "off") and not (
+        os.getenv("AXGT_SESSION_ID") or ""
+    ).strip()
+
+
+def _agent_headers(*, json_content: bool = False) -> dict[str, str]:
+    """Return the complete, fail-closed identity for an agent request.
+
+    The fleet-wide WebRTC key authorizes the kind of caller.  The remaining
+    values bind that caller to the one compute-session row whose credentials
+    were injected by the launcher.  Treat every value as required: silently
+    falling back to the shared key would restore the global-offer queue bug.
+    """
+    agent_key = _agent_key()
+    compute_session_id = (os.getenv("AXGT_SESSION_ID") or "").strip()
+    wallet = (os.getenv("AXGT_WALLET_ADDRESS") or "").strip().lower()
+    session_key = (os.getenv("AXGT_SESSION_FILES_KEY") or "").strip()
+
+    if (
+        agent_key
+        and not compute_session_id
+        and not wallet
+        and not session_key
+        and _legacy_single_container_mode()
+    ):
+        if any(c in agent_key for c in "\r\n"):
+            raise ValueError("invalid agent credential")
+        headers = {_AXT: agent_key}
+        if json_content:
+            headers["Content-Type"] = "application/json"
+        return headers
+
+    missing = [
+        name
+        for name, value in (
+            ("WEBRTC_AGENT_INTERNAL_KEY", agent_key),
+            ("AXGT_SESSION_ID", compute_session_id),
+            ("AXGT_WALLET_ADDRESS", wallet),
+            ("AXGT_SESSION_FILES_KEY", session_key),
+        )
+        if not value
+    ]
+    if missing:
+        raise ValueError(f"missing agent identity: {', '.join(missing)}")
+
+    if (
+        not compute_session_id.isascii()
+        or not compute_session_id.isdigit()
+        or int(compute_session_id) <= 0
+    ):
+        raise ValueError("invalid AXGT_SESSION_ID")
+    compute_session_id = str(int(compute_session_id))
+
+    if (
+        len(wallet) != 42
+        or not wallet.startswith("0x")
+        or any(c not in "0123456789abcdef" for c in wallet[2:])
+    ):
+        raise ValueError("invalid AXGT_WALLET_ADDRESS")
+    if any(c in value for value in (agent_key, session_key) for c in "\r\n"):
+        raise ValueError("invalid agent credential")
+
+    headers = {
+        _AXT: agent_key,
+        _SESSION_ID_HEADER: compute_session_id,
+        _WALLET_HEADER: wallet,
+        _SESSION_KEY_HEADER: session_key,
+    }
+    if json_content:
+        headers["Content-Type"] = "application/json"
+    return headers
+
+
+def _job_matches_agent_identity(
+    job: object,
+    agent_headers: dict[str, str] | None = None,
+) -> bool:
+    """True only when a claimed signaling job belongs to this container."""
+    if not isinstance(job, dict):
+        return False
+    try:
+        headers = agent_headers or _agent_headers()
+        if _legacy_single_container_mode() and _SESSION_ID_HEADER not in headers:
+            claimed_session_id = int(str(job.get("compute_session_id") or "").strip())
+            claimed_wallet = str(job.get("wallet_address") or "").strip().lower()
+            return (
+                claimed_session_id > 0
+                and len(claimed_wallet) == 42
+                and claimed_wallet.startswith("0x")
+                and all(c in "0123456789abcdef" for c in claimed_wallet[2:])
+            )
+        expected_session_id = int(headers[_SESSION_ID_HEADER])
+        claimed_session_id = int(str(job.get("compute_session_id") or "").strip())
+        expected_wallet = headers[_WALLET_HEADER].strip().lower()
+        claimed_wallet = str(job.get("wallet_address") or "").strip().lower()
+    except (KeyError, TypeError, ValueError):
+        return False
+    return claimed_session_id == expected_session_id and claimed_wallet == expected_wallet
 
 
 def _display() -> str:
@@ -865,7 +971,6 @@ def _build_rtc_configuration():  # type: ignore[no-untyped-def]
 
 
 def _agent_fail(session_id: str, error: str) -> None:
-    key = _agent_key()
     gate = _gate_url()
     try:
         import urllib.request
@@ -874,7 +979,7 @@ def _agent_fail(session_id: str, error: str) -> None:
         req = urllib.request.Request(
             f"{gate}/api/webrtc/agent/fail",
             data=data,
-            headers={"Content-Type": "application/json", _AXT: key},
+            headers=_agent_headers(json_content=True),
             method="POST",
         )
         urllib.request.urlopen(req, timeout=5)
@@ -1021,7 +1126,7 @@ async def _run_session(job: dict[str, Any]) -> None:
                 except Exception:
                     pass
 
-    key = _agent_key()
+    agent_headers = _agent_headers()
     gate = _gate_url()
     applied_ice: set[str] = set()
     clipboard_env = _display_env()
@@ -1374,7 +1479,7 @@ async def _run_session(job: dict[str, Any]) -> None:
                 try:
                     async with session.get(
                         url,
-                        headers={_AXT: key},
+                        headers=agent_headers,
                         params={"session_id": session_id},
                         timeout=aiohttp.ClientTimeout(total=6),
                     ) as resp:
@@ -1444,7 +1549,7 @@ async def _run_session(job: dict[str, Any]) -> None:
     async with aiohttp.ClientSession() as session:
         async with session.post(
             f"{gate}/api/webrtc/agent/answer",
-            headers={_AXT: key, "Content-Type": "application/json"},
+            headers=_agent_headers(json_content=True),
             json=payload,
             timeout=aiohttp.ClientTimeout(total=15),
         ) as resp:
@@ -1538,8 +1643,10 @@ async def _prewarm_session_capabilities() -> None:
 
 
 async def main_loop() -> None:
-    if not _agent_key():
-        logger.error("WEBRTC_AGENT_INTERNAL_KEY unset")
+    try:
+        agent_headers = _agent_headers()
+    except ValueError as exc:
+        logger.error("WebRTC agent identity invalid (%s); refusing to poll", exc)
         while True:
             await asyncio.sleep(3600)
 
@@ -1562,6 +1669,7 @@ async def main_loop() -> None:
             await _run_session(j)
         except asyncio.CancelledError:
             logger.info("session task cancelled: %s", str(j.get("session_id", ""))[:16])
+            _agent_fail(str(j.get("session_id", "")), "superseded_by_new_offer")
             raise
         except Exception as e:
             logger.exception("session error")
@@ -1572,7 +1680,7 @@ async def main_loop() -> None:
         if not _truthy("WEBRTC_ENABLED"):
             await asyncio.sleep(5)
             continue
-        status, job = _http_get_job(poll_url, {_AXT: _agent_key()})
+        status, job = _http_get_job(poll_url, agent_headers)
         if status == -1:
             await asyncio.sleep(0.75)
             continue
@@ -1580,7 +1688,14 @@ async def main_loop() -> None:
             sleep_time = 1.0 if (active_task and not active_task.done()) else 0.35
             await asyncio.sleep(sleep_time)
             continue
-        if status != 200 or not job.get("session_id"):
+        if status != 200 or not isinstance(job, dict) or not job.get("session_id"):
+            await asyncio.sleep(1.0)
+            continue
+        if not _job_matches_agent_identity(job, agent_headers):
+            logger.error(
+                "Rejected WebRTC signaling job %s: compute-session identity mismatch",
+                str(job.get("session_id") or "")[:16],
+            )
             await asyncio.sleep(1.0)
             continue
 

@@ -126,6 +126,8 @@ except ImportError:
 try:
     from session_manager import (
         get_active_session,
+        get_active_desktop_session_for_wallet,
+        get_single_active_desktop_session,
         heartbeat as session_heartbeat,
         is_session_owner,
         release_session,
@@ -133,12 +135,15 @@ try:
         session_status,
         try_claim_session,
         validate_session_files_key,
+        validate_webrtc_agent_identity,
     )
     _session_mgr_available = True
 except ImportError:
     try:
         from axonos_gate.session_manager import (
             get_active_session,
+            get_active_desktop_session_for_wallet,
+            get_single_active_desktop_session,
             heartbeat as session_heartbeat,
             is_session_owner,
             release_session,
@@ -146,10 +151,14 @@ except ImportError:
             session_status,
             try_claim_session,
             validate_session_files_key,
+            validate_webrtc_agent_identity,
         )
         _session_mgr_available = True
     except ImportError:
         _session_mgr_available = False
+        get_active_desktop_session_for_wallet = None
+        get_single_active_desktop_session = None
+        validate_webrtc_agent_identity = None
 
 try:
     from webrtc import config as webrtc_config
@@ -1664,6 +1673,40 @@ def _webrtc_sig_allow(wallet_key: str) -> bool:
     return _webrtc_sig_limiter.allow(f"{ip}|{wallet_key or '_'}")
 
 
+def _active_webrtc_compute_id(wallet_norm: str):
+    if not _session_mgr_available or get_active_desktop_session_for_wallet is None:
+        return None
+    identity = get_active_desktop_session_for_wallet(wallet_norm)
+    return identity.get("id") if isinstance(identity, dict) else None
+
+
+def _webrtc_agent_scope_from_headers():
+    if webrtc_service is None:
+        return None
+    supplied_key = (request.headers.get("X-AxonOS-WebRTC-Agent-Key") or "").strip()
+    expected_key = webrtc_config.agent_internal_key() if webrtc_config is not None else ""
+    if (
+        not expected_key
+        or not supplied_key
+        or not secrets.compare_digest(expected_key, supplied_key)
+    ):
+        return None
+    scope = webrtc_service.resolve_agent_scope(
+        request.headers.get("X-AXGT-Session-ID"),
+        request.headers.get("X-Wallet-Address") or "",
+        request.headers.get("X-AXGT-Session-Key") or "",
+        validate_webrtc_agent_identity if _session_mgr_available else None,
+    )
+    if scope is not None:
+        return scope
+    if get_single_active_desktop_session is None:
+        return None
+    identity = get_single_active_desktop_session()
+    if not isinstance(identity, dict):
+        return None
+    return webrtc_service.scope_from_trusted_identity(identity)
+
+
 @app.route('/api/webrtc/config', methods=['GET', 'OPTIONS'])
 def api_webrtc_config():
     if request.method == 'OPTIONS':
@@ -1690,8 +1733,13 @@ def api_webrtc_session():
     wn = wallet.lower()
     if not _webrtc_sig_allow(wn):
         return jsonify({"ok": False, "error": "Rate limit exceeded"}), 429
-    owner = _session_mgr_available and is_session_owner(wn)
-    st, payload = webrtc_service.handle_create_session(wn, True, owner)
+    active_compute_id = _active_webrtc_compute_id(wn)
+    st, payload = webrtc_service.handle_create_session(
+        wn,
+        True,
+        active_compute_id,
+        data.get("compute_session_id"),
+    )
     return jsonify(payload), st
 
 
@@ -1712,9 +1760,14 @@ def api_webrtc_offer():
     wn = wallet.lower()
     if not _webrtc_sig_allow(wn):
         return jsonify({"ok": False, "error": "Rate limit exceeded"}), 429
-    owner = _session_mgr_available and is_session_owner(wn)
-    tok_ok = True
-    st, payload = webrtc_service.handle_post_offer(sid, wn, tok_ok, owner, data)
+    active_compute_id = _active_webrtc_compute_id(wn)
+    st, payload = webrtc_service.handle_post_offer(
+        sid,
+        wn,
+        True,
+        active_compute_id,
+        data,
+    )
     return jsonify(payload), st
 
 
@@ -1732,8 +1785,14 @@ def api_webrtc_status():
     if auth_err:
         return auth_err
     wn = wallet.lower()
-    tok_ok = True
-    st, payload = webrtc_service.handle_get_status(sid, wn, tok_ok)
+    active_compute_id = _active_webrtc_compute_id(wn)
+    st, payload = webrtc_service.handle_get_status(
+        sid,
+        wn,
+        True,
+        active_compute_id,
+        request.args.get("compute_session_id"),
+    )
     return jsonify(payload), st
 
 
@@ -1760,7 +1819,14 @@ def api_webrtc_ice():
     wn = wallet.lower()
     if not _webrtc_sig_allow(wn):
         return jsonify({"ok": False, "error": "Rate limit exceeded"}), 429
-    st, payload = webrtc_service.handle_post_client_ice(sid, wn, True, data)
+    active_compute_id = _active_webrtc_compute_id(wn)
+    st, payload = webrtc_service.handle_post_client_ice(
+        sid,
+        wn,
+        True,
+        active_compute_id,
+        data,
+    )
     return jsonify(payload), st
 
 
@@ -1807,7 +1873,8 @@ def api_webrtc_agent_next():
     if webrtc_service is None:
         return '', 503
     key = (request.headers.get("X-AxonOS-WebRTC-Agent-Key") or "").strip()
-    st, payload = webrtc_service.handle_agent_next(key)
+    scope = _webrtc_agent_scope_from_headers()
+    st, payload = webrtc_service.handle_agent_next(key, scope)
     if st == 204:
         return '', 204
     return jsonify(payload), st
@@ -1820,8 +1887,9 @@ def api_webrtc_agent_row():
     if webrtc_service is None:
         return jsonify({"ok": False}), 503
     key = (request.headers.get("X-AxonOS-WebRTC-Agent-Key") or "").strip()
+    scope = _webrtc_agent_scope_from_headers()
     sid = (request.args.get("session_id") or "").strip()
-    st, payload = webrtc_service.handle_agent_row(key, sid)
+    st, payload = webrtc_service.handle_agent_row(key, scope, sid)
     return jsonify(payload), st
 
 
@@ -1832,8 +1900,9 @@ def api_webrtc_agent_answer():
     if webrtc_service is None:
         return jsonify({"ok": False, "error": "WebRTC module unavailable"}), 503
     key = (request.headers.get("X-AxonOS-WebRTC-Agent-Key") or "").strip()
+    scope = _webrtc_agent_scope_from_headers()
     data = request.get_json() or {}
-    st, payload = webrtc_service.handle_agent_answer(key, data)
+    st, payload = webrtc_service.handle_agent_answer(key, scope, data)
     return jsonify(payload), st
 
 
@@ -1844,8 +1913,9 @@ def api_webrtc_agent_fail():
     if webrtc_service is None:
         return jsonify({"ok": False}), 503
     key = (request.headers.get("X-AxonOS-WebRTC-Agent-Key") or "").strip()
+    scope = _webrtc_agent_scope_from_headers()
     data = request.get_json() or {}
-    st, payload = webrtc_service.handle_agent_fail(key, data)
+    st, payload = webrtc_service.handle_agent_fail(key, scope, data)
     return jsonify(payload), st
 
 

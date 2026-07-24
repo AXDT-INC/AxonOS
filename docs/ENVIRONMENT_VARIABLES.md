@@ -391,6 +391,7 @@ Configuration: [`axonos_gate/webrtc/config.py`](../axonos_gate/webrtc/config.py)
 | `WEBRTC_SESSION_TIMEOUT_SECONDS` | `600` | Signaling session TTL (60–86400). |
 | `WEBRTC_MAX_RECONNECT_ATTEMPTS` | `5` | Client reconnect cap (0–50). |
 | `WEBRTC_ANSWER_WAIT_MS` | `180000` | Browser polls for SDP answer (90k–300k ms). |
+| `WEBRTC_AGENT_CLAIM_LEASE_SECONDS` | derived | Reclaims an abandoned scoped offer after 30–540 seconds; default is the larger of answer/display wait plus 30 seconds. |
 | `WEBRTC_SIGNAL_RATE_LIMIT_PER_MIN` | `60` | Signaling POST rate limit per IP+wallet; `0` = unlimited. |
 | `WEBRTC_DISPLAY_WAIT_SECONDS` | `120` | Agent waits for X11 `:0` before capture. |
 

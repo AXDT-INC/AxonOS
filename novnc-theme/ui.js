@@ -3079,6 +3079,17 @@ const UI = {
                     }
                     return;
                 }
+                const computeSessionId = Number(claim && claim.session_id);
+                if (!Number.isSafeInteger(computeSessionId) || computeSessionId <= 0) {
+                    if (typeof window.axonosHideConnectionLoader === 'function') {
+                        window.axonosHideConnectionLoader(true);
+                    } else if (typeof window.axonosSetLaunchBusy === 'function') {
+                        window.axonosSetLaunchBusy(false);
+                    }
+                    UI.updateVisualState('disconnected');
+                    UI.showStatus(_('The session claim did not return a valid compute session ID.'), 'error');
+                    return;
+                }
                 if (typeof window.axonosRememberOwnedSession === 'function') {
                     window.axonosRememberOwnedSession(claim);
                 }
@@ -3170,7 +3181,7 @@ const UI = {
                         try {
                             // A stable module URL keeps negotiation generation/cancellation
                             // state shared across retries and rapid user reconnects.
-                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260724b');
+                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260724c');
                             if (!connectAttemptIsCurrent()) {
                                 return;
                             }
@@ -3179,6 +3190,7 @@ const UI = {
                             }
                             usedWebRtc = await webRtcModule.connectAxonOSWebRTC({
                                 UI,
+                                computeSessionId,
                                 onProgress: onWebRtcProgress,
                             });
                             captureWebRtcFailure();
@@ -3205,6 +3217,7 @@ const UI = {
                                 try {
                                     usedWebRtc = await webRtcModule.connectAxonOSWebRTC({
                                         UI,
+                                        computeSessionId,
                                         onProgress: onWebRtcProgress,
                                     });
                                     captureWebRtcFailure();

@@ -223,6 +223,7 @@ function _normalizeSdp(sdp) {
 /**
  * @param {object} opts
  * @param {import('../ui.js').UI} opts.UI - noVNC UI object
+ * @param {number|string} opts.computeSessionId - claimed compute-session identifier
  * @param {(phase: string) => void} [opts.onProgress] - truthful loader phase callback
  * @returns {Promise<boolean>} true if WebRTC owns the session UI
  */
@@ -230,6 +231,7 @@ export async function connectAxonOSWebRTC(opts) {
     const UI = opts.UI;
     const wallet = window.verifiedWalletAddress;
     const token = window.verifiedWalletAuthToken;
+    const computeSessionId = Number(opts.computeSessionId);
     const reportProgress = (phase) => {
         const callback = typeof opts.onProgress === 'function'
             ? opts.onProgress
@@ -247,7 +249,7 @@ export async function connectAxonOSWebRTC(opts) {
     // terminal reason suppress the retry policy for a newer attempt.
     _lastConnectFailure = null;
 
-    if (!wallet || !token) {
+    if (!wallet || !token || !Number.isSafeInteger(computeSessionId) || computeSessionId <= 0) {
         return false;
     }
 
@@ -301,7 +303,10 @@ export async function connectAxonOSWebRTC(opts) {
     const sessRes = await _fetchJson('./api/webrtc/session', {
         method: 'POST',
         headers: _authHeaders(),
-        body: JSON.stringify({ wallet_address: wallet }),
+        body: JSON.stringify({
+            wallet_address: wallet,
+            compute_session_id: computeSessionId,
+        }),
     });
     if (!sessRes.ok || !sessRes.json.ok || !sessRes.json.session_id) {
         _hideBanner();
@@ -471,6 +476,7 @@ export async function connectAxonOSWebRTC(opts) {
         const body = {
             wallet_address: wallet,
             session_id: sessionId,
+            compute_session_id: computeSessionId,
             candidate: ev.candidate.candidate,
             sdpMid: ev.candidate.sdpMid,
             sdpMLineIndex: ev.candidate.sdpMLineIndex,
@@ -497,6 +503,7 @@ export async function connectAxonOSWebRTC(opts) {
         body: JSON.stringify({
             wallet_address: wallet,
             session_id: sessionId,
+            compute_session_id: computeSessionId,
             sdp: pc.localDescription.sdp,
             type: 'offer',
         }),
@@ -527,7 +534,7 @@ export async function connectAxonOSWebRTC(opts) {
             return false;
         }
         const st = await _fetchJson(
-            `./api/webrtc/status?session_id=${encodeURIComponent(sessionId)}&wallet_address=${encodeURIComponent(wallet)}`,
+            `./api/webrtc/status?session_id=${encodeURIComponent(sessionId)}&wallet_address=${encodeURIComponent(wallet)}&compute_session_id=${encodeURIComponent(computeSessionId)}`,
             { headers: _authHeaders() }
         );
         if (!st.ok) {
@@ -553,7 +560,7 @@ export async function connectAxonOSWebRTC(opts) {
             lastSignalingState = signalingState;
             if (signalingState === 'agent_processing') {
                 reportProgress('webrtc-agent');
-            } else if (signalingState === 'offer_received') {
+            } else if (signalingState === 'scoped_offer_received') {
                 reportProgress('webrtc-waiting');
             }
         }

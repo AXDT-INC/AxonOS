@@ -140,6 +140,8 @@ except ImportError:
 try:
     from session_manager import (
         get_active_session,
+        get_active_desktop_session_for_wallet,
+        get_single_active_desktop_session,
         heartbeat as session_heartbeat,
         is_session_owner,
         release_session,
@@ -147,12 +149,15 @@ try:
         session_status,
         try_claim_session,
         validate_session_files_key,
+        validate_webrtc_agent_identity,
     )
     _session_mgr_available = True
 except ImportError:
     try:
         from axonos_gate.session_manager import (
             get_active_session,
+            get_active_desktop_session_for_wallet,
+            get_single_active_desktop_session,
             heartbeat as session_heartbeat,
             is_session_owner,
             release_session,
@@ -160,11 +165,15 @@ except ImportError:
             session_status,
             try_claim_session,
             validate_session_files_key,
+            validate_webrtc_agent_identity,
         )
         _session_mgr_available = True
     except ImportError:
         _session_mgr_available = False
+        get_active_desktop_session_for_wallet = None
+        get_single_active_desktop_session = None
         validate_session_files_key = None
+        validate_webrtc_agent_identity = None
 
 try:
     from webrtc import config as webrtc_config
@@ -208,6 +217,40 @@ def _webrtc_ws_rate_allow(wallet_key: str, headers, client_ip: str) -> bool:
         _webrtc_sig_ws = SimpleRateLimiter(limit=n, window_seconds=60)
     ip = (headers.get("X-Forwarded-For") or client_ip or "unknown").split(",")[0].strip()
     return _webrtc_sig_ws.allow(f"{ip}|{wallet_key or '_'}")
+
+
+def _active_webrtc_compute_id(wallet_norm: str):
+    if not _session_mgr_available or get_active_desktop_session_for_wallet is None:
+        return None
+    identity = get_active_desktop_session_for_wallet(wallet_norm)
+    return identity.get("id") if isinstance(identity, dict) else None
+
+
+def _webrtc_agent_scope_from_headers(headers):
+    if webrtc_service is None:
+        return None
+    supplied_key = (headers.get("X-AxonOS-WebRTC-Agent-Key") or "").strip()
+    expected_key = webrtc_config.agent_internal_key() if webrtc_config is not None else ""
+    if (
+        not expected_key
+        or not supplied_key
+        or not secrets.compare_digest(expected_key, supplied_key)
+    ):
+        return None
+    scope = webrtc_service.resolve_agent_scope(
+        headers.get("X-AXGT-Session-ID"),
+        headers.get("X-Wallet-Address") or "",
+        headers.get("X-AXGT-Session-Key") or "",
+        validate_webrtc_agent_identity if _session_mgr_available else None,
+    )
+    if scope is not None:
+        return scope
+    if get_single_active_desktop_session is None:
+        return None
+    identity = get_single_active_desktop_session()
+    if not isinstance(identity, dict):
+        return None
+    return webrtc_service.scope_from_trusted_identity(identity)
 
 
 _auth_lock = Lock()
@@ -1184,11 +1227,11 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         pu = urlparse(self.path)
         ponly = pu.path
 
-        if webrtc_service and ponly.startswith('/api/webrtc/config'):
+        if webrtc_service and ponly == '/api/webrtc/config':
             st, pl = webrtc_service.handle_config_public()
             return self._send_json(st, pl)
 
-        if webrtc_service and ponly.startswith('/api/webrtc/status'):
+        if webrtc_service and ponly == '/api/webrtc/status':
             qs = parse_qs(pu.query)
             sid = (qs.get('session_id') or [''])[0].strip()
             wallet = (qs.get('wallet_address') or [''])[0].strip() or (self.headers.get('X-Wallet-Address') or '').strip()
@@ -1198,12 +1241,20 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             if not auth_token or not _is_auth_token_valid(auth_token, wallet):
                 return self._send_json(401, {'ok': False, 'error': 'Valid auth token required'})
             wn = wallet.lower()
-            st, pl = webrtc_service.handle_get_status(sid, wn, True)
+            active_compute_id = _active_webrtc_compute_id(wn)
+            st, pl = webrtc_service.handle_get_status(
+                sid,
+                wn,
+                True,
+                active_compute_id,
+                (qs.get('compute_session_id') or [''])[0].strip(),
+            )
             return self._send_json(st, pl, no_cache=True)
 
-        if webrtc_service and ponly.startswith('/api/webrtc/agent/next'):
+        if webrtc_service and ponly == '/api/webrtc/agent/next':
             key = (self.headers.get('X-AxonOS-WebRTC-Agent-Key') or '').strip()
-            st, pl = webrtc_service.handle_agent_next(key)
+            scope = _webrtc_agent_scope_from_headers(self.headers)
+            st, pl = webrtc_service.handle_agent_next(key, scope)
             if st == 204:
                 self.send_response(204)
                 origin = cors_origin_for_request(
@@ -1220,11 +1271,12 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 return
             return self._send_json(st, pl)
 
-        if webrtc_service and ponly.startswith('/api/webrtc/agent/row'):
+        if webrtc_service and ponly == '/api/webrtc/agent/row':
             key = (self.headers.get('X-AxonOS-WebRTC-Agent-Key') or '').strip()
+            scope = _webrtc_agent_scope_from_headers(self.headers)
             qs = parse_qs(pu.query)
             sid = (qs.get('session_id') or [''])[0].strip()
-            st, pl = webrtc_service.handle_agent_row(key, sid)
+            st, pl = webrtc_service.handle_agent_row(key, scope, sid)
             return self._send_json(st, pl)
 
         # ---- Session / Queue read endpoints ----
@@ -1478,8 +1530,13 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 wn = wallet.lower()
                 if not _webrtc_ws_rate_allow(wn, self.headers, client_ip):
                     return self._send_json(429, {"ok": False, "error": "Rate limit exceeded"})
-                owner = _session_mgr_available and is_session_owner(wn)
-                st, pl = webrtc_service.handle_create_session(wn, True, owner)
+                active_compute_id = _active_webrtc_compute_id(wn)
+                st, pl = webrtc_service.handle_create_session(
+                    wn,
+                    True,
+                    active_compute_id,
+                    data.get("compute_session_id"),
+                )
                 return self._send_json(st, pl)
 
             if ponly == "/api/webrtc/offer":
@@ -1493,8 +1550,14 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 wn = wallet.lower()
                 if not _webrtc_ws_rate_allow(wn, self.headers, client_ip):
                     return self._send_json(429, {"ok": False, "error": "Rate limit exceeded"})
-                owner = _session_mgr_available and is_session_owner(wn)
-                st, pl = webrtc_service.handle_post_offer(sid, wn, True, owner, data)
+                active_compute_id = _active_webrtc_compute_id(wn)
+                st, pl = webrtc_service.handle_post_offer(
+                    sid,
+                    wn,
+                    True,
+                    active_compute_id,
+                    data,
+                )
                 return self._send_json(st, pl)
 
             if ponly == "/api/webrtc/ice":
@@ -1508,7 +1571,14 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 wn = wallet.lower()
                 if not _webrtc_ws_rate_allow(wn, self.headers, client_ip):
                     return self._send_json(429, {"ok": False, "error": "Rate limit exceeded"})
-                st, pl = webrtc_service.handle_post_client_ice(sid, wn, True, data)
+                active_compute_id = _active_webrtc_compute_id(wn)
+                st, pl = webrtc_service.handle_post_client_ice(
+                    sid,
+                    wn,
+                    True,
+                    active_compute_id,
+                    data,
+                )
                 return self._send_json(st, pl)
 
             if ponly == "/api/webrtc/metrics":
@@ -1535,12 +1605,14 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
 
             if ponly == "/api/webrtc/agent/answer":
                 key = (self.headers.get("X-AxonOS-WebRTC-Agent-Key") or "").strip()
-                st, pl = webrtc_service.handle_agent_answer(key, data)
+                scope = _webrtc_agent_scope_from_headers(self.headers)
+                st, pl = webrtc_service.handle_agent_answer(key, scope, data)
                 return self._send_json(st, pl)
 
             if ponly == "/api/webrtc/agent/fail":
                 key = (self.headers.get("X-AxonOS-WebRTC-Agent-Key") or "").strip()
-                st, pl = webrtc_service.handle_agent_fail(key, data)
+                scope = _webrtc_agent_scope_from_headers(self.headers)
+                st, pl = webrtc_service.handle_agent_fail(key, scope, data)
                 return self._send_json(st, pl)
 
             return self._send_json(404, {"ok": False, "error": "Unknown WebRTC path"})
