@@ -1,0 +1,17 @@
+# Never send local credentials or repository metadata to BuildKit.
+.env
+.env.*
+.git
+
+# Local interpreter/test artifacts must not invalidate application COPY layers.
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+
+# Dependency trees and editor/OS noise are not Docker build inputs.
+**/node_modules/
+**/.DS_Store
+**/*.log
