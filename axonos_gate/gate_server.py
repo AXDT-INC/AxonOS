@@ -131,6 +131,7 @@ try:
         heartbeat as session_heartbeat,
         is_session_owner,
         release_session,
+        refresh_webrtc_agent_capability,
         restart_desktop_session,
         session_status,
         try_claim_session,
@@ -147,6 +148,7 @@ except ImportError:
             heartbeat as session_heartbeat,
             is_session_owner,
             release_session,
+            refresh_webrtc_agent_capability,
             restart_desktop_session,
             session_status,
             try_claim_session,
@@ -158,6 +160,7 @@ except ImportError:
         _session_mgr_available = False
         get_active_desktop_session_for_wallet = None
         get_single_active_desktop_session = None
+        refresh_webrtc_agent_capability = None
         validate_webrtc_agent_identity = None
 
 try:
@@ -200,6 +203,34 @@ app = Flask(__name__)
 _allow_any, _allowlist = parse_cors_allowlist(os.getenv("AXGT_CORS_ORIGINS"))
 # Keep flask-cors installed but don't let it default to "*".
 CORS(app, resources={r"/api/*": {"origins": []}})
+
+_WEBRTC_AGENT_PATHS = {
+    "/api/webrtc/agent/next",
+    "/api/webrtc/agent/row",
+    "/api/webrtc/agent/answer",
+    "/api/webrtc/agent/fail",
+    "/api/webrtc/agent/refresh",
+}
+
+
+def _env_truthy(name: str, default: bool = False) -> bool:
+    raw = (os.getenv(name) or ("true" if default else "false")).strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+@app.before_request
+def _restrict_internal_agent_listener():
+    """Keep agent APIs off public 8889/6080 and public APIs off internal 8890."""
+    agent_only = _env_truthy("GATE_AGENT_ONLY")
+    agent_api_enabled = _env_truthy("GATE_AGENT_API_ENABLED")
+    is_agent_path = request.path in _WEBRTC_AGENT_PATHS
+    if agent_only and not is_agent_path:
+        return jsonify({"ok": False, "error": "Not found"}), 404
+    # Never allow these routes on a mixed/public listener, even if an operator
+    # accidentally leaves GATE_AGENT_API_ENABLED=true in the shared .env.
+    if is_agent_path and not (agent_only and agent_api_enabled):
+        return jsonify({"ok": False, "error": "Not found"}), 404
+    return None
 
 _rate_limiter = get_rate_limiter_from_env()
 
@@ -1022,7 +1053,10 @@ def api_config():
         'usdc_credit_per_usdc_minutes': policy.get("usdc_credit_per_usdc_minutes"),
         'min_usdc_deposit_minutes': policy.get("min_usdc_deposit_minutes"),
         'axgt_discount_tiers': policy.get("axgt_discount_tiers", []),
-        'multi_session_enabled': (os.getenv("AXGT_MULTI_SESSION_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")),
+        'multi_session_enabled': (
+            _env_truthy("AXGT_USER_CONTAINER_ENABLED")
+            and _env_truthy("AXGT_MULTI_SESSION_ENABLED", True)
+        ),
         'gpu_profiles_enabled': (os.getenv("AXGT_GPU_PROFILES_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")),
         'gpu_profiles': {'small': 1, 'medium': 2, 'large': 4, 'max': 8},
         'gpu_weighted_billing_enabled': policy.get("gpu_weighted_billing_enabled", False),
@@ -1034,7 +1068,9 @@ def api_config():
             if webrtc_config is not None
             else {
                 "webrtc_enabled": False,
-                "webrtc_fallback_enabled": True,
+                "webrtc_fallback_enabled": not _env_truthy(
+                    "AXGT_USER_CONTAINER_ENABLED"
+                ),
             }
         ),
     })
@@ -1683,6 +1719,18 @@ def _active_webrtc_compute_id(wallet_norm: str):
 def _webrtc_agent_scope_from_headers():
     if webrtc_service is None:
         return None
+    scope = webrtc_service.resolve_agent_scope(
+        request.headers.get("X-AXGT-Session-ID"),
+        request.headers.get("X-Wallet-Address") or "",
+        request.headers.get("X-AXGT-WebRTC-Token") or "",
+        validate_webrtc_agent_identity if _session_mgr_available else None,
+    )
+    if scope is not None:
+        return scope
+    # The only fleet-key compatibility path is the explicitly single-container
+    # deployment. Multi-session tenants never receive this central secret.
+    if _env_truthy("AXGT_USER_CONTAINER_ENABLED"):
+        return None
     supplied_key = (request.headers.get("X-AxonOS-WebRTC-Agent-Key") or "").strip()
     expected_key = webrtc_config.agent_internal_key() if webrtc_config is not None else ""
     if (
@@ -1691,20 +1739,15 @@ def _webrtc_agent_scope_from_headers():
         or not secrets.compare_digest(expected_key, supplied_key)
     ):
         return None
-    scope = webrtc_service.resolve_agent_scope(
-        request.headers.get("X-AXGT-Session-ID"),
-        request.headers.get("X-Wallet-Address") or "",
-        request.headers.get("X-AXGT-Session-Key") or "",
-        validate_webrtc_agent_identity if _session_mgr_available else None,
-    )
-    if scope is not None:
-        return scope
     if get_single_active_desktop_session is None:
         return None
     identity = get_single_active_desktop_session()
     if not isinstance(identity, dict):
         return None
-    return webrtc_service.scope_from_trusted_identity(identity)
+    return webrtc_service.scope_from_trusted_identity(
+        identity,
+        fleet_key_required=True,
+    )
 
 
 @app.route('/api/webrtc/config', methods=['GET', 'OPTIONS'])
@@ -1917,6 +1960,23 @@ def api_webrtc_agent_fail():
     data = request.get_json() or {}
     st, payload = webrtc_service.handle_agent_fail(key, scope, data)
     return jsonify(payload), st
+
+
+@app.route('/api/webrtc/agent/refresh', methods=['POST'])
+def api_webrtc_agent_refresh():
+    """Rotate one still-valid scoped bearer on the internal listener only."""
+    if not _session_mgr_available or refresh_webrtc_agent_capability is None:
+        return jsonify({"ok": False, "error": "Session service unavailable"}), 503
+    refreshed = refresh_webrtc_agent_capability(
+        request.headers.get("X-AXGT-Session-ID"),
+        request.headers.get("X-Wallet-Address") or "",
+        request.headers.get("X-AXGT-WebRTC-Token") or "",
+    )
+    if not refreshed:
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+    response = jsonify({"ok": True, **refreshed})
+    response.headers["Cache-Control"] = "no-store"
+    return response, 200
 
 
 @app.route('/api/files/<route_suffix>', methods=['GET', 'POST', 'PUT', 'OPTIONS'])
@@ -2177,12 +2237,25 @@ def main():
     host = os.getenv('GATE_HOST', '127.0.0.1')
     port = int(os.getenv('GATE_PORT', '8889'))
 
+    # The HTTP launcher exposes its own fail-closed health endpoint. Direct
+    # docker_cli mode has no separate service, so refuse to start the gate over
+    # a legacy unlabeled axgt-session-* container that could still hold a GPU
+    # while the database allocator believes it is free.
+    try:
+        from axonos_gate import session_launcher as _session_launcher
+    except ImportError:
+        import session_launcher as _session_launcher
+    launcher_error = _session_launcher.runtime_configuration_error()
+    if launcher_error:
+        raise RuntimeError(f"Session launcher preflight failed: {launcher_error}")
+
     logger.info(f"Starting AxonOS AXGT Gate Server on {host}:{port}")
     logger.info(f"AXGT Contract: {(os.getenv('AXGT_CONTRACT_ADDRESS') or '<unset>').strip()}")
     logger.info(f"RPC URL: {(os.getenv('AXGT_RPC_URL') or '<unset>').strip()}")
     _init_all_tables()
 
-    # Start background session cleanup thread
+    # Start one cleanup thread on the public/control listener only. The
+    # internal agent-only process shares the DB but must not duplicate billing.
     import threading
     try:
         from axonos_gate.session_manager import perform_session_cleanup
@@ -2200,8 +2273,9 @@ def main():
                 logger.error("Error in background session cleanup: %s", e, exc_info=True)
             time.sleep(30)
 
-    cleanup_thread = threading.Thread(target=cleanup_loop, daemon=True)
-    cleanup_thread.start()
+    if not _env_truthy("GATE_AGENT_ONLY"):
+        cleanup_thread = threading.Thread(target=cleanup_loop, daemon=True)
+        cleanup_thread.start()
 
 
     use_gevent = (os.getenv('GATE_USE_GEVENT', '1').strip().lower() in ('1', 'true', 'yes'))

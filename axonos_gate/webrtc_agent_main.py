@@ -3,8 +3,8 @@
 
 Environment:
   WEBRTC_ENABLED=true
-  WEBRTC_AGENT_INTERNAL_KEY — shared secret with the gate (required)
-  WEBRTC_GATE_INTERNAL_URL — gate base URL (default http://127.0.0.1:8889)
+  AXGT_WEBRTC_AGENT_TOKEN — signed, session-specific central-gate capability
+  WEBRTC_GATE_INTERNAL_URL — internal agent gate (default http://127.0.0.1:8890)
   WEBRTC_CAPTURE_DISPLAY — X display (default :0)
   WEBRTC_CAPTURE_MAX_WIDTH — scale bound (default 1920; matches the current session display)
   WEBRTC_CAPTURE_FPS — target FPS (default 15)
@@ -16,9 +16,12 @@ Environment:
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
+import math
 import os
+import stat
 import subprocess
 import sys
 import time
@@ -78,7 +81,11 @@ except Exception as e:
 _AXT = "X-AxonOS-WebRTC-Agent-Key"
 _SESSION_ID_HEADER = "X-AXGT-Session-ID"
 _WALLET_HEADER = "X-Wallet-Address"
-_SESSION_KEY_HEADER = "X-AXGT-Session-Key"
+_AGENT_TOKEN_HEADER = "X-AXGT-WebRTC-Token"
+_AGENT_TOKEN_STATE_PATH = "/run/axonos/webrtc-agent-token"
+_MAX_AGENT_TOKEN_CHARS = 4096
+_runtime_agent_token: str | None = None
+_runtime_agent_identity: tuple[str, str] | None = None
 _clipboard_owners: dict[str, subprocess.Popen[bytes]] = {}
 # RFB-style pressed buttons: 1=left, 2=middle, 4=right.
 _mouse_button_mask: int = 0
@@ -96,7 +103,12 @@ def _truthy(name: str) -> bool:
 
 
 def _gate_url() -> str:
-    return (os.getenv("WEBRTC_GATE_INTERNAL_URL") or "http://127.0.0.1:8889").rstrip("/")
+    if not (os.getenv("AXGT_SESSION_ID") or "").strip():
+        # The legacy/base agent always talks to the central-only listener. This
+        # deliberately overrides stale pre-split deployments that still carry
+        # WEBRTC_GATE_INTERNAL_URL=http://127.0.0.1:8889 in an env file.
+        return "http://127.0.0.1:8890"
+    return (os.getenv("WEBRTC_GATE_INTERNAL_URL") or "http://axonos:8890").rstrip("/")
 
 
 def _agent_key() -> str:
@@ -105,8 +117,8 @@ def _agent_key() -> str:
 
 def _legacy_single_container_mode() -> bool:
     """True only for the documented shared-desktop deployment."""
-    raw = (os.getenv("AXGT_MULTI_SESSION_ENABLED") or "true").strip().lower()
-    return raw in ("0", "false", "no", "off") and not (
+    user_containers = (os.getenv("AXGT_USER_CONTAINER_ENABLED") or "").strip().lower()
+    return user_containers not in ("1", "true", "yes", "on") and not (
         os.getenv("AXGT_SESSION_ID") or ""
     ).strip()
 
@@ -114,21 +126,21 @@ def _legacy_single_container_mode() -> bool:
 def _agent_headers(*, json_content: bool = False) -> dict[str, str]:
     """Return the complete, fail-closed identity for an agent request.
 
-    The fleet-wide WebRTC key authorizes the kind of caller.  The remaining
-    values bind that caller to the one compute-session row whose credentials
-    were injected by the launcher.  Treat every value as required: silently
-    falling back to the shared key would restore the global-offer queue bug.
+    Multi-session agents use a signed purpose-specific capability. The fleet
+    key exists only in the central gate and the trusted legacy single-container
+    path; it is never delegated to launcher-managed tenant containers.
     """
+    global _runtime_agent_identity, _runtime_agent_token
     agent_key = _agent_key()
     compute_session_id = (os.getenv("AXGT_SESSION_ID") or "").strip()
     wallet = (os.getenv("AXGT_WALLET_ADDRESS") or "").strip().lower()
-    session_key = (os.getenv("AXGT_SESSION_FILES_KEY") or "").strip()
+    agent_token = (os.getenv("AXGT_WEBRTC_AGENT_TOKEN") or "").strip()
 
     if (
         agent_key
         and not compute_session_id
         and not wallet
-        and not session_key
+        and not agent_token
         and _legacy_single_container_mode()
     ):
         if any(c in agent_key for c in "\r\n"):
@@ -141,10 +153,9 @@ def _agent_headers(*, json_content: bool = False) -> dict[str, str]:
     missing = [
         name
         for name, value in (
-            ("WEBRTC_AGENT_INTERNAL_KEY", agent_key),
             ("AXGT_SESSION_ID", compute_session_id),
             ("AXGT_WALLET_ADDRESS", wallet),
-            ("AXGT_SESSION_FILES_KEY", session_key),
+            ("AXGT_WEBRTC_AGENT_TOKEN", agent_token),
         )
         if not value
     ]
@@ -165,18 +176,247 @@ def _agent_headers(*, json_content: bool = False) -> dict[str, str]:
         or any(c not in "0123456789abcdef" for c in wallet[2:])
     ):
         raise ValueError("invalid AXGT_WALLET_ADDRESS")
-    if any(c in value for value in (agent_key, session_key) for c in "\r\n"):
+    if (
+        _runtime_agent_token
+        and _runtime_agent_identity == (compute_session_id, wallet)
+    ):
+        agent_token = _runtime_agent_token
+    else:
+        persisted = _load_persisted_agent_token(compute_session_id, wallet)
+        if persisted:
+            persisted_claims = _capability_schedule_claims(persisted)
+            launch_claims = _capability_schedule_claims(agent_token)
+            # A newly launched container may carry a newer capability than an
+            # old state file. Prefer the newest exact-identity issuance; after
+            # an ordinary Supervisor restart the persisted renewal wins over
+            # the immutable launch-time environment token.
+            if not launch_claims or (
+                persisted_claims
+                and persisted_claims["issued_at"] >= launch_claims["issued_at"]
+            ):
+                agent_token = persisted
+                _runtime_agent_identity = (compute_session_id, wallet)
+                _runtime_agent_token = persisted
+    if len(agent_token) > _MAX_AGENT_TOKEN_CHARS or any(
+        c in agent_token for c in "\r\n"
+    ):
         raise ValueError("invalid agent credential")
 
     headers = {
-        _AXT: agent_key,
         _SESSION_ID_HEADER: compute_session_id,
         _WALLET_HEADER: wallet,
-        _SESSION_KEY_HEADER: session_key,
+        _AGENT_TOKEN_HEADER: agent_token,
     }
     if json_content:
         headers["Content-Type"] = "application/json"
     return headers
+
+
+def _capability_schedule_claims(token: str) -> dict[str, Any] | None:
+    """Decode untrusted JWT timing/identity claims for refresh scheduling only.
+
+    The token is still authenticated by the central gate on every operation;
+    these unverified values never grant access or select a compute session.
+    """
+    try:
+        parts = str(token or "").strip().split(".")
+        if len(parts) != 3 or not parts[1] or len(parts[1]) > 8192:
+            return None
+        payload = parts[1] + ("=" * (-len(parts[1]) % 4))
+        claims = json.loads(base64.urlsafe_b64decode(payload.encode("ascii")))
+        if not isinstance(claims, dict):
+            return None
+        issued_at = claims.get("iat")
+        expires_at = claims.get("exp")
+        session_id = claims.get("sid")
+        wallet = str(claims.get("wallet") or "").strip().lower()
+        if (
+            isinstance(issued_at, bool)
+            or isinstance(expires_at, bool)
+            or isinstance(session_id, bool)
+        ):
+            return None
+        issued_at = float(issued_at)
+        expires_at = float(expires_at)
+        session_id = str(int(session_id))
+        if (
+            not math.isfinite(issued_at)
+            or not math.isfinite(expires_at)
+            or expires_at <= issued_at
+            or int(session_id) <= 0
+        ):
+            return None
+        if (
+            len(wallet) != 42
+            or not wallet.startswith("0x")
+            or any(c not in "0123456789abcdef" for c in wallet[2:])
+        ):
+            return None
+        return {
+            "issued_at": issued_at,
+            "expires_at": expires_at,
+            "session_id": session_id,
+            "wallet_address": wallet,
+        }
+    except (ArithmeticError, TypeError, ValueError, UnicodeError, json.JSONDecodeError):
+        return None
+
+
+def _load_persisted_agent_token(session_id: str, wallet: str) -> str | None:
+    """Load a root-owned renewal only for this exact runtime identity."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(_AGENT_TOKEN_STATE_PATH, flags)
+    except (FileNotFoundError, OSError):
+        return None
+    token = ""
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.geteuid()
+            or metadata.st_mode & 0o077
+        ):
+            return None
+        with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+            descriptor = -1
+            token = handle.read(_MAX_AGENT_TOKEN_CHARS + 1).strip()
+    except (OSError, UnicodeError):
+        return None
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    if (
+        not token
+        or len(token) > _MAX_AGENT_TOKEN_CHARS
+        or any(character in token for character in "\r\n")
+    ):
+        return None
+    claims = _capability_schedule_claims(token)
+    if (
+        not claims
+        or claims["session_id"] != session_id
+        or claims["wallet_address"] != wallet
+        or claims["expires_at"] <= time.time()
+    ):
+        return None
+    return token
+
+
+def _persist_agent_token(token: str) -> None:
+    """Atomically persist a renewed bearer for Supervisor process restarts."""
+    path = _AGENT_TOKEN_STATE_PATH
+    parent = os.path.dirname(path)
+    os.makedirs(parent, mode=0o700, exist_ok=True)
+    parent_metadata = os.lstat(parent)
+    if (
+        not stat.S_ISDIR(parent_metadata.st_mode)
+        or stat.S_ISLNK(parent_metadata.st_mode)
+        or parent_metadata.st_uid != os.geteuid()
+    ):
+        raise OSError("unsafe WebRTC agent token state directory")
+    os.chmod(parent, 0o700)
+    temporary = f"{path}.tmp-{os.getpid()}-{time.time_ns()}"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = -1
+    try:
+        descriptor = os.open(temporary, flags, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            descriptor = -1
+            handle.write(token)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        os.chmod(path, 0o600)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
+def _capability_refresh_due(
+    agent_headers: dict[str, str],
+    *,
+    now: float | None = None,
+) -> bool:
+    """Renew after roughly two thirds of the signed lifetime has elapsed."""
+    token = (agent_headers.get(_AGENT_TOKEN_HEADER) or "").strip()
+    claims = _capability_schedule_claims(token)
+    if not claims:
+        return False
+    lifetime = claims["expires_at"] - claims["issued_at"]
+    lead_seconds = max(300.0, min(21_600.0, lifetime / 3.0))
+    return float(time.time() if now is None else now) >= (
+        claims["expires_at"] - lead_seconds
+    )
+
+
+def _set_runtime_agent_token(
+    current_headers: dict[str, str],
+    token: str,
+) -> dict[str, str]:
+    """Install a refreshed token only for this process's exact identity."""
+    global _runtime_agent_identity, _runtime_agent_token
+    session_id = (current_headers.get(_SESSION_ID_HEADER) or "").strip()
+    wallet = (current_headers.get(_WALLET_HEADER) or "").strip().lower()
+    refreshed = str(token or "").strip()
+    claims = _capability_schedule_claims(refreshed)
+    if (
+        not session_id
+        or not wallet
+        or not refreshed
+        or len(refreshed) > _MAX_AGENT_TOKEN_CHARS
+        or any(c in refreshed for c in "\r\n")
+        or not claims
+        or claims["session_id"] != session_id
+        or claims["wallet_address"] != wallet
+    ):
+        raise ValueError("invalid refreshed agent capability")
+    _persist_agent_token(refreshed)
+    _runtime_agent_identity = (session_id, wallet)
+    _runtime_agent_token = refreshed
+    return _agent_headers()
+
+
+def _refresh_agent_capability(
+    gate: str,
+    agent_headers: dict[str, str],
+) -> dict[str, str] | None:
+    """Ask the central-only gate to renew this still-valid bearer capability."""
+    if _AGENT_TOKEN_HEADER not in agent_headers:
+        return None
+    try:
+        import urllib.request
+
+        request_headers = dict(agent_headers)
+        request_headers["Content-Type"] = "application/json"
+        req = urllib.request.Request(
+            f"{gate}/api/webrtc/agent/refresh",
+            data=b"{}",
+            headers=request_headers,
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as response:
+            raw = response.read(8193)
+            if len(raw) > 8192:
+                raise ValueError("oversized refresh response")
+        payload = json.loads(raw.decode("utf-8"))
+        refreshed = str(payload.get("token") or "") if isinstance(payload, dict) else ""
+        claims = _capability_schedule_claims(refreshed)
+        if not claims or claims["expires_at"] <= time.time() + 60:
+            raise ValueError("refresh returned an unusable capability")
+        updated_headers = _set_runtime_agent_token(agent_headers, refreshed)
+        logger.info(
+            "WebRTC agent capability renewed for compute session %s",
+            updated_headers.get(_SESSION_ID_HEADER),
+        )
+        return updated_headers
+    except Exception as exc:
+        logger.warning("WebRTC agent capability refresh failed: %s", exc)
+        return None
 
 
 def _job_matches_agent_identity(
@@ -1596,8 +1836,8 @@ def _http_get_job(url: str, headers: dict[str, str]) -> tuple[int, dict[str, Any
         logger.debug("GET error %s %s", e.code, body[:200])
         return e.code, None
     except urllib.error.URLError as e:
-        # Common on startup: axgt-api sleeps 4s before gate_server binds 8889 — connection refused
-        # must not kill the agent process or supervisord will flap until the gate is up.
+        # Common on startup while the central internal listener on :8890 is
+        # coming up; a refusal must not make supervisord flap the agent.
         logger.debug("agent/next unreachable: %s", getattr(e, "reason", e) or e)
         return -1, None
 
@@ -1663,6 +1903,7 @@ async def main_loop() -> None:
 
     active_task: asyncio.Task | None = None
     current_session_id: str | None = None
+    next_refresh_attempt_at = 0.0
 
     async def run_job(j: dict[str, Any]) -> None:
         try:
@@ -1680,6 +1921,23 @@ async def main_loop() -> None:
         if not _truthy("WEBRTC_ENABLED"):
             await asyncio.sleep(5)
             continue
+        now = time.time()
+        if (
+            now >= next_refresh_attempt_at
+            and _capability_refresh_due(agent_headers, now=now)
+        ):
+            # A transient central-gate failure must not create a tight retry
+            # loop, while a lost successful response remains safe because the
+            # server preserves the capability JTI during renewal.
+            next_refresh_attempt_at = now + 30.0
+            refreshed_headers = await asyncio.to_thread(
+                _refresh_agent_capability,
+                gate,
+                agent_headers,
+            )
+            if refreshed_headers:
+                agent_headers = refreshed_headers
+                next_refresh_attempt_at = 0.0
         status, job = _http_get_job(poll_url, agent_headers)
         if status == -1:
             await asyncio.sleep(0.75)
@@ -1717,10 +1975,6 @@ async def main_loop() -> None:
 if __name__ == "__main__":
     if not _truthy("WEBRTC_ENABLED"):
         logger.info("WEBRTC_ENABLED off; exiting")
-        sys.exit(0)
-    if not _agent_key():
-        logger.warning("WEBRTC_AGENT_INTERNAL_KEY unset; sleep")
-        time.sleep(999999)
         sys.exit(0)
     try:
         asyncio.run(main_loop())

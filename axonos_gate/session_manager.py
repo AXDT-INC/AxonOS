@@ -47,7 +47,13 @@ def _truthy(name: str, default: bool = False) -> bool:
 
 
 def _multi_session_enabled() -> bool:
-    return _truthy("AXGT_MULTI_SESSION_ENABLED", True)
+    # Multiple wallet owners are safe only when each claim receives its own
+    # runtime. Treat a shared-desktop deployment as single-session even if the
+    # multi-session flag was accidentally left at its historical default.
+    return _truthy("AXGT_USER_CONTAINER_ENABLED", False) and _truthy(
+        "AXGT_MULTI_SESSION_ENABLED",
+        True,
+    )
 
 
 def _gpu_profiles_enabled() -> bool:
@@ -460,6 +466,18 @@ def _import_session_launcher():
     return session_launcher
 
 
+def _import_webrtc_capability():
+    """Import the capability codec in package and flat-script layouts."""
+    try:
+        from .webrtc import capability
+    except ImportError:
+        try:
+            from axonos_gate.webrtc import capability
+        except ImportError:
+            from webrtc import capability
+    return capability
+
+
 def _ensure_tables(conn) -> None:
     with conn.cursor() as cur:
         cur.execute(f"""
@@ -485,13 +503,20 @@ def _ensure_tables(conn) -> None:
             WHERE table_schema = current_schema() AND table_name = %s AND column_name = 'last_billed_at'
         """, (_SESSION_TABLE,))
         if cur.fetchone() is None:
-            cur.execute(f"ALTER TABLE {_SESSION_TABLE} ADD COLUMN last_billed_at DOUBLE PRECISION")
+            cur.execute(
+                f"ALTER TABLE {_SESSION_TABLE} "
+                "ADD COLUMN IF NOT EXISTS last_billed_at DOUBLE PRECISION"
+            )
         for col_name, col_sql in (
             ("requested_profile", "TEXT NOT NULL DEFAULT 'small'"),
             ("gpu_ids", "TEXT"),
             ("container_id", "TEXT"),
             ("allocation_status", "TEXT NOT NULL DEFAULT 'allocated'"),
             ("files_key", "TEXT"),
+            # Revocation metadata for the signed, purpose-specific WebRTC
+            # capability. The bearer token itself is never stored in Postgres.
+            ("webrtc_cap_jti_hash", "TEXT"),
+            ("webrtc_cap_expires_at", "DOUBLE PRECISION"),
             # Non-sliding hard cap (unlike expires_at, which slides on heartbeat).
             # Set for headless/SSH sessions so an abandoned session can't drain the
             # whole prepaid balance. NULL = no cap (e.g. desktop, legacy rows).
@@ -508,7 +533,12 @@ def _ensure_tables(conn) -> None:
                 (_SESSION_TABLE, col_name),
             )
             if cur.fetchone() is None:
-                cur.execute(f"ALTER TABLE {_SESSION_TABLE} ADD COLUMN {col_name} {col_sql}")
+                # Multiple central listeners initialize concurrently on startup;
+                # IF NOT EXISTS makes their additive migrations race-safe.
+                cur.execute(
+                    f"ALTER TABLE {_SESSION_TABLE} "
+                    f"ADD COLUMN IF NOT EXISTS {col_name} {col_sql}"
+                )
                 if col_name == "ssh_enabled":
                     # One-time backfill for rows that predate the column (they get
                     # the FALSE default): hard_expires_at was only ever set for
@@ -980,7 +1010,17 @@ def _ssh_connection_fields(session_id: int) -> Dict[str, Any]:
     }
 
 
-def _spawn_session_container(session_id: int, wallet: str, profile: str, gpu_ids: List[int], template: Optional[str] = None, files_key: Optional[str] = None, ssh_enabled: bool = False, ssh_pubkey: Optional[str] = None) -> Tuple[bool, Optional[str], Optional[str]]:
+def _spawn_session_container(
+    session_id: int,
+    wallet: str,
+    profile: str,
+    gpu_ids: List[int],
+    template: Optional[str] = None,
+    files_key: Optional[str] = None,
+    ssh_enabled: bool = False,
+    ssh_pubkey: Optional[str] = None,
+    webrtc_agent_token: Optional[str] = None,
+) -> Tuple[bool, Optional[str], Optional[str]]:
     launcher = _import_session_launcher()
     return launcher.launch_session(
         session_id=session_id,
@@ -991,7 +1031,44 @@ def _spawn_session_container(session_id: int, wallet: str, profile: str, gpu_ids
         files_key=files_key,
         ssh_enabled=ssh_enabled,
         ssh_pubkey=ssh_pubkey,
+        webrtc_agent_token=webrtc_agent_token,
     )
+
+
+def _issue_webrtc_agent_capability(
+    cur,
+    session_id: int,
+    wallet: str,
+    files_key: str,
+) -> Optional[str]:
+    """Mint and persist revocation metadata, returning only the bearer token."""
+    try:
+        issued = _import_webrtc_capability().issue(session_id, wallet, files_key)
+    except Exception as exc:
+        logger.warning(
+            "WebRTC capability issuance failed for session %s: %s",
+            session_id,
+            exc,
+        )
+        return None
+    if not isinstance(issued, dict):
+        return None
+    token = str(issued.get("token") or "").strip()
+    jti_hash = str(issued.get("jti_hash") or "").strip()
+    try:
+        expires_at = float(issued.get("expires_at") or 0)
+    except (TypeError, ValueError):
+        expires_at = 0
+    if not token or len(jti_hash) != 64 or expires_at <= time.time():
+        return None
+    cur.execute(
+        f"""UPDATE {_SESSION_TABLE}
+            SET webrtc_cap_jti_hash = %s,
+                webrtc_cap_expires_at = %s
+            WHERE id = %s AND status = 'active'""",
+        (jti_hash, expires_at, session_id),
+    )
+    return token
 
 
 # ---------------------------------------------------------------------------
@@ -1233,19 +1310,75 @@ def try_claim_session(
                     ),
                 )
                 session_id = cur.fetchone()[0]
+                webrtc_agent_token = None
+                if not requested_ssh:
+                    failure_reason = None
+                    if not _truthy("WEBRTC_ENABLED"):
+                        failure_reason = "WebRTC desktop streaming is not configured"
+                    else:
+                        webrtc_agent_token = _issue_webrtc_agent_capability(
+                            cur,
+                            session_id,
+                            wallet,
+                            files_key,
+                        )
+                        if not webrtc_agent_token:
+                            failure_reason = "Could not establish isolated desktop agent identity"
+                    if failure_reason:
+                        cur.execute(
+                            f"""UPDATE {_SESSION_TABLE}
+                                SET status = 'ended', allocation_status = 'failed'
+                                WHERE id = %s AND status = 'active'""",
+                            (session_id,),
+                        )
+                        conn.commit()
+                        logger.warning(
+                            "Desktop claim rejected before spawn for session %s: %s",
+                            session_id,
+                            failure_reason,
+                        )
+                        return {
+                            "granted": False,
+                            "allocation_status": "failed",
+                            "requested_profile": profile_name,
+                            "requested_gpus": requested_gpus,
+                            "reason": failure_reason,
+                        }
                 conn.commit()
 
-                spawned, container_id, spawn_error = _spawn_session_container(
-                    session_id=session_id,
-                    wallet=wallet,
-                    profile=profile_name,
-                    gpu_ids=allocated_gpu_ids,
-                    template=requested_template,
-                    files_key=files_key,
-                    ssh_enabled=requested_ssh,
-                    ssh_pubkey=ssh_pubkey,
-                )
-                conn2 = _get_connection()
+                spawned = False
+                container_id = None
+                spawn_error = None
+                try:
+                    spawned, container_id, spawn_error = _spawn_session_container(
+                        session_id=session_id,
+                        wallet=wallet,
+                        profile=profile_name,
+                        gpu_ids=allocated_gpu_ids,
+                        template=requested_template,
+                        files_key=files_key,
+                        ssh_enabled=requested_ssh,
+                        ssh_pubkey=ssh_pubkey,
+                        webrtc_agent_token=webrtc_agent_token,
+                    )
+                except Exception as exc:
+                    spawn_error = str(exc)
+                    logger.warning(
+                        "Session container spawn raised for session %s: %s",
+                        session_id,
+                        exc,
+                    )
+
+                finalized = False
+                try:
+                    conn2 = _get_connection()
+                except Exception as exc:
+                    conn2 = None
+                    logger.warning(
+                        "Could not open spawn-finalization DB connection for session %s: %s",
+                        session_id,
+                        exc,
+                    )
                 if conn2:
                     try:
                         with conn2.cursor() as cur2:
@@ -1256,6 +1389,10 @@ def try_claim_session(
                                         WHERE id = %s AND status = 'active'""",
                                     (container_id, session_id),
                                 )
+                                if cur2.rowcount != 1:
+                                    raise RuntimeError(
+                                        "allocation ended before spawn finalization"
+                                    )
                             else:
                                 cur2.execute(
                                     f"""UPDATE {_SESSION_TABLE}
@@ -1264,8 +1401,40 @@ def try_claim_session(
                                     (session_id,),
                                 )
                         conn2.commit()
+                        finalized = True
+                    except Exception as exc:
+                        try:
+                            conn2.rollback()
+                        except Exception:
+                            pass
+                        logger.warning(
+                            "Session spawn finalization failed for session %s: %s",
+                            session_id,
+                            exc,
+                        )
                     finally:
                         conn2.close()
+                if not finalized:
+                    # The allocation row was committed before the external
+                    # Docker call. Reuse the still-open primary connection as a
+                    # best-effort fail transition if the finalizer is unavailable.
+                    try:
+                        cur.execute(
+                            f"""UPDATE {_SESSION_TABLE}
+                                SET status = 'ended', allocation_status = 'failed'
+                                WHERE id = %s AND status = 'active'""",
+                            (session_id,),
+                        )
+                        conn.commit()
+                    except Exception as exc:
+                        logger.warning(
+                            "Could not mark unfinalized session %s failed: %s",
+                            session_id,
+                            exc,
+                        )
+                    if spawned:
+                        spawn_error = spawn_error or "Could not finalize session allocation"
+                    spawned = False
                 if not spawned:
                     # Confirmed failure (the launcher's verify poll also found no
                     # running container). Reap any half-created container by its
@@ -1781,7 +1950,7 @@ def get_single_active_desktop_session() -> Optional[Dict[str, Any]]:
     identity. Compatibility is safe only while multi-session scheduling is
     explicitly disabled and exactly one eligible desktop row exists.
     """
-    if _multi_session_enabled() or not _init_once():
+    if _truthy("AXGT_USER_CONTAINER_ENABLED", False) or not _init_once():
         return None
     conn = _get_connection()
     if not conn:
@@ -1829,22 +1998,70 @@ def _numeric_session_id(session_id: Any) -> Optional[int]:
     return parsed if parsed > 0 else None
 
 
+def _webrtc_capability_matches_row(
+    capability,
+    verified: Dict[str, Any],
+    row,
+    sid: int,
+    wallet: str,
+    now: float,
+) -> bool:
+    try:
+        trusted_id = int(row[0])
+        trusted_wallet = (row[1] or "").strip().lower()
+        stored_key = row[2] if isinstance(row[2], str) else ""
+        stored_jti_hash = row[3] if isinstance(row[3], str) else ""
+        stored_cap_expiry = float(row[4] or 0)
+        token_expiry = float(verified.get("expires_at") or 0)
+    except (TypeError, ValueError, IndexError):
+        return False
+    stored_fingerprint = capability.files_key_fingerprint(stored_key) or ""
+    return bool(
+        trusted_id == sid
+        and trusted_wallet == wallet
+        and stored_fingerprint
+        and stored_jti_hash
+        and stored_cap_expiry > now
+        # A successfully renewed row deliberately accepts the previous token
+        # until that token's own signed expiry. This makes refresh retry-safe if
+        # the first response is lost, while never accepting a token that claims
+        # a later expiry than the database authorized.
+        and stored_cap_expiry + 1.0 >= token_expiry
+        and secrets.compare_digest(
+            stored_fingerprint,
+            str(verified.get("files_key_fingerprint") or ""),
+        )
+        and secrets.compare_digest(
+            stored_jti_hash,
+            str(verified.get("jti_hash") or ""),
+        )
+    )
+
+
 def validate_webrtc_agent_identity(
     session_id: Any,
     wallet_address: str,
-    files_key: str,
+    agent_token: str,
 ) -> Optional[Dict[str, Any]]:
     """Validate one session container as the exact active desktop compute row.
 
-    Unlike :func:`validate_session_files_key`, this never resolves by "latest
-    session for wallet".  The numeric compute-session ID, normalized wallet,
-    active allocation state, desktop mode, expiry, and per-session secret must
-    all match the same database row.
+    Signature, issuer, audience, expiry, compute ID, and wallet are checked
+    before any database call. The signed JTI and file-key fingerprint must then
+    match the same active row, providing immediate central revocation without
+    exposing either the fleet signing key or the database credential.
     """
     sid = _numeric_session_id(session_id)
     wallet = (wallet_address or "").strip().lower()
-    key = (files_key or "").strip()
-    if sid is None or not wallet or not key or not _init_once():
+    token = (agent_token or "").strip()
+    if sid is None or not wallet or not token:
+        return None
+    try:
+        capability = _import_webrtc_capability()
+        verified = capability.verify(token, sid, wallet)
+    except Exception as exc:
+        logger.warning("WebRTC capability verification failed: %s", exc)
+        return None
+    if not verified or not _init_once():
         return None
     conn = _get_connection()
     if not conn:
@@ -1853,7 +2070,8 @@ def validate_webrtc_agent_identity(
         now = time.time()
         with conn.cursor() as cur:
             cur.execute(
-                f"""SELECT id, wallet_address, files_key
+                f"""SELECT id, wallet_address, files_key,
+                           webrtc_cap_jti_hash, webrtc_cap_expires_at
                     FROM {_SESSION_TABLE}
                     WHERE id = %s
                       AND wallet_address = %s
@@ -1867,16 +2085,112 @@ def validate_webrtc_agent_identity(
             row = cur.fetchone()
         if not row:
             return None
-        trusted_id = int(row[0])
-        trusted_wallet = (row[1] or "").strip().lower()
-        stored_key = row[2] if isinstance(row[2], str) else ""
-        if trusted_id != sid or trusted_wallet != wallet:
+        if not _webrtc_capability_matches_row(
+            capability,
+            verified,
+            row,
+            sid,
+            wallet,
+            now,
+        ):
             return None
-        if not stored_key or not secrets.compare_digest(stored_key, key):
-            return None
-        return {"id": trusted_id, "wallet_address": trusted_wallet}
+        return {"id": sid, "wallet_address": wallet}
     except Exception as exc:
         logger.warning("validate_webrtc_agent_identity failed: %s", exc)
+        return None
+    finally:
+        conn.close()
+
+
+def refresh_webrtc_agent_capability(
+    session_id: Any,
+    wallet_address: str,
+    agent_token: str,
+) -> Optional[Dict[str, Any]]:
+    """Renew a live/paused desktop capability without delegating the signer."""
+    sid = _numeric_session_id(session_id)
+    wallet = (wallet_address or "").strip().lower()
+    token = (agent_token or "").strip()
+    if sid is None or not wallet or not token:
+        return None
+    try:
+        capability = _import_webrtc_capability()
+        verified = capability.verify(token, sid, wallet)
+    except Exception as exc:
+        logger.warning("WebRTC capability refresh verification failed: %s", exc)
+        return None
+    if not verified or not _init_once():
+        return None
+    conn = _get_connection()
+    if not conn:
+        return None
+    try:
+        now = time.time()
+        paused_cutoff = now - _session_paused_max_seconds()
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""SELECT id, wallet_address, files_key,
+                           webrtc_cap_jti_hash, webrtc_cap_expires_at
+                    FROM {_SESSION_TABLE}
+                    WHERE id = %s
+                      AND wallet_address = %s
+                      AND allocation_status = 'allocated'
+                      AND ssh_enabled = FALSE
+                      AND (
+                          (status = 'active' AND expires_at > %s)
+                          OR (status = 'paused' AND last_heartbeat >= %s)
+                      )
+                    LIMIT 1
+                    FOR UPDATE""",
+                (sid, wallet, now, paused_cutoff),
+            )
+            row = cur.fetchone()
+            if not row or not _webrtc_capability_matches_row(
+                capability,
+                verified,
+                row,
+                sid,
+                wallet,
+                now,
+            ):
+                conn.rollback()
+                return None
+            renewed = capability.renew(token, sid, wallet)
+            if not isinstance(renewed, dict):
+                conn.rollback()
+                return None
+            renewed_token = str(renewed.get("token") or "").strip()
+            renewed_jti = str(renewed.get("jti_hash") or "").strip()
+            renewed_fingerprint = str(
+                renewed.get("files_key_fingerprint") or ""
+            ).strip()
+            renewed_expiry = float(renewed.get("expires_at") or 0)
+            if (
+                not renewed_token
+                or renewed_jti != str(verified.get("jti_hash") or "")
+                or renewed_fingerprint
+                != str(verified.get("files_key_fingerprint") or "")
+                or renewed_expiry <= now
+            ):
+                conn.rollback()
+                return None
+            cur.execute(
+                f"""UPDATE {_SESSION_TABLE}
+                    SET webrtc_cap_expires_at = %s
+                    WHERE id = %s
+                      AND wallet_address = %s
+                      AND webrtc_cap_jti_hash = %s
+                      AND status IN ('active', 'paused')""",
+                (renewed_expiry, sid, wallet, renewed_jti),
+            )
+        conn.commit()
+        return {"token": renewed_token, "expires_at": renewed_expiry}
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logger.warning("refresh_webrtc_agent_capability failed: %s", exc)
         return None
     finally:
         conn.close()
@@ -1959,6 +2273,10 @@ def _reconcile_containers(cur, now: float) -> Tuple[List[int], List[Tuple[str, i
 
 def perform_session_cleanup() -> None:
     """Enforce session expiry and reconcile container state with DB under advisory lock."""
+    try:
+        _import_session_launcher().reconcile_session_networks()
+    except Exception as exc:
+        logger.warning("Session-network reconciliation failed: %s", exc)
     if not _init_once():
         return
     conn = _get_connection()

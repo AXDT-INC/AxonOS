@@ -7,7 +7,8 @@
 # UI: http://HOST:6080/vnc.html  —  gate API: 8889
 #
 # Image tag axonos:public-beta (not latest) so main-branch axonos:latest is untouched on rebuild.
-# Session containers join network axonos_stack (fixed name; not tied to COMPOSE_PROJECT_NAME).
+# Each session gets a launcher-managed bridge shared only with the central gate;
+# Postgres and the Docker-socket launcher remain on axonos_control.
 # AXGT_CHALLENGE_DB_URL is set on the axonos service to this stack's postgres only.
 
 name: axonos
@@ -24,10 +25,15 @@ services:
       AXGT_SESSION_LAUNCHER_BIND_PORT: ${AXGT_SESSION_LAUNCHER_BIND_PORT:-8090}
       AXGT_SESSION_LAUNCHER_TOKEN: ${AXGT_SESSION_LAUNCHER_TOKEN:-change-me-launcher-token}
       AXGT_CHALLENGE_DB_URL: postgresql://${POSTGRES_USER:-axonos_gate}:${POSTGRES_PASSWORD:-axonos_gate_secret}@postgres:5432/${POSTGRES_DB:-axonos_gate}
+      AXGT_SESSION_DB_CONNECT_TIMEOUT_SECONDS: ${AXGT_SESSION_DB_CONNECT_TIMEOUT_SECONDS:-5}
       # Session desktops must run the WebRTC capture agent; base gate stack disables it (see startup.sh).
+      WEBRTC_ENABLED: ${WEBRTC_ENABLED:-false}
       WEBRTC_AGENT_ENABLED: "true"
       AXGT_HOST_SESSION_CONTAINER_IMAGE: ${AXGT_HOST_SESSION_CONTAINER_IMAGE:-axonos:public-beta}
+      # Used only when the explicit isolation escape hatch is disabled.
       AXGT_HOST_SESSION_CONTAINER_NETWORK: ${AXGT_HOST_SESSION_CONTAINER_NETWORK:-axonos_stack}
+      AXGT_HOST_SESSION_NETWORK_ISOLATION: ${AXGT_HOST_SESSION_NETWORK_ISOLATION:-true}
+      AXGT_HOST_CENTRAL_GATE_CONTAINER: ${AXGT_HOST_CENTRAL_GATE_CONTAINER:-axonos}
       AXGT_HOST_SESSION_CONTAINER_COMMAND: ${AXGT_HOST_SESSION_CONTAINER_COMMAND:-/startup.sh}
       AXGT_HOST_SESSION_CONTAINER_EXTRA_ARGS: ${AXGT_HOST_SESSION_CONTAINER_EXTRA_ARGS:-}
       AXGT_HOST_SESSION_CONTAINER_SHM_SIZE: ${AXGT_HOST_SESSION_CONTAINER_SHM_SIZE:-32g}
@@ -40,12 +46,17 @@ services:
 
 
 
-      # axgt-session-* runs full stack; WebRTC agent polls local gate (127.0.0.1:8889) like prod — do not override to axonos:8889.
-      AXGT_HOST_SESSION_ENV_PASSTHROUGH: ${AXGT_HOST_SESSION_ENV_PASSTHROUGH:-AXGT_CHAIN_ID,AXGT_RPC_URL,AXGT_CONTRACT_ADDRESS,AXGT_REVENUE_WALLET,AXGT_CHALLENGE_DB_URL,AXONOS_TEST_CREDITS_ENABLED,AXONOS_TEST_CREDIT_WALLETS,AXONOS_TEST_CREDIT_GRANT_MINUTES,AXONOS_TEST_CREDIT_MAX_BALANCE_MINUTES,AXONOS_WHITELISTED_WALLETS,AXGT_MIN_DEPOSIT,AXGT_CREDIT_PER_100_AXGT_MINUTES,ETH_MIN_DEPOSIT,ETH_CREDIT_PER_ETH_MINUTES,AXGT_ENABLE_ETH_DEPOSITS,USDC_RPC_URL,USDC_CONTRACT_ADDRESS,USDC_CHAIN_ID,USDC_NETWORK,USDC_MIN_DEPOSIT,USDC_CREDIT_PER_USDC_MINUTES,USDC_EIP712_NAME,AXGT_ENABLE_USDC_DEPOSITS,WEBRTC_ENABLED,WEBRTC_AGENT_ENABLED,WEBRTC_AGENT_INTERNAL_KEY,WEBRTC_DISPLAY_WAIT_SECONDS,WEBRTC_ANSWER_WAIT_MS,WEBRTC_STUN_URLS,WEBRTC_TURN_URLS,WEBRTC_TURN_USERNAME,WEBRTC_TURN_CREDENTIAL,WEBRTC_FALLBACK_ENABLED,WEBRTC_CAPTURE_BACKEND,WEBRTC_CAPTURE_FPS,WEBRTC_CAPTURE_BITRATE,WEBRTC_CAPTURE_NVENC_PRESET,WEBRTC_CAPTURE_NVENC_TUNE,WEBRTC_CAPTURE_NVFBC_BIN,WEBRTC_CAPTURE_NVFBC_PRESET,WEBRTC_CAPTURE_LOW_LATENCY,WEBRTC_CAPTURE_MAX_WIDTH,WEBRTC_CAPTURE_DISPLAY,WEBRTC_LOCAL_CURSOR,WEBRTC_CAPTURE_MAX_STALE_FRAMES,WEBRTC_AUDIO_ENABLED,WEBRTC_AUDIO_SOURCE,WEBRTC_MIC_ENABLED,WEBRTC_MIC_SINK}
+      # Tenant sessions receive media tuning only. Identity, the signed WebRTC
+      # capability, and central gate URLs are injected explicitly by the launcher.
+      # Database, payment/RPC, launcher, and fleet signing credentials stay central.
+      AXGT_HOST_SESSION_ENV_PASSTHROUGH: ${AXGT_HOST_SESSION_ENV_PASSTHROUGH:-WEBRTC_DISPLAY_WAIT_SECONDS,WEBRTC_STUN_URLS,WEBRTC_TURN_URLS,WEBRTC_TURN_USERNAME,WEBRTC_TURN_CREDENTIAL,WEBRTC_CAPTURE_BACKEND,WEBRTC_CAPTURE_FPS,WEBRTC_CAPTURE_BITRATE,WEBRTC_CAPTURE_NVENC_PRESET,WEBRTC_CAPTURE_NVENC_TUNE,WEBRTC_CAPTURE_NVFBC_BIN,WEBRTC_CAPTURE_NVFBC_PRESET,WEBRTC_CAPTURE_LOW_LATENCY,WEBRTC_CAPTURE_MAX_WIDTH,WEBRTC_CAPTURE_DISPLAY,WEBRTC_LOCAL_CURSOR,WEBRTC_CAPTURE_MAX_STALE_FRAMES,WEBRTC_CLIPBOARD_MAX_BYTES,WEBRTC_CLIPBOARD_POLL_PRIMARY,WEBRTC_PUBLIC_IP,WEBRTC_AUDIO_ENABLED,WEBRTC_AUDIO_SOURCE,WEBRTC_MIC_ENABLED,WEBRTC_MIC_SINK}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
-      - axonos_stack
+      - axonos_control
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=2).read()"]
@@ -81,7 +92,7 @@ services:
     volumes:
       - axonos_postgres_data:/var/lib/postgresql/data
     networks:
-      - axonos_stack
+      - axonos_control
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-axonos_gate} -d ${POSTGRES_DB:-axonos_gate}"]
@@ -127,15 +138,21 @@ services:
       # Gate must listen on all interfaces so axgt-session-* agents can reach :8889 via http://axonos:8889.
       GATE_HOST: ${GATE_HOST:-0.0.0.0}
       GATE_PORT: ${GATE_PORT:-8889}
-      # WebRTC (browser-native stream). Set WEBRTC_AGENT_INTERNAL_KEY to a long random secret; same value gate + agent read from env.
+      # Central WebRTC capability signing key. Never forwarded to tenant sessions.
+      # Legacy single-container mode also uses it directly on localhost.
       WEBRTC_ENABLED: ${WEBRTC_ENABLED:-false}
+      # webrtc.config forces this off in user-container mode (where no classic
+      # VNC listener exists) while preserving legacy single-container fallback.
       WEBRTC_FALLBACK_ENABLED: ${WEBRTC_FALLBACK_ENABLED:-true}
       WEBRTC_AGENT_INTERNAL_KEY: ${WEBRTC_AGENT_INTERNAL_KEY:-}
-      WEBRTC_GATE_INTERNAL_URL: ${WEBRTC_GATE_INTERNAL_URL:-http://127.0.0.1:8889}
+      # Do not honor the historical :8889 override: agent routes exist only on
+      # the central, un-published 8890 listener.
+      WEBRTC_GATE_INTERNAL_URL: http://127.0.0.1:8890
       WEBRTC_STUN_URLS: ${WEBRTC_STUN_URLS:-}
       WEBRTC_TURN_URLS: ${WEBRTC_TURN_URLS:-}
       WEBRTC_TURN_USERNAME: ${WEBRTC_TURN_USERNAME:-}
       WEBRTC_TURN_CREDENTIAL: ${WEBRTC_TURN_CREDENTIAL:-}
+      WEBRTC_CLIPBOARD_POLL_PRIMARY: ${WEBRTC_CLIPBOARD_POLL_PRIMARY:-false}
       WEBRTC_SESSION_TIMEOUT_SECONDS: ${WEBRTC_SESSION_TIMEOUT_SECONDS:-600}
       WEBRTC_MAX_RECONNECT_ATTEMPTS: ${WEBRTC_MAX_RECONNECT_ATTEMPTS:-5}
       WEBRTC_SIGNAL_RATE_LIMIT_PER_MIN: ${WEBRTC_SIGNAL_RATE_LIMIT_PER_MIN:-60}
@@ -157,10 +174,19 @@ services:
     # GPU pool auto-detect: base axonos runs nvidia-smi if available; otherwise the gate calls
     # axonos-launcher GET /enumerate-gpus (docker run --gpus all … nvidia-smi) when in http mode.
     networks:
+      - axonos_control
       - axonos_stack
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import os,socket; enabled=os.getenv('WEBRTC_ENABLED','').strip().lower() in ('1','true','yes','on'); ports=(6080,8889,8890) if enabled else (6080,8889); [socket.create_connection(('127.0.0.1',port),2).close() for port in ports]\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
 
 networks:
+  axonos_control:
+    name: axonos_control
   axonos_stack:
     name: axonos_stack
     driver: bridge

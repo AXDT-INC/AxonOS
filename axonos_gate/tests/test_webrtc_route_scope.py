@@ -119,7 +119,7 @@ class WebRtcRouteScopeContractTests(unittest.TestCase):
         for required in (
             "X-AXGT-Session-ID",
             "X-Wallet-Address",
-            "X-AXGT-Session-Key",
+            "X-AXGT-WebRTC-Token",
             "validate_webrtc_agent_identity",
         ):
             self.assertIn(required, helper_source)
@@ -147,22 +147,9 @@ class WebRtcRouteScopeContractTests(unittest.TestCase):
                 self.assertEqual(len(handler_calls), 1)
                 self.assertIn("scope", _argument_source(handler_calls[0]))
 
-    def test_websockify_all_agent_routes_pass_validated_scope(self) -> None:
-        self._assert_scope_helper_is_validated(
-            self.websockify_tree,
-            self.websockify_source,
-            "_webrtc_agent_scope_from_headers",
-        )
+    def test_public_websockify_listener_exposes_no_agent_routes(self) -> None:
         do_get = _function(self.websockify_tree, "do_GET")
         do_post = _function(self.websockify_tree, "do_POST")
-        self.assertEqual(
-            _scope_assignment_count(do_get, "_webrtc_agent_scope_from_headers"),
-            2,
-        )
-        self.assertEqual(
-            _scope_assignment_count(do_post, "_webrtc_agent_scope_from_headers"),
-            2,
-        )
         for owner, handler_name in (
             (do_get, "handle_agent_next"),
             (do_get, "handle_agent_row"),
@@ -170,9 +157,44 @@ class WebRtcRouteScopeContractTests(unittest.TestCase):
             (do_post, "handle_agent_fail"),
         ):
             with self.subTest(handler=handler_name):
-                handler_calls = _calls(owner, handler_name)
-                self.assertEqual(len(handler_calls), 1)
-                self.assertIn("scope", _argument_source(handler_calls[0]))
+                self.assertEqual(_calls(owner, handler_name), [])
+        self.assertNotIn("/api/webrtc/agent/", self.websockify_source)
+        self.assertNotIn("_webrtc_agent_scope_from_headers", self.websockify_source)
+
+    def test_flask_agent_routes_are_internal_listener_only(self) -> None:
+        restriction = _function(
+            self.flask_tree,
+            "_restrict_internal_agent_listener",
+        )
+        restriction_source = (
+            ast.get_source_segment(self.flask_source, restriction) or ""
+        )
+        self.assertIn("GATE_AGENT_ONLY", restriction_source)
+        self.assertIn("GATE_AGENT_API_ENABLED", restriction_source)
+        self.assertIn(
+            "is_agent_path and not (agent_only and agent_api_enabled)",
+            restriction_source,
+        )
+        self.assertGreaterEqual(restriction_source.count("404"), 2)
+
+        expected_paths = {
+            "/api/webrtc/agent/next",
+            "/api/webrtc/agent/row",
+            "/api/webrtc/agent/answer",
+            "/api/webrtc/agent/fail",
+            "/api/webrtc/agent/refresh",
+        }
+        assignment = next(
+            node
+            for node in self.flask_tree.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name)
+                and target.id == "_WEBRTC_AGENT_PATHS"
+                for target in node.targets
+            )
+        )
+        self.assertEqual(ast.literal_eval(assignment.value), expected_paths)
 
 
 class WebRtcBrowserScopeContractTests(unittest.TestCase):

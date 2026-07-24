@@ -1,17 +1,23 @@
 # WebRTC remote desktop (AxonOS)
 
-AxonOS can deliver the GPU desktop over **WebRTC** (low-latency video + optional data channel input) instead of or in addition to **noVNC over WebSockets**. Signaling and ICE configuration are served from the same process as the wallet/session APIs; the streaming agent runs **inside the desktop container** and talks to the local gate on `127.0.0.1`.
+AxonOS delivers launcher-managed GPU desktops over **WebRTC** (low-latency
+video + optional data channel input). **noVNC over WebSockets** remains a
+fallback only for the legacy single-container deployment. Signaling and ICE
+configuration are served by the central gate; each launcher-managed streaming
+agent runs **inside its owning desktop container** and reaches the agent-only
+central listener at `http://axonos:8890` through that session's isolated bridge.
+The legacy single-container agent uses `http://127.0.0.1:8890`.
 
 ## Feature flags
 
 | Variable | Meaning |
 |----------|---------|
 | `WEBRTC_ENABLED` | If true, the UI attempts WebRTC after a successful session claim. |
-| `WEBRTC_FALLBACK_ENABLED` | If true (default), failure to negotiate WebRTC falls back to classic noVNC. If false, the user sees an error when WebRTC fails. |
+| `WEBRTC_FALLBACK_ENABLED` | If true (legacy default), failure to negotiate WebRTC falls back to classic noVNC. User-container mode forces this false because tenant VNC listeners are intentionally disabled. |
 
 ## Required secrets
 
-- **`WEBRTC_AGENT_INTERNAL_KEY`**: Long random string shared only by the gate (Flask + websockify handlers) and the `webrtc-agent` supervisord process. Never commit this value. Unauthorized callers cannot claim offers without it.
+- **`WEBRTC_AGENT_INTERNAL_KEY`**: Long random central signing secret. Never commit or forward it to tenant containers. The gate derives an Ed25519 signer and gives each tenant only a renewable bearer capability bound to the exact compute ID, wallet, and per-session file-key fingerprint. Legacy single-container mode uses the key directly on loopback.
 
 ## ICE / STUN / TURN
 
@@ -32,7 +38,9 @@ With both set, TURN becomes a fallback rather than the default path.
 
 ## Reverse proxies and ports
 
-- Browsers load noVNC from **`/vnc.html`** on the **websockify** port (default `6080` in compose).
+- Browsers load the AxonOS web client from the historical noVNC shell at
+  **`/vnc.html`** on port `6080`. In user-container mode that page negotiates
+  WebRTC and has no tenant VNC target.
 - The gate API used by tunnels may be on **`8889`** (mapped in `docker-compose.yml`).
 - WebRTC media is **peer-to-peer** (or via TURN); the HTTP signaling endpoints are on the **same origin** as the page users load (typically `:6080`). Ensure your proxy forwards:
   - `GET`/`POST` under `/api/webrtc/*`
@@ -42,9 +50,17 @@ For **WebSocket-only** proxies, signaling still uses **HTTPS fetch** on the same
 
 ## Session security
 
-- Signaling **create/offer/status/ice** require a valid **AXGT auth token** and **session ownership** (`POST /api/session/claim` succeeded for that wallet).
+- Browser signaling **create/offer/status/ice** requires a valid **AXGT auth token** and the exact active compute-session ownership returned by `POST /api/session/claim`.
 - WebRTC session IDs are **random 256-bit** tokens stored in Postgres; they are not derivable from the wallet address.
-- The agent only processes offers after the gate atomically marks a row; another user cannot steal a session without the token and wallet auth.
+- Agent offers, row reads, answers, ICE, and failures are SQL-scoped by signaling ID, compute ID, and wallet after signed capability and live allocation checks. The queue is not global.
+- A live agent renews its capability before expiry through the unpublished
+  `:8890` listener. The newest renewal is stored inside that tenant at
+  `/run/axonos/webrtc-agent-token` in an agent-root-owned `0700` directory and
+  `0600` file, so a Supervisor restart of the agent process can reload it. This
+  runtime file does not survive container replacement and is not trusted by
+  itself: the central gate still verifies the signature, exact identity, and
+  live allocation on every request. The fleet signer and database credential
+  remain in the control plane.
 
 ## Observability
 
@@ -56,16 +72,17 @@ For **WebSocket-only** proxies, signaling still uses **HTTPS fetch** on the same
 1. Add to `.env`: `WEBRTC_ENABLED=true`, a strong `WEBRTC_AGENT_INTERNAL_KEY`, and optional `WEBRTC_STUN_URLS` / TURN credentials.
 2. `docker compose build && docker compose up -d`
 3. Open `http://localhost:6080/vnc.html` (or mapped port), complete wallet + session claim, launch desktop.
-4. Confirm in logs: gate posts answer, agent reports `WebRTC answer stored`, browser shows “Connected (WebRTC)” or falls back to classic stream if configured.
+4. Confirm in logs: gate posts answer, agent reports `WebRTC answer stored`, and the browser shows “Connected (WebRTC)”. Classic fallback exists only in legacy single-container mode.
 
 ## Troubleshooting
 
 | Symptom | Check |
 |---------|--------|
-| Immediate fallback to noVNC | `WEBRTC_ENABLED`, Postgres reachable, agent running (`supervisorctl status webrtc-agent`). |
+| Legacy mode immediately falls back to noVNC | `WEBRTC_ENABLED`, Postgres reachable, agent running (`supervisorctl status webrtc-agent`). |
+| Multi-user mode shows a WebRTC connection error | Check the same WebRTC prerequisites plus STUN/TURN reachability. This mode intentionally has no tenant VNC fallback. |
 | Stuck on “Connecting” | STUN/TURN reachability; restrictive NAT → configure TURN. |
 | 403 on signaling | Auth token or session claim missing/expired. |
-| Agent idle | `WEBRTC_AGENT_INTERNAL_KEY` must match between environment for gate and agent. |
+| Agent idle | In user-container mode, confirm the claim returned a compute ID, the tenant has `AXGT_WEBRTC_AGENT_TOKEN`, and it can resolve `axonos:8890`. Keep `WEBRTC_AGENT_INTERNAL_KEY` only on the central gate. |
 | Scroll blur / hazy video | Default H.264 capture is tuned for **lowest-latency 1080p desktop** (`p1`/`llhp`, 12 Mbps, one-frame buffer). If latency is clean, try `WEBRTC_CAPTURE_BITRATE=14000000`; if loss appears, use `WEBRTC_CAPTURE_MAX_WIDTH=1600` or `1280` rather than pushing bitrate higher. |
 | Lag / clicks stop / jitter buffer climbs | Path saturated or buffering. Confirm `packetsLost`, `nackCount`, and jitter buffer delay in `chrome://webrtc-internals`. Keep `WEBRTC_CAPTURE_NVENC_PRESET=p1` and `WEBRTC_CAPTURE_LOW_LATENCY=true`, then try `WEBRTC_CAPTURE_BITRATE=8000000` or `WEBRTC_CAPTURE_MAX_WIDTH=1600`; reconnect after deploy and hard-refresh the page. |
 | Black screen, ICE connected | In `chrome://webrtc-internals`, if **inbound video codec is VP8** while the agent runs H.264 capture, SDP negotiated the wrong codec. Agent + browser must prefer **H.264** (fixed in `capture.prefer_h264_for_pc` and `axonos-webrtc.js`). Hard-refresh the page after deploy. |

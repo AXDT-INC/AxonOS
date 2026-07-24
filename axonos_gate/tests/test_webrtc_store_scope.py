@@ -152,7 +152,11 @@ class WebrtcStoreScopeTests(unittest.TestCase):
         self.assertIn("compute_session_id = %s", guarded_update)
         self.assertIn("wallet_address = %s", guarded_update)
         self.assertIn("returning id, wallet_address, compute_session_id", guarded_update)
-        self.assertEqual(update_params, (1000.0, "signal-id", 248, _WALLET))
+        self.assertEqual(
+            update_params,
+            (1000.0, "signal-id", 248, _WALLET, 1000.0),
+        )
+        self.assertIn("expires_at > %s", guarded_update)
         self.assertEqual(job["compute_session_id"], 248)
         self.assertEqual(job["wallet_address"], _WALLET)
         self.assertEqual(conn.commits, 1)
@@ -198,7 +202,8 @@ class WebrtcStoreScopeTests(unittest.TestCase):
         cursor = _RecordingCursor(fetch_rows=[stored_row])
         conn = _RecordingConnection(cursor)
         with mock.patch.object(self.store, "ensure_table", return_value=True), \
-             mock.patch.object(self.store, "_conn", return_value=conn):
+             mock.patch.object(self.store, "_conn", return_value=conn), \
+             mock.patch.object(self.store.time, "time", return_value=1000.0):
             row = self.store.get_row_for_agent("signal-id", 248, _WALLET.upper())
 
         statement, params = cursor.executions[0]
@@ -206,13 +211,15 @@ class WebrtcStoreScopeTests(unittest.TestCase):
             "where id = %s and compute_session_id = %s and wallet_address = %s",
             statement,
         )
+        self.assertIn("expires_at > %s", statement)
         self.assertIn("for update", statement)
-        self.assertEqual(params, ("signal-id", 248, _WALLET))
+        self.assertEqual(params, ("signal-id", 248, _WALLET, 1000.0))
         self.assertEqual(row["compute_session_id"], 248)
         self.assertEqual(len(cursor.executions), 2)
         lease_touch, touch_params = cursor.executions[1]
         self.assertIn("state = 'agent_processing'", lease_touch)
-        self.assertEqual(touch_params[1:], ("signal-id", 248, _WALLET))
+        self.assertIn("expires_at > %s", lease_touch)
+        self.assertEqual(touch_params[1:], ("signal-id", 248, _WALLET, 1000.0))
         self.assertEqual(conn.commits, 1)
 
     def test_answer_and_fail_updates_are_scoped_by_compute_and_wallet(self) -> None:
@@ -243,7 +250,11 @@ class WebrtcStoreScopeTests(unittest.TestCase):
         fail_sql, fail_params = fail_cursor.executions[0]
         self.assertIn("where id = %s and compute_session_id = %s and wallet_address = %s", fail_sql)
         self.assertIn("state in ('scoped_offer_received', 'agent_processing')", fail_sql)
-        self.assertEqual(fail_params, ("failed", 1000.0, "signal-id", 248, _WALLET))
+        self.assertIn("expires_at > %s", fail_sql)
+        self.assertEqual(
+            fail_params,
+            ("failed", 1000.0, "signal-id", 248, _WALLET, 1000.0),
+        )
 
     def test_server_ice_read_and_update_are_both_compute_wallet_scoped(self) -> None:
         cursor = _RecordingCursor(fetch_rows=[("[]",)], rowcount=1)
@@ -265,7 +276,11 @@ class WebrtcStoreScopeTests(unittest.TestCase):
             self.assertIn("wallet_address = %s", statement)
         self.assertIn("for update", select_sql)
         self.assertEqual(select_params, ("signal-id", 248, _WALLET, 1000.0))
-        self.assertEqual(update_params[2:], ("signal-id", 248, _WALLET))
+        self.assertEqual(
+            update_params[2:],
+            ("signal-id", 248, _WALLET, 1000.0),
+        )
+        self.assertIn("expires_at > %s", update_sql)
         self.assertIn('"candidate": "candidate:1"', update_params[0])
 
 

@@ -95,7 +95,13 @@ class TestAccessControl(unittest.TestCase):
 
 class TestBillingAndSession(unittest.TestCase):
     def setUp(self):
-        self.env = patch.dict(os.environ, {"AXGT_CHALLENGE_DB_URL": "postgresql://test/test"})
+        self.env = patch.dict(
+            os.environ,
+            {
+                "AXGT_CHALLENGE_DB_URL": "postgresql://test/test",
+                "AXGT_USER_CONTAINER_ENABLED": "true",
+            },
+        )
         self.env.start()
 
     def tearDown(self):
@@ -427,6 +433,128 @@ class TestBillingAndSession(unittest.TestCase):
             
         self.assertFalse(result["granted"])
         self.assertEqual(result["reason"], "No GPUs available for profile \"Dual\" (2 GPU(s) required)")
+
+    def test_desktop_claim_fails_before_spawn_when_capability_cannot_be_issued(self):
+        from axonos_gate import session_manager
+
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.__enter__.return_value = cur
+        cur.fetchone.return_value = (73,)
+        conn.cursor.return_value = cur
+        with patch.dict(
+            os.environ,
+            {
+                "AXGT_USER_CONTAINER_ENABLED": "true",
+                "AXGT_MULTI_SESSION_ENABLED": "true",
+                "WEBRTC_ENABLED": "true",
+            },
+            clear=False,
+        ), patch.object(session_manager, "_init_once", return_value=True), patch.object(
+            session_manager, "_get_connection", return_value=conn
+        ), patch.object(
+            session_manager, "_expire_stale_session", return_value=(None, [])
+        ), patch.object(
+            session_manager, "_expire_stale_paused_sessions", return_value=[]
+        ), patch.object(session_manager, "_get_active_rows", return_value=[]), patch.object(
+            session_manager, "_get_paused_rows", return_value=[]
+        ), patch.object(
+            session_manager, "_active_session_for_wallet", return_value=None
+        ), patch.object(
+            session_manager, "_paused_session_for_wallet", return_value=None
+        ), patch.object(
+            session_manager,
+            "_prepaid_credit_allows_profile",
+            return_value=(True, None),
+        ), patch.object(
+            session_manager, "_choose_allocation", return_value=[0]
+        ), patch.object(
+            session_manager, "_issue_webrtc_agent_capability", return_value=None
+        ), patch.object(session_manager, "_spawn_session_container") as spawn:
+            result = session_manager.try_claim_session(
+                "0x1234567890123456789012345678901234567890",
+                "small",
+            )
+
+        self.assertFalse(result["granted"])
+        self.assertEqual(result["allocation_status"], "failed")
+        self.assertIn("isolated desktop agent identity", result["reason"])
+        spawn.assert_not_called()
+        self.assertTrue(
+            any(
+                "allocation_status = 'failed'" in str(invocation.args[0])
+                for invocation in cur.execute.call_args_list
+            )
+        )
+
+    def test_spawn_finalization_requires_live_row_and_cleans_race_loser(self):
+        from axonos_gate import session_manager
+
+        primary = MagicMock()
+        primary_cur = MagicMock()
+        primary_cur.__enter__.return_value = primary_cur
+        primary_cur.fetchone.return_value = (73,)
+        primary.cursor.return_value = primary_cur
+
+        finalizer = MagicMock()
+        finalizer_cur = MagicMock()
+        finalizer_cur.__enter__.return_value = finalizer_cur
+        finalizer_cur.rowcount = 0
+        finalizer.cursor.return_value = finalizer_cur
+        launcher = MagicMock()
+        with patch.dict(
+            os.environ,
+            {
+                "AXGT_USER_CONTAINER_ENABLED": "true",
+                "AXGT_MULTI_SESSION_ENABLED": "true",
+                "WEBRTC_ENABLED": "true",
+            },
+            clear=False,
+        ), patch.object(session_manager, "_init_once", return_value=True), patch.object(
+            session_manager,
+            "_get_connection",
+            side_effect=(primary, finalizer),
+        ), patch.object(
+            session_manager, "_expire_stale_session", return_value=(None, [])
+        ), patch.object(
+            session_manager, "_expire_stale_paused_sessions", return_value=[]
+        ), patch.object(session_manager, "_get_active_rows", return_value=[]), patch.object(
+            session_manager, "_get_paused_rows", return_value=[]
+        ), patch.object(
+            session_manager, "_active_session_for_wallet", return_value=None
+        ), patch.object(
+            session_manager, "_paused_session_for_wallet", return_value=None
+        ), patch.object(
+            session_manager,
+            "_prepaid_credit_allows_profile",
+            return_value=(True, None),
+        ), patch.object(
+            session_manager, "_choose_allocation", return_value=[0]
+        ), patch.object(
+            session_manager,
+            "_issue_webrtc_agent_capability",
+            return_value="signed-capability",
+        ), patch.object(
+            session_manager,
+            "_spawn_session_container",
+            return_value=(True, "container-id", None),
+        ), patch.object(
+            session_manager,
+            "_import_session_launcher",
+            return_value=launcher,
+        ):
+            result = session_manager.try_claim_session(
+                "0x1234567890123456789012345678901234567890",
+                "small",
+            )
+
+        self.assertFalse(result["granted"])
+        self.assertEqual(result["allocation_status"], "failed")
+        self.assertIn("finaliz", result["container_error"].lower())
+        launcher.stop_session.assert_called_once_with(
+            session_id=73,
+            container_id=None,
+        )
 
 
 class TestGpuDeviceDiscovery(unittest.TestCase):

@@ -24,6 +24,12 @@ class DockerGpuCliTests(unittest.TestCase):
         )
         inp2 = ["--gpus=device=1,2"]
         self.assertEqual(strip_conflicting_gpu_run_flags(inp2), [])
+        self.assertEqual(
+            strip_conflicting_gpu_run_flags(
+                ["--memory", "8g", "--gpus", "device=0,1", "--read-only"]
+            ),
+            ["--memory", "8g", "--read-only"],
+        )
 
     def test_docker_run_gpus_device_value_quotes_multi_gpu(self) -> None:
         from docker_gpu_cli import docker_run_gpus_device_value
@@ -57,6 +63,85 @@ class DockerGpuCliTests(unittest.TestCase):
                 "-e",
                 "OMPI_MCA_btl_base_warn_component_unused=0",
             ],
+        )
+
+    def test_runtime_config_digest_is_stable_and_identity_bound(self) -> None:
+        from docker_gpu_cli import session_runtime_config_digest
+
+        base = {
+            "session_id": 37,
+            "wallet": "0x1234567890123456789012345678901234567890",
+            "profile": "small",
+            "gpu_ids": [2, 0],
+            "files_key": "per-session-secret",
+            "ssh_enabled": False,
+            "network_name": "axgt-session-net-37",
+            "image_name": "axonos:public-beta",
+        }
+        first = session_runtime_config_digest(**base)
+        self.assertEqual(
+            first,
+            session_runtime_config_digest(**{**base, "gpu_ids": [0, 2]}),
+        )
+        self.assertEqual(len(first), 64)
+        for key, changed in (
+            ("session_id", 38),
+            ("wallet", "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            ("files_key", "another-session-secret"),
+            ("ssh_enabled", True),
+            ("network_name", "axonos_stack"),
+            ("requested_template", "chemistry"),
+            ("ssh_pubkey", "ssh-ed25519 AAAA-test"),
+        ):
+            with self.subTest(key=key):
+                self.assertNotEqual(
+                    first,
+                    session_runtime_config_digest(**{**base, key: changed}),
+                )
+
+    def test_strip_unsafe_session_run_flags_preserves_resource_limits(self) -> None:
+        from docker_gpu_cli import strip_unsafe_session_run_flags
+
+        self.assertEqual(
+            strip_unsafe_session_run_flags(
+                [
+                    "--memory",
+                    "8g",
+                    "--privileged",
+                    "--network=host",
+                    "--mount",
+                    "type=bind,src=/,dst=/host",
+                    "--env-file=/run/secrets/all",
+                    "-eDATABASE_URL=secret",
+                    "-p6080:6080",
+                    "--device",
+                    "/dev/sda",
+                    "--read-only",
+                ]
+            ),
+            ["--memory", "8g", "--read-only"],
+        )
+
+    def test_strip_unsafe_session_run_flags_rejects_clustered_and_api_socket_forms(self) -> None:
+        from docker_gpu_cli import strip_unsafe_session_run_flags
+
+        self.assertEqual(
+            strip_unsafe_session_run_flags(
+                [
+                    "--cpus",
+                    "2",
+                    "-itP",
+                    "-itp8080:80",
+                    "-itv/tmp:/host",
+                    "-iteWEBRTC_AGENT_INTERNAL_KEY",
+                    "--use-api-socket",
+                    "--cidfile",
+                    "/etc/cron.d/tenant",
+                    "--label-file=/run/secrets/control",
+                    "--read-only",
+                ]
+            ),
+            ["--cpus", "2", "--read-only"],
         )
 
 

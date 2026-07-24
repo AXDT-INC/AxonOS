@@ -23,9 +23,14 @@ class AgentScope:
 
     compute_session_id: int
     wallet_address: str
+    fleet_key_required: bool
 
 
-def scope_from_trusted_identity(identity: Any) -> Optional[AgentScope]:
+def scope_from_trusted_identity(
+    identity: Any,
+    *,
+    fleet_key_required: bool = True,
+) -> Optional[AgentScope]:
     """Build a scope from a server-side session-manager result."""
     if not isinstance(identity, dict):
         return None
@@ -33,7 +38,7 @@ def scope_from_trusted_identity(identity: Any) -> Optional[AgentScope]:
     trusted_wallet = str(identity.get("wallet_address") or "").strip().lower()
     if trusted_id is None or not trusted_wallet:
         return None
-    return AgentScope(trusted_id, trusted_wallet)
+    return AgentScope(trusted_id, trusted_wallet, fleet_key_required)
 
 
 def _positive_session_id(value: Any) -> Optional[int]:
@@ -54,17 +59,17 @@ def _positive_session_id(value: Any) -> Optional[int]:
 def resolve_agent_scope(
     compute_session_id: Any,
     wallet_address: str,
-    session_key: str,
+    agent_token: str,
     validator: Optional[AgentIdentityValidator],
 ) -> Optional[AgentScope]:
     """Validate untrusted agent headers and retain only trusted DB identity."""
     owner_id = _positive_session_id(compute_session_id)
     wallet = (wallet_address or "").strip().lower()
-    key = (session_key or "").strip()
-    if owner_id is None or not wallet or not key or validator is None:
+    token = (agent_token or "").strip()
+    if owner_id is None or not wallet or not token or validator is None:
         return None
     try:
-        trusted = validator(owner_id, wallet, key)
+        trusted = validator(owner_id, wallet, token)
     except Exception:
         logger.exception("WebRTC agent identity validation failed")
         return None
@@ -74,16 +79,26 @@ def resolve_agent_scope(
     trusted_wallet = str(trusted.get("wallet_address") or "").strip().lower()
     if trusted_id != owner_id or trusted_wallet != wallet:
         return None
-    return AgentScope(compute_session_id=trusted_id, wallet_address=trusted_wallet)
+    return AgentScope(
+        compute_session_id=trusted_id,
+        wallet_address=trusted_wallet,
+        fleet_key_required=False,
+    )
 
 
 def _agent_authorized(agent_key: str, scope: Optional[AgentScope]) -> bool:
+    if scope is None:
+        return False
+    if not scope.fleet_key_required:
+        # Multi-session scopes already passed signed capability verification and
+        # exact active-row validation. The fleet key stays central and is never
+        # delegated to tenant containers.
+        return True
     expected = config.agent_internal_key()
     supplied = (agent_key or "").strip()
     return bool(
         expected
         and supplied
-        and scope is not None
         and secrets.compare_digest(expected, supplied)
     )
 

@@ -24,7 +24,11 @@ class ResolveAgentScopeTests(unittest.TestCase):
 
         self.assertEqual(
             scope,
-            service.AgentScope(compute_session_id=73, wallet_address=WALLET),
+            service.AgentScope(
+                compute_session_id=73,
+                wallet_address=WALLET,
+                fleet_key_required=False,
+            ),
         )
         validator.assert_called_once_with(73, WALLET, "session-secret")
 
@@ -107,6 +111,7 @@ class WebrtcServiceScopeTests(unittest.TestCase):
         self.scope = service.AgentScope(
             compute_session_id=73,
             wallet_address=WALLET,
+            fleet_key_required=False,
         )
         self.store.reset_mock()
         self.metrics.reset_mock()
@@ -137,28 +142,67 @@ class WebrtcServiceScopeTests(unittest.TestCase):
                 self.assertEqual(payload.get("error"), "Forbidden")
                 self.assert_no_store_calls()
 
-    def test_missing_shared_key_rejects_valid_scope_without_store_access(self):
+    def test_signed_session_scope_needs_no_fleet_key(self):
+        self.store.fetch_next_pending_offer_for_agent.return_value = None
+        self.store.get_row_for_agent.return_value = {
+            "state": "agent_processing",
+            "client_ice": "[]",
+            "expires_at": 2000.0,
+        }
         calls = (
-            lambda: service.handle_agent_next("", self.scope),
-            lambda: service.handle_agent_row("", self.scope, "signal-a"),
-            lambda: service.handle_agent_answer(
-                "",
-                self.scope,
-                {"session_id": "signal-a", "sdp": "v=0", "type": "answer"},
+            (
+                lambda: service.handle_agent_next("", self.scope),
+                204,
             ),
-            lambda: service.handle_agent_fail(
-                "",
-                self.scope,
-                {"session_id": "signal-a", "error": "failed"},
+            (
+                lambda: service.handle_agent_row("", self.scope, "signal-a"),
+                200,
+            ),
+            (
+                lambda: service.handle_agent_answer(
+                    "",
+                    self.scope,
+                    {"session_id": "signal-a", "sdp": "v=0", "type": "answer"},
+                ),
+                200,
+            ),
+            (
+                lambda: service.handle_agent_fail(
+                    "",
+                    self.scope,
+                    {"session_id": "signal-a", "error": "failed"},
+                ),
+                200,
             ),
         )
-        for call in calls:
-            with self.subTest(call=call):
-                self.store.reset_mock()
+        for call, expected_status in calls:
+            with self.subTest(expected_status=expected_status):
                 status, payload = call()
+                self.assertEqual(status, expected_status)
+                if expected_status == 200:
+                    self.assertTrue(payload.get("ok"))
+        self.config.agent_internal_key.assert_not_called()
+
+    def test_legacy_scope_still_requires_the_central_fleet_key(self):
+        legacy_scope = service.AgentScope(
+            compute_session_id=73,
+            wallet_address=WALLET,
+            fleet_key_required=True,
+        )
+        for key in ("", "wrong-fleet-key"):
+            with self.subTest(key=key):
+                self.store.reset_mock()
+                status, payload = service.handle_agent_next(key, legacy_scope)
                 self.assertEqual(status, 403)
                 self.assertEqual(payload.get("error"), "Forbidden")
                 self.assert_no_store_calls()
+
+        self.store.fetch_next_pending_offer_for_agent.return_value = None
+        status, payload = service.handle_agent_next(SHARED_AGENT_KEY, legacy_scope)
+        self.assertEqual((status, payload), (204, {}))
+        self.store.fetch_next_pending_offer_for_agent.assert_called_once_with(
+            73, WALLET
+        )
 
     def test_agent_next_claim_is_scoped_to_compute_and_wallet(self):
         job = {
@@ -170,9 +214,7 @@ class WebrtcServiceScopeTests(unittest.TestCase):
         }
         self.store.fetch_next_pending_offer_for_agent.return_value = job
 
-        status, payload = service.handle_agent_next(
-            SHARED_AGENT_KEY, self.scope
-        )
+        status, payload = service.handle_agent_next("", self.scope)
 
         self.assertEqual(status, 200)
         self.assertEqual(payload, job)
@@ -189,7 +231,7 @@ class WebrtcServiceScopeTests(unittest.TestCase):
         }
 
         status, payload = service.handle_agent_row(
-            SHARED_AGENT_KEY, self.scope, "signal-a"
+            "", self.scope, "signal-a"
         )
 
         self.assertEqual(status, 200)
@@ -210,7 +252,7 @@ class WebrtcServiceScopeTests(unittest.TestCase):
         }
 
         status, payload = service.handle_agent_answer(
-            SHARED_AGENT_KEY, self.scope, body
+            "", self.scope, body
         )
 
         self.assertEqual(status, 200)
@@ -224,7 +266,7 @@ class WebrtcServiceScopeTests(unittest.TestCase):
 
     def test_agent_fail_marks_only_the_authenticated_scope(self):
         status, payload = service.handle_agent_fail(
-            SHARED_AGENT_KEY,
+            "",
             self.scope,
             {"session_id": "signal-a", "error": "capture_failed"},
         )
@@ -242,7 +284,7 @@ class WebrtcServiceScopeTests(unittest.TestCase):
         self.store.mark_failed.return_value = False
 
         status, payload = service.handle_agent_answer(
-            SHARED_AGENT_KEY,
+            "",
             self.scope,
             {"session_id": "signal-b", "sdp": "invalid", "type": "answer"},
         )

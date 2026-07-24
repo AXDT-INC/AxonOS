@@ -232,6 +232,7 @@ def get_row_for_agent(
     c = _conn()
     if not c:
         return None
+    now = time.time()
     try:
         with c.cursor() as cur:
             cur.execute(
@@ -241,12 +242,14 @@ def get_row_for_agent(
                        client_ice, server_ice, last_error, created_at, updated_at, expires_at
                 FROM {_TABLE}
                 WHERE id = %s AND compute_session_id = %s AND wallet_address = %s
+                  AND expires_at > %s
                 FOR UPDATE
                 """,
                 (
                     session_id,
                     int(compute_session_id),
                     (wallet_norm or "").strip().lower(),
+                    now,
                 ),
             )
             row = cur.fetchone()
@@ -254,12 +257,14 @@ def get_row_for_agent(
                 cur.execute(
                     f"""UPDATE {_TABLE} SET updated_at = %s
                         WHERE id = %s AND compute_session_id = %s
-                          AND wallet_address = %s AND state = 'agent_processing'""",
+                          AND wallet_address = %s AND state = 'agent_processing'
+                          AND expires_at > %s""",
                     (
-                        time.time(),
+                        now,
                         session_id,
                         int(compute_session_id),
                         (wallet_norm or "").strip().lower(),
+                        now,
                     ),
                 )
             c.commit()
@@ -419,8 +424,16 @@ def append_client_ice(
                 UPDATE {_TABLE}
                 SET client_ice = %s, updated_at = %s
                 WHERE id = %s AND wallet_address = %s AND compute_session_id = %s
+                  AND expires_at > %s
                 """,
-                (json.dumps(existing[-500:]), now, session_id, w, int(compute_session_id)),
+                (
+                    json.dumps(existing[-500:]),
+                    now,
+                    session_id,
+                    w,
+                    int(compute_session_id),
+                    now,
+                ),
             )
             ok = cur.rowcount == 1
         if ok:
@@ -478,6 +491,7 @@ def append_server_ice(
                 UPDATE {_TABLE}
                 SET server_ice = %s, updated_at = %s
                 WHERE id = %s AND compute_session_id = %s AND wallet_address = %s
+                  AND expires_at > %s
                 """,
                 (
                     json.dumps(existing[-500:]),
@@ -485,6 +499,7 @@ def append_server_ice(
                     session_id,
                     int(compute_session_id),
                     (wallet_norm or "").strip().lower(),
+                    now,
                 ),
             )
             ok = cur.rowcount == 1
@@ -534,6 +549,7 @@ def mark_failed(
                 SET state = 'failed', last_error = %s, updated_at = %s
                 WHERE id = %s AND compute_session_id = %s AND wallet_address = %s
                   AND state IN ('scoped_offer_received', 'agent_processing')
+                  AND expires_at > %s
                 """,
                 (
                     message[:2000],
@@ -541,6 +557,7 @@ def mark_failed(
                     session_id,
                     int(compute_session_id),
                     (wallet_norm or "").strip().lower(),
+                    now,
                 ),
             )
             ok = cur.rowcount == 1
@@ -659,6 +676,7 @@ def fetch_next_pending_offer_for_agent(
                 SET state = 'agent_processing', updated_at = %s
                 WHERE id = %s AND state = 'scoped_offer_received'
                   AND compute_session_id = %s AND wallet_address = %s
+                  AND expires_at > %s
                 RETURNING id, wallet_address, compute_session_id, offer_sdp, offer_type
                 """,
                 (
@@ -666,6 +684,7 @@ def fetch_next_pending_offer_for_agent(
                     sid,
                     int(compute_session_id),
                     (wallet_norm or "").strip().lower(),
+                    now,
                 ),
             )
             row = cur.fetchone()

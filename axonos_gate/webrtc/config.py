@@ -16,6 +16,13 @@ def webrtc_enabled() -> bool:
 
 
 def fallback_enabled() -> bool:
+    # Launcher-managed desktops deliberately have no x11vnc/noVNC listener, so
+    # advertising fallback there would leave the UI waiting on a route that
+    # cannot succeed. Preserve the historical default for the explicitly
+    # supported single-container deployment where classic VNC still exists.
+    user_containers = (os.getenv("AXGT_USER_CONTAINER_ENABLED") or "").strip().lower()
+    if user_containers in ("1", "true", "yes", "on"):
+        return False
     raw = (os.getenv("WEBRTC_FALLBACK_ENABLED") or "true").strip().lower()
     return raw in ("1", "true", "yes", "on")
 
@@ -100,7 +107,7 @@ def agent_internal_key() -> str:
 
 
 def gate_internal_base_url() -> str:
-    return (os.getenv("WEBRTC_GATE_INTERNAL_URL") or "http://127.0.0.1:8889").rstrip("/")
+    return (os.getenv("WEBRTC_GATE_INTERNAL_URL") or "http://127.0.0.1:8890").rstrip("/")
 
 
 def parse_ice_url_list(env_name: str) -> list[str]:

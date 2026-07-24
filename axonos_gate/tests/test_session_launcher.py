@@ -71,53 +71,77 @@ class SessionLauncherTests(unittest.TestCase):
 
     @patch("subprocess.check_output")
     def test_launch_via_docker_cli_enabled(self, mock_check_output: MagicMock) -> None:
-        mock_check_output.return_value = "container_id_123"
+        mock_check_output.side_effect = ["", "container_id_123"]
         os.environ["AXGT_SESSION_LAUNCHER_MODE"] = "docker_cli"
         os.environ["AXGT_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"
         os.environ["AXGT_USER_CONTAINER_ENABLED"] = "true"
         os.environ["AXGT_PERSISTENT_STORAGE_ENABLED"] = "true"
+        # Network lifecycle has its own focused regression tests.  Keep this
+        # storage test's subprocess mock scoped to the final docker run.
+        os.environ["AXGT_SESSION_NETWORK_ISOLATION"] = "false"
+        os.environ["AXGT_SESSION_CONTAINER_NETWORK"] = "axonos_stack"
         
         from session_launcher import launch_session
-        ok, cid, err = launch_session(
-            session_id=42,
-            wallet="0xAbC123-xyz_!!",
-            profile="small",
-            gpu_ids=[0]
-        )
+        with patch(
+            "session_launcher._inspect_managed_container_contract_direct",
+            return_value=("absent", None, ""),
+        ), patch(
+            "session_launcher._cleanup_session_network_direct",
+            return_value=(True, None),
+        ):
+            ok, cid, err = launch_session(
+                session_id=42,
+                wallet="0xAbC123-xyz_!!",
+                profile="small",
+                gpu_ids=[0],
+                webrtc_agent_token="signed-capability",
+            )
         
         self.assertTrue(ok)
         self.assertEqual(cid, "container_id_123")
         self.assertIsNone(err)
         
-        mock_check_output.assert_called_once()
-        cmd = mock_check_output.call_args[0][0]
+        self.assertEqual(mock_check_output.call_count, 2)
+        cmd = mock_check_output.call_args_list[-1].args[0]
         
         # Check volume mount parameters
         # Sanitized wallet should be 0xabc123-xyz_
+        self.assertIn("--cap-drop", cmd)
+        self.assertEqual(cmd[cmd.index("--cap-drop") + 1], "NET_RAW")
         self.assertIn("-v", cmd)
         idx = cmd.index("-v")
         self.assertEqual(cmd[idx + 1], "axgt-user-storage-0xabc123-xyz_:/home/aXonian")
 
     @patch("subprocess.check_output")
     def test_launch_via_docker_cli_with_template(self, mock_check_output: MagicMock) -> None:
-        mock_check_output.return_value = "container_id_123"
+        mock_check_output.side_effect = ["", "container_id_123"]
         os.environ["AXGT_SESSION_LAUNCHER_MODE"] = "docker_cli"
         os.environ["AXGT_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"
         os.environ["AXGT_USER_CONTAINER_ENABLED"] = "true"
         os.environ["AXGT_PERSISTENT_STORAGE_ENABLED"] = "false"
+        os.environ["AXGT_SESSION_NETWORK_ISOLATION"] = "false"
+        os.environ["AXGT_SESSION_CONTAINER_NETWORK"] = "axonos_stack"
         
         from session_launcher import launch_session
-        ok, cid, err = launch_session(
-            session_id=42,
-            wallet="0xAbC123",
-            profile="small",
-            gpu_ids=[0],
-            template="pytorch"
-        )
+        with patch(
+            "session_launcher._inspect_managed_container_contract_direct",
+            return_value=("absent", None, ""),
+        ), patch(
+            "session_launcher._cleanup_session_network_direct",
+            return_value=(True, None),
+        ):
+            ok, cid, err = launch_session(
+                session_id=42,
+                wallet="0xAbC123",
+                profile="small",
+                gpu_ids=[0],
+                template="pytorch",
+                webrtc_agent_token="signed-capability",
+            )
         
         self.assertTrue(ok)
-        mock_check_output.assert_called_once()
-        cmd = mock_check_output.call_args[0][0]
+        self.assertEqual(mock_check_output.call_count, 2)
+        cmd = mock_check_output.call_args_list[-1].args[0]
         
         # Verify requested template is passed as environment variable
         self.assertIn("-e", cmd)
@@ -125,23 +149,33 @@ class SessionLauncherTests(unittest.TestCase):
 
     @patch("subprocess.check_output")
     def test_launch_via_docker_cli_disabled(self, mock_check_output: MagicMock) -> None:
-        mock_check_output.return_value = "container_id_123"
+        mock_check_output.side_effect = ["", "container_id_123"]
         os.environ["AXGT_SESSION_LAUNCHER_MODE"] = "docker_cli"
         os.environ["AXGT_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"
         os.environ["AXGT_USER_CONTAINER_ENABLED"] = "true"
         os.environ["AXGT_PERSISTENT_STORAGE_ENABLED"] = "false"
+        os.environ["AXGT_SESSION_NETWORK_ISOLATION"] = "false"
+        os.environ["AXGT_SESSION_CONTAINER_NETWORK"] = "axonos_stack"
         
         from session_launcher import launch_session
-        ok, cid, err = launch_session(
-            session_id=42,
-            wallet="0xAbC123",
-            profile="small",
-            gpu_ids=[0]
-        )
+        with patch(
+            "session_launcher._inspect_managed_container_contract_direct",
+            return_value=("absent", None, ""),
+        ), patch(
+            "session_launcher._cleanup_session_network_direct",
+            return_value=(True, None),
+        ):
+            ok, cid, err = launch_session(
+                session_id=42,
+                wallet="0xAbC123",
+                profile="small",
+                gpu_ids=[0],
+                webrtc_agent_token="signed-capability",
+            )
         
         self.assertTrue(ok)
-        mock_check_output.assert_called_once()
-        cmd = mock_check_output.call_args[0][0]
+        self.assertEqual(mock_check_output.call_count, 2)
+        cmd = mock_check_output.call_args_list[-1].args[0]
         
         self.assertNotIn("-v", cmd)
 
@@ -155,6 +189,7 @@ class SessionLauncherTests(unittest.TestCase):
             "wallet_address": "0xAbC123-xyz_!!",
             "requested_profile": "small",
             "assigned_gpu_ids": [0],
+            "webrtc_agent_token": "signed-capability",
         }
         cmd, err = _build_launch_cmd(payload)
         self.assertIsNone(err)
@@ -176,6 +211,7 @@ class SessionLauncherTests(unittest.TestCase):
             "requested_profile": "small",
             "assigned_gpu_ids": [0],
             "requested_template": "gromacs",
+            "webrtc_agent_token": "signed-capability",
         }
         cmd, err = _build_launch_cmd(payload)
         self.assertIsNone(err)
@@ -194,12 +230,71 @@ class SessionLauncherTests(unittest.TestCase):
             "wallet_address": "0xAbC123-xyz_!!",
             "requested_profile": "small",
             "assigned_gpu_ids": [0],
+            "webrtc_agent_token": "signed-capability",
         }
         cmd, err = _build_launch_cmd(payload)
         self.assertIsNone(err)
         self.assertIsNotNone(cmd)
         
         self.assertNotIn("-v", cmd)
+
+    def test_desktop_launch_requires_scoped_capability(self) -> None:
+        os.environ["AXGT_HOST_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"
+        os.environ["AXGT_PERSISTENT_STORAGE_ENABLED"] = "false"
+
+        from session_launcher_service import _build_launch_cmd
+
+        cmd, err = _build_launch_cmd(
+            {
+                "session_id": 42,
+                "wallet_address": "0xabc123",
+                "requested_profile": "small",
+                "assigned_gpu_ids": [0],
+            }
+        )
+        self.assertIsNone(cmd)
+        self.assertEqual(
+            err,
+            "webrtc_agent_token is required for a desktop session",
+        )
+
+    def test_malformed_direct_extra_args_fail_before_network_creation(self) -> None:
+        os.environ.update(
+            {
+                "AXGT_SESSION_LAUNCHER_MODE": "docker_cli",
+                "AXGT_SESSION_CONTAINER_IMAGE": "axonos:public-beta",
+                "AXGT_USER_CONTAINER_ENABLED": "true",
+                "AXGT_SESSION_NETWORK_ISOLATION": "true",
+                "AXGT_SESSION_CONTAINER_EXTRA_ARGS": "'unterminated",
+            }
+        )
+        import session_launcher
+
+        with patch.object(
+            session_launcher,
+            "runtime_configuration_error",
+            return_value=None,
+        ), patch.object(
+            session_launcher,
+            "_ensure_session_network_direct",
+        ) as ensure_network, patch.object(
+            session_launcher.subprocess,
+            "check_output",
+        ) as check_output:
+            ok, cid, err = session_launcher.launch_session(
+                session_id=42,
+                wallet="0xabc123",
+                profile="small",
+                gpu_ids=[0],
+                files_key="files-key",
+                webrtc_agent_token="signed-capability",
+            )
+
+        self.assertFalse(ok)
+        self.assertIsNone(cid)
+        self.assertIn("invalid AXGT_SESSION_CONTAINER_EXTRA_ARGS", err)
+        ensure_network.assert_not_called()
+        check_output.assert_not_called()
 
     def _http_env(self) -> None:
         os.environ["AXGT_USER_CONTAINER_ENABLED"] = "true"
@@ -209,47 +304,88 @@ class SessionLauncherTests(unittest.TestCase):
         os.environ["AXGT_SESSION_LAUNCH_VERIFY_INTERVAL_SECONDS"] = "0"
         os.environ["AXGT_SESSION_LAUNCH_VERIFY_ATTEMPTS"] = "3"
 
-    def test_launch_via_http_timeout_but_container_running(self) -> None:
-        """A /launch timeout must NOT fail the spawn if the container is up."""
+    def test_launch_via_http_timeout_but_contract_retry_succeeds(self) -> None:
+        """A timeout is recovered only by the host's idempotent contract check."""
         self._http_env()
         import session_launcher
 
+        calls = []
+
         def fake_http(method, url, payload, timeout_s=None):
+            calls.append((method, url, payload, timeout_s))
             if url.endswith("/launch"):
-                return 0, {}, "timed out"  # client-side timeout
+                if len(calls) == 1:
+                    return 0, {}, "timed out"  # client-side timeout
+                return 200, {"ok": True, "container_id": "abc123def456"}, None
+            raise AssertionError("unexpected url " + url)
+
+        with patch.object(session_launcher, "_http_json", side_effect=fake_http):
+            ok, cid, err = session_launcher.launch_session(
+                session_id=42, wallet="0xabc", profile="small", gpu_ids=[0],
+                webrtc_agent_token="signed-capability",
+            )
+        self.assertTrue(ok)
+        self.assertEqual(cid, "abc123def456")
+        self.assertIsNone(err)
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(all(method == "POST" for method, *_rest in calls))
+        self.assertEqual(calls[0][2], calls[1][2])
+
+    def test_launch_via_http_timeout_and_contract_never_confirms(self) -> None:
+        """Repeated inconclusive host responses fail closed."""
+        self._http_env()
+        import session_launcher
+
+        calls = []
+
+        def fake_http(method, url, payload, timeout_s=None):
+            calls.append((method, url))
+            if url.endswith("/launch"):
+                return 0, {}, "timed out"
+            raise AssertionError("unexpected url " + url)
+
+        with patch.object(session_launcher, "_http_json", side_effect=fake_http):
+            ok, cid, err = session_launcher.launch_session(
+                session_id=42, wallet="0xabc", profile="small", gpu_ids=[0],
+                webrtc_agent_token="signed-capability",
+            )
+        self.assertFalse(ok)
+        self.assertIsNone(cid)
+        self.assertEqual(err, "timed out")
+        self.assertEqual(len(calls), 4)  # initial request plus three bounded retries
+        self.assertTrue(all(method == "POST" for method, _url in calls))
+
+    def test_launch_via_http_5xx_never_accepts_name_only_container(self) -> None:
+        """A mismatched same-name container cannot bypass host preflight/contract."""
+        self._http_env()
+        import session_launcher
+
+        calls = []
+
+        def fake_http(method, url, payload, timeout_s=None):
+            calls.append((method, url))
+            if url.endswith("/launch"):
+                return 503, {"error": "legacy or runtime mismatch"}, None
             if url.endswith("/list-containers"):
                 return 200, {"ok": True, "containers": [
-                    {"name": "axgt-session-42", "short_id": "abc123def456"}
+                    {"name": "axgt-session-42", "short_id": "wrong-contract"}
                 ]}, None
             raise AssertionError("unexpected url " + url)
 
         with patch.object(session_launcher, "_http_json", side_effect=fake_http):
             ok, cid, err = session_launcher.launch_session(
-                session_id=42, wallet="0xabc", profile="small", gpu_ids=[0]
+                session_id=42,
+                wallet="0xabc",
+                profile="small",
+                gpu_ids=[0],
+                webrtc_agent_token="signed-capability",
             )
-        self.assertTrue(ok)
-        self.assertEqual(cid, "abc123def456")
-        self.assertIsNone(err)
 
-    def test_launch_via_http_timeout_and_container_absent(self) -> None:
-        """A /launch timeout with no running container is a real failure."""
-        self._http_env()
-        import session_launcher
-
-        def fake_http(method, url, payload, timeout_s=None):
-            if url.endswith("/launch"):
-                return 0, {}, "timed out"
-            if url.endswith("/list-containers"):
-                return 200, {"ok": True, "containers": []}, None
-            raise AssertionError("unexpected url " + url)
-
-        with patch.object(session_launcher, "_http_json", side_effect=fake_http):
-            ok, cid, err = session_launcher.launch_session(
-                session_id=42, wallet="0xabc", profile="small", gpu_ids=[0]
-            )
         self.assertFalse(ok)
         self.assertIsNone(cid)
-        self.assertEqual(err, "timed out")
+        self.assertEqual(err, "legacy or runtime mismatch")
+        self.assertTrue(calls)
+        self.assertTrue(all(url.endswith("/launch") for _method, url in calls))
 
     def test_launch_via_http_clean_success_skips_verify(self) -> None:
         self._http_env()
@@ -264,7 +400,8 @@ class SessionLauncherTests(unittest.TestCase):
 
         with patch.object(session_launcher, "_http_json", side_effect=fake_http):
             ok, cid, err = session_launcher.launch_session(
-                session_id=7, wallet="0xabc", profile="small", gpu_ids=[0]
+                session_id=7, wallet="0xabc", profile="small", gpu_ids=[0],
+                webrtc_agent_token="signed-capability",
             )
         self.assertTrue(ok)
         self.assertEqual(cid, "live123")

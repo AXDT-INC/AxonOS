@@ -44,11 +44,25 @@ fi
 echo "Initializing IPFS..."
 su - aXonian -c 'ipfs init --profile=server' || echo "IPFS already initialized or failed to initialize"
 
-# Configure IPFS bind addresses (runtime-configurable via env).
-# Defaults preserve prior behavior unless overridden.
-IPFS_API_BIND="${IPFS_API_BIND:-0.0.0.0}"
+# Configure IPFS bind addresses (runtime-configurable via env). Tenant sessions
+# and the multi-user central container default to loopback so their unauthenticated
+# IPFS control APIs are never exposed laterally. Standalone deployments preserve
+# the historical all-interface default unless explicitly overridden.
+_axonos_truthy() {
+    case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+        1|true|yes|on) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+_multi_user=$(echo "${AXGT_USER_CONTAINER_ENABLED:-}" | tr '[:upper:]' '[:lower:]')
+if [ -n "${AXGT_SESSION_ID:-}" ] || _axonos_truthy "${_multi_user}"; then
+    IPFS_API_BIND="${IPFS_API_BIND:-127.0.0.1}"
+    IPFS_GATEWAY_BIND="${IPFS_GATEWAY_BIND:-127.0.0.1}"
+else
+    IPFS_API_BIND="${IPFS_API_BIND:-0.0.0.0}"
+    IPFS_GATEWAY_BIND="${IPFS_GATEWAY_BIND:-0.0.0.0}"
+fi
 IPFS_API_PORT="${IPFS_API_PORT:-5001}"
-IPFS_GATEWAY_BIND="${IPFS_GATEWAY_BIND:-0.0.0.0}"
 IPFS_GATEWAY_PORT="${IPFS_GATEWAY_PORT:-8080}"
 
 echo "Configuring IPFS bind addresses..."
@@ -66,13 +80,12 @@ if [ -n "${AXGT_SESSION_ID:-}" ]; then
     fi
 elif [ -z "${AXGT_SESSION_ID:-}" ]; then
     _uc=$(echo "${AXGT_USER_CONTAINER_ENABLED:-}" | tr '[:upper:]' '[:lower:]')
-    if [ "${_uc}" = "true" ] || [ "${_uc}" = "1" ] || [ "${_uc}" = "yes" ]; then
-        if [ -z "${AXGT_DESKTOP_ENABLED:-}" ]; then
-            export AXGT_DESKTOP_ENABLED=false
-        fi
-        if [ -z "${WEBRTC_AGENT_ENABLED:-}" ]; then
-            export WEBRTC_AGENT_ENABLED=false
-        fi
+    if _axonos_truthy "${_uc}"; then
+        # The central multi-user container is control-plane only. Tenant
+        # launchers set both values explicitly for each desktop, so a stale
+        # operator env must not resurrect a shared base desktop/agent.
+        export AXGT_DESKTOP_ENABLED=false
+        export WEBRTC_AGENT_ENABLED=false
     else
         if [ -z "${AXGT_DESKTOP_ENABLED:-}" ]; then
             export AXGT_DESKTOP_ENABLED=true
@@ -101,7 +114,7 @@ chown -R aXonian:aXonian /home/aXonian/.config/axonos
 # public key arriving in AXGT_SSH_PUBKEY was already validated gate-side
 # (single line, known key type) so it is safe to write verbatim.
 _ssh_on=$(echo "${AXGT_SSH_ENABLED:-}" | tr '[:upper:]' '[:lower:]')
-if [ "${_ssh_on}" = "true" ] || [ "${_ssh_on}" = "1" ] || [ "${_ssh_on}" = "yes" ]; then
+if _axonos_truthy "${_ssh_on}"; then
     echo "AXGT_SSH_ENABLED: configuring direct SSH access for aXonian..."
 
     # Researcher's authorized key (single key; latest claim wins).
@@ -159,6 +172,7 @@ fi
 
 # Start supervisord
 /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf &
+SUPERVISOR_PID=$!
 
 # Wait for VNC server to start
 sleep 5
@@ -345,5 +359,74 @@ else
     echo "AXGT_DESKTOP_ENABLED=false: gate-only container (no local X desktop)."
 fi
 
-# Keep the container running
-tail -f /dev/null
+# A Docker healthcheck makes listener failure visible, but Compose does not
+# restart merely-unhealthy containers. If a critical Supervisor child exhausts
+# its retries, terminate Supervisor so the container exits and restart policy
+# can recover the complete process set.
+critical_supervisor_child_is_terminal() {
+    local statuses
+    # supervisorctl intentionally exits nonzero for stopped states. Preserve its
+    # output instead of treating FATAL/EXITED as a query failure and skipping it.
+    statuses=$(
+        "${SUPERVISORCTL_BIN:-/usr/bin/supervisorctl}" \
+            -c "${SUPERVISOR_CONFIG_PATH:-/etc/supervisor/conf.d/supervisord.conf}" \
+            status axgt-api novnc webrtc-agent-gate webrtc-agent \
+                x11vnc xorg-nvidia xfce4 \
+            2>/dev/null || true
+    )
+    case "$statuses" in
+        *" FATAL "*|*" EXITED "*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+critical_supervisor_listeners_ready() {
+    local -a ports=(6080 8889)
+    if _axonos_truthy "${WEBRTC_ENABLED:-false}"; then
+        ports+=(8890)
+    fi
+    if _axonos_truthy "${AXGT_DESKTOP_ENABLED:-true}"; then
+        ports+=(5901)
+    fi
+    "${AXONOS_LISTENER_PROBE_BIN:-/usr/bin/python3}" -c '
+import socket
+import sys
+
+for raw_port in sys.argv[1:]:
+    connection = socket.create_connection(("127.0.0.1", int(raw_port)), timeout=2)
+    connection.close()
+' "${ports[@]}" 2>/dev/null
+}
+
+monitor_critical_supervisor_children() {
+    local listener_failures=0
+    local max_listener_failures=6
+    while kill -0 "$SUPERVISOR_PID" 2>/dev/null; do
+        sleep 10
+        if critical_supervisor_child_is_terminal; then
+            echo "Critical Supervisor child entered FATAL/EXITED; restarting container." >&2
+            kill -TERM "$SUPERVISOR_PID" 2>/dev/null || true
+            return
+        fi
+        if critical_supervisor_listeners_ready; then
+            listener_failures=0
+            continue
+        fi
+        listener_failures=$((listener_failures + 1))
+        if [ "$listener_failures" -ge "$max_listener_failures" ]; then
+            echo "Critical Supervisor listeners failed ${listener_failures} consecutive readiness checks; restarting container." >&2
+            kill -TERM "$SUPERVISOR_PID" 2>/dev/null || true
+            return
+        fi
+    done
+}
+# Launcher-managed tenants use an external lifecycle/reconciliation path and
+# are intentionally not self-terminated here. The central/legacy container has
+# Docker restart policy and owns the listeners covered by its healthcheck.
+if [ -z "${AXGT_SESSION_ID:-}" ]; then
+    monitor_critical_supervisor_children &
+fi
+
+# Supervisord is the container's service owner. Propagate its death to Docker so
+# restart policy can recover instead of leaving a false "running" shell.
+wait "$SUPERVISOR_PID"

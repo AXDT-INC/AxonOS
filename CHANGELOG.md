@@ -18,8 +18,10 @@ agent access over SSH.
 
 #### WebRTC remote desktop
 - Browser-native WebRTC desktop path alongside (and preferred over) noVNC, with
-  automatic fallback to noVNC over WebSockets when negotiation fails
-  (`WEBRTC_FALLBACK_ENABLED`).
+  optional noVNC-over-WebSockets fallback in legacy single-container mode
+  (`WEBRTC_FALLBACK_ENABLED`). Launcher-managed tenant sessions fail visibly
+  when WebRTC negotiation fails because their VNC listener is intentionally
+  disabled and fallback is forced off.
 - In-container capture agent with HTTP signaling (offer/answer/ICE) persisted in
   Postgres; session IDs are random 256-bit tokens gated by wallet auth + session
   ownership.
@@ -119,8 +121,10 @@ agent access over SSH.
 
 ### Changed
 - Single, self-contained **public-beta compose stack** (`axonos:public-beta`,
-  gate + Postgres + session launcher) on the fixed `axonos_stack` network; the
-  base container is gate-only when per-user containers are enabled.
+  gate + Postgres + session launcher): Postgres and the Docker-socket launcher
+  stay on `axonos_control`, coturn uses the shared media network, and each tenant
+  gets a dynamic `axgt-session-net-<id>` bridge shared only with the central
+  gate. The base container is gate-only when per-user containers are enabled.
 - Default payment configuration switched to **mainnet**: AXGT on Ethereum
   mainnet, USDC on Base mainnet; dynamic USD pricing on at $1/hour with the AXGT
   pay-in bonus.
@@ -152,6 +156,12 @@ agent access over SSH.
   key, Postgres credentials, and the launcher token are all configured via
   environment/secrets and never logged. The x402 settlement signer is a dedicated
   low-balance hot wallet, separate from the revenue/treasury wallet.
+- Launcher-managed tenants receive only exact session identity, per-session
+  bearer values, and allowlisted media tuning. Database, payment/RPC, launcher,
+  and fleet-signing credentials remain in the control plane. Agent operations
+  are accepted only on the unpublished `:8890` listener after signed capability,
+  compute ID, wallet, file-key fingerprint, and live-allocation checks, then use
+  session-scoped SQL.
 - Deposits are verified server-side on-chain (Transfer event log, confirmations,
   replay protection); client-reported balances and amounts are never trusted.
 - Per-session file-transfer and WebRTC signaling require wallet auth + session

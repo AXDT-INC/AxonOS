@@ -136,17 +136,17 @@
 <rect x="1055" y="250" width="72" height="20" rx="10" fill="rgba(78,195,212,0.12)" stroke="rgba(78,195,212,0.30)" stroke-width="1"/>
 <text x="1091" y="264" text-anchor="middle" font-size="9" font-weight="700" fill="#4ec3d4" font-family="'SF Mono',Menlo,Consolas,monospace">:8889</text>
 
-<!-- Gate chip 1: noVNC+WS — x=80 y=278 w=247 h=112 -->
+<!-- Gate chip 1: central web UI/browser API — x=80 y=278 w=247 h=112 -->
 <rect x="80" y="278" width="247" height="112" rx="11" fill="rgba(78,195,212,0.10)" stroke="rgba(78,195,212,0.34)" stroke-width="1"/>
 <rect x="80" y="278" width="247" height="2.5" rx="1.2" fill="#4ec3d4" opacity="0.52"/>
 <rect x="88" y="284" width="42" height="15" rx="7.5" fill="rgba(78,195,212,0.22)"/>
 <text x="109" y="295" text-anchor="middle" font-size="8" font-weight="700" fill="#4ec3d4" font-family="'SF Mono',Menlo,Consolas,monospace">:6080</text>
-<text x="204" y="302" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">noVNC + Websockify</text>
+<text x="204" y="302" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">Web UI + Browser API</text>
 <text x="204" y="317" text-anchor="middle" font-size="9" fill="rgba(78,195,212,0.68)" font-family="'SF Mono',Menlo,Consolas,monospace">websockify_gate.py</text>
 <text x="204" y="331" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Validates auth token</text>
-<text x="204" y="345" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Proxies WS -&gt; VNC :5901</text>
-<text x="204" y="360" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Serves HTML / JS / CSS</text>
-<text x="204" y="381" text-anchor="middle" font-size="8" fill="rgba(78,195,212,0.36)" font-family="'SF Mono',Menlo,Consolas,monospace">WEBRTC_FALLBACK_ENABLED=false</text>
+<text x="204" y="345" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Serves HTML / JS / signaling</text>
+<text x="204" y="360" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">VNC proxy: legacy mode only</text>
+<text x="204" y="381" text-anchor="middle" font-size="8" fill="rgba(78,195,212,0.36)" font-family="'SF Mono',Menlo,Consolas,monospace">Tenant VNC fallback disabled</text>
 
 <!-- Gate chip 2: Gate API — x=347 y=278 w=247 h=112 -->
 <rect x="347" y="278" width="247" height="112" rx="11" fill="rgba(78,195,212,0.10)" stroke="rgba(78,195,212,0.34)" stroke-width="1"/>
@@ -165,12 +165,12 @@
 <rect x="614" y="278" width="247" height="2.5" rx="1.2" fill="#9d6fd9" opacity="0.52"/>
 <rect x="622" y="284" width="52" height="15" rx="7.5" fill="rgba(157,111,217,0.22)"/>
 <text x="648" y="295" text-anchor="middle" font-size="8" font-weight="700" fill="#9d6fd9" font-family="'SF Mono',Menlo,Consolas,monospace">NVFBC</text>
-<text x="738" y="302" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">WebRTC Agent</text>
-<text x="738" y="317" text-anchor="middle" font-size="9" fill="rgba(157,111,217,0.76)" font-family="'SF Mono',Menlo,Consolas,monospace">webrtc_agent_main.py</text>
-<text x="738" y="331" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">60fps / 18 Mbps / preset p4</text>
-<text x="738" y="345" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">H.264 via aiortc</text>
-<text x="738" y="360" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Polls agent/next SDP</text>
-<text x="738" y="381" text-anchor="middle" font-size="8" fill="rgba(157,111,217,0.42)" font-family="'SF Mono',Menlo,Consolas,monospace">OCI TURN: turn.axondao.io:3478</text>
+<text x="738" y="302" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">Agent-only Gate :8890</text>
+<text x="738" y="317" text-anchor="middle" font-size="9" fill="rgba(157,111,217,0.76)" font-family="'SF Mono',Menlo,Consolas,monospace">gate_server.py / internal only</text>
+<text x="738" y="331" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Signed session capability</text>
+<text x="738" y="345" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Exact compute + wallet scope</text>
+<text x="738" y="360" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Agent poll / answer / ICE</text>
+<text x="738" y="381" text-anchor="middle" font-size="8" fill="rgba(157,111,217,0.42)" font-family="'SF Mono',Menlo,Consolas,monospace">Not host-published</text>
 
 <!-- Gate chip 4: Session Manager — x=881 y=278 w=247 h=112 -->
 <rect x="881" y="278" width="247" height="112" rx="11" fill="rgba(123,224,200,0.08)" stroke="rgba(123,224,200,0.28)" stroke-width="1"/>
@@ -189,7 +189,7 @@
 
 <!-- Supervisord strip: y=404 h=28 -->
 <rect x="80" y="404" width="1048" height="28" rx="7" fill="rgba(140,200,220,0.04)" stroke="rgba(140,200,220,0.10)" stroke-width="1" stroke-dasharray="5,3"/>
-<text x="604" y="422" text-anchor="middle" font-size="8.5" font-weight="600" letter-spacing="1.5" fill="rgba(170,210,225,0.38)" font-family="'SF Mono',Menlo,Consolas,monospace">supervisord  manages:  xorg-nvidia  xfce4  x11vnc  novnc  axgt-api  webrtc-agent  ollama  jupyterlab  ipfs</text>
+<text x="604" y="422" text-anchor="middle" font-size="8.5" font-weight="600" letter-spacing="1.2" fill="rgba(170,210,225,0.38)" font-family="'SF Mono',Menlo,Consolas,monospace">supervisord role-gates: central web/API :6080/:8889/:8890  |  tenant Xorg/XFCE/WebRTC  |  legacy x11vnc</text>
 
 <!-- Auth & Billing strip: y=444 h=72 -->
 <rect x="80" y="444" width="1048" height="72" rx="9" fill="rgba(78,195,212,0.04)" stroke="rgba(78,195,212,0.12)" stroke-width="1"/>
@@ -271,7 +271,7 @@
 <!-- docker run command strip: y=378 h=96 -->
 <rect x="1186" y="378" width="542" height="96" rx="8" fill="rgba(0,0,0,0.30)" stroke="rgba(242,96,122,0.16)" stroke-width="1"/>
 <text x="1202" y="397" font-size="9" fill="rgba(242,96,122,0.58)" font-family="'SF Mono',Menlo,Consolas,monospace">$ docker run -d --rm --gpus device=0,1 \</text>
-<text x="1202" y="413" font-size="9" fill="rgba(170,210,225,0.40)" font-family="'SF Mono',Menlo,Consolas,monospace">    --name axgt-session-{id}  --net axonos_stack \</text>
+<text x="1202" y="413" font-size="9" fill="rgba(170,210,225,0.40)" font-family="'SF Mono',Menlo,Consolas,monospace">    --name axgt-session-{id}  --network axgt-session-net-{id} \</text>
 <text x="1202" y="429" font-size="9" fill="rgba(170,210,225,0.40)" font-family="'SF Mono',Menlo,Consolas,monospace">    -e AXGT_SESSION_ID=N  -e AXGT_WALLET_ADDRESS=0x... \</text>
 <text x="1202" y="445" font-size="9" fill="rgba(170,210,225,0.40)" font-family="'SF Mono',Menlo,Consolas,monospace">    --shm-size 32g  axonos:public-beta  /startup.sh</text>
 <text x="1202" y="465" font-size="8" fill="rgba(170,210,225,0.26)" font-family="'SF Mono',Menlo,Consolas,monospace">mode: http  /  axonos-launcher:8090  /  multi-session enabled  /  default profile: small</text>
@@ -294,7 +294,7 @@
 <line x1="1186" y1="668" x2="1220" y2="668" stroke="#f2607a" stroke-width="2" marker-end="url(#mK)"/>
 <text x="1232" y="672" font-size="8.5" fill="rgba(170,210,225,0.60)" font-family="'SF Mono',Menlo,Consolas,monospace">docker run (GPU)</text>
 <line x1="1186" y1="685" x2="1220" y2="685" stroke="#7be0c8" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#mG)"/>
-<text x="1232" y="689" font-size="8.5" fill="rgba(170,210,225,0.60)" font-family="'SF Mono',Menlo,Consolas,monospace">VNC proxy :5901</text>
+<text x="1232" y="689" font-size="8.5" fill="rgba(170,210,225,0.60)" font-family="'SF Mono',Menlo,Consolas,monospace">Legacy VNC proxy :5901</text>
 <line x1="1186" y1="702" x2="1220" y2="702" stroke="#b3a3eb" stroke-width="1.5" marker-end="url(#mV)"/>
 <text x="1232" y="706" font-size="8.5" fill="rgba(170,210,225,0.60)" font-family="'SF Mono',Menlo,Consolas,monospace">PostgreSQL SQL</text>
 <text x="1311" y="720" text-anchor="middle" font-size="7.5" fill="rgba(170,210,225,0.22)" font-family="'SF Mono',Menlo,Consolas,monospace">(c) 2026 AxonDAO</text>
@@ -357,13 +357,13 @@
 <text x="1154" y="809" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">NVFBC -&gt; H.264</text>
 <text x="1154" y="824" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">60fps / 18Mbps / p4</text>
 <text x="1154" y="856" text-anchor="middle" font-size="8" fill="rgba(157,111,217,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">X11 input data channel</text>
-<!-- x11vnc chip -->
+<!-- Tenant private-boundary chip -->
 <rect x="1278" y="758" width="220" height="106" rx="10" fill="rgba(242,96,122,0.07)" stroke="rgba(242,96,122,0.20)" stroke-width="1"/>
-<text x="1388" y="778" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">x11vnc</text>
-<text x="1388" y="794" text-anchor="middle" font-size="9" fill="rgba(242,96,122,0.62)" font-family="'SF Mono',Menlo,Consolas,monospace">VNC server :5901</text>
-<text x="1388" y="809" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">RFB protocol</text>
+<text x="1388" y="778" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">Private Boundary</text>
+<text x="1388" y="794" text-anchor="middle" font-size="9" fill="rgba(242,96,122,0.62)" font-family="'SF Mono',Menlo,Consolas,monospace">x11vnc / local gate disabled</text>
+<text x="1388" y="809" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">NET_RAW dropped</text>
 <rect x="1296" y="818" width="184" height="18" rx="9" fill="rgba(242,96,122,0.12)" stroke="rgba(242,96,122,0.28)" stroke-width="1"/>
-<text x="1388" y="831" text-anchor="middle" font-size="8" font-weight="700" fill="rgba(242,96,122,0.72)" font-family="'SF Mono',Menlo,Consolas,monospace">FALLBACK DISABLED in prod</text>
+<text x="1388" y="831" text-anchor="middle" font-size="8" font-weight="700" fill="rgba(242,96,122,0.72)" font-family="'SF Mono',Menlo,Consolas,monospace">MULTI-USER FALLBACK OFF</text>
 <text x="1388" y="856" text-anchor="middle" font-size="8" fill="rgba(242,96,122,0.34)" font-family="'SF Mono',Menlo,Consolas,monospace">WEBRTC_FALLBACK_ENABLED=false</text>
 <!-- Scientific Apps chip -->
 <rect x="1512" y="758" width="220" height="106" rx="10" fill="rgba(123,224,200,0.08)" stroke="rgba(123,224,200,0.22)" stroke-width="1"/>
@@ -391,13 +391,13 @@
 <rect x="576" y="916" width="1154" height="66" rx="7" fill="rgba(0,0,0,0.24)" stroke="rgba(140,200,220,0.07)" stroke-width="1"/>
 <text x="596" y="932" font-size="8.5" fill="rgba(78,195,212,0.38)" font-family="'SF Mono',Menlo,Consolas,monospace">ENV -&gt;  AXGT_SESSION_ID  AXGT_WALLET_ADDRESS  AXGT_REQUESTED_PROFILE  AXGT_ASSIGNED_GPU_IDS  AXGT_DESKTOP_ENABLED=true</text>
 <text x="596" y="948" font-size="8.5" fill="rgba(170,210,225,0.30)" font-family="'SF Mono',Menlo,Consolas,monospace">WEBRTC_AGENT_ENABLED=true  WEBRTC_CAPTURE_BACKEND=nvfbc  WEBRTC_CAPTURE_FPS=60  WEBRTC_CAPTURE_BITRATE=18000000</text>
-<text x="596" y="964" font-size="8.5" fill="rgba(170,210,225,0.26)" font-family="'SF Mono',Menlo,Consolas,monospace">WEBRTC_STUN/TURN=turn.axondao.io:3478  /  WEBRTC_FALLBACK_ENABLED=false  /  WEBRTC_GATE_INTERNAL_URL=http://axonos:8889</text>
-<text x="596" y="980" font-size="8" fill="rgba(170,210,225,0.20)" font-family="'SF Mono',Menlo,Consolas,monospace">AXGT_CHALLENGE_DB_URL=postgresql://axonos_gate:...@postgres:5432/axonos_gate</text>
+<text x="596" y="964" font-size="8.5" fill="rgba(170,210,225,0.26)" font-family="'SF Mono',Menlo,Consolas,monospace">WEBRTC_STUN/TURN=turn.axondao.io:3478  /  WEBRTC_FALLBACK_ENABLED=false  /  WEBRTC_GATE_INTERNAL_URL=http://axonos:8890</text>
+<text x="596" y="980" font-size="8" fill="rgba(170,210,225,0.20)" font-family="'SF Mono',Menlo,Consolas,monospace">AXGT_WEBRTC_AGENT_TOKEN=&lt;scoped&gt;  /  AXGT_SESSION_FILES_KEY=&lt;per-session&gt;  /  no database or fleet credentials</text>
 
 <!-- ═══ DOCKER HOST FOOTER ═══ -->
 <rect x="50" y="1014" width="1700" height="68" rx="11" fill="rgba(7,16,26,0.80)" stroke="rgba(140,200,220,0.09)" stroke-width="1" stroke-dasharray="5,3"/>
 <text x="70" y="1034" font-size="8.5" font-weight="700" letter-spacing="2.5" fill="rgba(140,200,220,0.30)" font-family="'SF Mono',Menlo,Consolas,monospace">DOCKER HOST  /  Linux  /  NVIDIA driver  /  /var/run/docker.sock  /  NVIDIA Container Toolkit</text>
-<text x="70" y="1052" font-size="8.5" fill="rgba(170,210,225,0.24)" font-family="'SF Mono',Menlo,Consolas,monospace">Network: axonos_stack (bridge)  /  Volume: axonos_postgres_data (persistent)  /  GPU passthrough via NVIDIA CTK</text>
+<text x="70" y="1052" font-size="8.5" fill="rgba(170,210,225,0.24)" font-family="'SF Mono',Menlo,Consolas,monospace">Networks: axonos_control + private axgt-session-net-{id}  /  Volume: axonos_postgres_data  /  GPU passthrough via NVIDIA CTK</text>
 <text x="70" y="1068" font-size="8.5" fill="rgba(170,210,225,0.20)" font-family="'SF Mono',Menlo,Consolas,monospace">Containers: axonos (:6080 :8889)  /  axonos_session_launcher (:8090)  /  axonos_postgres (:5432 internal)  /  axgt-session-N (spawned per wallet claim)</text>
 
 <!-- ═══ STEP SUMMARY ═══ -->
@@ -446,10 +446,10 @@
 <rect x="242" y="700" width="40" height="14" rx="7" fill="rgba(157,111,217,0.14)"/>
 <text x="262" y="711" text-anchor="middle" font-size="7.5" font-weight="700" fill="#b3a3eb" font-family="'SF Mono',Menlo,Consolas,monospace">SQL</text>
 
-<!-- Gate Websockify -> Session VNC (green dashed) -->
+<!-- Central gate -> isolated session bridge (green dashed) -->
 <path d="M 580,686 C 580,708 716,716 716,726" fill="none" stroke="#7be0c8" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#mG)" opacity="0.66"/>
 <rect x="530" y="704" width="76" height="14" rx="7" fill="rgba(123,224,200,0.10)"/>
-<text x="568" y="715" text-anchor="middle" font-size="7.5" font-weight="700" fill="#7be0c8" font-family="'SF Mono',Menlo,Consolas,monospace">VNC :5901</text>
+<text x="568" y="715" text-anchor="middle" font-size="7.5" font-weight="700" fill="#7be0c8" font-family="'SF Mono',Menlo,Consolas,monospace">private bridge</text>
 
 <!-- Session WebRTC Agent <-> Gate API (violet dashed) -->
 <path d="M 1154,726 C 1154,704 940,698 860,686" fill="none" stroke="#9d6fd9" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#mVr)" opacity="0.60"/>
