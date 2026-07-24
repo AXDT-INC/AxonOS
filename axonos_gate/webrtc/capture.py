@@ -8,12 +8,75 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from fractions import Fraction
 from typing import Any, Callable
 
 logger = logging.getLogger("axonos.webrtc_agent.capture")
+
+
+class _SingleFlightBoolProbe:
+    """Process-local bool cache that lets concurrent callers share one probe.
+
+    Runtime capability checks launch FFmpeg subprocesses and can take several
+    seconds.  A background prewarm and a newly accepted offer may reach the same
+    check together, so only one caller should perform it.  Some capabilities are
+    stable for the process lifetime and cache both outcomes; PulseAudio only
+    caches success because its monitor source may not exist yet during startup.
+    """
+
+    def __init__(self, *, cache_false: bool) -> None:
+        self._cache_false = cache_false
+        self._condition = threading.Condition()
+        self._cached: bool | None = None
+        self._running = False
+        self._generation = 0
+        self._last_result = False
+
+    def run(self, probe: Callable[[], bool]) -> bool:
+        with self._condition:
+            if self._cached is not None:
+                return self._cached
+            generation = self._generation
+            if self._running:
+                while self._running and self._generation == generation:
+                    self._condition.wait()
+                # Share the completed attempt with waiters even when a false
+                # result is deliberately not retained for future calls.
+                if self._generation != generation:
+                    return self._last_result
+            self._running = True
+
+        try:
+            result = bool(probe())
+        except BaseException:
+            with self._condition:
+                self._running = False
+                self._condition.notify_all()
+            raise
+
+        with self._condition:
+            self._last_result = result
+            self._generation += 1
+            if result or self._cache_false:
+                self._cached = result
+            self._running = False
+            self._condition.notify_all()
+        return result
+
+    def reset(self) -> None:
+        with self._condition:
+            self._cached = None
+            self._running = False
+            self._generation = 0
+            self._last_result = False
+            self._condition.notify_all()
+
+
+_nvenc_runtime_probe = _SingleFlightBoolProbe(cache_false=True)
+_pulse_runtime_probe = _SingleFlightBoolProbe(cache_false=False)
 
 
 def capture_backend_name() -> str:
@@ -175,7 +238,7 @@ def ffmpeg_lists_h264_nvenc() -> bool:
     return p.returncode == 0 and "h264_nvenc" in (p.stdout or "")
 
 
-def nvenc_runtime_ok(env: dict[str, str] | None = None) -> bool:
+def _probe_nvenc_runtime(env: dict[str, str] | None = None) -> bool:
     if not ffmpeg_lists_h264_nvenc():
         return False
     try:
@@ -211,6 +274,11 @@ def nvenc_runtime_ok(env: dict[str, str] | None = None) -> bool:
     return p.returncode == 0
 
 
+def nvenc_runtime_ok(env: dict[str, str] | None = None) -> bool:
+    """Return cached NVENC availability, sharing the first probe across callers."""
+    return _nvenc_runtime_probe.run(lambda: _probe_nvenc_runtime(env))
+
+
 def ffmpeg_lists_pulse_input() -> bool:
     try:
         p = subprocess.run(
@@ -229,7 +297,7 @@ def ffmpeg_lists_pulse_input() -> bool:
     return any(re.match(r"\s*DE?\s+pulse\s", line) for line in (p.stdout or "").splitlines())
 
 
-def pulse_runtime_ok(env: dict[str, str] | None = None) -> bool:
+def _probe_pulse_runtime(env: dict[str, str] | None = None) -> bool:
     """True when system ffmpeg can actually record from the Pulse monitor source."""
     if not ffmpeg_lists_pulse_input():
         return False
@@ -262,6 +330,17 @@ def pulse_runtime_ok(env: dict[str, str] | None = None) -> bool:
         err = (p.stderr or b"").decode("utf-8", errors="ignore")[:300]
         logger.debug("pulse runtime probe exit=%s: %s", p.returncode, err)
     return p.returncode == 0
+
+
+def pulse_runtime_ok(env: dict[str, str] | None = None) -> bool:
+    """Return Pulse capture readiness without retaining an early false result."""
+    return _pulse_runtime_probe.run(lambda: _probe_pulse_runtime(env))
+
+
+def _reset_runtime_probe_caches_for_tests() -> None:
+    """Reset process-local capability caches (unit tests only)."""
+    _nvenc_runtime_probe.reset()
+    _pulse_runtime_probe.reset()
 
 
 def nvfbc_runtime_ok(env: dict[str, str] | None = None) -> bool:

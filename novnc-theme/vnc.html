@@ -68,7 +68,7 @@ Copyright (C) 2019 The noVNC Authors
 
     <!-- Stylesheets -->
     <link rel="stylesheet" href="app/styles/base.css">
-    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.0&t=20260716">
+    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.1&t=20260724">
 
     <!-- Images that will later appear via CSS -->
     <link rel="preload" as="image" href="app/images/info.svg">
@@ -108,7 +108,7 @@ Copyright (C) 2019 The noVNC Authors
     </script>
     <script src="app/error-handler.js"></script>
     <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
-    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260716a"></script>
+    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260724b"></script>
 </head>
 
 <body>
@@ -1826,22 +1826,23 @@ Copyright (C) 2019 The noVNC Authors
         </div>
         <div class="axonos-loading-text">Preparing session</div>
         <div class="axonos-loading-subtext">Connecting to AxonOS with direct GPU access…</div>
+        <div class="axonos-loading-elapsed" id="axonos_loader_elapsed">Elapsed 0s · Current step 0s</div>
         <div class="axonos-prep-steps">
             <div class="axonos-prep-step active" id="axonos_prep_step_1">
                 <div class="axonos-prep-step__icon">1</div>
-                <span class="axonos-prep-step__label">Verifying payment on-chain</span>
+                <span class="axonos-prep-step__label">Checking session access</span>
             </div>
             <div class="axonos-prep-step" id="axonos_prep_step_2">
                 <div class="axonos-prep-step__icon">2</div>
-                <span class="axonos-prep-step__label">Provisioning GPU node</span>
+                <span class="axonos-prep-step__label">Starting GPU container</span>
             </div>
             <div class="axonos-prep-step" id="axonos_prep_step_3">
                 <div class="axonos-prep-step__icon">3</div>
-                <span class="axonos-prep-step__label">Booting Linux desktop</span>
+                <span class="axonos-prep-step__label">Starting desktop video</span>
             </div>
             <div class="axonos-prep-step" id="axonos_prep_step_4">
                 <div class="axonos-prep-step__icon">4</div>
-                <span class="axonos-prep-step__label">Mounting your storage volume</span>
+                <span class="axonos-prep-step__label">Securing display connection</span>
             </div>
         </div>
         <!-- Inspiring Quote during loading -->
@@ -2406,11 +2407,66 @@ Copyright (C) 2019 The noVNC Authors
 
         // Connection Loading Animation Handler
         let loaderStartTime = null;
+        let loaderPhaseStartTime = null;
+        let loaderElapsedTimer = null;
+        let loaderCurrentStepKey = null;
 
         function axonosIsReconnectLaunch() {
             if (window.axonosPausedResume) return true;
             if (window.axonosSessionDetached && window.axonosDetachedSession) return true;
             return false;
+        }
+
+        function axonosFormatLoaderElapsed(ms) {
+            var totalSeconds = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+            var hours = Math.floor(totalSeconds / 3600);
+            var minutes = Math.floor((totalSeconds % 3600) / 60);
+            var seconds = totalSeconds % 60;
+            if (hours > 0) return hours + 'h ' + String(minutes).padStart(2, '0') + 'm ' + String(seconds).padStart(2, '0') + 's';
+            if (minutes > 0) return minutes + 'm ' + String(seconds).padStart(2, '0') + 's';
+            return seconds + 's';
+        }
+
+        function axonosUpdateLoaderElapsed() {
+            var elapsedEl = document.getElementById('axonos_loader_elapsed');
+            if (!elapsedEl) return;
+            var now = Date.now();
+            var total = loaderStartTime == null ? 0 : now - loaderStartTime;
+            var current = loaderPhaseStartTime == null ? 0 : now - loaderPhaseStartTime;
+            elapsedEl.textContent = 'Elapsed ' + axonosFormatLoaderElapsed(total) +
+                ' · Current step ' + axonosFormatLoaderElapsed(current);
+        }
+
+        function axonosStartLoaderElapsedTimer() {
+            if (loaderElapsedTimer != null) clearInterval(loaderElapsedTimer);
+            axonosUpdateLoaderElapsed();
+            loaderElapsedTimer = setInterval(axonosUpdateLoaderElapsed, 250);
+        }
+
+        function axonosStopLoaderElapsedTimer(reset) {
+            if (loaderElapsedTimer != null) {
+                clearInterval(loaderElapsedTimer);
+                loaderElapsedTimer = null;
+            }
+            if (reset) {
+                loaderStartTime = null;
+                loaderPhaseStartTime = null;
+                loaderCurrentStepKey = null;
+                axonosUpdateLoaderElapsed();
+            }
+        }
+
+        function axonosSetLoaderChecklist(labels, stepNum) {
+            for (var i = 1; i <= 4; i++) {
+                var el = document.getElementById('axonos_prep_step_' + i);
+                if (!el) continue;
+                var label = Array.isArray(labels) ? labels[i - 1] : null;
+                el.hidden = !label;
+                var labelEl = el.querySelector('.axonos-prep-step__label');
+                if (labelEl && label) labelEl.textContent = label;
+                el.classList.toggle('active', !!label && i === stepNum);
+                el.classList.toggle('completed', !!label && i < stepNum);
+            }
         }
 
         function axonosSetConnectionLoaderPhase(phase) {
@@ -2420,41 +2476,125 @@ Copyright (C) 2019 The noVNC Authors
             // Direct-SSH launches have no desktop/display — word the loader for a console.
             var _sshToggle = document.getElementById('axonos_ssh_toggle');
             var ssh = !reconnect && !!(_sshToggle && _sshToggle.checked);
+            var persistentHome = !!(window.axonosConfig && window.axonosConfig.persistent_storage_enabled);
+            var normalSteps = [
+                'Checking session access',
+                'Starting GPU container',
+                'Starting desktop video',
+                'Securing display connection'
+            ];
+            var reconnectSteps = [
+                'Checking saved session access',
+                'Claiming running GPU container',
+                'Restarting desktop video',
+                'Securing display connection'
+            ];
+            var sshSteps = [
+                'Checking session access',
+                'Starting GPU container and SSH access'
+            ];
+            var launchSteps = reconnect ? reconnectSteps : (ssh ? sshSteps : normalSteps);
+            var classicSteps = [
+                reconnect ? 'Checking saved session access' : 'Checking session access',
+                reconnect ? 'Claiming running GPU container' : 'Starting GPU container',
+                reconnect ? 'Reopening classic desktop video' : 'Opening classic desktop video'
+            ];
+            var containerSubtext = persistentHome
+                ? 'Starting the GPU container and attaching its persistent home volume…'
+                : 'Starting the GPU container…';
             var phases = {
                 // Shown the moment a deposit tx is sent: instant confirmation that the
                 // payment went through + what happens next (tester feedback 2026-07-08:
                 // the on-chain wait used to look like a blank screen).
-                payment: ['Payment sent ✓', 'Waiting for on-chain confirmation — usually under 2 minutes. Keep this tab open; your desktop will continue automatically…'],
-                'test-credit': ['Issuing test credit', 'Applying bounded release-test credit — no wallet transaction is being sent…'],
-                preparing: reconnect
-                    ? ['Resuming session', 'Reconnecting to your running desktop…']
-                    : ssh
-                        ? ['Preparing SSH session', 'Checking wallet and SSH key…']
-                        : ['Preparing session', 'Checking wallet and saved desktop status…'],
-                claiming: reconnect
-                    ? ['Resuming session', 'Claiming your existing desktop and GPUs…']
-                    : ssh
-                        ? ['Claiming console', 'Reserving your GPU allocation…']
-                        : ['Claiming desktop', 'Reserving your GPU allocation…'],
-                webrtc: reconnect
-                    ? ['Resuming session', 'Reconnecting display (WebRTC may take a minute)…']
-                    : ['Connecting display', 'Negotiating WebRTC stream (this can take a minute)…'],
-                vnc: reconnect
-                    ? ['Resuming session', 'Reconnecting to your remote desktop…']
-                    : ['Connecting display', 'Opening remote desktop stream…']
+                payment: {
+                    title: 'Payment sent ✓',
+                    subtext: 'Waiting for the required on-chain confirmations. Keep this tab open…',
+                    step: 1,
+                    labels: ['Confirming payment on-chain']
+                },
+                'test-credit': {
+                    title: 'Issuing test credit',
+                    subtext: 'Applying bounded release-test credit; no wallet transaction is being sent…',
+                    step: 1,
+                    labels: ['Applying test credit']
+                },
+                preparing: {
+                    title: reconnect ? 'Checking saved session' : (ssh ? 'Checking SSH session access' : 'Checking session access'),
+                    subtext: reconnect
+                        ? 'Confirming wallet ownership and reading the saved session state…'
+                        : ssh
+                            ? 'Confirming wallet identity and validating the SSH key…'
+                            : 'Confirming wallet identity and checking for a saved session…',
+                    step: 1,
+                    labels: launchSteps
+                },
+                claiming: {
+                    title: reconnect ? 'Claiming running session' : (ssh ? 'Starting SSH session' : 'Starting GPU container'),
+                    subtext: reconnect
+                        ? 'Claiming the existing GPU container for this wallet…'
+                        : ssh
+                            ? (persistentHome
+                                ? 'Starting the GPU container, attaching its persistent home volume, and enabling SSH…'
+                                : 'Starting the GPU container and enabling SSH…')
+                            : containerSubtext,
+                    step: 2,
+                    labels: launchSteps
+                },
+                webrtc: {
+                    title: reconnect ? 'Restarting desktop video' : 'Starting desktop video',
+                    subtext: 'Selecting WebRTC and preparing the browser video connection…',
+                    step: 3,
+                    labels: launchSteps
+                },
+                'webrtc-offer': {
+                    title: reconnect ? 'Restarting desktop video' : 'Starting desktop video',
+                    subtext: 'Creating the display offer while network routes are gathered in parallel…',
+                    step: 3,
+                    labels: launchSteps
+                },
+                'webrtc-waiting': {
+                    title: reconnect ? 'Restarting desktop video' : 'Starting desktop video',
+                    subtext: 'Display offer sent; waiting for the desktop video agent to accept it…',
+                    step: 3,
+                    labels: launchSteps
+                },
+                'webrtc-agent': {
+                    title: reconnect ? 'Restarting desktop video' : 'Starting desktop video',
+                    subtext: 'Desktop agent accepted the offer and is starting video capture…',
+                    step: 3,
+                    labels: launchSteps
+                },
+                'webrtc-retry': {
+                    title: 'Retrying desktop video',
+                    subtext: 'The first WebRTC attempt did not connect; retrying once…',
+                    step: 3,
+                    labels: launchSteps
+                },
+                'webrtc-ice': {
+                    title: 'Securing display connection',
+                    subtext: 'Desktop answer received; negotiating the encrypted peer connection…',
+                    step: 4,
+                    labels: launchSteps
+                },
+                vnc: {
+                    title: reconnect ? 'Reopening desktop display' : 'Opening desktop display',
+                    subtext: 'WebRTC is unavailable; opening the classic remote desktop stream…',
+                    step: 3,
+                    labels: classicSteps
+                }
             };
-            var msg = phases[phase] || phases.preparing;
-            if (titleEl) titleEl.textContent = msg[0];
-            if (subEl) subEl.textContent = msg[1];
+            var resolvedPhase = phases[phase] ? phase : 'preparing';
+            var msg = phases[resolvedPhase];
+            if (titleEl) titleEl.textContent = msg.title;
+            if (subEl) subEl.textContent = msg.subtext;
+            axonosSetLoaderChecklist(msg.labels, msg.step);
 
-            // Progressively check checklist steps
-            if (typeof window.axonosBootOverlayNextStep === 'function') {
-                if (phase === 'payment') window.axonosBootOverlayNextStep(1);
-                else if (phase === 'preparing') window.axonosBootOverlayNextStep(1);
-                else if (phase === 'claiming') window.axonosBootOverlayNextStep(2);
-                else if (phase === 'webrtc') window.axonosBootOverlayNextStep(3);
-                else if (phase === 'vnc') window.axonosBootOverlayNextStep(4);
+            var currentStepKey = msg.step + ':' + String(msg.labels[msg.step - 1] || '');
+            if (loaderCurrentStepKey !== currentStepKey) {
+                loaderCurrentStepKey = currentStepKey;
+                loaderPhaseStartTime = Date.now();
             }
+            axonosUpdateLoaderElapsed();
         }
 
         window.axonosIsReconnectLaunch = axonosIsReconnectLaunch;
@@ -2468,33 +2608,34 @@ Copyright (C) 2019 The noVNC Authors
 
         function showConnectionLoader(phase) {
             const loader = document.getElementById('axonos-loader');
+            const fresh = !!(loader && !loader.classList.contains('active'));
             if (loader) {
                 loader.classList.remove('axonos-loader--workspace');
             }
             if (typeof phase === 'string') {
                 axonosSetConnectionLoaderPhase(phase);
+            } else if (fresh) {
+                // A generic fresh launch must not inherit payment/retry wording from
+                // the prior use of this reusable overlay.
+                axonosSetConnectionLoaderPhase('preparing');
             }
             axonosSetLaunchBusy(true);
-            if (loader && !loader.classList.contains('active')) {
+            if (fresh) {
                 loader.classList.add('active');
                 loaderStartTime = Date.now();
+                loaderPhaseStartTime = loaderStartTime;
+                axonosStartLoaderElapsedTimer();
             }
         }
 
-        function hideConnectionLoader(force) {
+        function hideConnectionLoader() {
             const loader = document.getElementById('axonos-loader');
             if (loader && loader.classList.contains('active')) {
-                const minDisplayTime = force ? 0 : 2000;
-                const elapsedTime = loaderStartTime ? Date.now() - loaderStartTime : minDisplayTime;
-                const remainingTime = Math.max(0, minDisplayTime - elapsedTime);
-
-                console.log('Hiding connection loader in', remainingTime, 'ms');
-                setTimeout(() => {
-                    loader.classList.remove('active');
-                    loader.classList.remove('axonos-loader--workspace');
-                    console.log('Connection loader hidden');
-                }, remainingTime);
+                loader.classList.remove('active');
+                loader.classList.remove('axonos-loader--workspace');
+                console.log('Connection loader hidden');
             }
+            axonosStopLoaderElapsedTimer(true);
             axonosSetLaunchBusy(false);
         }
 
@@ -6166,7 +6307,9 @@ Copyright (C) 2019 The noVNC Authors
             mutations.forEach(function (mutation) {
                 if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
                     if (document.documentElement.classList.contains('noVNC_connected')) {
-                        setTimeout(hideConnectionLoader, 500); // Small delay for smooth transition
+                        // Defensive fallback for connection paths that do not call the
+                        // normal success handler. Never hold the ready desktop behind UI.
+                        hideConnectionLoader();
                         // Hide branding elements
                         const branding = document.querySelector('.axonos-branding');
                         const version = document.querySelector('.axonos-version');

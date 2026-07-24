@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
+import time
 import unittest
 from unittest import mock
 
@@ -15,6 +17,9 @@ if _axonos_gate_root not in sys.path:
 
 class WebrtcCaptureTests(unittest.TestCase):
     def tearDown(self) -> None:
+        from webrtc.capture import _reset_runtime_probe_caches_for_tests
+
+        _reset_runtime_probe_caches_for_tests()
         for k in list(os.environ.keys()):
             if k.startswith(("WEBRTC_CAPTURE_", "WEBRTC_AUDIO_", "WEBRTC_MIC_")):
                 del os.environ[k]
@@ -160,6 +165,74 @@ class WebrtcCaptureTests(unittest.TestCase):
 
         os.environ["WEBRTC_CAPTURE_BACKEND"] = "auto"
         self.assertEqual(resolve_capture_backend({}), "nvenc")
+
+    def test_nvenc_runtime_probe_is_cached(self) -> None:
+        from webrtc import capture
+
+        capture._reset_runtime_probe_caches_for_tests()
+        with mock.patch.object(capture, "_probe_nvenc_runtime", return_value=True) as probe:
+            self.assertTrue(capture.nvenc_runtime_ok({}))
+            self.assertTrue(capture.nvenc_runtime_ok({}))
+
+        probe.assert_called_once()
+
+    def test_pulse_false_is_not_cached_but_success_is(self) -> None:
+        from webrtc import capture
+
+        capture._reset_runtime_probe_caches_for_tests()
+        with mock.patch.object(
+            capture,
+            "_probe_pulse_runtime",
+            side_effect=[False, True],
+        ) as probe:
+            self.assertFalse(capture.pulse_runtime_ok({}))
+            self.assertTrue(capture.pulse_runtime_ok({}))
+            self.assertTrue(capture.pulse_runtime_ok({}))
+
+        self.assertEqual(probe.call_count, 2)
+
+    def test_concurrent_pulse_callers_share_one_false_probe(self) -> None:
+        from webrtc import capture
+
+        capture._reset_runtime_probe_caches_for_tests()
+        entered = threading.Event()
+        release = threading.Event()
+        second_started = threading.Event()
+        results: list[bool] = []
+        calls = 0
+        calls_lock = threading.Lock()
+
+        def slow_false(_env: dict[str, str] | None = None) -> bool:
+            nonlocal calls
+            with calls_lock:
+                calls += 1
+            entered.set()
+            release.wait(timeout=2)
+            return False
+
+        def run_probe(started: threading.Event | None = None) -> None:
+            if started is not None:
+                started.set()
+            results.append(capture.pulse_runtime_ok({}))
+
+        with mock.patch.object(capture, "_probe_pulse_runtime", side_effect=slow_false):
+            first = threading.Thread(target=run_probe)
+            second = threading.Thread(target=run_probe, args=(second_started,))
+            first.start()
+            self.assertTrue(entered.wait(timeout=1))
+            second.start()
+            self.assertTrue(second_started.wait(timeout=1))
+            # Give the second caller time to join the in-flight probe before
+            # releasing the first; it must receive that same false result.
+            time.sleep(0.02)
+            release.set()
+            first.join(timeout=2)
+            second.join(timeout=2)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(results, [False, False])
+        self.assertEqual(calls, 1)
 
     def test_audio_defaults(self) -> None:
         from webrtc.capture import audio_enabled, audio_source_name

@@ -38,7 +38,9 @@ if [ -n "$NVSHMEM_DIRS" ]; then
     ldconfig
 fi
 
-# Initialize IPFS for aXonian user
+# Initialize IPFS for aXonian user.  Supervisord owns the daemon process;
+# keeping startup limited to repository/config preparation lets desktop services
+# begin without an unrelated fixed IPFS readiness delay.
 echo "Initializing IPFS..."
 su - aXonian -c 'ipfs init --profile=server' || echo "IPFS already initialized or failed to initialize"
 
@@ -52,15 +54,6 @@ IPFS_GATEWAY_PORT="${IPFS_GATEWAY_PORT:-8080}"
 echo "Configuring IPFS bind addresses..."
 su - aXonian -c "ipfs config Addresses.API \"/ip4/${IPFS_API_BIND}/tcp/${IPFS_API_PORT}\""
 su - aXonian -c "ipfs config Addresses.Gateway \"/ip4/${IPFS_GATEWAY_BIND}/tcp/${IPFS_GATEWAY_PORT}\""
-
-# Start IPFS daemon in background
-echo "Starting IPFS daemon..."
-su - aXonian -c 'ipfs daemon --enable-gc --routing=dht' &
-
-# Wait a moment for IPFS to start and check status
-sleep 3
-echo "Checking IPFS status..."
-su - aXonian -c 'ipfs id' || echo "IPFS still starting up..."
 
 # Per-session desktops (axgt-session-*): base axonos is gate-only — no Xorg on GPU 0.
 # Session runtimes set AXGT_SESSION_ID; respect explicit overrides if already set.

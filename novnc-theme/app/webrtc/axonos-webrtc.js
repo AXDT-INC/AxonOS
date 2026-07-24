@@ -220,40 +220,28 @@ function _normalizeSdp(sdp) {
         .replace(/(\r\n)+$/g, '') + '\r\n';
 }
 
-function _waitIceGathering(pc, ms) {
-    return new Promise((resolve) => {
-        if (pc.iceGatheringState === 'complete') {
-            resolve();
-            return;
-        }
-        const t0 = Date.now();
-        const iv = setInterval(() => {
-            if (pc.iceGatheringState === 'complete' || Date.now() - t0 > ms) {
-                clearInterval(iv);
-                pc.removeEventListener('icegatheringstatechange', onchg);
-                resolve();
-            }
-        }, 50);
-        function onchg() {
-            if (pc.iceGatheringState === 'complete') {
-                clearInterval(iv);
-                pc.removeEventListener('icegatheringstatechange', onchg);
-                resolve();
-            }
-        }
-        pc.addEventListener('icegatheringstatechange', onchg);
-    });
-}
-
 /**
  * @param {object} opts
  * @param {import('../ui.js').UI} opts.UI - noVNC UI object
+ * @param {(phase: string) => void} [opts.onProgress] - truthful loader phase callback
  * @returns {Promise<boolean>} true if WebRTC owns the session UI
  */
 export async function connectAxonOSWebRTC(opts) {
     const UI = opts.UI;
     const wallet = window.verifiedWalletAddress;
     const token = window.verifiedWalletAuthToken;
+    const reportProgress = (phase) => {
+        const callback = typeof opts.onProgress === 'function'
+            ? opts.onProgress
+            : window.axonosSetConnectionLoaderPhase;
+        if (typeof callback === 'function') {
+            try {
+                callback(phase);
+            } catch (e) {
+                console.warn('AxonOS WebRTC progress callback failed', e);
+            }
+        }
+    };
 
     // A caller reads this after each false result. Never let a prior attempt's
     // terminal reason suppress the retry policy for a newer attempt.
@@ -496,9 +484,12 @@ export async function connectAxonOSWebRTC(opts) {
         );
     };
 
+    reportProgress('webrtc-offer');
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    await _waitIceGathering(pc, 12000);
+    // Do not serialize the server-side display startup behind full browser ICE
+    // gathering. onicecandidate above already trickles every route to the gate,
+    // so the offer can be posted immediately and both operations can overlap.
 
     const offerRes = await _fetchJson('./api/webrtc/offer', {
         method: 'POST',
@@ -523,10 +514,12 @@ export async function connectAxonOSWebRTC(opts) {
         setTimeout(_hideBanner, 4000);
         return false;
     }
+    reportProgress('webrtc-waiting');
 
     let answerApplied = false;
     const deadline = Date.now() + answerWaitMs;
     let serverIceCursor = 0;
+    let lastSignalingState = '';
 
     while (Date.now() < deadline && !answerApplied) {
         if (_negotiationCancelled(negotiationGeneration)) {
@@ -555,6 +548,15 @@ export async function connectAxonOSWebRTC(opts) {
             break;
         }
         const j = st.json;
+        const signalingState = String(j.state || '');
+        if (signalingState !== lastSignalingState) {
+            lastSignalingState = signalingState;
+            if (signalingState === 'agent_processing') {
+                reportProgress('webrtc-agent');
+            } else if (signalingState === 'offer_received') {
+                reportProgress('webrtc-waiting');
+            }
+        }
         if (j.state === 'failed' || j.last_error) {
             if (await _finishNegotiationCancelled(negotiationGeneration, pc, video, sessionId, wallet)) {
                 return false;
@@ -591,6 +593,7 @@ export async function connectAxonOSWebRTC(opts) {
                 new RTCSessionDescription({ type: 'answer', sdp: answerSdp })
             );
             answerApplied = true;
+            reportProgress('webrtc-ice');
         }
         const srv = j.server_ice || [];
         for (; serverIceCursor < srv.length; serverIceCursor += 1) {
@@ -635,6 +638,7 @@ export async function connectAxonOSWebRTC(opts) {
 
     await Promise.allSettled(pendingIce);
 
+    reportProgress('webrtc-ice');
     _setBanner('WebRTC: negotiating ICE…', 'connecting');
     if (typeof UI.updateVisualState === 'function') {
         UI.updateVisualState('connecting');

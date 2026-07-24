@@ -3402,6 +3402,16 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
   letter-spacing: 0.06em;
 }
 
+.axonos-loading-elapsed {
+  margin-top: 9px;
+  color: #777f99;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+
 @keyframes text-pulse {
 
   0%,
@@ -7570,6 +7580,10 @@ html.noVNC_connected:has(.axonos-session-sidebar.collapsed) .axonos-session-hud 
   padding: 11px 0;
   opacity: 0.35;
   transition: opacity 0.3s ease;
+}
+
+.axonos-prep-step[hidden] {
+  display: none;
 }
 
 .axonos-prep-step.active {

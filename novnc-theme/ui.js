@@ -3132,6 +3132,11 @@ const UI = {
                             window.axonosSetConnectionLoaderPhase('webrtc');
                         }
                         let webRtcModule = null;
+                        const onWebRtcProgress = (phase) => {
+                            if (typeof window.axonosSetConnectionLoaderPhase === 'function') {
+                                window.axonosSetConnectionLoaderPhase(phase);
+                            }
+                        };
                         const captureWebRtcFailure = (caughtError) => {
                             let failure = null;
                             if (webRtcModule &&
@@ -3165,14 +3170,17 @@ const UI = {
                         try {
                             // A stable module URL keeps negotiation generation/cancellation
                             // state shared across retries and rapid user reconnects.
-                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260724a');
+                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260724b');
                             if (!connectAttemptIsCurrent()) {
                                 return;
                             }
                             if (typeof webRtcModule.cancelAxonOSWebRTCNegotiation === 'function') {
                                 window.axonosCancelWebRtcNegotiation = webRtcModule.cancelAxonOSWebRTCNegotiation;
                             }
-                            usedWebRtc = await webRtcModule.connectAxonOSWebRTC({ UI });
+                            usedWebRtc = await webRtcModule.connectAxonOSWebRTC({
+                                UI,
+                                onProgress: onWebRtcProgress,
+                            });
                             captureWebRtcFailure();
                         } catch (weErr) {
                             Log.Warn('AxonOS WebRTC path failed: ' + weErr);
@@ -3190,12 +3198,15 @@ const UI = {
                             Log.Warn('AxonOS: WebRTC negotiation failed; retrying once in 3s…');
                             UI.hideStatus();
                             if (typeof window.axonosSetConnectionLoaderPhase === 'function') {
-                                window.axonosSetConnectionLoaderPhase('webrtc');
+                                window.axonosSetConnectionLoaderPhase('webrtc-retry');
                             }
                             await new Promise((res) => setTimeout(res, 3000));
                             if (connectAttemptIsCurrent() && !window.axonosWebRtcConnectAborted) {
                                 try {
-                                    usedWebRtc = await webRtcModule.connectAxonOSWebRTC({ UI });
+                                    usedWebRtc = await webRtcModule.connectAxonOSWebRTC({
+                                        UI,
+                                        onProgress: onWebRtcProgress,
+                                    });
                                     captureWebRtcFailure();
                                 } catch (weErr2) {
                                     Log.Warn('AxonOS WebRTC retry failed: ' + weErr2);

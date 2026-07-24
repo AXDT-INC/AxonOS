@@ -882,6 +882,30 @@ def _agent_fail(session_id: str, error: str) -> None:
         logger.warning("agent fail report: %s", e)
 
 
+async def _wait_for_ice_gathering_complete(pc: Any, timeout_s: float = 8.0) -> bool:
+    """Wait for ICE gathering without missing a transition that already occurred.
+
+    aiortc may complete gathering inside ``setLocalDescription``.  Register the
+    listener first and then inspect the current state so both an earlier
+    transition and a concurrent transition resolve immediately.
+    """
+    done = asyncio.Event()
+
+    @pc.on("icegatheringstatechange")
+    def on_ice_state() -> None:
+        if pc.iceGatheringState == "complete":
+            done.set()
+
+    if pc.iceGatheringState == "complete":
+        done.set()
+
+    try:
+        await asyncio.wait_for(done.wait(), timeout=timeout_s)
+        return True
+    except asyncio.TimeoutError:
+        return False
+
+
 _cached_public_ip: str | None = None
 
 def _get_public_ip() -> str | None:
@@ -1395,16 +1419,7 @@ async def _run_session(job: dict[str, Any]) -> None:
             session_id[:16],
         )
 
-    done = asyncio.Event()
-
-    @pc.on("icegatheringstatechange")
-    def on_ice_state() -> None:
-        if pc.iceGatheringState == "complete":
-            done.set()
-
-    try:
-        await asyncio.wait_for(done.wait(), timeout=8.0)
-    except asyncio.TimeoutError:
+    if not await _wait_for_ice_gathering_complete(pc, timeout_s=8.0):
         logger.warning("ICE gathering timeout; continuing with partial SDP")
 
     sdp_local = pc.localDescription
@@ -1482,6 +1497,46 @@ def _http_get_job(url: str, headers: dict[str, str]) -> tuple[int, dict[str, Any
         return -1, None
 
 
+async def _prewarm_session_capabilities() -> None:
+    """Overlap display, video-backend, and audio readiness probes at startup.
+
+    Capture helpers single-flight these probes, so an offer arriving during
+    prewarm waits for the same work instead of launching duplicate FFmpeg
+    subprocesses.  Pulse failures remain retryable because PulseAudio may still
+    be starting when this background task runs.
+    """
+    sys.path.insert(0, "/axonos_gate")
+    from webrtc.capture import audio_enabled, pulse_runtime_ok, resolve_capture_backend
+
+    env = _display_env()
+    logger.info("session container: pre-warming display and media capabilities")
+    work = [
+        asyncio.to_thread(_ensure_display_ready),
+        asyncio.to_thread(resolve_capture_backend, env),
+    ]
+    probe_audio = audio_enabled()
+    if probe_audio:
+        work.append(asyncio.to_thread(pulse_runtime_ok, env))
+
+    results = await asyncio.gather(*work, return_exceptions=True)
+    display_result, backend_result = results[:2]
+    if isinstance(display_result, BaseException) or not display_result:
+        logger.warning("session container: display pre-warm incomplete; will retry when offer arrives")
+    if isinstance(backend_result, BaseException):
+        logger.warning("session container: capture backend pre-warm failed: %s", backend_result)
+    else:
+        logger.info("session container: capture backend pre-warmed: %s", backend_result)
+
+    if probe_audio:
+        audio_result = results[2]
+        if isinstance(audio_result, BaseException):
+            logger.warning("session container: audio capability pre-warm failed: %s", audio_result)
+        elif audio_result:
+            logger.info("session container: audio capability pre-warmed")
+        else:
+            logger.info("session container: audio not ready during pre-warm; offer path will retry")
+
+
 async def main_loop() -> None:
     if not _agent_key():
         logger.error("WEBRTC_AGENT_INTERNAL_KEY unset")
@@ -1492,15 +1547,12 @@ async def main_loop() -> None:
     poll_url = f"{gate}/api/webrtc/agent/next"
     logger.info("WebRTC agent polling gate at %s", poll_url)
 
+    prewarm_task: asyncio.Task | None = None
     if (os.getenv("AXGT_SESSION_ID") or "").strip():
-
-        async def _prewarm_display() -> None:
-            logger.info("session container: pre-warming display in background")
-            warmed = await asyncio.to_thread(_ensure_display_ready)
-            if not warmed:
-                logger.warning("session container: display pre-warm incomplete; will retry when offer arrives")
-
-        asyncio.create_task(_prewarm_display())
+        prewarm_task = asyncio.create_task(_prewarm_session_capabilities())
+        # Let asyncio.to_thread submit all probes before the first synchronous
+        # agent/next request can claim an already-waiting offer.
+        await asyncio.sleep(0)
 
     active_task: asyncio.Task | None = None
     current_session_id: str | None = None
