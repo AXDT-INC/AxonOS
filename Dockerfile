@@ -617,10 +617,10 @@ ARG NVIDIA_DRIVER_VERSION=580
 #   xserver-xorg-video-nvidia-*, libnvidia-gl-*, libnvidia-cfg1-*, libnvidia-common-*
 # The CUDA base image often preinstalls newer libnvidia-cfg1 (e.g. 535.309) — without pinning cfg1/common,
 # apt cannot downgrade to match host (e.g. 535.288). Use --allow-downgrades in the install line.
-# If unset, apt picks latest 535.x in Ubuntu — which can be NEWER than the host kernel driver
-# (e.g. lib 535.309 vs host 535.288). Then Xorg logs "NVIDIA GLX Module ..." vs
-# "NVIDIA dlloader X Driver ..." mismatched and often SIGSEGVs at "Enabling 2D acceleration".
-# Set via docker compose build arg / .env (see env.example).
+# If unset, apt picks the best package set available for the configured major branch.
+# The runtime Xorg launcher repairs libglx.so after NVIDIA's container hook injects
+# host-matched modules, so host patch updates do not leave this build-time link stale.
+# Pinning is still recommended for reproducible builds (see env.example).
 ARG NVIDIA_DRIVER_PKG_VERSION=
 # Only install the Xorg + GL userspace pieces needed for GPU-backed Xorg :0.
 # Avoid nvidia-utils to prevent overlayfs hardlink backup failures.
@@ -642,8 +642,9 @@ RUN ( dpkg -L "xserver-xorg-video-nvidia-${NVIDIA_DRIVER_VERSION}"; \
       exit 1; }
 
 # Mesa's libglx.so can remain the default after early apt layers; Xorg then loads two GLX vendors
-# ("Another vendor is already registered for screen 0") and SIGSEGVs. Script avoids Dockerfile RUN "$$VAR"
-# (sh expands $$ to PID, e.g. 1GLX_EXT).
+# ("Another vendor is already registered for screen 0") and SIGSEGVs. Keep this link on NVIDIA's
+# unversioned runtime-managed target; start-xorg-nvidia.sh repairs and validates it again at startup.
+# Script avoids Dockerfile RUN "$$VAR" (sh expands $$ to PID, e.g. 1GLX_EXT).
 RUN /usr/local/bin/fix-libglx-nvidia-symlink.sh
 
 ENV NVIDIA_DRIVER_CAPABILITIES=graphics,utility,compute,display,video

@@ -66,14 +66,14 @@ With repo `docker-compose.yml`, `AXGT_CHALLENGE_DB_URL` is **auto-set** on the `
 
 - **When:** Docker build arg
 - **Used by:** [`Dockerfile`](../Dockerfile), [`scripts/resolve-nvidia-driver-pkg-version.sh`](../scripts/resolve-nvidia-driver-pkg-version.sh), [`scripts/install-nvidia-xorg-userspace.sh`](../scripts/install-nvidia-xorg-userspace.sh)
-- **Purpose:** Pins `xserver-xorg-video-nvidia`, `libnvidia-gl`, `libnvidia-cfg1`, and `libnvidia-common` to a single apt version matching the **host** `nvidia-smi` driver. Prevents Xorg GLX mismatch crashes.
+- **Purpose:** Pins `xserver-xorg-video-nvidia`, `libnvidia-gl`, `libnvidia-cfg1`, and `libnvidia-common` to a reproducible apt version matching the host driver branch. At container startup, AxonOS also relinks Xorg GLX to NVIDIA's host-matched runtime module so automatic host patch updates do not leave a stale build-time link.
 - **Example:** `535.288.01-0ubuntu1` or triplet `535.288.01`
-- **Default:** Empty — build resolves best available for major branch `535`.
+- **Default:** Empty — build resolves the best available set for major branch `580`.
 
 ### `NVIDIA_DRIVER_VERSION`
 
-- **When:** Docker build (`ARG`, default `535`)
-- **Purpose:** Major NVIDIA driver branch for package names (e.g. `535` → `libnvidia-gl-535`).
+- **When:** Docker build (`ARG`, default `580`)
+- **Purpose:** Major NVIDIA driver branch for package names (e.g. `580` → `libnvidia-gl-580`).
 
 ### `OLLAMA_INSTALL_SHA256`
 

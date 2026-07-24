@@ -11,6 +11,17 @@ if command -v nvidia-smi >/dev/null 2>&1; then
   _dv="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 | tr -d '[:space:]')" || _dv=""
   echo "start-xorg-nvidia: nvidia-smi reports driver_version=${_dv:-unknown}"
 fi
+
+# NVIDIA's container runtime injects host-matched Xorg/GLX modules only when the
+# container starts. Repair the image's build-time link after that injection so a
+# host patch-driver update cannot leave Xorg loading two different versions.
+GLX_FIX=/usr/local/bin/fix-libglx-nvidia-symlink.sh
+if [ ! -x "$GLX_FIX" ]; then
+  echo "start-xorg-nvidia: ERROR missing executable $GLX_FIX"
+  exit 1
+fi
+"$GLX_FIX"
+
 BUS_ID_RAW="$(nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader 2>/dev/null | head -n 1 | tr -d '[:space:]')"
 CONFIG_SRC="/etc/X11/xorg.conf.nvidia"
 CONFIG_TMP="/tmp/xorg.conf.nvidia"
@@ -35,7 +46,12 @@ fi
 # Mesa libglx.so left in place => dual GLX vendors => SIGSEGV/SIGABRT (see fix-libglx-nvidia-symlink.sh).
 GLX_LINK="/usr/lib/xorg/modules/extensions/libglx.so"
 if [ -e "$GLX_LINK" ]; then
-  echo "start-xorg-nvidia: libglx.so -> $(readlink -f "$GLX_LINK" 2>/dev/null || ls -l "$GLX_LINK")"
+  _glx_resolved="$(readlink -f "$GLX_LINK" 2>/dev/null || true)"
+  echo "start-xorg-nvidia: libglx.so -> ${_glx_resolved:-unresolved}"
+  if [ -n "${_dv:-}" ] && [ "${_glx_resolved##*.so.}" != "$_dv" ]; then
+    echo "start-xorg-nvidia: ERROR NVIDIA GLX ${_glx_resolved##*.so.} does not match runtime driver $_dv"
+    exit 1
+  fi
 else
   echo "start-xorg-nvidia: WARNING missing $GLX_LINK (Xorg may abort)"
 fi

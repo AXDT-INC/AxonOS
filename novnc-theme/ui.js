@@ -273,6 +273,8 @@ const UI = {
     /** WebRTC: last time/text we pushed from host to remote (pull or Ctrl+V paste). */
     webrtcHostPushAt: 0,
     webrtcHostPushText: "",
+    /** Structured reason from the last unsuccessful WebRTC connect attempt. */
+    webrtcLastFailure: null,
 
     markHostClipboardSentToRemote(text) {
         if (typeof text !== 'string' || text.length === 0) {
@@ -2583,6 +2585,7 @@ const UI = {
         UI._axonosInvalidateConnectAttempt();
         UI._axonosCancelWebRtcClient();
         UI.hideStatus();
+        UI.webrtcLastFailure = null;
         if (UI.reconnectCallback !== null) {
             clearTimeout(UI.reconnectCallback);
             UI.reconnectCallback = null;
@@ -3010,6 +3013,7 @@ const UI = {
         }
 
         UI.hideStatus();
+        UI.webrtcLastFailure = null;
 
         if (!host) {
             Log.Error("Can't connect when host is: " + host);
@@ -3116,6 +3120,7 @@ const UI = {
                 }
                 (async () => {
                     let usedWebRtc = false;
+                    let webRtcFailure = null;
                     const cfgPeek = await fetch('./api/config', { credentials: 'include' })
                         .then((r) => r.json())
                         .catch(() => ({}));
@@ -3127,10 +3132,40 @@ const UI = {
                             window.axonosSetConnectionLoaderPhase('webrtc');
                         }
                         let webRtcModule = null;
+                        const captureWebRtcFailure = (caughtError) => {
+                            let failure = null;
+                            if (webRtcModule &&
+                                typeof webRtcModule.getAxonOSWebRTCFailure === 'function') {
+                                try {
+                                    failure = webRtcModule.getAxonOSWebRTCFailure();
+                                } catch (failureErr) {
+                                    Log.Warn('AxonOS WebRTC failure detail unavailable: ' + failureErr);
+                                }
+                            }
+                            if (!failure && caughtError) {
+                                const detail = String(
+                                    (caughtError && caughtError.message) || caughtError
+                                ).trim() || 'client error';
+                                failure = {
+                                    code: 'client_exception',
+                                    detail,
+                                    message: `WebRTC failed: ${detail}`,
+                                    stage: 'client',
+                                    state: 'failed',
+                                    terminal: false,
+                                    retryable: true,
+                                };
+                            }
+                            webRtcFailure = failure && typeof failure === 'object'
+                                ? { ...failure }
+                                : null;
+                            UI.webrtcLastFailure = webRtcFailure;
+                            return webRtcFailure;
+                        };
                         try {
                             // A stable module URL keeps negotiation generation/cancellation
                             // state shared across retries and rapid user reconnects.
-                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260716a');
+                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260724a');
                             if (!connectAttemptIsCurrent()) {
                                 return;
                             }
@@ -3138,13 +3173,17 @@ const UI = {
                                 window.axonosCancelWebRtcNegotiation = webRtcModule.cancelAxonOSWebRTCNegotiation;
                             }
                             usedWebRtc = await webRtcModule.connectAxonOSWebRTC({ UI });
+                            captureWebRtcFailure();
                         } catch (weErr) {
                             Log.Warn('AxonOS WebRTC path failed: ' + weErr);
+                            captureWebRtcFailure(weErr);
                         }
                         if (!connectAttemptIsCurrent()) {
                             return;
                         }
-                        if (!usedWebRtc && !window.axonosWebRtcConnectAborted && webRtcModule) {
+                        const terminalWebRtcFailure = webRtcFailure && webRtcFailure.terminal === true;
+                        if (!usedWebRtc && !window.axonosWebRtcConnectAborted &&
+                            webRtcModule && !terminalWebRtcFailure) {
                             // One automatic retry on the same module instance. Clear a
                             // provisional ICE error so a later success is not masked by
                             // showStatus()'s intentional "first error wins" behavior.
@@ -3157,10 +3196,17 @@ const UI = {
                             if (connectAttemptIsCurrent() && !window.axonosWebRtcConnectAborted) {
                                 try {
                                     usedWebRtc = await webRtcModule.connectAxonOSWebRTC({ UI });
+                                    captureWebRtcFailure();
                                 } catch (weErr2) {
                                     Log.Warn('AxonOS WebRTC retry failed: ' + weErr2);
+                                    captureWebRtcFailure(weErr2);
                                 }
                             }
+                        } else if (!usedWebRtc && terminalWebRtcFailure) {
+                            Log.Warn(
+                                'AxonOS: terminal WebRTC failure; skipping automatic retry: ' +
+                                (webRtcFailure.code || webRtcFailure.detail || 'unknown')
+                            );
                         }
                         if (!connectAttemptIsCurrent()) {
                             return;
@@ -3172,7 +3218,30 @@ const UI = {
                             return;
                         }
                         if (!usedWebRtc && cfgPeek.webrtc_fallback_enabled === false) {
-                            UI._axonosReturnToHomeAfterDisconnect();
+                            const failureCode = webRtcFailure && String(webRtcFailure.code || '').trim();
+                            const failureDetail = webRtcFailure && String(
+                                webRtcFailure.detail || webRtcFailure.message || ''
+                            ).trim();
+                            let failureMessage;
+                            if (failureCode === 'display_not_ready') {
+                                failureMessage = _(
+                                    'Desktop display failed to start (display_not_ready). ' +
+                                    'The session is still running; end it from the workspace and launch again. ' +
+                                    'If this repeats, contact support.'
+                                );
+                            } else {
+                                const detailSuffix = failureDetail ? `: ${failureDetail}` : '';
+                                failureMessage = _(
+                                    `Could not connect to the desktop display${detailSuffix}. ` +
+                                    'Retry from the workspace. If the session remains listed, end it before relaunching.'
+                                );
+                            }
+                            // showStatus errors never time out. Mark the workspace return as
+                            // status-preserving so its generic disconnect cleanup cannot hide
+                            // the actionable server reason the user needs to recover.
+                            UI.hideStatus();
+                            UI.showStatus(failureMessage, 'error');
+                            UI._axonosReturnToHomeAfterDisconnect({ preserveStatus: true });
                             return;
                         }
                     }

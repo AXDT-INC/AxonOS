@@ -91,6 +91,52 @@ function _hideBanner() {
 let _negotiationGeneration = 0;
 /** @type {{ pc: RTCPeerConnection, video: HTMLVideoElement, sessionId: string, wallet: string, generation: number, pasteClipboard?: Function, releasePointer?: Function } | null} */
 let _inFlightNegotiation = null;
+/** Structured reason for the most recently completed, unsuccessful connect attempt. */
+let _lastConnectFailure = null;
+const _terminalSignalingFailures = new Set(['display_not_ready']);
+
+function _normalizeFailureCode(value, fallback = 'signaling_failed') {
+    const text = String(value || '').trim().toLowerCase();
+    if (/^[a-z][a-z0-9_-]*$/.test(text)) {
+        return text;
+    }
+    const prefixedCode = text.match(/^([a-z][a-z0-9_-]*)\s*:/);
+    return prefixedCode ? prefixedCode[1] : fallback;
+}
+
+function _recordSignalingFailure(payload, sessionId) {
+    const rawError = payload && payload.last_error;
+    const structuredError = rawError && typeof rawError === 'object' ? rawError : null;
+    const detail = String(
+        (structuredError && (
+            structuredError.detail || structuredError.message ||
+            structuredError.error || structuredError.code
+        )) || rawError || 'signaling failed'
+    ).trim() || 'signaling failed';
+    const explicitCode = payload && (
+        payload.error_code || payload.failure_code || payload.last_error_code
+    );
+    const code = _normalizeFailureCode(
+        explicitCode || (structuredError && structuredError.code) || rawError
+    );
+    const terminal = _terminalSignalingFailures.has(code);
+    _lastConnectFailure = Object.freeze({
+        code,
+        detail,
+        message: `WebRTC failed: ${detail}`,
+        stage: 'signaling',
+        state: String((payload && payload.state) || 'failed'),
+        sessionId: String(sessionId || ''),
+        terminal,
+        retryable: !terminal,
+    });
+    return _lastConnectFailure;
+}
+
+/** Let the UI distinguish a terminal server failure from a retryable false result. */
+export function getAxonOSWebRTCFailure() {
+    return _lastConnectFailure ? { ..._lastConnectFailure } : null;
+}
 
 function _negotiationCancelled(generation) {
     return generation !== _negotiationGeneration;
@@ -208,6 +254,10 @@ export async function connectAxonOSWebRTC(opts) {
     const UI = opts.UI;
     const wallet = window.verifiedWalletAddress;
     const token = window.verifiedWalletAuthToken;
+
+    // A caller reads this after each false result. Never let a prior attempt's
+    // terminal reason suppress the retry policy for a newer attempt.
+    _lastConnectFailure = null;
 
     if (!wallet || !token) {
         return false;
@@ -509,9 +559,11 @@ export async function connectAxonOSWebRTC(opts) {
             if (await _finishNegotiationCancelled(negotiationGeneration, pc, video, sessionId, wallet)) {
                 return false;
             }
+            // Capture the server reason before teardown so even an unexpected cleanup
+            // exception cannot downgrade a terminal failure into a generic client error.
+            const failure = _recordSignalingFailure(j, sessionId);
             await _cleanup(pc, video, sessionId, wallet);
-            const detail = (j.last_error && String(j.last_error).trim()) || 'signaling failed';
-            const msg = `WebRTC failed: ${detail}`;
+            const msg = failure.message;
             if (webrtcFallbackOk) {
                 _setBanner(`${msg} — falling back.`, 'fallback');
             } else {
