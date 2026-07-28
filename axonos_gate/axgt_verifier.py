@@ -745,6 +745,21 @@ def get_wallet_access_status(wallet_address: str, consume_usage: bool = False) -
     """
     warning_threshold = _get_warning_threshold_minutes()
     test_credit_eligible = is_wallet_whitelisted(wallet_address)
+    test_credit_policy: Dict[str, Any] = {
+        "test_credit_eligible": test_credit_eligible,
+        "is_whitelisted": test_credit_eligible,
+    }
+    if test_credit_eligible:
+        # The dashboard must describe the server-enforced bounded grant, rather
+        # than hard-coding the default.  In particular, the default policy fills
+        # a wallet *toward* a 60-credit balance cap; it is not an unconditional
+        # +60 on every click.
+        test_credit_policy.update(
+            {
+                "test_credit_grant_minutes": get_test_credit_grant_minutes(),
+                "test_credit_max_balance_minutes": get_test_credit_max_balance_minutes(),
+            }
+        )
     base_response: Dict[str, Any] = {
         "verified": False,
         "access_type": None,
@@ -755,8 +770,7 @@ def get_wallet_access_status(wallet_address: str, consume_usage: bool = False) -
         "min_deposit": _get_min_deposit_display(),
         "credit_per_100_axgt_minutes": _get_credit_per_100_axgt_minutes(),
         "reason": "No deposit record or zero balance.",
-        "test_credit_eligible": test_credit_eligible,
-        "is_whitelisted": test_credit_eligible,
+        **test_credit_policy,
     }
 
     if not validate_wallet_address(wallet_address):
@@ -786,8 +800,7 @@ def get_wallet_access_status(wallet_address: str, consume_usage: bool = False) -
         "min_deposit": _get_min_deposit_display(),
         "credit_per_100_axgt_minutes": _get_credit_per_100_axgt_minutes(),
         "reason": None,
-        "test_credit_eligible": test_credit_eligible,
-        "is_whitelisted": test_credit_eligible,
+        **test_credit_policy,
     }
     if not verified:
         if eth_deposits_enabled():

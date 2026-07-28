@@ -11,7 +11,7 @@ AxonOS bills users for storage disk usage when they are offline, allows balances
 | Lifecycle Event | Container State | Volume State | Action / Billing |
 | :--- | :--- | :--- | :--- |
 | **Active Session** | Running | Mounted | Deducting prepaid credits from user balance. |
-| **Credits Exhausted** | Running (Grace Period) | Mounted | Active for **2 hours** to allow top-up. Billing stopped. |
+| **Credits Exhausted** | Running (Grace Period) | Mounted | Active for **2 hours** to allow top-up. Compute billing stopped; storage billing continues under this policy. |
 | **Grace Period Expiry** | **Destroyed** | Unmounted (Saved) | Resources (GPU, CPU, RAM) released. Volume saved. |
 | **Offline Storage Billing** | N/A | Saved | Storage charges accrue to balance. Credit balance goes negative. |
 | **Debt Limit Exceeded** | N/A | **Pruned/Deleted** | Volume is deleted when balance drops below the negative debt threshold. |
@@ -22,6 +22,7 @@ AxonOS bills users for storage disk usage when they are offline, allows balances
 
 You can configure this automatic pruning behavior inside your `.env` file:
 
+- `AXGT_SESSION_CREDIT_GRACE_MINUTES`: How long a credit-exhausted running container is retained for top-up before teardown (default: `120` minutes).
 - `AXGT_PERSISTENT_STORAGE_GB_HOUR_COST_MINUTES`: The storage cost in equivalent desktop minutes per GB per hour (defaults to `0.05` minutes/GB-hour).
 - `AXGT_PERSISTENT_STORAGE_CLEANUP_INTERVAL_SECONDS`: How often the background thread sweeps the database to apply storage billing and check for expired volumes (default: `3600` / 1 hour).
 - `AXGT_PERSISTENT_STORAGE_MIN_BALANCE_LIMIT_MINUTES`: The maximum storage debt allowed before volume deletion, expressed as a negative value (default: `-1440.0` minutes / -24 hours of standard compute equivalent).

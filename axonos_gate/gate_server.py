@@ -1009,6 +1009,10 @@ def api_x402_session():
 @app.route('/api/config', methods=['GET'])
 def api_config():
     policy = get_credit_policy()
+    try:
+        from axonos_gate.session_launcher import session_claim_timeout_seconds
+    except ImportError:
+        from session_launcher import session_claim_timeout_seconds
     _dec_raw = (os.getenv("AXGT_TOKEN_DECIMALS") or "").strip()
     try:
         _td = int(_dec_raw) if _dec_raw else 18
@@ -1063,6 +1067,7 @@ def api_config():
         'persistent_storage_enabled': (os.getenv("AXGT_PERSISTENT_STORAGE_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")),
         'persistent_storage_gb_hour_cost_minutes': storage_cost,
         'persistent_storage_min_balance_limit_minutes': min_balance_limit,
+        'session_claim_timeout_seconds': session_claim_timeout_seconds(),
         **(
             webrtc_config.public_config()
             if webrtc_config is not None
@@ -1610,6 +1615,23 @@ def api_session_claim():
     wallet_address = (data.get('wallet_address') or '').strip()
     requested_profile = (data.get('requested_profile') or '').strip() or None
     requested_template = (data.get('requested_template') or '').strip() or None
+    resume_only_raw = data.get('resume_only', False)
+    if not isinstance(resume_only_raw, bool):
+        return jsonify({
+            "granted": False,
+            "error": "resume_only must be a JSON boolean",
+        }), 400
+    resume_only = resume_only_raw is True
+    expected_session_id = data.get('expected_session_id')
+    if resume_only and (
+        isinstance(expected_session_id, bool)
+        or not isinstance(expected_session_id, int)
+        or expected_session_id <= 0
+    ):
+        return jsonify({
+            "granted": False,
+            "error": "A positive integer expected_session_id is required when resume_only is true",
+        }), 400
     # Fail closed: only an explicit JSON boolean true opts into a headless SSH
     # session. In particular, bool("false") is True in Python.
     requested_ssh = data.get('requested_ssh') is True
@@ -1629,6 +1651,8 @@ def api_session_claim():
         requested_template=requested_template,
         requested_ssh=requested_ssh,
         ssh_pubkey=ssh_pubkey,
+        resume_only=resume_only,
+        expected_session_id=expected_session_id,
     ))
 
 
@@ -1643,7 +1667,7 @@ def api_session_heartbeat():
     if not wallet_address or not validate_wallet_address(wallet_address):
         return jsonify({"ok": False, "error": "Valid wallet_address required"}), 400
     # Auth: normal wallet auth token (browser) OR the per-session files_key
-    # (headless/SSH in-container heartbeat daemon, no browser sign-in).
+    # (durable in-container runtime heartbeat, no browser sign-in).
     # ssh_active: daemon-reported live sshd connection -> renews the SSH hard cap.
     ssh_active = bool(data.get('ssh_active'))
     session_key = (request.headers.get('X-AXGT-Session-Key') or data.get('session_key') or '').strip()

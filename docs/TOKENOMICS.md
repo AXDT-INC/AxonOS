@@ -220,9 +220,12 @@ read-only server-side cache and never blocks payment.
    wallet/DEX) is also supported.
 5. Server verifies the tx on-chain, **re-checks** the AXGT balance, applies
    the discount-adjusted credit rate, and credits minutes.
-6. While connected, minutes are deducted incrementally on session
-   heartbeats. When `remaining_minutes` reaches 0, the session is terminated
-   and the user must top up again.
+6. While connected or explicitly detached, minutes are deducted incrementally
+   on runtime/browser heartbeats. When `remaining_minutes` reaches 0, viewer
+   access and compute billing stop while the same running container, jobs, and
+   GPUs are retained for a two-hour top-up grace. A funded reclaim resets the
+   billing checkpoint and reconnects to that allocation; otherwise cleanup ends
+   the container when the grace expires.
 
 ### GPU-weighted session billing
 
@@ -237,7 +240,7 @@ multiplies wall-clock time by the number of GPUs in the active session:
 | Max     | 8    | 8 prepaid minutes             |
 
 Deposits still credit **prepaid minutes** at the ETH/AXGT rates above; larger
-profiles consume that balance faster. Claim/queue requires at least as many
+profiles consume that balance faster. A claim requires at least as many
 prepaid minutes as GPUs in the selected profile (so one billing tick can run).
 
 Disable with `AXGT_GPU_WEIGHTED_BILLING=false` (not recommended for production).

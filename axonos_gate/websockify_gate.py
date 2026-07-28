@@ -928,6 +928,10 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
 
         if _up_cfg(self.path).path == '/api/config':
             policy = get_credit_policy()
+            try:
+                from axonos_gate.session_launcher import session_claim_timeout_seconds
+            except ImportError:
+                from session_launcher import session_claim_timeout_seconds
             _dec_raw = (os.getenv("AXGT_TOKEN_DECIMALS") or "").strip()
             try:
                 _td = int(_dec_raw) if _dec_raw else 18
@@ -988,6 +992,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 "persistent_storage_enabled": (os.getenv("AXGT_PERSISTENT_STORAGE_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")),
                 "persistent_storage_gb_hour_cost_minutes": storage_cost,
                 "persistent_storage_min_balance_limit_minutes": min_balance_limit,
+                "session_claim_timeout_seconds": session_claim_timeout_seconds(),
             }
             if webrtc_config is not None:
                 payload.update(webrtc_config.public_config())
@@ -1564,6 +1569,23 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             wallet_address = (data.get('wallet_address') or '').strip()
             requested_profile = (data.get('requested_profile') or '').strip() or None
             requested_template = (data.get('requested_template') or '').strip() or None
+            resume_only_raw = data.get('resume_only', False)
+            if not isinstance(resume_only_raw, bool):
+                return self._send_json(400, {
+                    'granted': False,
+                    'error': 'resume_only must be a JSON boolean',
+                })
+            resume_only = resume_only_raw is True
+            expected_session_id = data.get('expected_session_id')
+            if resume_only and (
+                isinstance(expected_session_id, bool)
+                or not isinstance(expected_session_id, int)
+                or expected_session_id <= 0
+            ):
+                return self._send_json(400, {
+                    'granted': False,
+                    'error': 'A positive integer expected_session_id is required when resume_only is true',
+                })
             # Fail closed: only an explicit JSON boolean true opts into a
             # headless SSH session (the string "false" must remain false).
             requested_ssh = data.get('requested_ssh') is True
@@ -1583,6 +1605,8 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 requested_template=requested_template,
                 requested_ssh=requested_ssh,
                 ssh_pubkey=ssh_pubkey,
+                resume_only=resume_only,
+                expected_session_id=expected_session_id,
             )
             return self._send_json(200, result)
 
@@ -1591,7 +1615,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             wallet_address = (data.get('wallet_address') or '').strip()
             if not wallet_address or not validate_wallet_address(wallet_address):
                 return self._send_json(400, {'ok': False, 'error': 'Valid wallet_address required'})
-            # Auth: wallet token (browser) OR per-session files_key (headless/SSH daemon).
+            # Auth: wallet token (browser) OR per-session files_key (runtime daemon).
             # ssh_active: daemon-reported live sshd connection -> renews the SSH hard cap.
             ssh_active = bool(data.get('ssh_active'))
             session_key = (self.headers.get('X-AXGT-Session-Key') or data.get('session_key') or '').strip()

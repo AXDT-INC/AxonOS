@@ -89,7 +89,7 @@ The two rails are mutually exclusive at runtime (the flag picks one), so you can
 - `AXGT_CORS_ORIGINS`: CORS allowlist for `/api/*`. Comma-separated origins or `*`.
 - `AXGT_RATE_LIMIT_PER_MIN`: Per-client rate limit for verify calls; `0` to disable.
 - `AXGT_AUTH_TOKEN_TTL_SECONDS`, `AXGT_CHALLENGE_TTL_SECONDS`, `AXGT_AUTH_COOKIE_NAME`, etc.: Auth/session tuning.
-- `AXGT_SESSION_MAX_MINUTES`, `AXGT_HEARTBEAT_TIMEOUT_SECONDS`: Idle session cap (sliding on heartbeat) and stale-heartbeat timeout.
+- `AXGT_SESSION_MAX_MINUTES`, `AXGT_HEARTBEAT_TIMEOUT_SECONDS`: Sliding runtime lease and stale-heartbeat timeout.
 - `AXGT_ADMIN_SECRET`: If set, enables admin API (`/api/admin/*`) when request includes header `X-AXGT-Admin-Secret` or query `admin_secret`.
 - `AXGT_EXPECTED_CONTRACT_ADDRESS`: If set, gate only accepts this contract address.
 
@@ -215,7 +215,8 @@ Optional user-container mode:
 - Active allocations are tracked as explicit GPU ID sets per session.
 - Scheduler derives free GPUs as `configured_gpus - union(active_session_gpu_ids)`.
 - New session can only be created from free IDs; overlapping GPU IDs are not allowed.
-- GPU IDs are released when a session ends (release, timeout, container failure). Credit exhaustion pauses the session by default (`AXGT_SESSION_PRESERVE_ON_CREDIT_EXHAUST=true`) so the same container/desktop can resume after top-up; paused sessions still reserve GPUs until `AXGT_SESSION_PAUSED_MAX_MINUTES` elapses.
+- GPU IDs are released when a session ends (release, timeout, container failure). With `AXGT_SESSION_PRESERVE_ON_CREDIT_EXHAUST=true`, zero credit instead starts a logical top-up grace (120 minutes by default): viewer access and compute billing stop, while the same running container, jobs, desktop, and GPU assignment are retained. Top-up restores access to that allocation; if no top-up arrives before `AXGT_SESSION_CREDIT_GRACE_MINUTES` elapses, cleanup stops the container and releases its GPUs. The old `AXGT_SESSION_PAUSED_MAX_MINUTES` name remains a fallback during migration.
+- Detach only disconnects the viewer. The session container keeps sending its authenticated heartbeat, so jobs continue and usage remains billed across reload/tab close until the owner ends the session or the balance reaches zero.
 
 ### Launcher adapter (Mode B)
 

@@ -68,7 +68,7 @@ sequenceDiagram
 
 ## ⚡ 3. GPU Session Scheduler & Billing Heartbeat
 
-During session creation, the client claims a resource profile (e.g. Small, Medium, Large, or Max). The scheduler assigns physical GPUs exclusively. If resources are constrained, users are queued fairly based on runnability. During active sessions, client heartbeats incrementally bill credits proportional to the profile's GPU weight.
+During session creation, the client claims a resource profile (e.g. Small, Medium, Large, or Max). Requests from different wallets are handled concurrently; the scheduler uses a short atomic reservation transaction so each physical GPU remains exclusive, then launches reserved containers concurrently. If the requested capacity is unavailable, the claim returns an immediate capacity response—there is no global launcher queue. During active sessions, runtime heartbeats incrementally bill credits proportional to the profile's GPU weight.
 
 ```mermaid
 sequenceDiagram
@@ -109,10 +109,18 @@ sequenceDiagram
         SM->>DB: Deduct elapsed minutes * GPU weight from remaining_minutes
         DB-->>SM: Return new balance (remaining_minutes)
         alt remaining_minutes <= 0
-            SM->>SL: Stop Session
-            SL->>Docker: Stop and remove container
-            SM->>DB: Mark session terminated / paused (credits exhausted)
-            SM-->>UI: Heartbeat Response: credit exhausted (session ended)
+            SM->>DB: Mark credit_grace and checkpoint billing time
+            SM-->>UI: Credit exhausted (viewer access and compute billing stop)
+            Note over Docker: Same container, jobs, and GPUs keep running for 2h
+            alt User tops up within 2h
+                UI->>SM: Claim existing session
+                SM->>DB: Mark active; reset billing checkpoint to now
+                SM-->>UI: Reconnect to same container and allocation
+            else Grace expires
+                SM->>SL: Stop Session
+                SL->>Docker: Stop and remove container
+                SM->>DB: Mark session ended
+            end
         else Credits OK
             SM-->>UI: Heartbeat Response (Ok, remaining_minutes)
         end

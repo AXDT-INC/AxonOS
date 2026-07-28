@@ -26,11 +26,12 @@ class TestSessionClaimSshOptIn(unittest.TestCase):
         gate_server.app.testing = True
         self.client = gate_server.app.test_client()
 
-    def _claim(self, requested_ssh_marker=...):
+    def _claim(self, requested_ssh_marker=..., extra_payload=None):
         # Supplying a key alone must not opt in; only requested_ssh=true may do so.
         payload = {"wallet_address": WALLET, "ssh_pubkey": "ssh-ed25519 AAAA"}
         if requested_ssh_marker is not ...:
             payload["requested_ssh"] = requested_ssh_marker
+        payload.update(extra_payload or {})
         with patch.object(gate_server, "_session_mgr_available", True), \
              patch.object(gate_server, "validate_wallet_address", return_value=True), \
              patch.object(gate_server, "_require_auth_token", return_value=None), \
@@ -57,6 +58,43 @@ class TestSessionClaimSshOptIn(unittest.TestCase):
         self.assertIs(kwargs["requested_ssh"], True)
         self.assertEqual(kwargs["ssh_pubkey"], "ssh-ed25519 AAAA")
         validate_key.assert_called_once_with("ssh-ed25519 AAAA")
+
+    def test_resume_only_passes_exact_session_contract(self):
+        kwargs, _ = self._claim(
+            extra_payload={"resume_only": True, "expected_session_id": 91}
+        )
+        self.assertIs(kwargs["resume_only"], True)
+        self.assertEqual(kwargs["expected_session_id"], 91)
+
+    def test_resume_only_requires_positive_integer_session_id(self):
+        for invalid_id in (None, 0, -1, True, "91", 91.0):
+            with self.subTest(expected_session_id=invalid_id), \
+                 patch.object(gate_server, "_session_mgr_available", True), \
+                 patch.object(gate_server, "try_claim_session") as claim:
+                response = self.client.post(
+                    "/api/session/claim",
+                    json={
+                        "wallet_address": WALLET,
+                        "resume_only": True,
+                        "expected_session_id": invalid_id,
+                    },
+                )
+            self.assertEqual(response.status_code, 400)
+            claim.assert_not_called()
+
+    def test_string_resume_only_is_rejected_instead_of_becoming_normal_claim(self):
+        with patch.object(gate_server, "_session_mgr_available", True), \
+             patch.object(gate_server, "try_claim_session") as claim:
+            response = self.client.post(
+                "/api/session/claim",
+                json={
+                    "wallet_address": WALLET,
+                    "resume_only": "true",
+                    "expected_session_id": 91,
+                },
+            )
+        self.assertEqual(response.status_code, 400)
+        claim.assert_not_called()
 
 
 class TestFrontendSshOptInContract(unittest.TestCase):

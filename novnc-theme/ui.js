@@ -2270,7 +2270,7 @@ const UI = {
         }
         const confirmed = await UI.showConfirm(
             _("Detach from the remote view?"),
-            _("You return to the home screen. Your desktop keeps running and prepaid minutes keep counting while this tab stays open. If you close the tab, the desktop pauses shortly after and can be resumed with the same wallet.\n\nUse End session when you are fully done."),
+            _("You return to the home screen, but your desktop and jobs keep running and prepaid minutes keep counting — even if you close this tab. Reconnect with the same wallet to return.\n\nUse End session when you are fully done. If credit runs out, viewer access and compute billing stop while the same running container, jobs, and GPUs are retained for the 2-hour top-up grace."),
             {
                 confirmText: _("Detach"),
                 confirmType: 'primary'
@@ -2575,10 +2575,64 @@ const UI = {
         });
     },
 
+    /** Fetch and consume a JSON response under one deadline; abort on timeout. */
+    _axonosFetchJsonWithTimeout(url, options = {}, timeoutMs = 20000) {
+        const controller = typeof AbortController !== 'undefined'
+            ? new AbortController()
+            : null;
+        const requestOptions = { ...options };
+        if (controller) {
+            requestOptions.signal = controller.signal;
+        }
+        return new Promise((resolve, reject) => {
+            let settled = false;
+            let timer = null;
+            const finish = (callback, value) => {
+                if (settled) return;
+                settled = true;
+                if (timer !== null) clearTimeout(timer);
+                callback(value);
+            };
+            timer = setTimeout(() => {
+                if (controller) controller.abort();
+                finish(reject, new Error('Request timed out'));
+            }, Math.max(1000, Number(timeoutMs) || 20000));
+            let request;
+            try {
+                request = fetch(url, requestOptions);
+            } catch (error) {
+                finish(reject, error);
+                return;
+            }
+            request
+                .then((response) => response.text().then((text) => {
+                    let data = {};
+                    if (text) {
+                        try {
+                            data = JSON.parse(text);
+                        } catch (err) {
+                            throw new Error(`HTTP ${response.status} returned non-JSON`);
+                        }
+                    }
+                    return {
+                        ok: response.ok,
+                        status: response.status,
+                        headers: response.headers,
+                        data,
+                    };
+                }))
+                .then(
+                    (result) => finish(resolve, result),
+                    (error) => finish(reject, error),
+                );
+        });
+    },
+
     /**
      * Clear error banner, pending reconnect timer, and reconnect inhibition so the next
      * "Launch GPU-Native Desktop" can proceed. Mirrors the intent of the credit-exhaustion
-     * path (reset gate) but without clearing wallet auth — use after leaving the queue or
+     * path (reset gate) but without clearing wallet auth — use after dismissing a
+     * capacity-unavailable response or
      * when recovering from a failed WS (e.g. 1006) before retrying.
      */
     axonosResetDesktopGateForRetry() {
@@ -2618,13 +2672,31 @@ const UI = {
     },
 
     /** POST /api/session/claim — required by AxonOS gate before WebSocket upgrade. */
-    _axonosFetchSessionClaim() {
+    _axonosFetchSessionClaim(options) {
+        const claimOptions = options && typeof options === 'object' ? options : {};
         const wallet = window.verifiedWalletAddress;
         if (!wallet) {
             return Promise.resolve({ granted: false, reason: 'No wallet' });
         }
         const payload = { wallet_address: wallet };
-        if (!window.axonosPausedResume && !window.axonosDetachedSession) {
+        const resumeMarker = window.axonosPausedResume;
+        const resumeRequested = claimOptions.resumeOnly === true || !!resumeMarker;
+        const expectedRaw = claimOptions.expectedSessionId != null
+            ? claimOptions.expectedSessionId
+            : (resumeMarker ? resumeMarker.sessionId : null);
+        const expectedSessionId = Number(expectedRaw);
+        if (resumeRequested) {
+            if (!Number.isSafeInteger(expectedSessionId) || expectedSessionId <= 0) {
+                return Promise.resolve({
+                    granted: false,
+                    resume_only: true,
+                    invalid_resume_request: true,
+                    reason: 'Retained session identity is unavailable. Refresh the workspace before reconnecting.',
+                });
+            }
+            payload.resume_only = true;
+            payload.expected_session_id = expectedSessionId;
+        } else if (!window.axonosDetachedSession) {
             payload.requested_profile = (typeof window.axonosGetRequestedProfile === 'function')
                 ? window.axonosGetRequestedProfile()
                 : 'small';
@@ -2646,21 +2718,28 @@ const UI = {
         if (window.verifiedWalletAuthToken) {
             headers['X-AXGT-Auth-Token'] = window.verifiedWalletAuthToken;
         }
-        return fetch(url, {
+        const timeoutMs = typeof window.axonosSessionClaimTimeoutMs === 'function'
+            ? window.axonosSessionClaimTimeoutMs(resumeRequested)
+            : (resumeRequested ? 20000 : 150000);
+        return UI._axonosFetchJsonWithTimeout(url, {
             method: 'POST',
             credentials: 'include',
             headers,
             body: JSON.stringify(payload),
-        }).then((r) => {
-            const ct = (r.headers.get('content-type') || '');
-            if (!ct.includes('application/json')) {
-                if (!r.ok) {
-                    throw new Error('HTTP ' + r.status);
-                }
-                return {};
-            }
-            return r.json();
-        });
+        }, timeoutMs).then((result) => result.data || {});
+    },
+
+    /** Reconcile an ambiguous claim without ever releasing its server-side session. */
+    _axonosReconcileUncertainSessionClaim(options) {
+        if (typeof window.axonosReconcileUncertainSessionClaim !== 'function') {
+            return Promise.resolve({ recovered: false, authoritative: false });
+        }
+        try {
+            return Promise.resolve(window.axonosReconcileUncertainSessionClaim(options))
+                .catch((error) => ({ recovered: false, authoritative: false, error }));
+        } catch (error) {
+            return Promise.resolve({ recovered: false, authoritative: false, error });
+        }
     },
 
     _axonosReleaseSessionHeaders() {
@@ -2682,8 +2761,8 @@ const UI = {
         // Detached desktops and headless SSH sessions (which reuse the detached
         // flag) must SURVIVE tab close: that is the whole point of detaching, and
         // SSH sessions are used from a terminal with the in-container heartbeat
-        // daemon keeping them alive. The server pauses a detached desktop for
-        // resume once browser heartbeats stop; only End session / sign-out
+        // daemon keeping them alive. The container heartbeat keeps detached
+        // compute active and billed across tab close; only End session / sign-out
         // releases it. Note the billing poll keeps running while detached, so
         // _axgtStatusPollId alone must not be treated as slot ownership here.
         if (window.axonosSessionDetached) {
@@ -2790,8 +2869,9 @@ const UI = {
 
         if (opts.creditExhausted) {
             UI.showStatus(
-                _("Session paused — usage credit exhausted. Add credit to resume."),
-                'warn'
+                _("Credit exhausted · 2h top-up grace. Jobs are still running; compute billing and viewer access have stopped. Add credit to reconnect."),
+                'warn',
+                12000
             );
         }
 
@@ -2843,12 +2923,13 @@ const UI = {
         UI.updateVisualState('disconnected');
         if (opts.creditExhausted) {
             UI.showStatus(
-                _("Session paused — usage credit exhausted. Add credit to resume."),
-                'warn'
+                _("Credit exhausted · 2h top-up grace. Jobs are still running; compute billing and viewer access have stopped. Add credit to reconnect."),
+                'warn',
+                12000
             );
         } else {
             UI.showStatus(
-                _("Detached — desktop still running. Launch again to reconnect, or End session when done."),
+                _("Detached — desktop and jobs are still running, and billing continues even if this tab closes. Reconnect or End session when done."),
                 'normal'
             );
         }
@@ -2946,8 +3027,34 @@ const UI = {
         // Every asynchronous continuation below belongs to this exact Launch/Resume.
         // Disconnect, Cancel, or a newer connect invalidates it before it can touch UI.
         const connectGeneration = UI._axonosInvalidateConnectAttempt();
+        const walletAtConnectStart = String(window.verifiedWalletAddress || '').trim();
         const connectAttemptIsCurrent = () =>
             UI._axonosConnectAttemptIsCurrent(connectGeneration);
+        const pendingResumeClaim = window.axonosPendingResumeClaim;
+        const pendingResumeMatchesWallet = !!(pendingResumeClaim &&
+            String(pendingResumeClaim.wallet || '').toLowerCase() ===
+                String(window.verifiedWalletAddress || '').toLowerCase());
+        const pendingResumeExpectedId = pendingResumeMatchesWallet
+            ? Number(pendingResumeClaim.expectedSessionId)
+            : null;
+        const pendingResumeClaimId = pendingResumeMatchesWallet
+            ? Number(pendingResumeClaim.claim && pendingResumeClaim.claim.session_id)
+            : null;
+        const preclaimedResumeAtConnectStart = pendingResumeMatchesWallet &&
+            Number.isSafeInteger(pendingResumeExpectedId) && pendingResumeExpectedId > 0 &&
+            pendingResumeClaimId === pendingResumeExpectedId &&
+            pendingResumeClaim.claim &&
+            (pendingResumeClaim.claim.granted === true || pendingResumeClaim.claim.granted === 'true')
+            ? pendingResumeClaim
+            : null;
+        // Resume intent is immutable for this connect attempt. A later status
+        // refresh may fail or report expiry, but it must never downgrade this
+        // operation into a spawn-capable ordinary claim.
+        const resumeMarkerAtConnectStart = window.axonosPausedResume;
+        const resumeIntentAtConnectStart = !!resumeMarkerAtConnectStart || pendingResumeMatchesWallet;
+        const expectedResumeSessionIdAtConnectStart = pendingResumeMatchesWallet
+            ? pendingResumeExpectedId
+            : (resumeMarkerAtConnectStart ? Number(resumeMarkerAtConnectStart.sessionId) : null);
 
         // Stale RFB from a failed WebSocket (1006): disconnect may not always fire before
         // retry — hard-reset client state and recurse (short delay lets the stack unwind).
@@ -3029,7 +3136,8 @@ const UI = {
 
         // AxonOS gate rejects WebSocket upgrade unless this wallet owns the active session
         // (see websockify_gate / gate_server). Launch previously skipped claim if the user
-        // left the queue and clicked connect — server returned 403 / abnormal close (1006).
+        // dismissed a capacity response and clicked connect — server returned 403 /
+        // abnormal close (1006).
         const runSessionClaim = () => {
             if (!connectAttemptIsCurrent()) {
                 return;
@@ -3051,16 +3159,42 @@ const UI = {
             if (typeof window.axonosSetConnectionLoaderPhase === 'function') {
                 window.axonosSetConnectionLoaderPhase('claiming');
             }
-            if (window.axonosPausedResume &&
+            if (resumeIntentAtConnectStart && !preclaimedResumeAtConnectStart &&
                 typeof window.axonosResumeDesktopConnectIfPaused === 'function' &&
-                window.axonosResumeDesktopConnectIfPaused()) {
+                window.axonosResumeDesktopConnectIfPaused({
+                    force: true,
+                    expectedSessionId: expectedResumeSessionIdAtConnectStart,
+                    walletPreflightDone: true
+                })) {
                 return;
             }
-            UI._axonosFetchSessionClaim().then((claim) => {
+            if (preclaimedResumeAtConnectStart &&
+                window.axonosPendingResumeClaim === pendingResumeClaim) {
+                window.axonosPendingResumeClaim = null;
+            }
+            const claimRequest = preclaimedResumeAtConnectStart
+                ? Promise.resolve(preclaimedResumeAtConnectStart.claim)
+                : UI._axonosFetchSessionClaim(resumeIntentAtConnectStart ? {
+                    resumeOnly: true,
+                    expectedSessionId: expectedResumeSessionIdAtConnectStart,
+                } : undefined);
+            claimRequest.then((claim) => {
+                const granted = claim && (claim.granted === true || claim.granted === 'true');
                 if (!connectAttemptIsCurrent()) {
+                    // Cancelling the browser flow cannot cancel a synchronous
+                    // server launch. If it granted after this generation became
+                    // stale, surface the resulting active/grace session instead
+                    // of silently leaving hidden compute running and billed.
+                    if (granted) {
+                        UI._axonosReconcileUncertainSessionClaim({
+                            wallet: walletAtConnectStart,
+                            resumeOnly: resumeIntentAtConnectStart,
+                            expectedSessionId: expectedResumeSessionIdAtConnectStart,
+                            cancelled: true,
+                        });
+                    }
                     return;
                 }
-                const granted = claim && (claim.granted === true || claim.granted === 'true');
                 if (!granted) {
                     if (typeof window.axonosHideConnectionLoader === 'function') {
                         window.axonosHideConnectionLoader(true);
@@ -3095,8 +3229,8 @@ const UI = {
                 }
                 if (claim && claim.ssh_enabled) {
                     // Headless SSH session: no browser viewer. Show the connect-string
-                    // and keep the session alive with the same detached-home heartbeat
-                    // loop — which heartbeats only while this tab stays open.
+                    // The container heartbeat keeps compute alive; the detached-home
+                    // poll only refreshes billing/status while this tab is open.
                     window.axonosSessionDetached = true;
                     if (typeof window.axonosHideConnectionLoader === 'function') {
                         window.axonosHideConnectionLoader(true);
@@ -3118,7 +3252,7 @@ const UI = {
                 if (claim && claim.resumed === true && typeof window.axonosRefreshPausedResumeStatus === 'function') {
                     window.axonosPausedResume = null;
                     window.axonosRefreshPausedResumeStatus();
-                    UI.showStatus(_('Resumed your saved desktop session'), 'normal', 2500);
+                    UI.showStatus(_('Restored access to your running desktop session'), 'normal', 2500);
                 } else if (Array.isArray(claim.assigned_gpu_ids) && claim.assigned_gpu_ids.length > 0) {
                     UI.showStatus(`Session active on GPU(s): ${claim.assigned_gpu_ids.join(',')}`, 'normal', 2500);
                 } else if (claim && claim.allocation_status === 'allocating') {
@@ -3132,8 +3266,12 @@ const UI = {
                 (async () => {
                     let usedWebRtc = false;
                     let webRtcFailure = null;
-                    const cfgPeek = await fetch('./api/config', { credentials: 'include' })
-                        .then((r) => r.json())
+                    const cfgPeek = await UI._axonosFetchJsonWithTimeout(
+                        './api/config',
+                        { credentials: 'include' },
+                        10000
+                    )
+                        .then((result) => result.ok ? (result.data || {}) : {})
                         .catch(() => ({}));
                     if (!connectAttemptIsCurrent()) {
                         return;
@@ -3277,17 +3415,31 @@ const UI = {
                     }
                 })();
             }).catch((err) => {
-                if (!connectAttemptIsCurrent()) {
-                    return;
-                }
                 Log.Error('AxonOS session claim failed: ' + err);
-                if (typeof window.axonosHideConnectionLoader === 'function') {
-                    window.axonosHideConnectionLoader(true);
-                } else if (typeof window.axonosSetLaunchBusy === 'function') {
-                    window.axonosSetLaunchBusy(false);
-                }
-                UI.updateVisualState('disconnected');
-                UI.showStatus(_('Could not claim desktop session. Check network.'), 'error');
+                const claimAttemptCancelled = !connectAttemptIsCurrent();
+                UI._axonosReconcileUncertainSessionClaim({
+                    wallet: walletAtConnectStart,
+                    resumeOnly: resumeIntentAtConnectStart,
+                    expectedSessionId: expectedResumeSessionIdAtConnectStart,
+                    cancelled: claimAttemptCancelled,
+                    error: err,
+                }).then((recovery) => {
+                    if ((recovery && recovery.recovered) || !connectAttemptIsCurrent()) {
+                        return;
+                    }
+                    if (typeof window.axonosHideConnectionLoader === 'function') {
+                        window.axonosHideConnectionLoader(true);
+                    } else if (typeof window.axonosSetLaunchBusy === 'function') {
+                        window.axonosSetLaunchBusy(false);
+                    }
+                    UI.updateVisualState('disconnected');
+                    UI.showStatus(
+                        resumeIntentAtConnectStart
+                            ? _('Resume request could not be confirmed. The retained session was not released; retry safely.')
+                            : _('Launch result could not be confirmed. Check the workspace for a running session before retrying.'),
+                        'error'
+                    );
+                });
             });
         };
 
@@ -3301,6 +3453,13 @@ const UI = {
             if (!connectAttemptIsCurrent()) {
                 return;
             }
+            // The strict resume path already performed both wallet preflight and
+            // the exact-session claim. Reuse that response immediately rather than
+            // waiting on another status read or issuing a spawn-capable claim.
+            if (preclaimedResumeAtConnectStart && pendingResumeClaim.walletPreflightDone === true) {
+                runSessionClaim();
+                return;
+            }
             if (typeof window.axonosRefreshPausedResumeStatus === 'function') {
                 window.axonosRefreshPausedResumeStatus()
                     .catch(() => null)
@@ -3310,7 +3469,9 @@ const UI = {
             }
         };
 
-        if (typeof window.axonosEnsureWalletSessionCurrent === 'function') {
+        if (preclaimedResumeAtConnectStart && pendingResumeClaim.walletPreflightDone === true) {
+            proceedAfterPreflight();
+        } else if (typeof window.axonosEnsureWalletSessionCurrent === 'function') {
             window.axonosEnsureWalletSessionCurrent({ requestPermission: true })
                 .then((ok) => {
                     if (!connectAttemptIsCurrent()) {
@@ -3323,8 +3484,10 @@ const UI = {
                             window.axonosSetLaunchBusy(false);
                         }
                         UI.updateVisualState('disconnected');
-                        UI.showStatus(_('Wallet account changed. Reconnect and sign in to continue.'), 'warn');
-                        UI.credentials({ detail: { types: ['password'] } });
+                        UI.showStatus(_('Wallet confirmation was cancelled or the active account changed. The running session was left unchanged.'), 'warn', 6000);
+                        if (!window.verifiedWalletAddress) {
+                            UI.credentials({ detail: { types: ['password'] } });
+                        }
                         return;
                     }
                     proceedAfterPreflight();
@@ -3340,7 +3503,7 @@ const UI = {
                         window.axonosSetLaunchBusy(false);
                     }
                     UI.updateVisualState('disconnected');
-                    UI.credentials({ detail: { types: ['password'] } });
+                    UI.showStatus(_('Could not confirm the active wallet. The running session was left unchanged.'), 'warn', 6000);
                 });
         } else {
             proceedAfterPreflight();
@@ -3468,7 +3631,7 @@ const UI = {
             }
         };
 
-        // Credit exhaustion / detach must not release the session (container preserved).
+        // Credit grace / Detach must not release the session (container retained).
         if (skipRelease) {
             doDisconnect();
             return;
@@ -3477,7 +3640,7 @@ const UI = {
         UI._axonosReleaseSessionBestEffort().finally(doDisconnect);
     },
 
-    /** Final heartbeat (pause session) then disconnect without killing the container. */
+    /** Final billing heartbeat enters credit grace, then disconnect the viewer. */
     _axgtDisconnectForCreditExhaustion(overlayMessage) {
         UI.inhibitReconnect = true;
         if (typeof window !== 'undefined') {
@@ -3492,7 +3655,7 @@ const UI = {
         } else if (typeof window.axonosHideQueueOverlay === 'function') {
             window.axonosHideQueueOverlay();
         }
-        const resumeHint = ' Your desktop is saved — add credit, then use Resume desktop session (same GPUs).';
+        const resumeHint = ' The same container, jobs, and GPUs keep running during the 2-hour top-up grace; compute billing and viewer access are stopped. Add credit before the grace expires, then reconnect.';
         UI._axgtUpdateUsageOverlay(
             'locked',
             (overlayMessage || 'Usage credit exhausted. Add more ETH to unlock access.') + resumeHint
@@ -3527,9 +3690,12 @@ const UI = {
         })
             .then((r) => (r.ok ? r.json() : null))
             .then((hb) => {
-                if (hb && hb.paused_for_resume &&
-                    typeof window.axonosApplyPausedResumeFromPayload === 'function') {
-                    window.axonosApplyPausedResumeFromPayload(hb);
+                const applyCreditGrace = window.axonosApplyCreditGraceResumeFromPayload ||
+                    window.axonosApplyPausedResumeFromPayload;
+                if (hb && (hb.credit_grace === true || hb.credit_grace_for_resume === true ||
+                    hb.paused_for_resume === true) &&
+                    typeof applyCreditGrace === 'function') {
+                    applyCreditGrace(hb);
                 }
                 if (typeof window.axonosRefreshPausedResumeStatus === 'function') {
                     window.axonosRefreshPausedResumeStatus();
@@ -3921,9 +4087,12 @@ const UI = {
                 if (hb && hb.ok === false) {
                     const hbReason = String(hb.reason || '');
                     if (/credit exhausted/i.test(hbReason)) {
-                        if (hb.paused_for_resume &&
-                            typeof window.axonosApplyPausedResumeFromPayload === 'function') {
-                            window.axonosApplyPausedResumeFromPayload(hb);
+                        const applyCreditGrace = window.axonosApplyCreditGraceResumeFromPayload ||
+                            window.axonosApplyPausedResumeFromPayload;
+                        if ((hb.credit_grace === true || hb.credit_grace_for_resume === true ||
+                            hb.paused_for_resume === true) &&
+                            typeof applyCreditGrace === 'function') {
+                            applyCreditGrace(hb);
                         }
                         UI._axgtDisconnectForCreditExhaustion(
                             'Usage credit exhausted. Add more ETH to unlock access.'

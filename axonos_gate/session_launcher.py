@@ -8,6 +8,7 @@ is configurable without changing scheduler logic.
 
 import json
 import logging
+import math
 import os
 import secrets
 import shlex
@@ -69,8 +70,12 @@ def _db_connect_timeout_seconds() -> int:
         return 5
 
 
-def _paused_session_max_seconds() -> int:
-    raw = (os.getenv("AXGT_SESSION_PAUSED_MAX_MINUTES") or "").strip()
+def _credit_grace_max_seconds() -> int:
+    raw = (
+        os.getenv("AXGT_SESSION_CREDIT_GRACE_MINUTES")
+        or os.getenv("AXGT_SESSION_PAUSED_MAX_MINUTES")
+        or ""
+    ).strip()
     try:
         minutes = int(raw) if raw else 120
         if minutes > 0:
@@ -225,6 +230,29 @@ def _launch_verify_interval_seconds() -> float:
         return max(0.0, float(raw)) if raw else 2.0
     except ValueError:
         return 2.0
+
+
+def session_claim_timeout_seconds() -> int:
+    """Browser deadline for a synchronous fresh session claim.
+
+    A claim can spend the launcher HTTP timeout on its first request and then
+    retry the identical launch contract several times after an inconclusive
+    response.  Publish the complete server-side envelope (plus transport/DB
+    headroom) so the browser never times out first and mistakes a successful,
+    billable cold launch for a failed request.  Strict retained-session resumes
+    do not spawn and intentionally use a separate short client deadline.
+    """
+    launch_timeout = _launch_timeout_seconds()
+    if not math.isfinite(launch_timeout) or launch_timeout <= 0:
+        launch_timeout = 90.0
+    verify_attempts = max(1, _launch_verify_attempts())
+    verify_interval = _launch_verify_interval_seconds()
+    if not math.isfinite(verify_interval) or verify_interval < 0:
+        verify_interval = 2.0
+    verify_envelope = (verify_attempts * 5.0) + (
+        max(0, verify_attempts - 1) * verify_interval
+    )
+    return int(math.ceil(max(150.0, launch_timeout + verify_envelope + 15.0)))
 
 
 def _verify_container_started_via_http(
@@ -448,18 +476,27 @@ def reconcile_session_networks() -> None:
             connect_timeout=_db_connect_timeout_seconds(),
         )
         now = time.time()
-        paused_cutoff = now - _paused_session_max_seconds()
+        credit_grace_cutoff = now - _credit_grace_max_seconds()
         grace_seconds = _session_grace_seconds()
         with conn.cursor() as cur:
             cur.execute(
                 """SELECT id FROM axgt_sessions
                    WHERE allocation_status IN ('allocating', 'allocated')
-                     AND (hard_expires_at IS NULL OR hard_expires_at + %s > %s)
                      AND (
-                         (status = 'active' AND expires_at > %s)
-                         OR (status = 'paused' AND last_heartbeat >= %s)
+                         (
+                             status = 'active'
+                             AND expires_at > %s
+                             AND (
+                                 hard_expires_at IS NULL
+                                 OR hard_expires_at + %s > %s
+                             )
+                         )
+                         OR (
+                             status IN ('credit_grace', 'paused')
+                             AND last_heartbeat >= %s
+                         )
                      )""",
-                (grace_seconds, now, now, paused_cutoff),
+                (now, grace_seconds, now, credit_grace_cutoff),
             )
             authorized_ids = {int(row[0]) for row in (cur.fetchall() or [])}
     except Exception as exc:
@@ -1074,6 +1111,14 @@ def _launch_via_docker_cli(
         "-e", "AXGT_GATE_HEARTBEAT_URL=http://axonos-gate:8889",
     ])
     cmd.extend(_mode_env_args(session_id, ssh_enabled, ssh_pubkey))
+    heartbeat_interval = (
+        os.getenv("AXGT_HEARTBEAT_INTERVAL_SECONDS") or ""
+    ).strip()
+    if heartbeat_interval:
+        cmd.extend([
+            "-e",
+            f"AXGT_HEARTBEAT_INTERVAL_SECONDS={heartbeat_interval}",
+        ])
     if template:
         cmd.extend(["-e", f"AXONOS_SELECTED_TEMPLATE={template}"])
     if files_key:

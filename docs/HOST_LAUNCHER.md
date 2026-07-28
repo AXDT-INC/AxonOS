@@ -15,6 +15,12 @@ You can run the launcher either:
 - Host launcher creates a private `axgt-session-net-<session-id>` bridge, attaches
   the central `axonos` gate and the matching tenant container, and performs
   `docker run --gpus device=...` / `docker rm -f`.
+- Every tenant container sends an authenticated runtime heartbeat. Browser Detach
+  therefore disconnects only the viewer; the container and jobs keep running and
+  compute billing continues across reload/tab close. At zero credit, viewer
+  access and compute billing stop for the configured top-up grace while that
+  same running container and GPU assignment are retained; cleanup removes it if
+  the grace expires.
 - Postgres and the launcher stay on the control network. Tenant containers do not
   receive database, launcher, payment/RPC, or fleet WebRTC signing credentials.
 
@@ -59,6 +65,20 @@ Set on host:
 - optional bind:
   - `AXGT_SESSION_LAUNCHER_BIND_HOST=127.0.0.1`
   - `AXGT_SESSION_LAUNCHER_BIND_PORT=8090`
+
+When deploying the durable desktop heartbeat, rebuild the session image and
+drain/recreate every already-running session container before enabling the
+gate's stale-runtime cleanup. Rebuilding an image does not update existing
+containers, and an old desktop container cannot provide the heartbeat needed to
+distinguish healthy detached compute from a failed runtime. No launcher API
+version change is required.
+
+The `credit_grace` lifecycle must be rolled out as one coordinated control-plane
+change: deploy/restart the gate, host launcher, and launcher service together,
+with no old launcher process left handling rows after the gate can emit the new
+state. An older launcher only understands the legacy `paused` state and may
+clean up a retained session network incorrectly. Drain or restart existing
+launcher workers as needed before enabling the new gate behavior.
 
 ## Security boundary
 

@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-In-container session heartbeat daemon for headless / SSH-only AxonOS sessions.
+In-container session heartbeat daemon for every AxonOS compute session.
 
-Browser desktop sessions are kept alive by the noVNC UI (ui.js) polling
-/api/session/heartbeat. Headless sessions (SSH-only, agent SSH) have no browser,
-so without this daemon they are reaped after AXGT_HEARTBEAT_TIMEOUT_SECONDS
-(default 120s) and are not billed per-minute. This daemon sends those heartbeats
-from inside the session container.
+Runtime ownership and billing must not depend on a browser tab remaining alive.
+The noVNC UI may also poll /api/session/heartbeat while attached or detached;
+the database row lock and billing checkpoint make concurrent heartbeats safe.
+This daemon is the durable source of compute liveness after a browser reload,
+network drop, or explicit Detach.
 
 Auth: the session's per-session secret (AXGT_SESSION_FILES_KEY), validated by the
-gate against the active session row — no browser wallet token needed.
+gate against the active or retained credit-grace row — no browser wallet token
+needed.
 
 Each heartbeat also reports ``ssh_active`` — whether an ESTABLISHED TCP
 connection to the container's sshd (:22) exists — which the gate uses to renew
@@ -22,7 +23,7 @@ Env (injected at session launch):
   AXGT_SESSION_ID           session id (for logging)
   AXGT_GATE_HEARTBEAT_URL   gate base URL (default http://127.0.0.1:8889)
   AXGT_HEARTBEAT_INTERVAL_SECONDS   send interval (default 30)
-  AXGT_DESKTOP_ENABLED      if "true", a browser drives heartbeats → daemon idles
+  AXGT_DESKTOP_ENABLED      runtime mode metadata (heartbeats run in both modes)
 """
 import json
 import logging
@@ -48,10 +49,6 @@ def _interval() -> int:
     except ValueError:
         pass
     return 30
-
-
-def _desktop_enabled() -> bool:
-    return (os.getenv("AXGT_DESKTOP_ENABLED") or "true").strip().lower() not in ("0", "false", "no", "off")
 
 
 def _ssh_connection_active() -> bool:
@@ -103,15 +100,8 @@ def main() -> int:
         while True:
             time.sleep(3600)
 
-    # Desktop sessions are heartbeated by the browser UI; the daemon is a no-op
-    # there to avoid double counting. It runs for headless/SSH sessions.
-    if _desktop_enabled():
-        log.info("session %s has a desktop (browser drives heartbeats) — daemon idle", SESSION_ID)
-        while True:
-            time.sleep(3600)
-
     interval = _interval()
-    log.info("session %s headless heartbeat daemon: every %ss -> %s", SESSION_ID, interval, GATE)
+    log.info("session %s runtime heartbeat daemon: every %ss -> %s", SESSION_ID, interval, GATE)
     fails = 0
     while True:
         try:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import os
 import sys
 import unittest
@@ -69,6 +70,33 @@ class SessionLauncherTests(unittest.TestCase):
         # Sanitization should revert unsafe mount path back to default /home/aXonian
         self.assertEqual(_persistent_storage_mount_path(), "/home/aXonian")
 
+    def test_network_reconciliation_preserves_credit_grace_runtimes(self) -> None:
+        from session_launcher import reconcile_session_networks
+        from session_launcher_service import _reconcile_session_networks
+
+        for reconcile in (reconcile_session_networks, _reconcile_session_networks):
+            source = inspect.getsource(reconcile)
+            self.assertIn("status IN ('credit_grace', 'paused')", source)
+            self.assertIn("credit_grace_cutoff", source)
+            active_clause, grace_clause = source.split(
+                "OR (\n                             status IN ('credit_grace', 'paused')",
+                1,
+            )
+            self.assertIn("hard_expires_at", active_clause)
+            self.assertNotIn("hard_expires_at", grace_clause)
+
+    def test_credit_grace_duration_prefers_canonical_env_name(self) -> None:
+        os.environ["AXGT_SESSION_CREDIT_GRACE_MINUTES"] = "45"
+        os.environ["AXGT_SESSION_PAUSED_MAX_MINUTES"] = "30"
+
+        from session_launcher import _credit_grace_max_seconds as client_seconds
+        from session_launcher_service import (
+            _credit_grace_max_seconds as service_seconds,
+        )
+
+        self.assertEqual(client_seconds(), 45 * 60)
+        self.assertEqual(service_seconds(), 45 * 60)
+
     @patch("subprocess.check_output")
     def test_launch_via_docker_cli_enabled(self, mock_check_output: MagicMock) -> None:
         mock_check_output.side_effect = ["", "container_id_123"]
@@ -76,6 +104,7 @@ class SessionLauncherTests(unittest.TestCase):
         os.environ["AXGT_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"
         os.environ["AXGT_USER_CONTAINER_ENABLED"] = "true"
         os.environ["AXGT_PERSISTENT_STORAGE_ENABLED"] = "true"
+        os.environ["AXGT_HEARTBEAT_INTERVAL_SECONDS"] = "17"
         # Network lifecycle has its own focused regression tests.  Keep this
         # storage test's subprocess mock scoped to the final docker run.
         os.environ["AXGT_SESSION_NETWORK_ISOLATION"] = "false"
@@ -108,6 +137,7 @@ class SessionLauncherTests(unittest.TestCase):
         # Sanitized wallet should be 0xabc123-xyz_
         self.assertIn("--cap-drop", cmd)
         self.assertEqual(cmd[cmd.index("--cap-drop") + 1], "NET_RAW")
+        self.assertIn("AXGT_HEARTBEAT_INTERVAL_SECONDS=17", cmd)
         self.assertIn("-v", cmd)
         idx = cmd.index("-v")
         self.assertEqual(cmd[idx + 1], "axgt-user-storage-0xabc123-xyz_:/home/aXonian")
@@ -182,6 +212,7 @@ class SessionLauncherTests(unittest.TestCase):
     def test_service_build_launch_cmd_enabled(self) -> None:
         os.environ["AXGT_HOST_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"
         os.environ["AXGT_PERSISTENT_STORAGE_ENABLED"] = "true"
+        os.environ["AXGT_HEARTBEAT_INTERVAL_SECONDS"] = "17"
         
         from session_launcher_service import _build_launch_cmd
         payload = {
@@ -197,6 +228,7 @@ class SessionLauncherTests(unittest.TestCase):
         
         # Check volume mount parameters
         self.assertIn("-v", cmd)
+        self.assertIn("AXGT_HEARTBEAT_INTERVAL_SECONDS=17", cmd)
         idx = cmd.index("-v")
         self.assertEqual(cmd[idx + 1], "axgt-user-storage-0xabc123-xyz_:/home/aXonian")
 
@@ -303,6 +335,24 @@ class SessionLauncherTests(unittest.TestCase):
         # Keep verify polling instant in tests.
         os.environ["AXGT_SESSION_LAUNCH_VERIFY_INTERVAL_SECONDS"] = "0"
         os.environ["AXGT_SESSION_LAUNCH_VERIFY_ATTEMPTS"] = "3"
+
+    def test_session_claim_timeout_covers_launcher_and_verification_envelope(self) -> None:
+        import session_launcher
+
+        with patch.dict(
+            os.environ,
+            {
+                "AXGT_SESSION_LAUNCHER_TIMEOUT_SECONDS": "180",
+                "AXGT_SESSION_LAUNCH_VERIFY_ATTEMPTS": "4",
+                "AXGT_SESSION_LAUNCH_VERIFY_INTERVAL_SECONDS": "3",
+            },
+            clear=False,
+        ):
+            # 180s launch + (4 * 5s) retries + (3 * 3s) sleeps + 15s headroom.
+            self.assertEqual(session_launcher.session_claim_timeout_seconds(), 224)
+
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(session_launcher.session_claim_timeout_seconds(), 150)
 
     def test_launch_via_http_timeout_but_contract_retry_succeeds(self) -> None:
         """A timeout is recovered only by the host's idempotent contract check."""

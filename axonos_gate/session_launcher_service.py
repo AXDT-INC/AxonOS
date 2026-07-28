@@ -115,8 +115,12 @@ def _db_connect_timeout_seconds() -> int:
         return 5
 
 
-def _paused_session_max_seconds() -> int:
-    raw = (os.getenv("AXGT_SESSION_PAUSED_MAX_MINUTES") or "").strip()
+def _credit_grace_max_seconds() -> int:
+    raw = (
+        os.getenv("AXGT_SESSION_CREDIT_GRACE_MINUTES")
+        or os.getenv("AXGT_SESSION_PAUSED_MAX_MINUTES")
+        or ""
+    ).strip()
     try:
         minutes = int(raw) if raw else 120
         if minutes > 0:
@@ -842,18 +846,27 @@ def _reconcile_session_networks() -> None:
             connect_timeout=_db_connect_timeout_seconds(),
         )
         now = time.time()
-        paused_cutoff = now - _paused_session_max_seconds()
+        credit_grace_cutoff = now - _credit_grace_max_seconds()
         grace_seconds = _session_grace_seconds()
         with conn.cursor() as cur:
             cur.execute(
                 """SELECT id FROM axgt_sessions
                    WHERE allocation_status IN ('allocating', 'allocated')
-                     AND (hard_expires_at IS NULL OR hard_expires_at + %s > %s)
                      AND (
-                         (status = 'active' AND expires_at > %s)
-                         OR (status = 'paused' AND last_heartbeat >= %s)
+                         (
+                             status = 'active'
+                             AND expires_at > %s
+                             AND (
+                                 hard_expires_at IS NULL
+                                 OR hard_expires_at + %s > %s
+                             )
+                         )
+                         OR (
+                             status IN ('credit_grace', 'paused')
+                             AND last_heartbeat >= %s
+                         )
                      )""",
-                (grace_seconds, now, now, paused_cutoff),
+                (now, grace_seconds, now, credit_grace_cutoff),
             )
             authorized_ids = {int(row[0]) for row in (cur.fetchall() or [])}
     except Exception as exc:
@@ -1013,6 +1026,14 @@ def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], 
         ]
     )
     cmd.extend(_mode_env_args(session_id, ssh_enabled, ssh_pubkey))
+    heartbeat_interval = (
+        os.getenv("AXGT_HEARTBEAT_INTERVAL_SECONDS") or ""
+    ).strip()
+    if heartbeat_interval:
+        cmd.extend([
+            "-e",
+            f"AXGT_HEARTBEAT_INTERVAL_SECONDS={heartbeat_interval}",
+        ])
 
     requested_template = str(payload.get("requested_template") or "").strip()
     if requested_template:

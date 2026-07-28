@@ -2,7 +2,7 @@ import os
 import sys
 import time
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import call, patch, MagicMock
 
 _tests_dir = os.path.dirname(os.path.abspath(__file__))
 _pkg_dir = os.path.dirname(_tests_dir)
@@ -57,13 +57,14 @@ class TestPaidSessionExpiry(unittest.TestCase):
         
         now = time.time()
         cur.fetchone.side_effect = [
-            (True,),  # pg_try_advisory_xact_lock
-            ("0xwallet", 197),  # _expire_stale_session
+            (True,),  # pg_try_advisory_lock scheduler/teardown lock
             ("active", now - 100, "0xwallet"), # reconcile SELECT for 197
         ]
         cur.fetchall.side_effect = [
-            [],  # _pause_stale_zero_credit_sessions
-            [],  # _expire_stale_paused_sessions
+            [("0xwallet", 197)],  # _expire_stale_session
+            [],  # _expire_credit_grace_sessions
+            [],  # post-cleanup stale recheck
+            [],  # post-cleanup credit-grace recheck
         ]
         
         session_manager.perform_session_cleanup()
@@ -87,13 +88,12 @@ class TestPaidSessionExpiry(unittest.TestCase):
         mock_conn2.return_value = conn
         
         cur.fetchone.side_effect = [
-            (True,),  # pg_try_advisory_xact_lock
-            None,  # _expire_stale_session
+            (True,),  # pg_try_advisory_lock scheduler/teardown lock
             ("ended", time.time() - 100, "0xwallet"), # reconcile SELECT for 197
         ]
         cur.fetchall.side_effect = [
-            [],  # _pause_stale_zero_credit_sessions
-            [],  # _expire_stale_paused_sessions
+            [],  # _expire_stale_session
+            [],  # _expire_credit_grace_sessions
         ]
         
         session_manager.perform_session_cleanup()
@@ -122,13 +122,12 @@ class TestPaidSessionExpiry(unittest.TestCase):
         
         for _ in range(3):
             cur.fetchone.side_effect = [
-                (True,),  # pg_try_advisory_xact_lock
-                None,  # _expire_stale_session
+                (True,),  # pg_try_advisory_lock scheduler/teardown lock
                 ("ended", time.time() - 100, "0xwallet"), # reconcile SELECT
             ]
             cur.fetchall.side_effect = [
-                [],  # _pause_stale_zero_credit_sessions
-                [],  # _expire_stale_paused_sessions
+                [],  # _expire_stale_session
+                [],  # _expire_credit_grace_sessions
             ]
             session_manager.perform_session_cleanup()
             
@@ -152,13 +151,12 @@ class TestPaidSessionExpiry(unittest.TestCase):
         mock_conn2.return_value = conn
         
         cur.fetchone.side_effect = [
-            (True,),  # pg_try_advisory_xact_lock
-            None,  # _expire_stale_session
+            (True,),  # pg_try_advisory_lock scheduler/teardown lock
             None,  # reconcile SELECT -> not found in DB
         ]
         cur.fetchall.side_effect = [
-            [],  # _pause_stale_zero_credit_sessions
-            [],  # _expire_stale_paused_sessions
+            [],  # _expire_stale_session
+            [],  # _expire_credit_grace_sessions
         ]
         
         session_manager.perform_session_cleanup()
@@ -187,18 +185,92 @@ class TestPaidSessionExpiry(unittest.TestCase):
         
         now = time.time()
         cur.fetchone.side_effect = [
-            (True,),  # pg_try_advisory_xact_lock
-            None,  # _expire_stale_session
+            (True,),  # pg_try_advisory_lock scheduler/teardown lock
             ("active", now + 1000, "0xwallet"), # reconcile SELECT -> active and NOT expired
         ]
         cur.fetchall.side_effect = [
-            [],  # _pause_stale_zero_credit_sessions
-            [],  # _expire_stale_paused_sessions
+            [],  # _expire_stale_session
+            [],  # _expire_credit_grace_sessions
         ]
         
         session_manager.perform_session_cleanup()
         mock_stop1.assert_not_called()
         mock_stop2.assert_not_called()
+
+    def test_stale_runtime_heartbeat_ends_instead_of_entering_credit_grace(self):
+        from axonos_gate import session_manager
+
+        cur = MagicMock()
+        cur.fetchall.return_value = [
+            ("0xwallet", 197),
+            ("0xsecond", 198),
+        ]
+        with patch.object(
+            session_manager, "_heartbeat_timeout_seconds", return_value=120
+        ), patch.object(session_manager, "session_grace_seconds", return_value=60):
+            ended, grace_transitions = session_manager._expire_stale_session(
+                cur, 1000.0
+            )
+
+        self.assertEqual(ended, [("0xwallet", 197), ("0xsecond", 198)])
+        self.assertEqual(grace_transitions, [])
+        sql, params = cur.execute.call_args.args
+        self.assertIn("SET status = 'ended'", sql)
+        self.assertNotIn("credit_grace", sql)
+        self.assertEqual(params, (880.0, 1000.0, 60, 1000.0))
+
+        with patch.object(session_manager, "_on_session_credit_grace") as grace_hook, \
+             patch.object(session_manager, "_on_session_ended") as ended_hook:
+            session_manager._apply_stale_session_maintenance(
+                ended, grace_transitions
+            )
+        grace_hook.assert_not_called()
+        self.assertEqual(
+            ended_hook.call_args_list,
+            [
+                call("0xwallet", 197),
+                call("0xsecond", 198),
+            ],
+        )
+
+    def test_credit_grace_expiry_uses_its_fixed_start_timestamp(self):
+        from axonos_gate import session_manager
+
+        cur = MagicMock()
+        cur.fetchall.return_value = [("0xwallet", 197)]
+        with patch.object(
+            session_manager,
+            "_session_credit_grace_max_seconds",
+            return_value=7200,
+        ):
+            expired = session_manager._expire_credit_grace_sessions(cur, 10000.0)
+
+        self.assertEqual(expired, [("0xwallet", 197)])
+        sql, params = cur.execute.call_args.args
+        self.assertIn("WHERE status = 'credit_grace'", sql)
+        self.assertIn(
+            "COALESCE(credit_grace_started_at, last_heartbeat)",
+            " ".join(sql.split()),
+        )
+        self.assertNotIn("hard_expires_at", sql)
+        self.assertEqual(params, (2800.0,))
+
+    def test_reconciliation_does_not_apply_ssh_hard_cap_during_credit_grace(self):
+        from axonos_gate import session_manager
+
+        cur = MagicMock()
+        cur.fetchone.return_value = ("credit_grace", 100.0, "0xwallet")
+        launcher = MagicMock()
+        launcher.list_running_sessions.return_value = [197]
+
+        with patch.object(
+            session_manager, "_import_session_launcher", return_value=launcher
+        ), patch.object(session_manager, "session_grace_seconds", return_value=60):
+            to_stop, to_expire = session_manager._reconcile_containers(cur, 1000.0)
+
+        self.assertEqual(to_stop, [])
+        self.assertEqual(to_expire, [])
+        self.assertEqual(cur.execute.call_count, 1)
 
     @patch("gate_server.try_claim_session")
     @patch("axonos_gate.gate_server.try_claim_session")

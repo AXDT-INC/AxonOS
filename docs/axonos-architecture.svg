@@ -178,9 +178,9 @@
 <text x="1005" y="302" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">Session Manager</text>
 <text x="1005" y="317" text-anchor="middle" font-size="9" fill="rgba(123,224,200,0.66)" font-family="'SF Mono',Menlo,Consolas,monospace">session_manager.py</text>
 <text x="1005" y="331" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Exclusive GPU allocation</text>
-<text x="1005" y="345" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Heartbeat timeout: 120s</text>
-<text x="1005" y="360" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Session max: 60 min</text>
-<text x="1005" y="381" text-anchor="middle" font-size="8" fill="rgba(123,224,200,0.38)" font-family="'SF Mono',Menlo,Consolas,monospace">Pause on credit exhaust</text>
+<text x="1005" y="345" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Runtime heartbeat timeout: 120s</text>
+<text x="1005" y="360" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.46)" font-family="'SF Mono',Menlo,Consolas,monospace">Runtime lease: 60 min (sliding)</text>
+<text x="1005" y="381" text-anchor="middle" font-size="8" fill="rgba(123,224,200,0.38)" font-family="'SF Mono',Menlo,Consolas,monospace">2h running grace on credit exhaust</text>
 
 <!-- Internal chip connectors -->
 <path d="M 327,334 L 347,334" fill="none" stroke="rgba(78,195,212,0.32)" stroke-width="1.2" stroke-dasharray="3,2" marker-end="url(#mC)"/>
@@ -219,7 +219,7 @@
 <text x="460" y="508" font-size="9" fill="rgba(170,210,225,0.28)" font-family="'SF Mono',Menlo,Consolas,monospace">|</text>
 <text x="474" y="508" font-size="9" fill="rgba(123,224,200,0.60)" font-family="'SF Mono',Menlo,Consolas,monospace">small(1)  medium(2)  large(4)  max(8 GPUs)</text>
 <text x="760" y="508" font-size="9" fill="rgba(170,210,225,0.28)" font-family="'SF Mono',Menlo,Consolas,monospace">|</text>
-<text x="774" y="508" font-size="9" fill="rgba(232,168,90,0.58)" font-family="'SF Mono',Menlo,Consolas,monospace">pause container on credit exhaust</text>
+<text x="774" y="508" font-size="9" fill="rgba(232,168,90,0.58)" font-family="'SF Mono',Menlo,Consolas,monospace">retain running container/jobs for top-up grace</text>
 
 <!-- DB Tables compact strip: y=528 h=148 -->
 <rect x="80" y="528" width="1048" height="148" rx="9" fill="rgba(157,111,217,0.05)" stroke="rgba(157,111,217,0.18)" stroke-width="1"/>
@@ -407,7 +407,7 @@
 <text x="770" y="1116" font-size="9" fill="rgba(232,168,90,0.56)" font-family="'SF Mono',Menlo,Consolas,monospace">3  POST /session/claim -&gt; exclusive GPU allocation</text>
 <text x="1100" y="1116" font-size="9" fill="rgba(242,96,122,0.56)" font-family="'SF Mono',Menlo,Consolas,monospace">4  docker run --gpus -&gt; Xorg + WebRTC agent</text>
 <text x="1440" y="1116" font-size="9" fill="rgba(157,111,217,0.56)" font-family="'SF Mono',Menlo,Consolas,monospace">5  P2P H.264 60fps</text>
-<text x="70" y="1148" font-size="8.5" fill="rgba(170,210,225,0.26)" font-family="'SF Mono',Menlo,Consolas,monospace">Heartbeat every 30-60s deducts elapsed_min x gpu_count  /  session paused on credit exhaust  /  TURN servers: turn.axondao.io:3478</text>
+<text x="70" y="1148" font-size="8.5" fill="rgba(170,210,225,0.26)" font-family="'SF Mono',Menlo,Consolas,monospace">Heartbeat every 30s deducts elapsed_min x gpu_count  /  zero credit starts 2h running grace  /  TURN servers: turn.axondao.io:3478</text>
 
 <!-- ═══ CONNECTION ARROWS ═══ -->
 

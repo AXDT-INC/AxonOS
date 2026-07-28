@@ -118,6 +118,12 @@ ETH, USDC, and AXGT payment controls always submit on-chain transactions. Grants
 recorded with separate ledger/provenance fields and are disabled unless both the
 feature flag and wallet eligibility list permit them.
 
+For an eligible signed-in wallet, the dashboard balance card becomes a one-click
+test-credit action and displays the configured grant. The default policy refills
+*toward* a 60-credit balance cap (0→60, 25→60, 60→60), rather than adding an
+unconditional 60 on every click. A successful grant reconnects an existing
+credit-grace session only; it never silently starts a new compute session.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `AXONOS_TEST_CREDITS_ENABLED` | `false` | Explicit fail-closed switch for token-free test credit. A wallet list alone never enables it. |
@@ -252,7 +258,7 @@ Read primarily by [`axonos_gate/session_manager.py`](../axonos_gate/session_mana
 | `AXGT_GPU_PROFILES_ENABLED` | `true` | GPU profile selection (`small`/`medium`/`large`/`max`). |
 | `AXGT_GPU_WEIGHTED_BILLING` | `true`* | Bill `wall_clock_minutes × GPU count` on heartbeat when profiles enabled. Set `false` for 1× billing. (*Enabled when profiles enabled and var not explicitly off.) |
 | `AXGT_USER_CONTAINER_ENABLED` | `false` in code; `true` in compose | One container per claimed session vs shared desktop. |
-| `AXGT_SESSION_PRESERVE_ON_CREDIT_EXHAUST` | `true` | Pause session on zero credit instead of destroying container. |
+| `AXGT_SESSION_PRESERVE_ON_CREDIT_EXHAUST` | `true` | On zero credit, stop viewer access and compute billing but retain the same running container, jobs, and GPU assignment for the configured top-up grace. When `false`, end the session immediately. |
 
 ### GPU pool
 
@@ -269,11 +275,12 @@ Read primarily by [`axonos_gate/session_manager.py`](../axonos_gate/session_mana
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AXGT_SESSION_MAX_MINUTES` | `60` | Idle cap — extended on each heartbeat; session ends when exceeded or heartbeat stale. |
+| `AXGT_SESSION_MAX_MINUTES` | `60` | Sliding runtime lease — extended by healthy container/browser heartbeats; session ends when the lease or stale-heartbeat timeout is exceeded. |
 | `AXGT_HEARTBEAT_TIMEOUT_SECONDS` | `120` | No heartbeat → session considered stale and released. |
 | `AXGT_SSH_MAX_SESSION_MINUTES` | *(unset = affordability only)* | Hard, **non-sliding** billing ceiling (minutes) for headless/SSH sessions kept alive by the in-container heartbeat daemon. Effective cap = `min(this, affordable minutes)`. Does not affect desktop sessions. |
 | `AXGT_SESSION_COOLDOWN_SECONDS` | `0` | Seconds before same wallet can reclaim after release. |
-| `AXGT_SESSION_PAUSED_MAX_MINUTES` | `120` | Max time a credit-paused session may sit before expiry. |
+| `AXGT_SESSION_CREDIT_GRACE_MINUTES` | `120` | Top-up grace after credit exhaustion. The container and jobs keep running, compute billing/viewer access remain stopped, and cleanup stops the container when this grace expires. |
+| `AXGT_SESSION_PAUSED_MAX_MINUTES` | *(unset)* | Legacy fallback for `AXGT_SESSION_CREDIT_GRACE_MINUTES`; ignored when the canonical variable is set. |
 | `AXGT_SESSION_RESET_SCRIPT` | `/usr/local/bin/reset_session.sh` | Script run between users (desktop cleanup). |
 
 ### Desktop mode (container runtime)
@@ -297,7 +304,7 @@ Set by session launcher on `axgt-session-*` containers (not operator `.env`):
 | `AXGT_WEBRTC_AGENT_TOKEN` | Gate via launcher | Signed bearer capability bound to this session ID, wallet, and file-key fingerprint. Generated automatically; never configure or forward it globally. |
 | `WEBRTC_GATE_INTERNAL_URL` | Launcher | Internal-only agent API. Launcher-managed sessions use `http://axonos-gate:8890`; legacy single-container mode uses loopback. |
 | `AXGT_GATE_HEARTBEAT_URL` | Launcher | Central gate URL the heartbeat daemon posts to. Launcher-managed sessions use `http://axonos-gate:8889`. |
-| `AXGT_HEARTBEAT_INTERVAL_SECONDS` | Launcher | Heartbeat post interval for headless/SSH sessions (default `30`). |
+| `AXGT_HEARTBEAT_INTERVAL_SECONDS` | Launcher | Durable in-container heartbeat interval for every tenant session, including desktops (default `30`). Keep it below `AXGT_HEARTBEAT_TIMEOUT_SECONDS`; this keeps detached compute alive and billed independently of the browser. |
 
 ---
 
@@ -313,6 +320,8 @@ Set by session launcher on `axgt-session-*` containers (not operator `.env`):
 | `AXGT_SESSION_LAUNCHER_URL` | *(none)* | Base URL for HTTP mode, e.g. `http://axonos-launcher:8090`. |
 | `AXGT_SESSION_LAUNCHER_TOKEN` | *(none)* | Shared bearer token for launcher API. Compose default: `change-me-launcher-token`. |
 | `AXGT_SESSION_LAUNCHER_TIMEOUT_SECONDS` | `90` | HTTP launch/stop timeout. After an inconclusive timeout, the gate retries the identical idempotent launch request so only the host launcher's exact identity/digest/network contract can confirm success. |
+| `AXGT_SESSION_LAUNCH_VERIFY_ATTEMPTS` | `5` | Maximum idempotent launch-contract checks after an inconclusive launcher response. |
+| `AXGT_SESSION_LAUNCH_VERIFY_INTERVAL_SECONDS` | `2` | Delay between those verification attempts. |
 | `AXGT_SESSION_LAUNCHER_ENUMERATE_TIMEOUT_SECONDS` | `90` | Timeout for `GET /enumerate-gpus`. |
 | `AXGT_SESSION_CONTAINER_IMAGE` | *(none)* | Image for `docker_cli` mode. |
 | `AXGT_SESSION_CONTAINER_COMMAND` | *(none)* | Command after image name (e.g. `/startup.sh`). |
@@ -320,6 +329,12 @@ Set by session launcher on `axgt-session-*` containers (not operator `.env`):
 | `AXGT_CENTRAL_GATE_CONTAINER` | `axonos` | Central container attached to each isolated `docker_cli` session network. |
 | `AXGT_SESSION_CONTAINER_NETWORK` | *(empty)* | Compatibility network used—and required—when `AXGT_SESSION_NETWORK_ISOLATION=false`; an empty default fails closed because the tenant could not resolve the central gate. |
 | `AXGT_SESSION_CONTAINER_EXTRA_ARGS` | *(none)* | Restricted extra `docker run` args. Network, ports, mounts/devices, namespaces, capabilities, runtime/security settings, environment injection, and privileged mode are stripped. |
+
+`GET /api/config` exposes `session_claim_timeout_seconds`, derived from the
+launcher timeout plus its bounded verification envelope (with a 150-second
+minimum). Browser clients use it for fresh launches; exact retained-session
+resume requests keep a separate short deadline because they never spawn a new
+container.
 
 ### Host launcher service
 

@@ -206,6 +206,24 @@ class TestTestCreditPolicy(unittest.TestCase):
             status = axgt_verifier.get_wallet_access_status(ELIGIBLE)
         self.assertTrue(status["test_credit_eligible"])
         self.assertEqual(status["test_credit_eligible"], status["is_whitelisted"])
+        self.assertEqual(status["test_credit_grant_minutes"], 60.0)
+        self.assertEqual(status["test_credit_max_balance_minutes"], 60.0)
+
+    def test_wallet_status_does_not_advertise_test_credit_policy_to_ineligible_wallet(self):
+        ledger = MagicMock()
+        ledger.init_once.return_value = True
+        ledger.get_deposit_status.return_value = {
+            "remaining_minutes": 0.0,
+            "consumed_minutes": 0.0,
+            "credited_minutes_total": 0.0,
+        }
+        with patch.object(axgt_verifier, "_get_deposit_ledger", return_value=ledger), patch.object(
+            axgt_verifier, "_get_axgt_balance_display", return_value=None
+        ):
+            status = axgt_verifier.get_wallet_access_status(INELIGIBLE)
+        self.assertFalse(status["test_credit_eligible"])
+        self.assertNotIn("test_credit_grant_minutes", status)
+        self.assertNotIn("test_credit_max_balance_minutes", status)
 
 
 class TestRealDepositVerifiers(unittest.TestCase):

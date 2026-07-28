@@ -316,7 +316,8 @@ class WebrtcSessionIdentityTests(unittest.TestCase):
         first_sql, first_params = cur.execute.call_args_list[0].args
         normalized = " ".join(first_sql.split()).lower()
         self.assertIn("for update", normalized)
-        self.assertIn("status = 'paused'", normalized)
+        self.assertIn("status = 'credit_grace'", normalized)
+        self.assertIn("credit_grace_started_at", normalized)
         self.assertEqual(first_params[0:3], (73, self.wallet, now))
         update_sql, update_params = cur.execute.call_args_list[1].args
         self.assertIn("webrtc_cap_expires_at", update_sql)

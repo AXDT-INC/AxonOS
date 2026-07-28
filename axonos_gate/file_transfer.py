@@ -98,8 +98,8 @@ def _import_session_manager():
 def resolve_target_for_wallet(wallet: str) -> Tuple[Optional[dict], Optional[str]]:
     """Returns ({host, port, key}, None) or (None, error message).
 
-    Paused (credit-exhausted) sessions still resolve while their container is
-    alive so users can retrieve their data.
+    Credit-grace sessions still resolve while their container is alive so users
+    can retrieve their data during the top-up window.
     """
     if not files_enabled():
         return None, "File transfer is disabled on this deployment"

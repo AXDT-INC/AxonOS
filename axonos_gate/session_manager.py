@@ -23,6 +23,12 @@ _SESSION_TABLE = "axgt_sessions"
 # claims (vnc.html + ui.js) can't both pass the "no active session" check and
 # spawn duplicate containers — a leaked container + a spurious failure response.
 _CLAIM_ADVISORY_LOCK_NAMESPACE = 0x4158  # "AX"
+# Coordinates teardown with the read-free-GPUs + INSERT reservation critical
+# section. This is deliberately a session-level lock: teardown commits before
+# stopping a container, so a transaction-level lock would expose its GPU while
+# the old runtime was still shutting down. The lock is released before external
+# container spawn, so launches for different users remain concurrent.
+_ALLOCATION_ADVISORY_LOCK_KEY = 0x41584750  # "AXGP"
 
 _pg_init_done = False
 _pg_init_lock = Lock()
@@ -401,13 +407,17 @@ def _session_cooldown_seconds() -> int:
 
 
 def _preserve_session_on_credit_exhaust() -> bool:
-    """Keep container/desktop alive when prepaid credit hits zero (resume after top-up)."""
+    """Keep the same runtime alive during the credit top-up grace period."""
     return _truthy("AXGT_SESSION_PRESERVE_ON_CREDIT_EXHAUST", True)
 
 
-def _session_paused_max_seconds() -> int:
-    """How long a credit-paused session (and its container) may be resumed."""
-    raw = (os.getenv("AXGT_SESSION_PAUSED_MAX_MINUTES") or "").strip()
+def _session_credit_grace_max_seconds() -> int:
+    """How long a credit-exhausted runtime is retained for a top-up."""
+    raw = (
+        os.getenv("AXGT_SESSION_CREDIT_GRACE_MINUTES")
+        or os.getenv("AXGT_SESSION_PAUSED_MAX_MINUTES")
+        or ""
+    ).strip()
     try:
         minutes = int(raw)
         if minutes > 0:
@@ -494,7 +504,8 @@ def _ensure_tables(conn) -> None:
                 expires_at  DOUBLE PRECISION NOT NULL,
                 status      TEXT NOT NULL DEFAULT 'active',
                 files_key   TEXT,
-                ssh_enabled BOOLEAN NOT NULL DEFAULT FALSE
+                ssh_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+                credit_grace_started_at DOUBLE PRECISION
             )
         """)
         # Add last_billed_at if table existed from before migration
@@ -524,6 +535,9 @@ def _ensure_tables(conn) -> None:
             # Persisted SSH mode so a page reload / status query can tell a headless
             # SSH session from a desktop one without the client re-asserting intent.
             ("ssh_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            # Credit exhaustion is a logical billing state: the runtime remains
+            # live while this timestamp anchors the bounded top-up grace period.
+            ("credit_grace_started_at", "DOUBLE PRECISION"),
         ):
             cur.execute(
                 """
@@ -552,6 +566,47 @@ def _ensure_tables(conn) -> None:
         # Ensure no NULL last_billed_at: bill from session start (fixes pre-migration or old migrations)
         cur.execute(
             f"UPDATE {_SESSION_TABLE} SET last_billed_at = started_at WHERE last_billed_at IS NULL"
+        )
+        # Legacy ``paused`` is ambiguous: older code used it both for actual
+        # zero-credit retention and for an ordinary missed browser heartbeat.
+        # Recover funded rows as active without charging their paused wall time;
+        # the remaining unfunded rows are the real credit-grace population.
+        cur.execute("SELECT to_regclass('axgt_deposits')")
+        deposits_table_row = cur.fetchone()
+        deposits_table_exists = bool(
+            deposits_table_row and deposits_table_row[0]
+        )
+        if deposits_table_exists:
+            migration_now = time.time()
+            cur.execute(
+                f"""UPDATE {_SESSION_TABLE} AS session
+                    SET status = 'active',
+                        last_heartbeat = %s,
+                        last_billed_at = %s,
+                        expires_at = %s,
+                        credit_grace_started_at = NULL
+                    WHERE session.status = 'paused'
+                      AND session.last_heartbeat >= %s
+                      AND session.hard_expires_at IS NULL
+                      AND EXISTS (
+                          SELECT 1 FROM axgt_deposits AS deposit
+                          WHERE deposit.wallet_address = session.wallet_address
+                            AND deposit.remaining_minutes > 0
+                      )""",
+                (
+                    migration_now,
+                    migration_now,
+                    migration_now + _session_max_seconds(),
+                    migration_now - _session_credit_grace_max_seconds(),
+                ),
+            )
+        cur.execute(
+            f"""UPDATE {_SESSION_TABLE}
+                SET status = 'credit_grace',
+                    credit_grace_started_at = COALESCE(
+                        credit_grace_started_at, last_heartbeat
+                    )
+                WHERE status = 'paused'"""
         )
         cur.execute(f"""
             CREATE INDEX IF NOT EXISTS idx_{_SESSION_TABLE}_status
@@ -585,40 +640,6 @@ def _init_once() -> bool:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _pause_stale_sessions(cur, now: float, hb_cutoff: float) -> List[tuple]:
-    """Pause (not kill) active sessions whose heartbeats stopped.
-
-    Originally this only applied to zero-credit timeouts, but a heartbeat
-    timeout with credit left just means the browser went away (tab closed
-    while detached, crash, network loss) — killing the container there
-    destroyed the user's session storage. With preserve enabled, ALL
-    heartbeat-stale sessions pause instead: the container keeps running,
-    billing stops (billing is heartbeat-driven), and the owner can resume
-    within AXGT_SESSION_PAUSED_MAX_MINUTES; after that TTL —
-    or at an SSH session's hard cap — _expire_stale_paused_sessions ends it.
-    """
-    if not _preserve_session_on_credit_exhaust():
-        return []
-    cur.execute(
-        f"""SELECT id, wallet_address FROM {_SESSION_TABLE}
-            WHERE status = 'active' AND last_heartbeat < %s AND expires_at > %s""",
-        (hb_cutoff, now),
-    )
-    rows = cur.fetchall() or []
-    paused: List[tuple] = []
-    for session_id, wallet in rows:
-        cur.execute(
-            f"""UPDATE {_SESSION_TABLE}
-                SET status = 'paused', last_heartbeat = %s
-                WHERE id = %s AND status = 'active'
-                RETURNING wallet_address""",
-            (now, session_id),
-        )
-        if cur.fetchone():
-            paused.append((wallet, session_id))
-    return paused
-
-
 def session_grace_seconds() -> int:
     """Return the session grace period in seconds from AXGT_SESSION_GRACE_SECONDS (default 60)."""
     raw = (os.getenv("AXGT_SESSION_GRACE_SECONDS") or "").strip()
@@ -631,18 +652,16 @@ def session_grace_seconds() -> int:
     return 60
 
 
-def _expire_stale_session(cur, now: float) -> Tuple[Optional[tuple], List[tuple]]:
-    """End or pause stale active sessions.
+def _expire_stale_session(cur, now: float) -> Tuple[List[tuple], List[tuple]]:
+    """End stale active runtimes; detach is not represented by this state.
 
-    Heartbeat timeouts become ``paused`` when preserve is enabled (container kept,
-    resumable by the owner within the paused TTL). With preserve disabled — or when
-    ``expires_at`` itself lapsed (no heartbeat within ``AXGT_SESSION_MAX_MINUTES``)
-    or an SSH hard cap passed — the session ends and the container is removed.
+    Desktop and SSH containers own their runtime heartbeats. A stale heartbeat
+    therefore means the runtime/control path is unhealthy, not that a browser
+    detached. Only an actual credit-exhaustion result enters ``credit_grace``.
 
-    Returns (ended_session_or_none, paused_sessions).
+    Returns (all_ended_sessions, legacy_credit_grace_transitions).
     """
     hb_cutoff = now - _heartbeat_timeout_seconds()
-    paused = _pause_stale_sessions(cur, now, hb_cutoff)
     grace = session_grace_seconds()
     cur.execute(
         f"""UPDATE {_SESSION_TABLE}
@@ -654,26 +673,44 @@ def _expire_stale_session(cur, now: float) -> Tuple[Optional[tuple], List[tuple]
             RETURNING wallet_address, id""",
         (hb_cutoff, now, grace, now),
     )
-    row = cur.fetchone()
-    ended = (row[0], row[1]) if row else None
-    return ended, paused
+    rows = cur.fetchall() or []
+    ended = [(row[0], row[1]) for row in rows]
+    return ended, []
 
 
-def _apply_stale_session_maintenance(ended: Optional[tuple], paused_credit: List[tuple]) -> None:
-    for wallet, session_id in paused_credit:
-        _on_session_credit_paused(wallet, session_id)
-    if ended:
-        _on_session_ended(ended[0], ended[1])
+def _apply_stale_session_maintenance(
+    ended: Optional[List[tuple]],
+    credit_grace_transitions: List[tuple],
+) -> None:
+    if credit_grace_transitions:
+        logger.warning(
+            "session_manager: ignored unexpected stale credit-grace transitions"
+        )
+    # Accept the former single-tuple shape during rolling in-process/test
+    # compatibility, but production expiry now returns every affected row.
+    ended_rows: List[tuple]
+    if not ended:
+        ended_rows = []
+    elif (
+        isinstance(ended, tuple)
+        and len(ended) == 2
+        and not isinstance(ended[0], (tuple, list))
+    ):
+        ended_rows = [ended]
+    else:
+        ended_rows = list(ended)
+    for wallet_ended, session_id_ended in ended_rows:
+        _on_session_ended(wallet_ended, session_id_ended)
 
 
 def _cleanup_after_stale_maintenance(
-    ended: Optional[tuple],
-    paused_credit: List[tuple],
-    paused_ttl_ended: Optional[List[tuple]] = None,
+    ended: Optional[List[tuple]],
+    credit_grace_transitions: List[tuple],
+    expired_credit_grace: Optional[List[tuple]] = None,
 ) -> None:
     """Post-commit hooks for stale session DB updates."""
-    _apply_stale_session_maintenance(ended, paused_credit)
-    for wallet_ended, session_id_ended in paused_ttl_ended or []:
+    _apply_stale_session_maintenance(ended, credit_grace_transitions)
+    for wallet_ended, session_id_ended in expired_credit_grace or []:
         logger.info(
             "session_manager: auto-ended stale session for %s",
             _mask(wallet_ended),
@@ -715,6 +752,7 @@ def _session_row_to_dict(row) -> Dict[str, Any]:
         "files_key": row[10] if len(row) > 10 else None,
         "hard_expires_at": row[11] if len(row) > 11 else None,
         "ssh_enabled": bool(row[12]) if len(row) > 12 else False,
+        "credit_grace_started_at": row[13] if len(row) > 13 else None,
     }
 
 
@@ -722,7 +760,7 @@ def _get_active_rows(cur) -> List[Dict[str, Any]]:
     cur.execute(
         f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
                    started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at,
-                   ssh_enabled
+                   ssh_enabled, credit_grace_started_at
             FROM {_SESSION_TABLE}
             WHERE status = 'active'
             ORDER BY started_at ASC""",
@@ -731,15 +769,16 @@ def _get_active_rows(cur) -> List[Dict[str, Any]]:
     return [_session_row_to_dict(r) for r in rows]
 
 
-def _get_paused_rows(cur, now: float) -> List[Dict[str, Any]]:
-    """Credit-paused sessions still holding GPUs/container until paused TTL expires."""
-    cutoff = now - _session_paused_max_seconds()
+def _get_credit_grace_rows(cur, now: float) -> List[Dict[str, Any]]:
+    """Credit-grace sessions still reserving their running runtime and GPUs."""
+    cutoff = now - _session_credit_grace_max_seconds()
     cur.execute(
         f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
                    started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at,
-                   ssh_enabled
+                   ssh_enabled, credit_grace_started_at
             FROM {_SESSION_TABLE}
-            WHERE status = 'paused' AND last_heartbeat >= %s
+            WHERE status = 'credit_grace'
+              AND COALESCE(credit_grace_started_at, last_heartbeat) >= %s
             ORDER BY started_at ASC""",
         (cutoff,),
     )
@@ -748,20 +787,25 @@ def _get_paused_rows(cur, now: float) -> List[Dict[str, Any]]:
 
 
 def _get_gpu_reserved_rows(cur, now: float) -> List[Dict[str, Any]]:
-    """Active plus non-expired paused sessions (both reserve GPU IDs)."""
-    return _get_active_rows(cur) + _get_paused_rows(cur, now)
+    """Active and credit-grace sessions both reserve their GPU IDs."""
+    return _get_active_rows(cur) + _get_credit_grace_rows(cur, now)
 
 
-def _paused_session_for_wallet(cur, wallet: str, now: float) -> Optional[Dict[str, Any]]:
+def _credit_grace_session_for_wallet(
+    cur,
+    wallet: str,
+    now: float,
+) -> Optional[Dict[str, Any]]:
     cur.execute(
         f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
                    started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at,
-                   ssh_enabled
+                   ssh_enabled, credit_grace_started_at
             FROM {_SESSION_TABLE}
-            WHERE status = 'paused' AND wallet_address = %s AND last_heartbeat >= %s
+            WHERE status = 'credit_grace' AND wallet_address = %s
+              AND COALESCE(credit_grace_started_at, last_heartbeat) >= %s
             ORDER BY started_at DESC
             LIMIT 1""",
-        (wallet, now - _session_paused_max_seconds()),
+        (wallet, now - _session_credit_grace_max_seconds()),
     )
     row = cur.fetchone()
     return _session_row_to_dict(row) if row else None
@@ -778,7 +822,7 @@ def _active_session_for_wallet(cur, wallet: str) -> Optional[Dict[str, Any]]:
     cur.execute(
         f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
                    started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at,
-                   ssh_enabled
+                   ssh_enabled, credit_grace_started_at
             FROM {_SESSION_TABLE}
             WHERE status = 'active' AND wallet_address = %s
             ORDER BY started_at DESC
@@ -859,88 +903,188 @@ def _mask(addr: str) -> str:
     return f"{addr[:6]}...{addr[-4:]}"
 
 
-def _on_session_credit_paused(wallet_address: str, session_id: int) -> None:
-    """Credit exhausted: disconnect billing but keep container/desktop for resume."""
-    deposit_ledger = _import_deposit_ledger()
-    if deposit_ledger.init_once():
-        remaining = deposit_ledger.get_remaining_minutes(wallet_address)
-        deposit_ledger.record_session_expiry(
-            wallet_address,
-            minutes_deducted=0.0,
-            balance_after_minutes=remaining,
-            session_id=str(session_id),
-        )
+def _on_session_credit_grace(wallet_address: str, session_id: int) -> None:
+    """Log credit exhaustion while leaving the existing runtime untouched.
+
+    The usage deduction already provides the zero-balance audit event. A
+    ``session_expiry`` event is deliberately deferred until the grace TTL ends
+    or the owner explicitly ends the session.
+    """
     logger.info(
-        "session_manager: session %s paused for %s (container preserved)",
+        "session_manager: session %s entered credit grace for %s "
+        "(runtime and jobs continue)",
         session_id,
         _mask(wallet_address),
     )
 
 
 def _on_session_ended(wallet_address: str, session_id: int) -> None:
-    """Record session expiry in ledger, stop container, and run reset script."""
-    deposit_ledger = _import_deposit_ledger()
-    if deposit_ledger.init_once():
-        remaining = deposit_ledger.get_remaining_minutes(wallet_address)
-        deposit_ledger.record_session_expiry(
-            wallet_address,
-            minutes_deducted=0.0,
-            balance_after_minutes=remaining,
-            session_id=str(session_id),
+    """Stop the runtime first, then record expiry bookkeeping.
+
+    Ledger failures must never prevent compute teardown. A launcher-declared
+    stop failure is surfaced after bookkeeping/reset so the caller logs a failed
+    maintenance cycle and the periodic reconciliation worker can retry it. The
+    DB currently has no durable ``cleanup_pending`` state, so the scheduler lock
+    guarantees ordering for successful teardown, not permanent stop failures.
+    """
+    cleanup_error: Optional[Exception] = None
+    try:
+        _cleanup_session_container(session_id)
+    except Exception as exc:
+        cleanup_error = exc
+        logger.warning(
+            "session_manager: runtime cleanup failed for session %s: %s",
+            session_id,
+            exc,
         )
-    _cleanup_session_container(session_id)
+
+    try:
+        deposit_ledger = _import_deposit_ledger()
+        if deposit_ledger.init_once():
+            remaining = deposit_ledger.get_remaining_minutes(wallet_address)
+            deposit_ledger.record_session_expiry(
+                wallet_address,
+                minutes_deducted=0.0,
+                balance_after_minutes=remaining,
+                session_id=str(session_id),
+            )
+    except Exception as exc:
+        logger.warning(
+            "session_manager: expiry ledger bookkeeping failed for session %s: %s",
+            session_id,
+            exc,
+        )
     _run_reset_script()
+    if cleanup_error is not None:
+        raise RuntimeError(
+            f"Runtime cleanup was not confirmed for session {session_id}"
+        ) from cleanup_error
 
 
-def _expire_stale_paused_sessions(cur, now: float) -> List[tuple]:
-    """End paused sessions past resume TTL (container teardown)."""
-    cutoff = now - _session_paused_max_seconds()
-    grace = session_grace_seconds()
+def _expire_credit_grace_sessions(cur, now: float) -> List[tuple]:
+    """End credit-grace sessions past the top-up TTL (container teardown)."""
+    cutoff = now - _session_credit_grace_max_seconds()
     cur.execute(
         f"""UPDATE {_SESSION_TABLE}
             SET status = 'ended'
-            WHERE status = 'paused'
-              AND (last_heartbeat < %s
-                   OR (hard_expires_at IS NOT NULL AND hard_expires_at + %s <= %s))
+            WHERE status = 'credit_grace'
+              AND COALESCE(credit_grace_started_at, last_heartbeat) < %s
             RETURNING wallet_address, id""",
-        (cutoff, grace, now),
+        (cutoff,),
     )
     rows = cur.fetchall() or []
     return [(r[0], r[1]) for r in rows]
 
 
-def _resume_paused_session(
+def _acquire_allocation_scheduler_lock(cur) -> None:
+    """Serialize GPU teardown and reservation across transaction commits."""
+    cur.execute(
+        "SELECT pg_advisory_lock(%s)",
+        (_ALLOCATION_ADVISORY_LOCK_KEY,),
+    )
+
+
+def _try_acquire_allocation_scheduler_lock(cur) -> bool:
+    """Non-blocking scheduler lock acquisition for polling and cleanup work."""
+    cur.execute(
+        "SELECT pg_try_advisory_lock(%s)",
+        (_ALLOCATION_ADVISORY_LOCK_KEY,),
+    )
+    row = cur.fetchone()
+    return bool(row and row[0])
+
+
+def _release_allocation_scheduler_lock(conn, cur) -> None:
+    """Release the session-level scheduler lock and close its transaction."""
+    cur.execute(
+        "SELECT pg_advisory_unlock(%s)",
+        (_ALLOCATION_ADVISORY_LOCK_KEY,),
+    )
+    conn.commit()
+
+
+def _run_stale_session_maintenance_locked(conn, cur) -> None:
+    """Expire and fully tear down stale runtimes while scheduler-locked.
+
+    Cleanup is external to PostgreSQL and can take long enough for another row
+    to cross its expiry boundary. Repeat until a fresh sweep finds no work so a
+    claim cannot treat that row's GPU as free before its container is stopped.
+    The caller must hold ``_ALLOCATION_ADVISORY_LOCK_KEY``.
+    """
+    while True:
+        maintenance_now = time.time()
+        ended, stale_grace = _expire_stale_session(cur, maintenance_now)
+        grace_ended = _expire_credit_grace_sessions(cur, maintenance_now)
+        if not (ended or stale_grace or grace_ended):
+            return
+        conn.commit()
+        _cleanup_after_stale_maintenance(ended, stale_grace, grace_ended)
+
+
+def _run_stale_session_maintenance(conn, cur) -> bool:
+    """Opportunistically run stale teardown under the scheduler lock.
+
+    Polling/status/heartbeat requests must not queue behind a slow Docker stop.
+    If a claim, release, or cleanup worker already owns the lock, this caller
+    skips maintenance and continues without making any GPU-freeing transition.
+    """
+    if not _try_acquire_allocation_scheduler_lock(cur):
+        return False
+    try:
+        _run_stale_session_maintenance_locked(conn, cur)
+    finally:
+        _release_allocation_scheduler_lock(conn, cur)
+    return True
+
+
+def _resume_credit_grace_session(
     cur,
     wallet: str,
-    paused: Dict[str, Any],
+    credit_grace: Dict[str, Any],
     now: float,
 ) -> Dict[str, Any]:
-    """Reactivate a credit-paused session without spawning a new container.
+    """Reactivate a credit-grace session without spawning a new container.
 
-    Restores the same profile, GPU assignment, and container as before credit exhaustion.
-    Client-supplied ``requested_profile`` is ignored for resume.
+    The same row, container, profile, GPU assignment, and running jobs are
+    retained. The billing checkpoint moves to ``now`` in the same UPDATE that
+    reactivates billing, so grace wall time is never charged.
+    Client-supplied ``requested_profile`` is ignored for reactivation.
     """
-    paused_profile = (paused.get("requested_profile") or "small").strip().lower()
-    assigned = list(paused.get("gpu_ids") or [])
+    stored_profile_hint = (
+        credit_grace.get("requested_profile") or "small"
+    ).strip().lower()
+    assigned = list(credit_grace.get("gpu_ids") or [])
     max_secs = _session_max_seconds()
+    grace_cutoff = now - _session_credit_grace_max_seconds()
     cur.execute(
         f"""UPDATE {_SESSION_TABLE}
             SET status = 'active',
                 last_heartbeat = %s,
+                last_billed_at = %s,
+                credit_grace_started_at = NULL,
                 expires_at = %s
-            WHERE id = %s AND status = 'paused' AND wallet_address = %s
+            WHERE id = %s AND status = 'credit_grace' AND wallet_address = %s
+              AND COALESCE(credit_grace_started_at, last_heartbeat) >= %s
             RETURNING id, gpu_ids, container_id, expires_at, requested_profile""",
-        (now, now + max_secs, paused["id"], wallet),
+        (
+            now,
+            now,
+            now + max_secs,
+            credit_grace["id"],
+            wallet,
+            grace_cutoff,
+        ),
     )
     row = cur.fetchone()
     if not row:
-        return {"granted": False, "reason": "Paused session no longer available"}
+        return {"granted": False, "reason": "Credit-grace session no longer available"}
     session_id, gpu_ids_text, container_id, expires_at, stored_profile = row[0], row[1], row[2], row[3], row[4]
     assigned = _parse_gpu_ids(gpu_ids_text) or assigned
-    profile_name = (stored_profile or paused_profile or "small").strip().lower()
+    profile_name = (stored_profile or stored_profile_hint or "small").strip().lower()
     remaining = max(0, expires_at - now)
     logger.info(
-        "session_manager: resumed paused session %s for %s (profile=%s, gpus=%s)",
+        "session_manager: reactivated credit-grace session %s for %s "
+        "(profile=%s, gpus=%s)",
         session_id,
         _mask(wallet),
         profile_name,
@@ -948,6 +1092,8 @@ def _resume_paused_session(
     )
     resp = {
         "granted": True,
+        "credit_grace_reactivated": True,
+        # Rolling compatibility for clients that called this action Resume.
         "resumed": True,
         "session_id": session_id,
         "requested_profile": profile_name,
@@ -956,12 +1102,12 @@ def _resume_paused_session(
         "allocation_status": "allocated",
         "remaining_seconds": int(remaining),
     }
-    if paused.get("ssh_enabled"):
-        # Resume is an explicit owner action: renew the SSH hard cap (extend-only;
+    if credit_grace.get("ssh_enabled"):
+        # Reactivation is an explicit owner action: renew the SSH hard cap (extend-only;
         # an uncapped session stays uncapped) and return the connect fields so an
         # agent or browser that lost state gets its endpoint back in the same
         # shape as a fresh claim — the client must not attempt a desktop connect.
-        hard_expires_at = paused.get("hard_expires_at")
+        hard_expires_at = credit_grace.get("hard_expires_at")
         if hard_expires_at is not None:
             cap_secs = _ssh_hard_cap_seconds(_remaining_minutes_for(wallet))
             if cap_secs is not None and now + cap_secs > hard_expires_at:
@@ -978,7 +1124,9 @@ def _resume_paused_session(
 
 def _cleanup_session_container(session_id: int) -> None:
     launcher = _import_session_launcher()
-    launcher.stop_session(session_id=session_id, container_id=None)
+    stopped = launcher.stop_session(session_id=session_id, container_id=None)
+    if stopped is False:
+        raise RuntimeError("session launcher did not confirm runtime removal")
 
 
 # Direct-SSH session template: each session gets one published TCP port -> container :22.
@@ -1084,12 +1232,7 @@ def get_active_session() -> Optional[Dict[str, Any]]:
         return None
     try:
         with conn.cursor() as cur:
-            now = time.time()
-            ended, paused_credit = _expire_stale_session(cur, now)
-            paused_ended = _expire_stale_paused_sessions(cur, now)
-            if ended or paused_credit or paused_ended:
-                conn.commit()
-                _cleanup_after_stale_maintenance(ended, paused_credit, paused_ended)
+            _run_stale_session_maintenance(conn, cur)
             rows = _get_active_rows(cur)
             if not rows:
                 return None
@@ -1104,10 +1247,10 @@ def get_active_session() -> Optional[Dict[str, Any]]:
 
 
 def get_session_for_wallet(wallet_address: str) -> Optional[Dict[str, Any]]:
-    """Active or credit-paused session row for *wallet_address*, or None.
+    """Active or credit-grace session row for *wallet_address*, or None.
 
-    Paused sessions are included so wallets can still retrieve files while
-    their container survives the paused TTL.
+    Credit-grace sessions are included so wallets can still retrieve files
+    while their running container survives the top-up TTL.
     """
     wallet = (wallet_address or "").strip().lower()
     if not wallet or not _init_once():
@@ -1119,7 +1262,7 @@ def get_session_for_wallet(wallet_address: str) -> Optional[Dict[str, Any]]:
         with conn.cursor() as cur:
             session = _active_session_for_wallet(cur, wallet)
             if session is None:
-                session = _paused_session_for_wallet(cur, wallet, time.time())
+                session = _credit_grace_session_for_wallet(cur, wallet, time.time())
             return session
     except Exception as exc:
         logger.warning("get_session_for_wallet failed: %s", exc)
@@ -1134,28 +1277,49 @@ def try_claim_session(
     requested_template: Optional[str] = None,
     requested_ssh: bool = False,
     ssh_pubkey: Optional[str] = None,
+    resume_only: bool = False,
+    expected_session_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Attempt to claim the desktop session for *wallet_address*.
 
     Returns a dict with at least ``granted`` (bool).  On failure, includes
     ``active_wallet`` (masked) when another session blocks access.
+
+    ``resume_only`` is a strict compare-and-reactivate contract. It may only
+    return the wallet's matching active session or reactivate its matching
+    credit-grace session; it never falls through to a new allocation. This
+    closes the race where grace expires after a status read but before claim.
     """
     wallet = wallet_address.lower()
+    if resume_only and (
+        isinstance(expected_session_id, bool)
+        or not isinstance(expected_session_id, int)
+        or expected_session_id <= 0
+    ):
+        return {
+            "granted": False,
+            "reason": "A positive expected_session_id is required for resume-only claims",
+            "resume_only": True,
+            "invalid_resume_request": True,
+            "resume_expired": False,
+            "session_mismatch": False,
+        }
     profile_name, requested_gpus = _resolve_profile(requested_profile)
     if not _init_once():
         return {"granted": False, "reason": "Session DB unavailable"}
     conn = _get_connection()
     if not conn:
         return {"granted": False, "reason": "Session DB unavailable"}
+    allocation_lock_held = False
     try:
         with conn.cursor() as cur:
-            now = time.time()
-
-            ended, paused_credit = _expire_stale_session(cur, now)
-            paused_ended = _expire_stale_paused_sessions(cur, now)
-            if ended or paused_credit or paused_ended:
-                conn.commit()
-                _cleanup_after_stale_maintenance(ended, paused_credit, paused_ended)
+            # A session-level lock is required here because stale-session DB
+            # expiry commits before external container teardown. Hold it from
+            # the first expiry sweep through the allocation reservation, then
+            # release it before spawning the new container.
+            _acquire_allocation_scheduler_lock(cur)
+            allocation_lock_held = True
+            _run_stale_session_maintenance_locked(conn, cur)
 
             # Serialize concurrent claims for the same wallet. The UI fires two
             # claims that race (vnc.html + ui.js); without this both can read
@@ -1168,24 +1332,103 @@ def try_claim_session(
                 (wallet, _CLAIM_ADVISORY_LOCK_NAMESPACE),
             )
 
+            # Refresh after scheduler/per-wallet waits and external stale-runtime
+            # cleanup. Neither lock wait nor cleanup time belongs to a resumed
+            # session's new billing interval.
+            now = time.time()
             active_rows = _get_active_rows(cur)
-            paused_rows = _get_paused_rows(cur, now)
-            reserved_rows = active_rows + paused_rows
+            grace_rows = _get_credit_grace_rows(cur, now)
+            reserved_rows = active_rows + grace_rows
             active = active_rows[-1] if active_rows else None
-            blocking = active if active else (paused_rows[-1] if paused_rows else None)
+            blocking = active if active else (grace_rows[-1] if grace_rows else None)
 
-            is_owner = _active_session_for_wallet(cur, wallet) is not None
-            paused = _paused_session_for_wallet(cur, wallet, now)
-            if not is_owner and paused and _preserve_session_on_credit_exhaust():
-                paused_profile = (paused.get("requested_profile") or "small").strip().lower()
-                _, paused_gpus = _resolve_profile(paused_profile)
+            owned_at_resume_check = _active_session_for_wallet(cur, wallet)
+            is_owner = owned_at_resume_check is not None
+            credit_grace = _credit_grace_session_for_wallet(cur, wallet, now)
+
+            if resume_only:
+                # This check is deliberately inside the same-wallet advisory
+                # transaction lock as reactivation. A status response is only a
+                # hint; this locked state is authoritative when grace expires or
+                # another request reactivates/replaces the session concurrently.
+                resume_target = owned_at_resume_check or credit_grace
+                if resume_target is None:
+                    conn.commit()
+                    return {
+                        "granted": False,
+                        "reason": "The session is no longer available to resume",
+                        "resume_only": True,
+                        "expected_session_id": expected_session_id,
+                        "resume_expired": True,
+                        "session_mismatch": False,
+                    }
+                if resume_target["id"] != expected_session_id:
+                    conn.commit()
+                    return {
+                        "granted": False,
+                        "reason": "The current session does not match the requested resume session",
+                        "resume_only": True,
+                        "expected_session_id": expected_session_id,
+                        "current_session_id": resume_target["id"],
+                        "resume_expired": False,
+                        "session_mismatch": True,
+                    }
+                if credit_grace is not None and owned_at_resume_check is None:
+                    stored_profile = (
+                        credit_grace.get("requested_profile") or "small"
+                    ).strip().lower()
+                    _, stored_gpus = _resolve_profile(stored_profile)
+                    ok_credit, credit_reason = _prepaid_credit_allows_profile(
+                        wallet, stored_gpus, stored_profile
+                    )
+                    if not ok_credit:
+                        conn.commit()
+                        return {
+                            "granted": False,
+                            "reason": credit_reason,
+                            "resume_only": True,
+                            "expected_session_id": expected_session_id,
+                            "resume_expired": False,
+                            "session_mismatch": False,
+                        }
+                    reactivation_now = time.time()
+                    resume = _resume_credit_grace_session(
+                        cur, wallet, credit_grace, reactivation_now
+                    )
+                    conn.commit()
+                    if not resume.get("granted"):
+                        return {
+                            **resume,
+                            "resume_only": True,
+                            "expected_session_id": expected_session_id,
+                            "resume_expired": True,
+                            "session_mismatch": False,
+                        }
+                    resume.update({
+                        "resume_only": True,
+                        "expected_session_id": expected_session_id,
+                    })
+                    return resume
+
+            if (
+                not is_owner
+                and credit_grace
+                and _preserve_session_on_credit_exhaust()
+            ):
+                stored_profile = (
+                    credit_grace.get("requested_profile") or "small"
+                ).strip().lower()
+                _, stored_gpus = _resolve_profile(stored_profile)
                 ok_credit, credit_reason = _prepaid_credit_allows_profile(
-                    wallet, paused_gpus, paused_profile
+                    wallet, stored_gpus, stored_profile
                 )
                 if not ok_credit:
                     conn.commit()
                     return {"granted": False, "reason": credit_reason}
-                resume = _resume_paused_session(cur, wallet, paused, now)
+                reactivation_now = time.time()
+                resume = _resume_credit_grace_session(
+                    cur, wallet, credit_grace, reactivation_now
+                )
                 conn.commit()
                 return resume
 
@@ -1197,8 +1440,16 @@ def try_claim_session(
                     conn.commit()
                     return {"granted": False, "reason": credit_reason}
 
+            # Preserve the historical second owner read for ordinary claims.
+            # A strict resume reuses the state checked above so it cannot fall
+            # through to allocation if its expected session disappears.
+            owned = (
+                owned_at_resume_check
+                if resume_only
+                else _active_session_for_wallet(cur, wallet)
+            )
+
             # Already owner in multi-session mode
-            owned = _active_session_for_wallet(cur, wallet)
             if owned:
                 remaining = max(0, owned["expires_at"] - now)
                 # An explicit owner re-claim of an SSH session RENEWS its hard
@@ -1233,6 +1484,12 @@ def try_claim_session(
                     "allocation_status": "allocated",
                     "remaining_seconds": int(remaining),
                 }
+                if resume_only:
+                    owned_resp.update({
+                        "resume_only": True,
+                        "expected_session_id": expected_session_id,
+                        "already_active": True,
+                    })
                 if hard_expires_at is not None:
                     owned_resp["hard_cap_remaining_seconds"] = int(max(0, hard_expires_at - now))
                 # The stored ssh_enabled flag (not the client's requested_ssh) decides
@@ -1346,6 +1603,12 @@ def try_claim_session(
                         }
                 conn.commit()
 
+                # Reservation is durable. Release the scheduler/teardown lock
+                # before the external Docker operation so independent launches
+                # remain concurrent.
+                _release_allocation_scheduler_lock(conn, cur)
+                allocation_lock_held = False
+
                 spawned = False
                 container_id = None
                 spawn_error = None
@@ -1368,6 +1631,13 @@ def try_claim_session(
                         session_id,
                         exc,
                     )
+
+                if not spawned:
+                    # The reservation row still excludes this GPU. Reacquire the
+                    # shared lock before changing it to ended, and keep the lock
+                    # through deterministic cleanup of any half-created runtime.
+                    _acquire_allocation_scheduler_lock(cur)
+                    allocation_lock_held = True
 
                 finalized = False
                 try:
@@ -1415,6 +1685,12 @@ def try_claim_session(
                     finally:
                         conn2.close()
                 if not finalized:
+                    if not allocation_lock_held:
+                        # A successful spawn whose DB finalization lost a race or
+                        # failed must also be torn down before its reservation is
+                        # exposed as ended.
+                        _acquire_allocation_scheduler_lock(cur)
+                        allocation_lock_held = True
                     # The allocation row was committed before the external
                     # Docker call. Reuse the still-open primary connection as a
                     # best-effort fail transition if the finalizer is unavailable.
@@ -1441,9 +1717,7 @@ def try_claim_session(
                     # deterministic name so a partial spawn can't leak a GPU/ports
                     # and later starve real claims ("No GPUs available").
                     try:
-                        _import_session_launcher().stop_session(
-                            session_id=session_id, container_id=None
-                        )
+                        _cleanup_session_container(session_id)
                     except Exception as exc:
                         logger.warning(
                             "try_claim_session: cleanup after failed spawn of session %s failed: %s",
@@ -1494,6 +1768,16 @@ def try_claim_session(
         logger.warning("try_claim_session failed: %s", exc)
         return {"granted": False, "reason": "Internal error"}
     finally:
+        if allocation_lock_held:
+            try:
+                with conn.cursor() as unlock_cur:
+                    _release_allocation_scheduler_lock(conn, unlock_cur)
+            except Exception as exc:
+                # Connection close below is PostgreSQL's final, reliable release
+                # for any remaining session-level advisory lock.
+                logger.warning(
+                    "try_claim_session: scheduler lock release failed: %s", exc
+                )
         conn.close()
 
 
@@ -1522,14 +1806,20 @@ def heartbeat(wallet_address: str, ssh_active: bool = False) -> Dict[str, Any]:
             import deposit_ledger
 
     try:
-        now = time.time()
         cur = conn.cursor()
         try:
-            ended, paused_credit = _expire_stale_session(cur, now)
-            paused_ended = _expire_stale_paused_sessions(cur, now)
+            _run_stale_session_maintenance(conn, cur)
+            preserve_on_credit_exhaust = _preserve_session_on_credit_exhaust()
+            if not preserve_on_credit_exhaust:
+                # This deployment can free a GPU from the billing transaction.
+                # Take the scheduler lock before the row lock to preserve the
+                # global-lock -> row-lock order used by claim/cleanup paths.
+                # Connection close releases it after any required teardown.
+                _acquire_allocation_scheduler_lock(cur)
+            now = time.time()
             cur.execute(
                 f"""SELECT id, last_billed_at, expires_at, started_at, requested_profile, gpu_ids, container_id,
-                           hard_expires_at
+                           hard_expires_at, ssh_enabled
                     FROM {_SESSION_TABLE}
                     WHERE status = 'active' AND wallet_address = %s
                     FOR UPDATE""",
@@ -1537,16 +1827,71 @@ def heartbeat(wallet_address: str, ssh_active: bool = False) -> Dict[str, Any]:
             )
             row = cur.fetchone()
             if not row:
-                paused = _paused_session_for_wallet(cur, wallet, now)
+                credit_grace = _credit_grace_session_for_wallet(cur, wallet, now)
                 conn.commit()
-                _cleanup_after_stale_maintenance(ended, paused_credit, paused_ended)
-                if paused and _preserve_session_on_credit_exhaust():
+                if credit_grace and _preserve_session_on_credit_exhaust():
+                    grace_started_at = (
+                        credit_grace.get("credit_grace_started_at")
+                        or credit_grace["last_heartbeat"]
+                    )
+                    grace_profile = (
+                        credit_grace.get("requested_profile") or "small"
+                    )
+                    grace_gpu_ids = credit_grace.get("gpu_ids", [])
+                    grace_billing_count = _billing_gpu_count(
+                        grace_gpu_ids,
+                        grace_profile,
+                    )
+                    grace_gpu_count = (
+                        len(grace_gpu_ids)
+                        if grace_gpu_ids
+                        else grace_billing_count
+                    )
+                    grace_remaining_seconds = int(
+                        max(
+                            0,
+                            grace_started_at
+                            + _session_credit_grace_max_seconds()
+                            - now,
+                        )
+                    )
                     return {
                         "ok": False,
                         "reason": "Credit exhausted",
+                        "credit_grace": True,
+                        "credit_grace_reason": "credit_exhausted",
+                        "credit_grace_session_id": credit_grace["id"],
+                        "credit_grace_container_id": credit_grace.get("container_id"),
+                        "credit_grace_requested_profile": grace_profile,
+                        "credit_grace_assigned_gpu_ids": grace_gpu_ids,
+                        "credit_grace_gpu_count": grace_gpu_count,
+                        "credit_grace_ssh_enabled": bool(
+                            credit_grace.get("ssh_enabled")
+                        ),
+                        "credit_grace_remaining_seconds": grace_remaining_seconds,
+                        "resume_minutes_required": (
+                            grace_billing_count
+                            if _gpu_billing_enabled()
+                            else 1
+                        ),
+                        # Rolling compatibility for the old frontend.
                         "paused_for_resume": True,
-                        "session_id": paused["id"],
-                        "container_id": paused.get("container_id"),
+                        "paused_session_id": credit_grace["id"],
+                        "paused_container_id": credit_grace.get("container_id"),
+                        "paused_requested_profile": grace_profile,
+                        "paused_assigned_gpu_ids": grace_gpu_ids,
+                        "paused_gpu_count": grace_gpu_count,
+                        "paused_ssh_enabled": bool(
+                            credit_grace.get("ssh_enabled")
+                        ),
+                        "paused_resume_seconds": grace_remaining_seconds,
+                        "session_id": credit_grace["id"],
+                        "container_id": credit_grace.get("container_id"),
+                        "requested_profile": grace_profile,
+                        "assigned_gpu_ids": grace_gpu_ids,
+                        "ssh_enabled": bool(credit_grace.get("ssh_enabled")),
+                        "gpu_billing_enabled": _gpu_billing_enabled(),
+                        "billing_gpu_count": grace_billing_count,
                     }
                 return {"ok": False, "reason": "No active session for this wallet"}
 
@@ -1555,6 +1900,7 @@ def heartbeat(wallet_address: str, ssh_active: bool = False) -> Dict[str, Any]:
             assigned_gpu_ids = _parse_gpu_ids(row[5])
             container_id = row[6]
             hard_expires_at = row[7]
+            ssh_enabled = bool(row[8])
             # Bill from last checkpoint, or from session start if never billed (e.g. pre-migration row)
             bill_from = last_billed_at if last_billed_at is not None else started_at
             elapsed_seconds = max(0.0, now - bill_from)
@@ -1567,7 +1913,6 @@ def heartbeat(wallet_address: str, ssh_active: bool = False) -> Dict[str, Any]:
             # If there is billable time but ledger is unavailable, fail the heartbeat (no silent unbilled use).
             if minutes_delta > 0 and not deposit_ledger.init_once():
                 conn.commit()
-                _cleanup_after_stale_maintenance(ended, paused_credit, paused_ended)
                 return {"ok": False, "reason": "Billing unavailable. Cannot record usage."}
 
             if minutes_delta > 0 and deposit_ledger.init_once():
@@ -1577,22 +1922,28 @@ def heartbeat(wallet_address: str, ssh_active: bool = False) -> Dict[str, Any]:
                 )
                 if not ok:
                     conn.commit()
-                    _cleanup_after_stale_maintenance(ended, paused_credit, paused_ended)
                     return {"ok": False, "reason": err or "Billing failed"}
                 if remaining <= 0:
-                    # Pause or end session (same cursor: lock still held). Commit before cleanup hooks.
-                    if _preserve_session_on_credit_exhaust():
+                    # Stop compute billing/viewer access but leave the same runtime and jobs
+                    # running during the bounded top-up grace period.
+                    preserve_enabled = preserve_on_credit_exhaust
+                    preserved = False
+                    if preserve_enabled:
                         cur.execute(
                             f"""UPDATE {_SESSION_TABLE}
-                                SET status = 'paused', last_heartbeat = %s
+                                SET status = 'credit_grace',
+                                    last_heartbeat = %s,
+                                    last_billed_at = %s,
+                                    credit_grace_started_at = %s
                                 WHERE id = %s AND status = 'active'
                                 RETURNING wallet_address""",
-                            (now, session_id),
+                            (now, now, now, session_id),
                         )
-                        paused_row = cur.fetchone()
+                        grace_row = cur.fetchone()
                         conn.commit()
-                        if paused_row:
-                            _on_session_credit_paused(paused_row[0], session_id)
+                        if grace_row:
+                            preserved = True
+                            _on_session_credit_grace(grace_row[0], session_id)
                     else:
                         cur.execute(
                             f"""UPDATE {_SESSION_TABLE} SET status = 'ended'
@@ -1603,7 +1954,6 @@ def heartbeat(wallet_address: str, ssh_active: bool = False) -> Dict[str, Any]:
                         conn.commit()
                         if ended_row:
                             _on_session_ended(ended_row[0], session_id)
-                    _cleanup_after_stale_maintenance(ended, paused_credit, paused_ended)
                     return {
                         "ok": False,
                         "reason": "Credit exhausted",
@@ -1611,7 +1961,59 @@ def heartbeat(wallet_address: str, ssh_active: bool = False) -> Dict[str, Any]:
                         "requested_profile": req_profile,
                         "assigned_gpu_ids": assigned_gpu_ids,
                         "container_id": container_id,
-                        "paused_for_resume": _preserve_session_on_credit_exhaust(),
+                        "credit_grace": preserved,
+                        "credit_grace_reason": (
+                            "credit_exhausted" if preserved else None
+                        ),
+                        "credit_grace_session_id": session_id if preserved else None,
+                        "credit_grace_container_id": container_id if preserved else None,
+                        "credit_grace_requested_profile": req_profile if preserved else None,
+                        "credit_grace_assigned_gpu_ids": (
+                            assigned_gpu_ids if preserved else []
+                        ),
+                        "credit_grace_gpu_count": (
+                            (
+                                len(assigned_gpu_ids)
+                                if assigned_gpu_ids
+                                else billing_gpu_count
+                            )
+                            if preserved
+                            else 0
+                        ),
+                        "credit_grace_ssh_enabled": ssh_enabled if preserved else False,
+                        "credit_grace_remaining_seconds": (
+                            _session_credit_grace_max_seconds()
+                            if preserved
+                            else 0
+                        ),
+                        "resume_minutes_required": (
+                            billing_gpu_count if _gpu_billing_enabled() else 1
+                        ),
+                        # Rolling compatibility for the old frontend.
+                        "paused_for_resume": preserved,
+                        "paused_session_id": session_id if preserved else None,
+                        "paused_container_id": container_id if preserved else None,
+                        "paused_requested_profile": req_profile if preserved else None,
+                        "paused_assigned_gpu_ids": (
+                            assigned_gpu_ids if preserved else []
+                        ),
+                        "paused_gpu_count": (
+                            (
+                                len(assigned_gpu_ids)
+                                if assigned_gpu_ids
+                                else billing_gpu_count
+                            )
+                            if preserved
+                            else 0
+                        ),
+                        "paused_ssh_enabled": ssh_enabled if preserved else False,
+                        "paused_resume_seconds": (
+                            _session_credit_grace_max_seconds()
+                            if preserved
+                            else 0
+                        ),
+                        "session_id": session_id if preserved else None,
+                        "ssh_enabled": ssh_enabled if preserved else False,
                         "gpu_billing_enabled": _gpu_billing_enabled(),
                         "billing_gpu_count": billing_gpu_count,
                     }
@@ -1644,7 +2046,6 @@ def heartbeat(wallet_address: str, ssh_active: bool = False) -> Dict[str, Any]:
             # No commit happens between deduct and this; if anything fails above, rollback in except unwinds all.
             conn.commit()
             if not row2:
-                _cleanup_after_stale_maintenance(ended, paused_credit, paused_ended)
                 return {"ok": False, "reason": "Session ended"}
             remaining_secs = max(0, row2[0] - now)
             result = {
@@ -1669,7 +2070,6 @@ def heartbeat(wallet_address: str, ssh_active: bool = False) -> Dict[str, Any]:
                     result["estimated_wall_minutes_remaining"] = round(
                         remaining_after / billing_gpu_count, 2
                     )
-            _cleanup_after_stale_maintenance(ended, paused_credit, paused_ended)
             return result
         finally:
             cur.close()
@@ -1691,17 +2091,25 @@ def release_session(wallet_address: str) -> Dict[str, Any]:
         return {"released": False, "reason": "Session DB unavailable"}
     try:
         with conn.cursor() as cur:
+            # Keep the GPU reserved until its runtime has actually been stopped.
+            # This session-scoped lock survives the commit below and is released
+            # by connection close after `_on_session_ended` completes.
+            _acquire_allocation_scheduler_lock(cur)
             cur.execute(
                 f"""UPDATE {_SESSION_TABLE}
                     SET status = 'ended'
-                    WHERE status IN ('active', 'paused') AND wallet_address = %s
+                    WHERE status IN ('active', 'credit_grace')
+                      AND wallet_address = %s
                     RETURNING id, requested_profile, gpu_ids, container_id""",
                 (wallet,),
             )
             row = cur.fetchone()
         conn.commit()
         if not row:
-            return {"released": False, "reason": "No active session for this wallet"}
+            return {
+                "released": False,
+                "reason": "No active or credit-grace session for this wallet",
+            }
         session_id = row[0]
         _on_session_ended(wallet, session_id)
         logger.info("session_manager: session released by %s", _mask(wallet))
@@ -1729,11 +2137,9 @@ def restart_desktop_session(wallet_address: str) -> Dict[str, Any]:
         return {"restarted": False, "reason": "Session DB unavailable"}
     try:
         with conn.cursor() as cur:
-            now = time.time()
-            ended, paused_credit = _expire_stale_session(cur, now)
+            _run_stale_session_maintenance(conn, cur)
             active = _get_active_row(cur)
         conn.commit()
-        _cleanup_after_stale_maintenance(ended, paused_credit, [])
         if not active:
             return {"restarted": False, "reason": "No active session"}
         if active["wallet_address"] != wallet:
@@ -1758,14 +2164,9 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
     if not conn:
         return {"active": False, "reason": "Session DB unavailable"}
     try:
-        now = time.time()
         with conn.cursor() as cur:
-            ended, paused_credit = _expire_stale_session(cur, now)
-            paused_ended = _expire_stale_paused_sessions(cur, now)
-            if ended or paused_credit or paused_ended:
-                conn.commit()
-                _cleanup_after_stale_maintenance(ended, paused_credit, paused_ended)
-
+            _run_stale_session_maintenance(conn, cur)
+            now = time.time()
             active_rows = _get_active_rows(cur)
             reserved_rows = _get_gpu_reserved_rows(cur, now)
             active = active_rows[-1] if active_rows else None
@@ -1833,24 +2234,38 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
                     result["owner_ssh_enabled"] = bool(owned.get("ssh_enabled"))
                     if owned.get("ssh_enabled"):
                         result.update(_ssh_connection_fields(owned["id"]))
-                paused_owned = _paused_session_for_wallet(cur, wallet, now)
-                if paused_owned and _preserve_session_on_credit_exhaust():
-                    paused_profile = paused_owned.get("requested_profile") or "small"
-                    paused_gpus = paused_owned.get("gpu_ids", [])
-                    billing_count = _billing_gpu_count(paused_gpus, paused_profile)
-                    pause_remaining = max(
-                        0,
-                        paused_owned["last_heartbeat"] + _session_paused_max_seconds() - now,
+                grace_owned = _credit_grace_session_for_wallet(cur, wallet, now)
+                if grace_owned and _preserve_session_on_credit_exhaust():
+                    grace_profile = grace_owned.get("requested_profile") or "small"
+                    grace_gpus = grace_owned.get("gpu_ids", [])
+                    billing_count = _billing_gpu_count(grace_gpus, grace_profile)
+                    grace_started_at = (
+                        grace_owned.get("credit_grace_started_at")
+                        or grace_owned["last_heartbeat"]
                     )
-                    result["paused"] = True
-                    result["can_resume"] = pause_remaining > 0
-                    result["paused_session_id"] = paused_owned["id"]
-                    result["paused_container_id"] = paused_owned.get("container_id")
-                    result["paused_requested_profile"] = paused_profile
-                    result["paused_assigned_gpu_ids"] = paused_gpus
-                    result["paused_gpu_count"] = len(paused_gpus) if paused_gpus else billing_count
-                    result["paused_ssh_enabled"] = bool(paused_owned.get("ssh_enabled"))
-                    result["paused_resume_seconds"] = int(pause_remaining)
+                    grace_remaining = max(
+                        0,
+                        grace_started_at
+                        + _session_credit_grace_max_seconds()
+                        - now,
+                    )
+                    result["is_owner"] = True
+                    result["credit_grace"] = True
+                    result["credit_grace_reason"] = "credit_exhausted"
+                    result["credit_grace_session_id"] = grace_owned["id"]
+                    result["credit_grace_container_id"] = grace_owned.get("container_id")
+                    result["credit_grace_requested_profile"] = grace_profile
+                    result["credit_grace_assigned_gpu_ids"] = grace_gpus
+                    result["credit_grace_gpu_count"] = (
+                        len(grace_gpus) if grace_gpus else billing_count
+                    )
+                    result["credit_grace_ssh_enabled"] = bool(
+                        grace_owned.get("ssh_enabled")
+                    )
+                    result["credit_grace_remaining_seconds"] = int(
+                        grace_remaining
+                    )
+                    result["can_resume"] = grace_remaining > 0
                     result["resume_minutes_required"] = (
                         billing_count if _gpu_billing_enabled() else 1
                     )
@@ -1869,6 +2284,18 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
                         result["gpu_billing_enabled"] = True
                         result["billing_gpu_count"] = billing_count
 
+                    # Rolling compatibility for a cached pre-migration frontend.
+                    result["paused"] = True
+                    result["paused_session_id"] = grace_owned["id"]
+                    result["paused_container_id"] = grace_owned.get("container_id")
+                    result["paused_requested_profile"] = grace_profile
+                    result["paused_assigned_gpu_ids"] = grace_gpus
+                    result["paused_gpu_count"] = result["credit_grace_gpu_count"]
+                    result["paused_ssh_enabled"] = result[
+                        "credit_grace_ssh_enabled"
+                    ]
+                    result["paused_resume_seconds"] = int(grace_remaining)
+
         return result
     except Exception as exc:
         logger.warning("session_status failed: %s", exc)
@@ -1886,12 +2313,10 @@ def is_session_owner(wallet_address: str) -> bool:
     if not conn:
         return False
     try:
-        now = time.time()
         with conn.cursor() as cur:
-            ended, paused_credit = _expire_stale_session(cur, now)
+            _run_stale_session_maintenance(conn, cur)
             active = _active_session_for_wallet(cur, wallet)
         conn.commit()
-        _cleanup_after_stale_maintenance(ended, paused_credit, [])
         return active is not None
     except Exception as exc:
         logger.warning("is_session_owner failed: %s", exc)
@@ -1905,7 +2330,7 @@ def get_active_desktop_session_for_wallet(wallet_address: str) -> Optional[Dict[
 
     The returned identity is intentionally minimal and never includes the
     per-session ``files_key``.  Only fully allocated, unexpired desktop rows are
-    eligible; SSH, paused, allocating, failed, ended, and stale sessions must
+    eligible; SSH, credit-grace, allocating, failed, ended, and stale sessions must
     not receive browser WebRTC signaling.
     """
     wallet = (wallet_address or "").strip().lower()
@@ -2107,7 +2532,7 @@ def refresh_webrtc_agent_capability(
     wallet_address: str,
     agent_token: str,
 ) -> Optional[Dict[str, Any]]:
-    """Renew a live/paused desktop capability without delegating the signer."""
+    """Renew a live/credit-grace desktop capability without delegating the signer."""
     sid = _numeric_session_id(session_id)
     wallet = (wallet_address or "").strip().lower()
     token = (agent_token or "").strip()
@@ -2126,7 +2551,7 @@ def refresh_webrtc_agent_capability(
         return None
     try:
         now = time.time()
-        paused_cutoff = now - _session_paused_max_seconds()
+        grace_cutoff = now - _session_credit_grace_max_seconds()
         with conn.cursor() as cur:
             cur.execute(
                 f"""SELECT id, wallet_address, files_key,
@@ -2138,11 +2563,16 @@ def refresh_webrtc_agent_capability(
                       AND ssh_enabled = FALSE
                       AND (
                           (status = 'active' AND expires_at > %s)
-                          OR (status = 'paused' AND last_heartbeat >= %s)
+                          OR (
+                              status = 'credit_grace'
+                              AND COALESCE(
+                                  credit_grace_started_at, last_heartbeat
+                              ) >= %s
+                          )
                       )
                     LIMIT 1
                     FOR UPDATE""",
-                (sid, wallet, now, paused_cutoff),
+                (sid, wallet, now, grace_cutoff),
             )
             row = cur.fetchone()
             if not row or not _webrtc_capability_matches_row(
@@ -2180,7 +2610,7 @@ def refresh_webrtc_agent_capability(
                     WHERE id = %s
                       AND wallet_address = %s
                       AND webrtc_cap_jti_hash = %s
-                      AND status IN ('active', 'paused')""",
+                      AND status IN ('active', 'credit_grace')""",
                 (renewed_expiry, sid, wallet, renewed_jti),
             )
         conn.commit()
@@ -2197,9 +2627,9 @@ def refresh_webrtc_agent_capability(
 
 
 def validate_session_files_key(wallet_address: str, files_key: str) -> bool:
-    """True if *files_key* matches the active session's per-session secret for *wallet*.
+    """True if *files_key* matches the retained runtime secret for *wallet*.
 
-    Lets a headless/SSH session container authenticate its own heartbeats (no
+    Lets every tenant session container authenticate its runtime heartbeat (no
     browser wallet token). The files_key is minted at claim, stored on the session
     row, and injected into the container env as AXGT_SESSION_FILES_KEY.
     """
@@ -2213,12 +2643,23 @@ def validate_session_files_key(wallet_address: str, files_key: str) -> bool:
     if not conn:
         return False
     try:
+        now = time.time()
+        grace_cutoff = now - _session_credit_grace_max_seconds()
         with conn.cursor() as cur:
             cur.execute(
                 f"""SELECT files_key FROM {_SESSION_TABLE}
-                    WHERE wallet_address = %s AND status = 'active'
+                    WHERE wallet_address = %s
+                      AND (
+                          status = 'active'
+                          OR (
+                              status = 'credit_grace'
+                              AND COALESCE(
+                                  credit_grace_started_at, last_heartbeat
+                              ) >= %s
+                          )
+                      )
                     ORDER BY started_at DESC LIMIT 1""",
-                (wallet,),
+                (wallet, grace_cutoff),
             )
             row = cur.fetchone()
         stored = (row[0] if row else None) or ""
@@ -2260,7 +2701,11 @@ def _reconcile_containers(cur, now: float) -> Tuple[List[int], List[Tuple[str, i
             to_stop_ids.append(s_id)
             continue
 
-        if hard_expires_at is not None and hard_expires_at + grace <= now:
+        if (
+            status == "active"
+            and hard_expires_at is not None
+            and hard_expires_at + grace <= now
+        ):
             logger.info("reconcile: session %s reached hard expiry, scheduling DB update to ended", s_id)
             cur.execute(
                 f"UPDATE {_SESSION_TABLE} SET status = 'ended' WHERE id = %s",
@@ -2282,38 +2727,39 @@ def perform_session_cleanup() -> None:
     conn = _get_connection()
     if not conn:
         return
+    allocation_lock_held = False
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT pg_try_advisory_xact_lock(8889197)")
-            locked = cur.fetchone()[0]
-            if not locked:
+            # The same session-level lock serializes cleanup workers *and*
+            # coordinates their DB frees with claims. Unlike the former xact
+            # lock, it survives the commits required before container teardown.
+            if not _try_acquire_allocation_scheduler_lock(cur):
                 return
+            allocation_lock_held = True
+            _run_stale_session_maintenance_locked(conn, cur)
 
             now = time.time()
-            ended, paused_credit = _expire_stale_session(cur, now)
-            paused_ended = _expire_stale_paused_sessions(cur, now)
-
             to_stop_ids, to_expire = _reconcile_containers(cur, now)
 
             conn.commit()
 
-            # 1. Trigger post-commit stale session maintenance hooks
-            if ended or paused_credit or paused_ended:
-                _cleanup_after_stale_maintenance(ended, paused_credit, paused_ended)
-
-            # 2. Trigger post-commit reconciliation expired hooks
+            # Trigger post-commit reconciliation expired hooks while claims are
+            # still excluded from reusing their GPU assignments.
             for wallet, s_id in to_expire:
                 try:
                     _on_session_ended(wallet, s_id)
                 except Exception as exc:
                     logger.warning("Post-commit reconcile expire failed for session %s: %s", s_id, exc)
 
-            # 3. Trigger post-commit container cleanups
+            # Trigger post-commit container cleanups.
             for s_id in to_stop_ids:
                 try:
                     _cleanup_session_container(s_id)
                 except Exception as exc:
                     logger.warning("Post-commit container stop failed for session %s: %s", s_id, exc)
+
+            _release_allocation_scheduler_lock(conn, cur)
+            allocation_lock_held = False
 
     except Exception as exc:
         try:
@@ -2322,4 +2768,8 @@ def perform_session_cleanup() -> None:
             pass
         logger.warning("perform_session_cleanup failed: %s", exc, exc_info=True)
     finally:
+        if allocation_lock_held:
+            # Session-level advisory locks are unconditionally released by
+            # PostgreSQL when this connection closes, including error paths.
+            logger.debug("cleanup: releasing scheduler lock via connection close")
         conn.close()
