@@ -14,7 +14,12 @@ You can run the launcher either:
 - Host launcher (`axonos_gate/session_launcher_service.py`) runs on the Docker host.
 - Host launcher creates a private `axgt-session-net-<session-id>` bridge, attaches
   the central `axonos` gate and the matching tenant container, and performs
-  `docker run --gpus device=...` / `docker rm -f`.
+  identity-checked `docker run`, `pause`, `unpause`, and `rm -f` operations.
+- Every tenant container sends an authenticated runtime heartbeat. Browser Detach
+  therefore disconnects only the viewer; compute and billing continue until End
+  or a verified credit-exhaustion Docker freeze of the container's host processes.
+  This does not prove GPU idleness: already-enqueued work, including persistent or
+  long-running kernels, may continue while those host processes are paused.
 - Postgres and the launcher stay on the control network. Tenant containers do not
   receive database, launcher, payment/RPC, or fleet WebRTC signing credentials.
 
@@ -59,6 +64,17 @@ Set on host:
 - optional bind:
   - `AXGT_SESSION_LAUNCHER_BIND_HOST=127.0.0.1`
   - `AXGT_SESSION_LAUNCHER_BIND_PORT=8090`
+
+For upgrades that introduce resumable runtime freezing, deploy the launcher
+first and verify `/healthz` reports `lifecycle_api_version: 3` with
+`pause`, `resume`, `verified_stop`, and `generation_fenced_lifecycle`. Rebuild the session image so desktop
+containers run the durable heartbeat daemon. Before deploying the gate/database
+migration, drain or recreate **every already-running session container** from the
+old image; rebuilding an image does not update existing containers. Only then
+enable the gate's stale-runtime cleanup. An old launcher cannot satisfy the new
+fail-closed pause contract, and an old desktop container does not provide the
+durable heartbeat required to distinguish a healthy detached runtime from a
+failed one.
 
 ## Security boundary
 
@@ -111,8 +127,10 @@ lack the signed capability, ownership labels, and isolated network required by
 the new launcher. Before the first upgrade:
 
 1. End/drain every active compute session.
-2. Confirm no legacy `axgt-session-*` container remains on the Docker host.
-3. Rebuild and recreate the complete compose stack, not only the central gate.
+2. If the old deployment used the shared desktop, recreate the base container
+   so no tenant process from that runtime survives the migration.
+3. Confirm no legacy `axgt-session-*` container remains on the Docker host.
+4. Rebuild and recreate the complete compose stack, not only the central gate.
 
 In HTTP mode, launcher `GET /healthz` fails closed and names any legacy
 unlabeled session container, so Compose will not start the central gate over a

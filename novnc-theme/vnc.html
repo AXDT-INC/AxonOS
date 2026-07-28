@@ -136,14 +136,15 @@ Copyright (C) 2019 The noVNC Authors
                         <span class="axonos-prerequisites-ticker__chunk">You'll <strong>sign a one-time message</strong>
                             (no gas, no transaction)</span>
                         <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
-                        <span class="axonos-prerequisites-ticker__chunk">While <strong>connected</strong>, prepaid
-                            minutes are consumed at <strong>1× per GPU</strong> (wall-clock × profile GPUs), including
-                            <strong>idle time</strong> if this tab stays open</span>
+                        <span class="axonos-prerequisites-ticker__chunk">While <strong>connected or detached</strong>,
+                            prepaid minutes are consumed at <strong>1× per GPU</strong> (wall-clock × profile GPUs),
+                            including <strong>idle time</strong>, even if this tab closes</span>
                         <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
                         <span class="axonos-prerequisites-ticker__chunk"><strong>Detach</strong> returns to home while
-                            your desktop keeps running (minutes still count) — closing the tab then pauses it for
-                            later resume. <strong>End session</strong> (or closing the tab while connected) stops
-                            billing and removes the desktop</span>
+                            your desktop and jobs keep running and minutes still count, even if you close the tab.
+                            <strong>End session</strong> (or closing while still connected) stops billing and removes the
+                            desktop. Credit exhaustion freezes the container's host processes for later resume;
+                            already-enqueued GPU work may continue while Docker-paused</span>
                     </div>
                     <div class="axonos-prerequisites-ticker__seg" data-ticker-mirror="1" aria-hidden="true"></div>
                 </div>
@@ -1754,7 +1755,7 @@ Copyright (C) 2019 The noVNC Authors
                 </span>
                 <span class="axonos-sidebar-ctrl-btn__details">
                     <span class="axonos-sidebar-ctrl-btn__title">Detach session</span>
-                    <span class="axonos-sidebar-ctrl-btn__desc">Return to home screen (desktop keeps running)</span>
+                    <span class="axonos-sidebar-ctrl-btn__desc">Return home; jobs and billing continue</span>
                 </span>
             </button>
             <button type="button" id="axonos_sidebar_end_btn"
@@ -3010,6 +3011,52 @@ Copyright (C) 2019 The noVNC Authors
             axonosApplyDetachedSessionUi(false);
         };
 
+        function axonosSessionStatusSnapshotComplete(st) {
+            return !!st && typeof st.active === 'boolean' &&
+                typeof st.active_sessions_count === 'number';
+        }
+
+        /** A lifecycle transition still belongs to this wallet, but is neither a
+         *  confirmed active desktop nor a confirmed frozen resume target yet. */
+        function axonosSessionLifecycleInProgress(st) {
+            var lifecycleState = String(st && st.owner_lifecycle_state || '').toLowerCase();
+            return !!(st && st.lifecycle_in_progress === true &&
+                (lifecycleState === 'pausing' || lifecycleState === 'resuming'));
+        }
+
+        /** Clear a previous wallet's cached active-session state after a successful
+         *  status response proves the CURRENT wallet owns no active or paused row. */
+        function axonosClearDetachedStateForNonOwner(st) {
+            // Do not destroy useful state on a failed/malformed status read. Error
+            // payloads may still carry `active: false`; the session count is part of
+            // every complete status snapshot and distinguishes a successful read.
+            if (!axonosSessionStatusSnapshotComplete(st) || st.is_owner === true ||
+                st.paused === true || axonosSessionLifecycleInProgress(st)) {
+                return false;
+            }
+            var hadOwnedSessionState = !!(window.axonosSessionDetached ||
+                window.axonosDetachedSession || window.axonosOwnedSession);
+            window.axonosSessionDetached = false;
+            window.axonosPausedResume = null;
+            window.axonosClearDetachedSession();
+            // SSH restore uses the same detached/owned globals. Remove its old
+            // wallet-specific command card and per-launch mode along with them.
+            if (hadOwnedSessionState && typeof UI !== 'undefined') {
+                if (typeof UI.hideAxonosSshCard === 'function') {
+                    UI.hideAxonosSshCard();
+                }
+                if (typeof UI.resetAxonosSshLaunchIntent === 'function') {
+                    UI.resetAxonosSshLaunchIntent();
+                }
+            }
+            if (typeof UI !== 'undefined' && UI._axgtStatusPollId &&
+                !axonosDesktopSessionLive()) {
+                clearInterval(UI._axgtStatusPollId);
+                UI._axgtStatusPollId = null;
+            }
+            return true;
+        }
+
         function axonosEffectiveOwnedSession() {
             return window.axonosDetachedSession || window.axonosOwnedSession;
         }
@@ -3122,18 +3169,29 @@ Copyright (C) 2019 The noVNC Authors
             if (!wallet) {
                 return Promise.resolve();
             }
+            var walletNorm = String(wallet).trim().toLowerCase();
+            var walletStillCurrent = function () {
+                return String(window.verifiedWalletAddress || '').trim().toLowerCase() === walletNorm;
+            };
             return sessionStatusForWallet(wallet).then(function (st) {
-                if (st && st.can_resume && st.paused) {
-                    axonosApplyPausedResumeFromPayload(st);
+                if (!walletStillCurrent()) {
                     return;
                 }
-                if (st && st.is_owner && st.owner_requested_profile) {
-                    window.axonosOwnedSession = axonosSessionProfileContextFromPayload(st);
-                    window.axonosDetachedSession = window.axonosOwnedSession;
+                if (!axonosSessionStatusSnapshotComplete(st)) {
+                    // A failed refresh must not destroy the detach state we just
+                    // established locally; the next successful poll reconciles it.
+                    axonosApplyDetachedSessionUi(
+                        window.axonosSessionDetached && !!axonosEffectiveOwnedSession()
+                    );
+                    return;
                 }
-                axonosApplyDetachedSessionUi(window.axonosSessionDetached && !!axonosEffectiveOwnedSession());
+                axonosApplySessionStatusToResumeUi(st, wallet);
             }).catch(function () {
-                axonosApplyDetachedSessionUi(window.axonosSessionDetached && !!axonosEffectiveOwnedSession());
+                if (walletStillCurrent()) {
+                    axonosApplyDetachedSessionUi(
+                        window.axonosSessionDetached && !!axonosEffectiveOwnedSession()
+                    );
+                }
             });
         };
 
@@ -3267,8 +3325,75 @@ Copyright (C) 2019 The noVNC Authors
         }
         window.axonosRestoreSshSessionUi = axonosRestoreSshSessionUi;
 
+        /**
+         * A page reload destroys the viewer-only detach flag and the browser billing
+         * timer, but it does not release the owned compute session. Restore that
+         * server-active desktop as detached once status identifies its owner, then
+         * restart heartbeats as soon as the wallet auth globals are available.
+         *
+         * This path is deliberately limited to ACTIVE desktop sessions. Paused rows
+         * continue through axonosPausedResume, and SSH sessions use their own restore
+         * helper / in-container heartbeat daemon.
+         */
+        function axonosRestoreActiveDesktopAsDetached(st) {
+            if (!st || st.paused || axonosSessionLifecycleInProgress(st) ||
+                !st.is_owner || !st.owner_requested_profile || st.owner_ssh_enabled) {
+                return false;
+            }
+
+            window.axonosOwnedSession = axonosSessionProfileContextFromPayload(st);
+
+            // A status response can race an in-progress reconnect. Never demote a
+            // live/negotiating viewer back to detached mode.
+            var viewerConnecting = document.documentElement.classList.contains('noVNC_connecting') ||
+                document.documentElement.classList.contains('noVNC_reconnecting');
+            if (axonosDesktopSessionLive() || viewerConnecting) {
+                return false;
+            }
+
+            window.axonosSessionDetached = true;
+            window.axonosDetachedSession = window.axonosOwnedSession;
+            window.axonosPausedResume = null;
+            axonosApplyResumeConnectUi(false);
+            axonosApplyDetachedSessionUi(true);
+
+            // The unauthenticated on-load probe may discover the session before
+            // wallet verification completes. The verified dashboard refresh calls
+            // this helper again and starts the authenticated heartbeat at that point.
+            if (typeof UI !== 'undefined' && window.verifiedWalletAddress &&
+                window.verifiedWalletAuthToken && !UI._axgtStatusPollId &&
+                typeof UI._axgtStartSessionBillingPoll === 'function') {
+                UI._axgtStartSessionBillingPoll();
+            }
+            if (typeof UI !== 'undefined' && typeof UI.updateSessionControlButtons === 'function') {
+                UI.updateSessionControlButtons();
+            }
+            return true;
+        }
+
         function axonosApplySessionStatusToResumeUi(st, walletHint) {
             var wallet = (walletHint || window.verifiedWalletAddress || '').trim().toLowerCase();
+            var currentWallet = String(window.verifiedWalletAddress || '').trim().toLowerCase();
+            // The localStorage startup probe can finish after another wallet has
+            // verified. Never let that stale response clear or restore its state in
+            // the newly verified wallet's UI. With no verified identity yet, the
+            // startup restore remains allowed.
+            if (wallet && currentWallet && wallet !== currentWallet) {
+                return false;
+            }
+            if (!axonosSessionStatusSnapshotComplete(st)) {
+                return false;
+            }
+            // Keep the current owner state untouched until the backend confirms
+            // either ACTIVE or PAUSED. Treating pausing/resuming as active here can
+            // briefly resurrect a detached desktop card during the transition.
+            if (axonosSessionLifecycleInProgress(st)) {
+                return true;
+            }
+            if (axonosClearDetachedStateForNonOwner(st)) {
+                axonosApplyResumeConnectUi(false);
+                return false;
+            }
             // Owned ACTIVE headless-SSH session: restore the SSH card instead of the
             // desktop resume/launch UI — the container has no desktop stream to open.
             // Skip the re-restore when the card is already up (periodic status
@@ -3288,8 +3413,8 @@ Copyright (C) 2019 The noVNC Authors
                 return true;
             }
             if (st && st.is_owner && st.owner_requested_profile && !st.paused) {
-                window.axonosOwnedSession = axonosSessionProfileContextFromPayload(st);
-                if (window.axonosSessionDetached) {
+                var restoredDetached = axonosRestoreActiveDesktopAsDetached(st);
+                if (!restoredDetached && window.axonosSessionDetached) {
                     window.axonosDetachedSession = window.axonosOwnedSession;
                     axonosApplyDetachedSessionUi(true);
                 }
@@ -3569,6 +3694,21 @@ Copyright (C) 2019 The noVNC Authors
         function handleSessionClaimDenied(claim, fallbackReason) {
             if (typeof window.axonosHideConnectionLoader === 'function') {
                 window.axonosHideConnectionLoader(true);
+            }
+            // Duplicate Resume/claim requests observe the same owned lifecycle
+            // transition. This is progress, not a capacity/auth failure: keep
+            // the owner's UI and poll for the stable active/paused result.
+            if (claim && claim.lifecycle_in_progress === true) {
+                if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                    UI.showStatus(String(claim.reason || 'Session lifecycle update in progress'), 'normal', 3000);
+                }
+                window.setTimeout(function () {
+                    if (window.verifiedWalletAddress &&
+                        typeof axonosRefreshPausedResumeStatus === 'function') {
+                        axonosRefreshPausedResumeStatus();
+                    }
+                }, 750);
+                return;
             }
             if (axonosClaimReasonNeedsWalletOrResume(claim)) {
                 axonosRouteClaimDeniedToRechargeOrResume(claim);
@@ -4007,10 +4147,10 @@ Copyright (C) 2019 The noVNC Authors
                             ? (' · Paying <strong>in AXGT</strong> is the best rate (+' + axgtBonus + '% bonus minutes)')
                             : '';
                         var billingHint = axonosGpuWeightedBillingEnabled()
-                            ? (' While connected, usage burns <strong>' + axonosGpuCountForProfile(getRequestedProfile()) + '×</strong> prepaid minutes per real minute for your selected GPU profile (idle counts if this tab stays open).')
-                            : ' While connected, minutes count for your session (idle included if this tab stays open).';
+                            ? (' While connected or detached, usage burns <strong>' + axonosGpuCountForProfile(getRequestedProfile()) + '×</strong> prepaid minutes per real minute for your selected GPU profile (idle included).')
+                            : ' While connected or detached, minutes count for your session (idle included).';
                         dlgHints.innerHTML = rateHint + legacyHint + '. ' + discountHint +
-                            '<span class="axonos-wallet-card__hints-session">' + billingHint + ' Use <strong>Detach</strong> to leave the view (desktop keeps running; closing the tab then pauses it for resume) or <strong>End session</strong> when finished.</span>';
+                            '<span class="axonos-wallet-card__hints-session">' + billingHint + ' <strong>Detach</strong> leaves the view while desktop jobs and billing continue, even if this tab closes. Use <strong>End session</strong> when finished. At credit exhaustion, container host processes freeze; already-enqueued GPU work, including persistent or long-running kernels, may continue while Docker-paused.</span>';
                     }
                     var insRates = document.getElementById('axonos_insufficient_credit_rates');
                     if (insRates) {
@@ -4087,7 +4227,7 @@ Copyright (C) 2019 The noVNC Authors
                     var dh = document.getElementById('axonos-dlg-credit-hints');
                     if (dh) {
                         dh.innerHTML = 'Connect wallet to see live rates from the server — payments are valued at the live token price when they are credited.' +
-                            '<span class="axonos-wallet-card__hints-session">While connected or detached, minutes count (idle included if this tab stays open). Use <strong>End session</strong> when finished.</span>';
+                            '<span class="axonos-wallet-card__hints-session">While connected or detached, minutes count (idle included). Detached jobs keep running and billing even if this tab closes. Use <strong>End session</strong> when finished. At credit exhaustion, container host processes freeze; already-enqueued GPU work may continue while Docker-paused.</span>';
                     }
                     syncAxonosPrerequisiteTickerMirror();
                 });
@@ -6731,6 +6871,7 @@ Copyright (C) 2019 The noVNC Authors
                         allocation_status: 'paused',
                         ssh_enabled: !!status.paused_ssh_enabled,
                         resume_seconds: status.paused_resume_seconds,
+                        pause_reason: status.paused_reason || status.pause_reason || '',
                         dashboard_state: 'paused'
                     });
                 }
@@ -6739,8 +6880,21 @@ Copyright (C) 2019 The noVNC Authors
         }
 
         function axonosSyncDashboardPausedResume(status, wallet) {
+            if (!axonosSessionStatusSnapshotComplete(status)) {
+                return;
+            }
+            if (axonosSessionLifecycleInProgress(status)) {
+                return;
+            }
             if (status && status.paused === true && status.can_resume === true) {
                 axonosApplySessionStatusToResumeUi(status, wallet);
+                return;
+            }
+            if (axonosClearDetachedStateForNonOwner(status)) {
+                axonosApplyResumeConnectUi(false);
+                return;
+            }
+            if (axonosRestoreActiveDesktopAsDetached(status)) {
                 return;
             }
             window.axonosPausedResume = null;
@@ -6900,6 +7054,9 @@ Copyright (C) 2019 The noVNC Authors
             return sessionStatusForWallet(wallet).then(function (status) {
                 if (!axonosDashboardRequestIsCurrent(requestGeneration, wallet)) return null;
                 console.log('[AxonOS] Dashboard status fetch:', status);
+                if (!axonosSessionStatusSnapshotComplete(status)) {
+                    throw new Error((status && status.reason) || 'Incomplete session status');
+                }
 
                 axonosSyncDashboardPausedResume(status || {}, wallet);
                 let dashboardSessions = axonosOwnedDashboardSessions(status || {}, wallet);
@@ -6984,8 +7141,15 @@ Copyright (C) 2019 The noVNC Authors
                                 `;
                             }
 
+                            const pauseReason = String(
+                                session.paused_reason || session.pause_reason || ''
+                            ).trim().toLowerCase();
+                            const pausedForCredit = /credit|balance|fund/.test(pauseReason);
+                            const pausedAfterDisconnect = /disconnect|heartbeat|stale|presence|browser/.test(pauseReason);
                             const statusText = isPaused
-                                ? 'Paused'
+                                ? (pausedForCredit
+                                    ? 'Paused — credits exhausted'
+                                    : (pausedAfterDisconnect ? 'Paused after disconnect' : 'Paused'))
                                 : (session.allocation_status === 'allocating' ? 'Allocating' : 'Running');
                             const pausedTtl = isPaused ? axonosFormatResumeTtl(session.resume_seconds) : '';
                             const specsSuffix = isPaused
@@ -7010,7 +7174,7 @@ Copyright (C) 2019 The noVNC Authors
                                     </div>
                                 </div>
                                 <div class="axonos-session-card__bottom">
-                                    <div class="axonos-session-card__rate-desc">${isPaused ? 'Compute billing paused' : `Burning <b>${rate}</b> cr/min`}</div>
+                                    <div class="axonos-session-card__rate-desc">${isPaused ? 'Container host processes paused · billing stopped' : `Burning <b>${rate}</b> cr/min`}</div>
                                     <div class="axonos-session-card__actions">
                                         <button type="button" class="axonos-session-card__btn axonos-session-card__btn--danger end-btn">End</button>
                                         <button type="button" class="axonos-session-card__btn axonos-session-card__btn--primary reconnect-btn">

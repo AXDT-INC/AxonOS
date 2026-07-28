@@ -407,6 +407,294 @@ class SessionLauncherTests(unittest.TestCase):
         self.assertEqual(cid, "live123")
         self.assertTrue(all(u.endswith("/launch") for u in calls))
 
+    def test_lifecycle_shared_fail_closed_and_noop_succeeds(self) -> None:
+        import session_launcher
+
+        with patch.dict(
+            os.environ,
+            {"AXGT_USER_CONTAINER_ENABLED": "false"},
+            clear=False,
+        ):
+            self.assertFalse(session_launcher.stop_session(42, "shared-desktop"))
+            self.assertFalse(session_launcher.pause_session(42, "shared-desktop"))
+            self.assertFalse(session_launcher.resume_session(42, "shared-desktop"))
+
+        with patch.dict(
+            os.environ,
+            {
+                "AXGT_USER_CONTAINER_ENABLED": "true",
+                "AXGT_SESSION_LAUNCHER_MODE": "noop",
+            },
+            clear=False,
+        ):
+            self.assertTrue(session_launcher.stop_session(42, "ignored"))
+            self.assertTrue(session_launcher.pause_session(42, "ignored"))
+            self.assertTrue(session_launcher.resume_session(42, "ignored"))
+
+    def test_pause_resume_http_forward_to_authenticated_host_contract(self) -> None:
+        self._http_env()
+        import session_launcher
+
+        calls = []
+
+        def fake_http(method, url, payload, timeout_s=None):
+            calls.append((method, url, payload, timeout_s))
+            return 200, {
+                "ok": True,
+                "paused": url.endswith("/pause"),
+                "transition_token": payload["transition_token"],
+            }, None
+
+        with patch.object(session_launcher, "_http_json", side_effect=fake_http):
+            self.assertTrue(session_launcher.pause_session(42, "claimed-id", "pause-generation"))
+            self.assertTrue(session_launcher.resume_session(42, "claimed-id", "resume-generation"))
+
+        self.assertEqual(
+            [(method, url) for method, url, _payload, _timeout in calls],
+            [
+                ("POST", "http://launcher:8090/pause"),
+                ("POST", "http://launcher:8090/resume"),
+            ],
+        )
+        self.assertEqual(
+            [payload for _method, _url, payload, _timeout in calls],
+            [
+                {
+                    "session_id": 42,
+                    "container_id": "claimed-id",
+                    "transition_token": "pause-generation",
+                },
+                {
+                    "session_id": 42,
+                    "container_id": "claimed-id",
+                    "transition_token": "resume-generation",
+                },
+            ],
+        )
+
+    def test_pause_via_http_timeout_then_verified_retry_succeeds(self) -> None:
+        self._http_env()
+        import session_launcher
+
+        calls = []
+
+        def fake_http(method, url, payload, timeout_s=None):
+            calls.append((method, url, payload, timeout_s))
+            if len(calls) == 1:
+                return 0, {}, "timed out"
+            return 200, {
+                "ok": True,
+                "paused": True,
+                "transition_token": payload["transition_token"],
+            }, None
+
+        with patch.object(session_launcher, "_http_json", side_effect=fake_http):
+            self.assertTrue(
+                session_launcher.pause_session(
+                    42, "claimed-id", "pause-generation"
+                )
+            )
+
+        self.assertEqual(len(calls), 2)
+        self.assertIsNone(calls[0][3])
+        self.assertEqual(calls[1][3], 5.0)
+        self.assertEqual(calls[0][2], calls[1][2])
+        self.assertTrue(all(url.endswith("/pause") for _method, url, _payload, _timeout in calls))
+
+    def test_resume_via_http_persistent_transport_failure_is_bounded(self) -> None:
+        self._http_env()
+        import session_launcher
+
+        calls = []
+
+        def fake_http(method, url, payload, timeout_s=None):
+            calls.append((method, url, payload, timeout_s))
+            return 0, {}, "connection reset"
+
+        with patch.object(session_launcher, "_http_json", side_effect=fake_http):
+            self.assertFalse(
+                session_launcher.resume_session(
+                    42, "claimed-id", "resume-generation"
+                )
+            )
+
+        self.assertEqual(len(calls), 4)  # initial request plus three bounded retries
+        self.assertIsNone(calls[0][3])
+        self.assertTrue(all(call[3] == 5.0 for call in calls[1:]))
+        self.assertTrue(all(url.endswith("/resume") for _method, url, _payload, _timeout in calls))
+
+    def test_pause_via_http_rejects_success_without_desired_state(self) -> None:
+        self._http_env()
+        import session_launcher
+
+        with patch.object(
+            session_launcher,
+            "_http_json",
+            return_value=(
+                200,
+                {
+                    "ok": True,
+                    "paused": False,
+                    "transition_token": "pause-generation",
+                },
+                None,
+            ),
+        ) as http:
+            self.assertFalse(
+                session_launcher.pause_session(
+                    42, "claimed-id", "pause-generation"
+                )
+            )
+
+        http.assert_called_once()
+
+    def test_pause_via_http_rejects_unfenced_legacy_host_success(self) -> None:
+        self._http_env()
+        import session_launcher
+
+        with patch.object(
+            session_launcher,
+            "_http_json",
+            return_value=(200, {"ok": True, "paused": True}, None),
+        ) as http:
+            self.assertFalse(
+                session_launcher.pause_session(
+                    42,
+                    "claimed-id",
+                    "pause-generation",
+                )
+            )
+
+        http.assert_called_once()
+
+    def test_direct_pause_resume_use_verified_managed_id_and_verify_state(self) -> None:
+        import session_launcher
+
+        environment = {
+            "AXGT_USER_CONTAINER_ENABLED": "true",
+            "AXGT_SESSION_LAUNCHER_MODE": "docker_cli",
+        }
+        pause_inspections = [
+            ("owned_running", "managed-id", ""),
+            ("owned_paused", "managed-id", ""),
+        ]
+        resume_inspections = [
+            ("owned_paused", "managed-id", ""),
+            ("owned_running", "managed-id", ""),
+        ]
+        lifecycle_conn = MagicMock()
+        lifecycle_cur = MagicMock()
+        lifecycle_cur.__enter__.return_value = lifecycle_cur
+        lifecycle_cur.fetchone.side_effect = [
+            ("pause-generation",),
+            ("resume-generation",),
+        ]
+        lifecycle_conn.cursor.return_value = lifecycle_cur
+        with patch.dict(os.environ, environment, clear=False), patch.object(
+            session_launcher,
+            "_inspect_managed_container_pause_state_direct",
+            side_effect=pause_inspections + resume_inspections,
+        ), patch.object(
+            session_launcher,
+            "_get_control_db_connection",
+            return_value=lifecycle_conn,
+        ), patch.object(session_launcher.subprocess, "run") as run:
+            run.return_value.returncode = 0
+            self.assertTrue(
+                session_launcher.pause_session(
+                    42, "axonos_postgres", "pause-generation"
+                )
+            )
+            self.assertTrue(
+                session_launcher.resume_session(
+                    42, "axonos_postgres", "resume-generation"
+                )
+            )
+
+        self.assertEqual(run.call_args_list[0].args[0], ["docker", "pause", "managed-id"])
+        self.assertEqual(run.call_args_list[1].args[0], ["docker", "unpause", "managed-id"])
+
+    def test_direct_pause_is_idempotent_only_for_verified_managed_state(self) -> None:
+        import session_launcher
+
+        environment = {
+            "AXGT_USER_CONTAINER_ENABLED": "true",
+            "AXGT_SESSION_LAUNCHER_MODE": "docker_cli",
+        }
+        lifecycle_conn = MagicMock()
+        lifecycle_cur = MagicMock()
+        lifecycle_cur.__enter__.return_value = lifecycle_cur
+        lifecycle_cur.fetchone.return_value = ("pause-generation",)
+        lifecycle_conn.cursor.return_value = lifecycle_cur
+        with patch.dict(os.environ, environment, clear=False), patch.object(
+            session_launcher,
+            "_inspect_managed_container_pause_state_direct",
+            return_value=("owned_paused", "managed-id", ""),
+        ), patch.object(
+            session_launcher,
+            "_get_control_db_connection",
+            return_value=lifecycle_conn,
+        ), patch.object(session_launcher.subprocess, "run") as run:
+            self.assertTrue(
+                session_launcher.pause_session(
+                    42, "untrusted-id", "pause-generation"
+                )
+            )
+            run.assert_not_called()
+
+        with patch.dict(os.environ, environment, clear=False), patch.object(
+            session_launcher,
+            "_inspect_managed_container_pause_state_direct",
+            return_value=("unmanaged", "untrusted-id", "unowned"),
+        ), patch.object(
+            session_launcher,
+            "_get_control_db_connection",
+            return_value=lifecycle_conn,
+        ), patch.object(session_launcher.subprocess, "run") as run:
+            self.assertFalse(
+                session_launcher.pause_session(
+                    42, "untrusted-id", "pause-generation"
+                )
+            )
+            run.assert_not_called()
+
+    def test_direct_stale_generation_is_rejected_before_docker(self) -> None:
+        import session_launcher
+
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.__enter__.return_value = cur
+        cur.fetchone.return_value = ("new-generation",)
+        conn.cursor.return_value = cur
+        environment = {
+            "AXGT_USER_CONTAINER_ENABLED": "true",
+            "AXGT_SESSION_LAUNCHER_MODE": "docker_cli",
+        }
+        with patch.dict(os.environ, environment, clear=False), patch.object(
+            session_launcher,
+            "_get_control_db_connection",
+            return_value=conn,
+        ), patch.object(
+            session_launcher,
+            "_inspect_managed_container_pause_state_direct",
+        ) as inspect_state, patch.object(
+            session_launcher.subprocess,
+            "run",
+        ) as run:
+            result = session_launcher.resume_session(
+                42,
+                "claimed-id",
+                "stale-generation",
+            )
+
+        self.assertFalse(result)
+        inspect_state.assert_not_called()
+        run.assert_not_called()
+        conn.rollback.assert_called_once()
+        sql, params = cur.execute.call_args.args
+        self.assertIn("FOR UPDATE", sql)
+        self.assertEqual(params, (42, "resuming"))
+
     @patch("subprocess.check_output")
     def test_get_volume_size_kb(self, mock_check_output: MagicMock) -> None:
         mock_check_output.return_value = "102400\t/volume-data"

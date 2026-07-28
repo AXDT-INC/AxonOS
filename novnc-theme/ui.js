@@ -2270,7 +2270,7 @@ const UI = {
         }
         const confirmed = await UI.showConfirm(
             _("Detach from the remote view?"),
-            _("You return to the home screen. Your desktop keeps running and prepaid minutes keep counting while this tab stays open. If you close the tab, the desktop pauses shortly after and can be resumed with the same wallet.\n\nUse End session when you are fully done."),
+            _("You return to the home screen, but your desktop and jobs keep running and prepaid minutes keep counting — even if you close this tab. Reconnect with the same wallet to return.\n\nUse End session when you are fully done. At credit exhaustion, AxonOS freezes the container's host processes; already-enqueued GPU work, including persistent or long-running kernels, may continue while the container is Docker-paused."),
             {
                 confirmText: _("Detach"),
                 confirmType: 'primary'
@@ -2680,11 +2680,9 @@ const UI = {
 
     _axonosSessionOwnsServerSlot() {
         // Detached desktops and headless SSH sessions (which reuse the detached
-        // flag) must SURVIVE tab close: that is the whole point of detaching, and
-        // SSH sessions are used from a terminal with the in-container heartbeat
-        // daemon keeping them alive. The server pauses a detached desktop for
-        // resume once browser heartbeats stop; only End session / sign-out
-        // releases it. Note the billing poll keeps running while detached, so
+        // flag) must SURVIVE tab close: their in-container heartbeat keeps compute
+        // active and billing until End session, sign-out, or credit exhaustion.
+        // Note the browser billing poll also runs while this detached tab is open, so
         // _axgtStatusPollId alone must not be treated as slot ownership here.
         if (window.axonosSessionDetached) {
             return false;
@@ -2848,7 +2846,7 @@ const UI = {
             );
         } else {
             UI.showStatus(
-                _("Detached — desktop still running. Launch again to reconnect, or End session when done."),
+                _("Detached — desktop and jobs are still running, and billing continues even if this tab closes. Reconnect or End session when done."),
                 'normal'
             );
         }
@@ -3073,7 +3071,8 @@ const UI = {
                     // looks like a silent hang (it did, and cost a long debug).
                     const reason = (claim && claim.reason) ? String(claim.reason) : _('Could not claim desktop session.');
                     const hasReason = !!(claim && claim.reason);
-                    UI.showStatus(reason, hasReason ? 'error' : 'warn');
+                    const lifecycleInProgress = !!(claim && claim.lifecycle_in_progress === true);
+                    UI.showStatus(reason, lifecycleInProgress ? 'normal' : (hasReason ? 'error' : 'warn'));
                     if (typeof window.axonosOnSessionClaimDenied === 'function') {
                         window.axonosOnSessionClaimDenied(claim || {});
                     }
@@ -3095,8 +3094,8 @@ const UI = {
                 }
                 if (claim && claim.ssh_enabled) {
                     // Headless SSH session: no browser viewer. Show the connect-string
-                    // and keep the session alive with the same detached-home heartbeat
-                    // loop — which heartbeats only while this tab stays open.
+                    // and use detached-home controls while the in-container heartbeat
+                    // keeps the session alive independently of this browser tab.
                     window.axonosSessionDetached = true;
                     if (typeof window.axonosHideConnectionLoader === 'function') {
                         window.axonosHideConnectionLoader(true);

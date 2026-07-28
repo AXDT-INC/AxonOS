@@ -1643,7 +1643,7 @@ def api_session_heartbeat():
     if not wallet_address or not validate_wallet_address(wallet_address):
         return jsonify({"ok": False, "error": "Valid wallet_address required"}), 400
     # Auth: normal wallet auth token (browser) OR the per-session files_key
-    # (headless/SSH in-container heartbeat daemon, no browser sign-in).
+    # (durable in-container runtime heartbeat, no browser sign-in).
     # ssh_active: daemon-reported live sshd connection -> renews the SSH hard cap.
     ssh_active = bool(data.get('ssh_active'))
     session_key = (request.headers.get('X-AXGT-Session-Key') or data.get('session_key') or '').strip()

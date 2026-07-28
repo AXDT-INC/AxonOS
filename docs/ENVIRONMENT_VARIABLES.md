@@ -251,8 +251,8 @@ Read primarily by [`axonos_gate/session_manager.py`](../axonos_gate/session_mana
 | `AXGT_MULTI_SESSION_ENABLED` | `true` when user containers are enabled | Multi-session scheduler (exclusive GPU allocation). Forced off when `AXGT_USER_CONTAINER_ENABLED=false` so multiple wallets can never share one desktop. |
 | `AXGT_GPU_PROFILES_ENABLED` | `true` | GPU profile selection (`small`/`medium`/`large`/`max`). |
 | `AXGT_GPU_WEIGHTED_BILLING` | `true`* | Bill `wall_clock_minutes × GPU count` on heartbeat when profiles enabled. Set `false` for 1× billing. (*Enabled when profiles enabled and var not explicitly off.) |
-| `AXGT_USER_CONTAINER_ENABLED` | `false` in code; `true` in compose | One container per claimed session vs shared desktop. |
-| `AXGT_SESSION_PRESERVE_ON_CREDIT_EXHAUST` | `true` | Pause session on zero credit instead of destroying container. |
+| `AXGT_USER_CONTAINER_ENABLED` | `false` in code; `true` in compose | One isolated container per claimed session. Metered claims fail closed when this is `false`; the legacy shared desktop has no trustworthy per-tenant stop/freeze boundary. |
+| `AXGT_SESSION_PRESERVE_ON_CREDIT_EXHAUST` | `true` | With isolated user containers enabled, Docker-pause the session's host processes on zero credit instead of destroying its container. This is not a GPU checkpoint: already-enqueued GPU work, including persistent or long-running kernels, may continue while the container is paused. |
 
 ### GPU pool
 
@@ -273,7 +273,8 @@ Read primarily by [`axonos_gate/session_manager.py`](../axonos_gate/session_mana
 | `AXGT_HEARTBEAT_TIMEOUT_SECONDS` | `120` | No heartbeat → session considered stale and released. |
 | `AXGT_SSH_MAX_SESSION_MINUTES` | *(unset = affordability only)* | Hard, **non-sliding** billing ceiling (minutes) for headless/SSH sessions kept alive by the in-container heartbeat daemon. Effective cap = `min(this, affordable minutes)`. Does not affect desktop sessions. |
 | `AXGT_SESSION_COOLDOWN_SECONDS` | `0` | Seconds before same wallet can reclaim after release. |
-| `AXGT_SESSION_PAUSED_MAX_MINUTES` | `120` | Max time a credit-paused session may sit before expiry. |
+| `AXGT_SESSION_PAUSED_MAX_MINUTES` | `120` | Max time a Docker-paused, resumable session may reserve its container and GPUs before expiry. |
+| `AXGT_SESSION_LIFECYCLE_TRANSITION_SECONDS` | `180` | Age at which cleanup recovers an interrupted runtime pause/resume transition (bounded to 30–600 seconds). Keep this above the launcher request/retry window. |
 | `AXGT_SESSION_RESET_SCRIPT` | `/usr/local/bin/reset_session.sh` | Script run between users (desktop cleanup). |
 
 ### Desktop mode (container runtime)
@@ -297,7 +298,7 @@ Set by session launcher on `axgt-session-*` containers (not operator `.env`):
 | `AXGT_WEBRTC_AGENT_TOKEN` | Gate via launcher | Signed bearer capability bound to this session ID, wallet, and file-key fingerprint. Generated automatically; never configure or forward it globally. |
 | `WEBRTC_GATE_INTERNAL_URL` | Launcher | Internal-only agent API. Launcher-managed sessions use `http://axonos-gate:8890`; legacy single-container mode uses loopback. |
 | `AXGT_GATE_HEARTBEAT_URL` | Launcher | Central gate URL the heartbeat daemon posts to. Launcher-managed sessions use `http://axonos-gate:8889`. |
-| `AXGT_HEARTBEAT_INTERVAL_SECONDS` | Launcher | Heartbeat post interval for headless/SSH sessions (default `30`). |
+| `AXGT_HEARTBEAT_INTERVAL_SECONDS` | Launcher | Durable in-container heartbeat interval for every tenant session, including desktops (default `30`). |
 
 ---
 
@@ -312,7 +313,7 @@ Set by session launcher on `axgt-session-*` containers (not operator `.env`):
 | `AXGT_SESSION_LAUNCHER_MODE` | `docker_cli` | `docker_cli` \| `http` \| `noop`. Compose default: `http`. |
 | `AXGT_SESSION_LAUNCHER_URL` | *(none)* | Base URL for HTTP mode, e.g. `http://axonos-launcher:8090`. |
 | `AXGT_SESSION_LAUNCHER_TOKEN` | *(none)* | Shared bearer token for launcher API. Compose default: `change-me-launcher-token`. |
-| `AXGT_SESSION_LAUNCHER_TIMEOUT_SECONDS` | `90` | HTTP launch/stop timeout. After an inconclusive timeout, the gate retries the identical idempotent launch request so only the host launcher's exact identity/digest/network contract can confirm success. |
+| `AXGT_SESSION_LAUNCHER_TIMEOUT_SECONDS` | `90` | HTTP launch/stop timeout. Pause/resume use the bounded control-request timeout. After an inconclusive launch timeout, the gate retries the identical idempotent launch request so only the host launcher's exact identity/digest/network contract can confirm success. |
 | `AXGT_SESSION_LAUNCHER_ENUMERATE_TIMEOUT_SECONDS` | `90` | Timeout for `GET /enumerate-gpus`. |
 | `AXGT_SESSION_CONTAINER_IMAGE` | *(none)* | Image for `docker_cli` mode. |
 | `AXGT_SESSION_CONTAINER_COMMAND` | *(none)* | Command after image name (e.g. `/startup.sh`). |
@@ -329,7 +330,7 @@ Set by session launcher on `axgt-session-*` containers (not operator `.env`):
 |----------|---------|-------------|
 | `AXGT_SESSION_LAUNCHER_BIND_HOST` | `127.0.0.1` | Listen address (`0.0.0.0` in compose). |
 | `AXGT_SESSION_LAUNCHER_BIND_PORT` | `8090` | Listen port. |
-| `AXGT_SESSION_LAUNCHER_TOKEN` | *(see above)* | Bearer auth for `/launch`, `/stop`, `/enumerate-gpus`. Empty = no auth (dev only). |
+| `AXGT_SESSION_LAUNCHER_TOKEN` | *(see above)* | Bearer auth for `/launch`, `/pause`, `/resume`, `/stop`, and `/enumerate-gpus`. Empty = no auth (dev only). |
 | `AXGT_HOST_SESSION_CONTAINER_IMAGE` | *(none)* | Image for session desktops. Compose: `axonos:public-beta`. |
 | `AXGT_HOST_SESSION_CONTAINER_COMMAND` | `/startup.sh` | Container entry command tokens. |
 | `AXGT_HOST_SESSION_CONTAINER_EXTRA_ARGS` | *(empty)* | Restricted extra `docker run` flags. Network, ports, mounts/devices, namespaces, capabilities, runtime/security settings, environment injection, conflicting GPUs, and privileged mode are stripped. |
@@ -602,10 +603,12 @@ The launcher creates one `axgt-session-net-N` per tenant. Postgres and the
 launcher are not attached; the central gate joins so that scoped heartbeat,
 signaling, and file operations can reach it.
 
-**Single-container legacy:** set both `AXGT_USER_CONTAINER_ENABLED=false` and
-`AXGT_MULTI_SESSION_ENABLED=false`. The base container runs Xorg + VNC + gate
-together; set `AXGT_DESKTOP_ENABLED=true`. Code also forces multi-session
-scheduling off whenever user containers are disabled.
+**Single-container legacy (trusted development only):** set both
+`AXGT_USER_CONTAINER_ENABLED=false` and `AXGT_MULTI_SESSION_ENABLED=false`. The
+base container runs Xorg + VNC + gate together; set `AXGT_DESKTOP_ENABLED=true`.
+Because that layout cannot verifiably stop or freeze one tenant's arbitrary
+CPU/CUDA jobs, metered session claims are rejected. Production prepaid sessions
+require `AXGT_USER_CONTAINER_ENABLED=true`.
 
 **Public-beta compose default:** `AXGT_USER_CONTAINER_ENABLED=true`, base is gate-only, desktops in `axgt-session-*`.
 

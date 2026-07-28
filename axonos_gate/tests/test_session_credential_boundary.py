@@ -29,6 +29,15 @@ def _docker_env_assignments(command: list[str]) -> list[str]:
     ]
 
 
+def _execute_authorized_generation(
+    _session_id: int,
+    _transition_token: str,
+    _expected_status: str,
+    mutation,
+):
+    return True, mutation(), "", 200
+
+
 class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
     def test_host_launcher_authorizes_exact_live_allocation_with_bounded_db_connect(self) -> None:
         import session_launcher_service as launcher
@@ -163,7 +172,10 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True), patch.object(
             launcher,
             "_inspect_managed_container_ownership",
-            return_value=("owned_running", "owned-container-id", ""),
+            side_effect=[
+                ("owned_running", "owned-container-id", ""),
+                ("absent", None, ""),
+            ],
         ), patch.object(launcher.subprocess, "run") as host_run, patch.object(
             launcher,
             "_cleanup_session_network",
@@ -185,7 +197,10 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
         with patch.object(
             direct,
             "_inspect_managed_container_ownership_direct",
-            return_value=("owned_running", "direct-owned-id", ""),
+            side_effect=[
+                ("owned_running", "direct-owned-id", ""),
+                ("absent", None, ""),
+            ],
         ), patch.object(direct.subprocess, "run") as direct_run, patch.object(
             direct,
             "_cleanup_session_network_direct",
@@ -196,6 +211,319 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
         self.assertEqual(
             direct_run.call_args.args[0],
             ["docker", "rm", "-f", "direct-owned-id"],
+        )
+
+    def test_stop_requires_post_remove_absence_verification(self) -> None:
+        import session_launcher as direct
+        import session_launcher_service as launcher
+
+        with patch.dict(os.environ, {}, clear=True), patch.object(
+            launcher,
+            "_inspect_managed_container_ownership",
+            side_effect=[
+                ("owned_running", "owned-container-id", ""),
+                ("owned_running", "owned-container-id", ""),
+            ],
+        ), patch.object(launcher.subprocess, "run") as host_run, patch.object(
+            launcher,
+            "_cleanup_session_network",
+        ) as host_cleanup:
+            host_run.return_value.returncode = 0
+            response = launcher.app.test_client().post(
+                "/stop",
+                json={"session_id": 37},
+            )
+
+        self.assertEqual(response.status_code, 500)
+        self.assertFalse(response.get_json()["ok"])
+        self.assertIn("still present", response.get_json()["error"])
+        host_cleanup.assert_not_called()
+
+        with patch.object(
+            direct,
+            "_inspect_managed_container_ownership_direct",
+            side_effect=[
+                ("owned_running", "direct-owned-id", ""),
+                ("owned_running", "direct-owned-id", ""),
+            ],
+        ), patch.object(direct.subprocess, "run") as direct_run, patch.object(
+            direct,
+            "_cleanup_session_network_direct",
+        ) as direct_cleanup:
+            direct_run.return_value.returncode = 0
+            stopped = direct._stop_via_docker_cli(37, None)
+
+        self.assertFalse(stopped)
+        direct_cleanup.assert_not_called()
+
+    def test_stop_preserves_idempotent_already_absent_semantics(self) -> None:
+        import session_launcher as direct
+        import session_launcher_service as launcher
+
+        with patch.dict(os.environ, {}, clear=True), patch.object(
+            launcher,
+            "_inspect_managed_container_ownership",
+            return_value=("absent", None, ""),
+        ), patch.object(launcher.subprocess, "run") as host_run, patch.object(
+            launcher,
+            "_cleanup_session_network",
+            return_value=(True, ""),
+        ) as host_cleanup:
+            response = launcher.app.test_client().post(
+                "/stop",
+                json={"session_id": 37},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["ok"])
+        self.assertIsNone(response.get_json()["stopped"])
+        host_run.assert_not_called()
+        host_cleanup.assert_called_once_with(37)
+
+        with patch.object(
+            direct,
+            "_inspect_managed_container_ownership_direct",
+            return_value=("absent", None, ""),
+        ), patch.object(direct.subprocess, "run") as direct_run, patch.object(
+            direct,
+            "_cleanup_session_network_direct",
+            return_value=(True, None),
+        ) as direct_cleanup:
+            stopped = direct._stop_via_docker_cli(37, None)
+
+        self.assertTrue(stopped)
+        direct_run.assert_not_called()
+        direct_cleanup.assert_called_once_with(37)
+
+    def test_pause_resume_routes_require_token_and_ignore_arbitrary_container_id(self) -> None:
+        import session_launcher_service as launcher
+
+        environment = {"AXGT_SESSION_LAUNCHER_TOKEN": "launcher-secret"}
+        client = launcher.app.test_client()
+        with patch.dict(os.environ, environment, clear=True), patch.object(
+            launcher,
+            "_inspect_managed_container_pause_state",
+        ) as inspect_state, patch.object(
+            launcher,
+            "_run_generation_fenced_host_mutation",
+            side_effect=_execute_authorized_generation,
+        ), patch.object(launcher.subprocess, "run") as run:
+            unauthenticated = client.post("/pause", json={"session_id": 37})
+            self.assertEqual(unauthenticated.status_code, 401)
+            inspect_state.assert_not_called()
+            run.assert_not_called()
+
+            headers = {"Authorization": "Bearer launcher-secret"}
+            unfenced = client.post(
+                "/pause",
+                json={"session_id": 37},
+                headers=headers,
+            )
+            self.assertEqual(unfenced.status_code, 400)
+            inspect_state.assert_not_called()
+            run.assert_not_called()
+
+            inspect_state.side_effect = [
+                ("owned_running", "managed-container-id", ""),
+                ("owned_paused", "managed-container-id", ""),
+                ("owned_paused", "managed-container-id", ""),
+                ("owned_running", "managed-container-id", ""),
+            ]
+            run.return_value.returncode = 0
+            paused = client.post(
+                "/pause",
+                json={
+                    "session_id": 37,
+                    "container_id": "axonos_postgres",
+                    "transition_token": "pause-generation",
+                },
+                headers=headers,
+            )
+            resumed = client.post(
+                "/resume",
+                json={
+                    "session_id": 37,
+                    "container_id": "axonos_postgres",
+                    "transition_token": "resume-generation",
+                },
+                headers=headers,
+            )
+
+        self.assertEqual(paused.status_code, 200)
+        self.assertTrue(paused.get_json()["paused"])
+        self.assertTrue(paused.get_json()["changed"])
+        self.assertEqual(paused.get_json()["transition_token"], "pause-generation")
+        self.assertEqual(resumed.status_code, 200)
+        self.assertFalse(resumed.get_json()["paused"])
+        self.assertTrue(resumed.get_json()["changed"])
+        self.assertEqual(resumed.get_json()["transition_token"], "resume-generation")
+        self.assertEqual(
+            run.call_args_list[0].args[0],
+            ["docker", "pause", "managed-container-id"],
+        )
+        self.assertEqual(
+            run.call_args_list[1].args[0],
+            ["docker", "unpause", "managed-container-id"],
+        )
+        self.assertNotIn("axonos_postgres", run.call_args_list[0].args[0])
+        self.assertNotIn("axonos_postgres", run.call_args_list[1].args[0])
+
+    def test_pause_route_is_idempotent_for_managed_state_and_rejects_unmanaged(self) -> None:
+        import session_launcher_service as launcher
+
+        client = launcher.app.test_client()
+        with patch.dict(os.environ, {}, clear=True), patch.object(
+            launcher,
+            "_inspect_managed_container_pause_state",
+            return_value=("owned_paused", "managed-container-id", ""),
+        ), patch.object(
+            launcher,
+            "_run_generation_fenced_host_mutation",
+            side_effect=_execute_authorized_generation,
+        ), patch.object(launcher.subprocess, "run") as run:
+            response = client.post(
+                "/pause",
+                json={"session_id": 37, "transition_token": "pause-generation"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.get_json()["changed"])
+        run.assert_not_called()
+
+        with patch.dict(os.environ, {}, clear=True), patch.object(
+            launcher,
+            "_inspect_managed_container_pause_state",
+            return_value=("unmanaged", "untrusted-id", "unowned container"),
+        ), patch.object(
+            launcher,
+            "_run_generation_fenced_host_mutation",
+            side_effect=_execute_authorized_generation,
+        ), patch.object(launcher.subprocess, "run") as run:
+            response = client.post(
+                "/pause",
+                json={"session_id": 37, "transition_token": "pause-generation"},
+            )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(response.get_json()["ok"])
+        run.assert_not_called()
+
+    def test_host_lifecycle_generation_is_locked_and_stale_token_cannot_mutate(self) -> None:
+        import session_launcher_service as launcher
+
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.__enter__.return_value = cur
+        conn.cursor.return_value = cur
+        mutation = MagicMock(return_value=(True, "managed-id", False, "", 200))
+
+        cur.fetchone.return_value = ("current-generation",)
+        with patch.object(
+            launcher,
+            "_get_control_db_connection",
+            return_value=conn,
+        ):
+            authorized, result, error, status = (
+                launcher._run_generation_fenced_host_mutation(
+                    37,
+                    "stale-generation",
+                    "resuming",
+                    mutation,
+                )
+            )
+
+        self.assertFalse(authorized)
+        self.assertIsNone(result)
+        self.assertEqual((error, status), ("stale lifecycle generation", 409))
+        mutation.assert_not_called()
+        conn.rollback.assert_called_once()
+
+        conn.reset_mock()
+        cur.reset_mock()
+        cur.__enter__.return_value = cur
+        cur.fetchone.return_value = ("current-generation",)
+
+        def mutate_while_locked():
+            conn.commit.assert_not_called()
+            return True, "managed-id", False, "", 200
+
+        with patch.object(
+            launcher,
+            "_get_control_db_connection",
+            return_value=conn,
+        ):
+            authorized, result, error, status = (
+                launcher._run_generation_fenced_host_mutation(
+                    37,
+                    "current-generation",
+                    "resuming",
+                    mutate_while_locked,
+                )
+            )
+
+        self.assertTrue(authorized)
+        self.assertEqual(result, (True, "managed-id", False, "", 200))
+        self.assertEqual((error, status), ("", 200))
+        conn.commit.assert_called_once()
+        sql, params = cur.execute.call_args.args
+        self.assertIn("FOR UPDATE", sql)
+        self.assertEqual(params, (37, "resuming"))
+
+    def test_pause_state_inspection_requires_exact_management_labels(self) -> None:
+        import session_launcher_service as launcher
+
+        digest = "a" * 64
+        with patch.object(
+            launcher,
+            "_run_cmd",
+            return_value=(
+                True,
+                f"true|true|true|37|{digest}|managed-container-id",
+            ),
+        ):
+            state, target, error = launcher._inspect_managed_container_pause_state(37)
+        self.assertEqual((state, target, error), ("owned_paused", "managed-container-id", ""))
+
+        with patch.object(
+            launcher,
+            "_run_cmd",
+            return_value=(
+                True,
+                f"true|false|false|37|{digest}|untrusted-id",
+            ),
+        ):
+            state, target, error = launcher._inspect_managed_container_pause_state(37)
+        self.assertEqual(state, "unmanaged")
+        self.assertEqual(target, "untrusted-id")
+        self.assertIn("unowned", error)
+
+    def test_pause_route_fails_if_post_transition_identity_changes(self) -> None:
+        import session_launcher_service as launcher
+
+        client = launcher.app.test_client()
+        with patch.dict(os.environ, {}, clear=True), patch.object(
+            launcher,
+            "_inspect_managed_container_pause_state",
+            side_effect=[
+                ("owned_running", "original-managed-id", ""),
+                ("owned_paused", "replacement-managed-id", ""),
+            ],
+        ), patch.object(
+            launcher,
+            "_run_generation_fenced_host_mutation",
+            side_effect=_execute_authorized_generation,
+        ), patch.object(launcher.subprocess, "run") as run:
+            run.return_value.returncode = 0
+            response = client.post(
+                "/pause",
+                json={"session_id": 37, "transition_token": "pause-generation"},
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertFalse(response.get_json()["ok"])
+        self.assertEqual(
+            run.call_args.args[0],
+            ["docker", "pause", "original-managed-id"],
         )
 
     def test_direct_duplicate_launch_reuses_owned_container_without_docker_run(self) -> None:
@@ -267,6 +595,17 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
         ):
             response = launcher.app.test_client().get("/healthz")
         self.assertEqual(response.status_code, 200)
+        health = response.get_json()
+        self.assertEqual(health["lifecycle_api_version"], 3)
+        self.assertEqual(
+            set(health["capabilities"]),
+            {
+                "pause",
+                "resume",
+                "verified_stop",
+                "generation_fenced_lifecycle",
+            },
+        )
 
         with patch.dict(
             os.environ,

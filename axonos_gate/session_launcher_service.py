@@ -18,7 +18,7 @@ import shlex
 import subprocess
 import threading
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from flask import Flask, jsonify, request
 
@@ -113,6 +113,67 @@ def _db_connect_timeout_seconds() -> int:
         return max(1, min(30, int(raw)))
     except ValueError:
         return 5
+
+
+def _get_control_db_connection():
+    db_url = (os.getenv("AXGT_CHALLENGE_DB_URL") or "").strip()
+    if not db_url:
+        return None
+    try:
+        import psycopg2
+
+        return psycopg2.connect(
+            db_url,
+            connect_timeout=_db_connect_timeout_seconds(),
+        )
+    except Exception as exc:
+        logger.warning("Could not connect to lifecycle control database: %s", exc)
+        return None
+
+
+def _run_generation_fenced_host_mutation(
+    session_id: int,
+    transition_token: str,
+    expected_status: str,
+    mutation: Callable[[], object],
+) -> Tuple[bool, Optional[object], str, int]:
+    """Hold the scheduler row lock through one exact-generation Docker action."""
+    token = str(transition_token or "").strip()
+    if not token:
+        return False, None, "transition_token is required", 400
+    conn = _get_control_db_connection()
+    if not conn:
+        return False, None, "launcher could not authorize lifecycle generation", 503
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT transition_token
+                   FROM axgt_sessions
+                   WHERE id = %s AND status = %s
+                   FOR UPDATE""",
+                (int(session_id), expected_status),
+            )
+            row = cur.fetchone()
+            stored = str(row[0] or "") if row else ""
+            if not stored or not secrets.compare_digest(stored, token):
+                conn.rollback()
+                return False, None, "stale lifecycle generation", 409
+            result = mutation()
+        conn.commit()
+        return True, result, "", 200
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logger.warning(
+            "Fenced lifecycle mutation failed for session %s: %s",
+            session_id,
+            exc,
+        )
+        return False, None, "launcher lifecycle authorization failed", 503
+    finally:
+        conn.close()
 
 
 def _paused_session_max_seconds() -> int:
@@ -632,6 +693,111 @@ def _inspect_managed_container_ownership(
     return "error", container_id, "invalid session container running state"
 
 
+def _inspect_managed_container_pause_state(
+    session_id: int,
+) -> Tuple[str, Optional[str], str]:
+    """Classify an exactly labeled tenant as running, paused, or stopped."""
+    name = _container_name(session_id)
+    ok, output = _run_cmd(
+        [
+            "docker",
+            "inspect",
+            "--format",
+            '{{.State.Running}}|{{.State.Paused}}|'
+            '{{index .Config.Labels "com.axonos.session-container"}}|'
+            '{{index .Config.Labels "com.axonos.session-id"}}|'
+            '{{index .Config.Labels "com.axonos.session-config-sha256"}}|{{.Id}}',
+            name,
+        ]
+    )
+    if not ok:
+        if _docker_object_is_absent(output):
+            return "absent", None, ""
+        return "error", None, output or "could not inspect session container"
+    parts = output.strip().split("|", 5)
+    if len(parts) != 6:
+        return "error", None, "malformed session container inspection"
+    running = parts[0].strip().lower()
+    paused = parts[1].strip().lower()
+    config_digest = parts[4].strip()
+    container_id = parts[5].strip()[:64]
+    if not container_id:
+        return "error", None, "session container inspection omitted its id"
+    valid_digest = len(config_digest) == 64 and all(
+        character in "0123456789abcdef" for character in config_digest
+    )
+    if (
+        parts[2].strip().lower() != "true"
+        or parts[3].strip() != str(int(session_id))
+        or not valid_digest
+    ):
+        return "unmanaged", container_id, "refusing unowned same-name session container"
+    if running not in ("true", "false") or paused not in ("true", "false"):
+        return "error", container_id, "invalid session container lifecycle state"
+    if paused == "true":
+        if running != "true":
+            return "error", container_id, "invalid paused session container state"
+        return "owned_paused", container_id, ""
+    if running == "true":
+        return "owned_running", container_id, ""
+    return "owned_stopped", container_id, ""
+
+
+def _transition_managed_container_pause_state(
+    session_id: int,
+    *,
+    paused: bool,
+) -> Tuple[bool, Optional[str], bool, str, int]:
+    """Apply an idempotent, identity-checked pause transition.
+
+    Returns ``(ok, container_id, changed, error, http_status)``.  A successful
+    Docker command is verified with a second exact-name/label/ID inspection;
+    disappearance or identity replacement therefore fails closed.
+    """
+    action = "pause" if paused else "unpause"
+    desired_state = "owned_paused" if paused else "owned_running"
+    state, target, inspection_error = _inspect_managed_container_pause_state(
+        session_id
+    )
+    if state == "error":
+        return False, target, False, inspection_error, 503
+    if state == "unmanaged":
+        return False, target, False, inspection_error, 409
+    if state == "absent":
+        return False, None, False, "managed session container not found", 404
+    if state == "owned_stopped" or not target:
+        return False, target, False, "managed session container is not running", 409
+    if state == desired_state:
+        return True, target, False, "", 200
+
+    result = subprocess.run(
+        ["docker", action, target],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+        env=subprocess_env_for_nested_docker(),
+    )
+    if result.returncode != 0:
+        return False, target, False, f"could not {action} managed session container", 500
+
+    verified_state, verified_target, verify_error = (
+        _inspect_managed_container_pause_state(session_id)
+    )
+    identity_matches = bool(verified_target) and secrets.compare_digest(
+        target,
+        verified_target,
+    )
+    if verified_state != desired_state or not identity_matches:
+        return (
+            False,
+            verified_target,
+            True,
+            verify_error or "could not verify managed session container lifecycle state",
+            503,
+        )
+    return True, target, True, "", 200
+
+
 def _managed_running_container_id(session_id: int) -> Optional[str]:
     return _managed_container_id(session_id, require_running=True)
 
@@ -851,6 +1017,7 @@ def _reconcile_session_networks() -> None:
                      AND (hard_expires_at IS NULL OR hard_expires_at + %s > %s)
                      AND (
                          (status = 'active' AND expires_at > %s)
+                         OR status IN ('pausing', 'resuming')
                          OR (status = 'paused' AND last_heartbeat >= %s)
                      )""",
                 (grace_seconds, now, now, paused_cutoff),
@@ -1120,7 +1287,16 @@ def healthz():
     errors = _configuration_errors()
     if errors:
         return jsonify({"ok": False, "errors": errors}), 503
-    return jsonify({"ok": True})
+    return jsonify({
+        "ok": True,
+        "lifecycle_api_version": 3,
+        "capabilities": [
+            "pause",
+            "resume",
+            "verified_stop",
+            "generation_fenced_lifecycle",
+        ],
+    })
 
 
 @app.route("/enumerate-gpus", methods=["GET"])
@@ -1310,6 +1486,52 @@ def launch():
         return jsonify({"ok": True, "container_id": container_id, "container_name": name})
 
 
+def _stop_managed_session(
+    session_id: int,
+) -> Tuple[bool, Optional[str], str, int]:
+    """Remove and verify one identity-checked tenant runtime."""
+    ownership_state, target, ownership_error = _inspect_managed_container_ownership(
+        session_id
+    )
+    if ownership_state == "error":
+        return False, None, ownership_error, 503
+    if ownership_state == "unmanaged":
+        return False, None, ownership_error, 409
+    removed = ownership_state == "absent"
+    if target and ownership_state in ("owned_running", "owned_stopped"):
+        result = subprocess.run(
+            ["docker", "rm", "-f", target],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        verified_state, _verified_target, verify_error = (
+            _inspect_managed_container_ownership(session_id)
+        )
+        removed = verified_state == "absent"
+        if not removed:
+            if verified_state == "error":
+                return False, None, verify_error, 503
+            if verified_state == "unmanaged":
+                return False, None, verify_error, 409
+            return (
+                False,
+                None,
+                "managed session container still present after removal "
+                f"(docker rc={result.returncode})",
+                500,
+            )
+    cleanup_ok, cleanup_error = _cleanup_session_network(session_id)
+    if not cleanup_ok:
+        return (
+            False,
+            None,
+            cleanup_error or "session network cleanup failed",
+            500,
+        )
+    return True, target if removed else None, "", 200
+
+
 @app.route("/stop", methods=["POST"])
 def stop():
     auth_err = _require_token()
@@ -1325,26 +1547,93 @@ def stop():
 
     if session_id <= 0:
         return jsonify({"ok": False, "error": "session_id must be positive"}), 400
+    transition_token = str(payload.get("transition_token") or "").strip()
     with _session_operation_lock(session_id):
-        ownership_state, target, ownership_error = _inspect_managed_container_ownership(
-            session_id
-        )
-        if ownership_state == "error":
-            return jsonify({"ok": False, "error": ownership_error}), 503
-        if ownership_state == "unmanaged":
-            return jsonify({"ok": False, "error": ownership_error}), 409
-        removed = ownership_state == "absent"
-        if target and ownership_state in ("owned_running", "owned_stopped"):
-            result = subprocess.run(["docker", "rm", "-f", target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-            removed = result.returncode == 0
-            if not removed:
-                return jsonify({"ok": False, "error": "could not remove managed session container"}), 500
-        cleanup_ok, cleanup_error = _cleanup_session_network(session_id)
-        if not cleanup_ok:
-            return jsonify({"ok": False, "error": cleanup_error or "session network cleanup failed"}), 500
-    stopped = target if removed else None
+        if transition_token:
+            authorized, result, generation_error, generation_status = (
+                _run_generation_fenced_host_mutation(
+                    session_id,
+                    transition_token,
+                    "pausing",
+                    lambda: _stop_managed_session(session_id),
+                )
+            )
+            if not authorized:
+                return jsonify({"ok": False, "error": generation_error}), generation_status
+            ok, stopped, error, status = result
+        else:
+            ok, stopped, error, status = _stop_managed_session(session_id)
+    if not ok:
+        return jsonify({"ok": False, "error": error}), status
     logger.info("launcher: stopped managed session=%s target=%s", session_id, stopped or "absent")
-    return jsonify({"ok": True, "stopped": stopped})
+    response = {"ok": True, "stopped": stopped}
+    if transition_token:
+        response["transition_token"] = transition_token
+    return jsonify(response)
+
+
+def _pause_resume_response(*, paused: bool):
+    auth_err = _require_token()
+    if auth_err:
+        return auth_err
+    payload = request.get_json(silent=True) or {}
+    if "session_id" not in payload:
+        return jsonify({"ok": False, "error": "session_id is required"}), 400
+    try:
+        session_id = int(payload.get("session_id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "session_id must be an integer"}), 400
+    if session_id <= 0:
+        return jsonify({"ok": False, "error": "session_id must be positive"}), 400
+    transition_token = str(payload.get("transition_token") or "").strip()
+    if not transition_token:
+        return jsonify({"ok": False, "error": "transition_token is required"}), 400
+
+    with _session_operation_lock(session_id):
+        authorized, result, generation_error, generation_status = (
+            _run_generation_fenced_host_mutation(
+                session_id,
+                transition_token,
+                "pausing" if paused else "resuming",
+                lambda: _transition_managed_container_pause_state(
+                    session_id,
+                    paused=paused,
+                ),
+            )
+        )
+    if not authorized:
+        return jsonify({"ok": False, "error": generation_error}), generation_status
+    ok, target, changed, error, status = result
+    if not ok:
+        return jsonify({"ok": False, "error": error}), status
+    operation = "paused" if paused else "resumed"
+    logger.info(
+        "launcher: %s managed session=%s target=%s changed=%s",
+        operation,
+        session_id,
+        target,
+        changed,
+    )
+    return jsonify(
+        {
+            "ok": True,
+            "session_id": session_id,
+            "container_id": target,
+            "paused": paused,
+            "changed": changed,
+            "transition_token": transition_token,
+        }
+    )
+
+
+@app.route("/pause", methods=["POST"])
+def pause():
+    return _pause_resume_response(paused=True)
+
+
+@app.route("/resume", methods=["POST"])
+def resume():
+    return _pause_resume_response(paused=False)
 
 
 @app.route("/list-containers", methods=["GET"])

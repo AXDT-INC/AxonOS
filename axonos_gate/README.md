@@ -172,7 +172,7 @@ When `AXGT_GPU_PROFILES_ENABLED` and weighted billing are on (default), usage de
 - `x402_facilitator.py`: Opt-in CDP facilitator settlement (Bazaar listing) — CDP JWT auth + `verify`/`settle` + discovery extension. Inactive unless `AXGT_X402_FACILITATOR_ENABLED=true`.
 - `session_manager.py`: Session scheduler + queue + heartbeat-based billing (calls deposit_ledger.deduct_usage). Supports private-beta single-session mode and feature-gated public-beta multi-session mode with exclusive GPU allocation.
 - `session_launcher.py`: Adapter client for session runtime orchestration (`docker_cli` / `http` / `noop`).
-- `session_launcher_service.py`: Host-side launcher API for non-nested deployments (`POST /launch`, `POST /stop`).
+- `session_launcher_service.py`: Host-side launcher API for non-nested deployments (`POST /launch`, `/pause`, `/resume`, `/stop`).
 - `gate_server.py`: HTTP API and WebSocket proxy (port **8889** by default).
 - `websockify_gate.py`: noVNC + WebSocket on **6080**; serves the same `/api/config`, `/api/auth/*` (challenge, verify-wallet, wallet-status, **verify-deposit**), and session/queue POSTs so a tunnel to 6080 alone can sign in and top up without hitting 8889.
 
@@ -215,18 +215,23 @@ Optional user-container mode:
 - Active allocations are tracked as explicit GPU ID sets per session.
 - Scheduler derives free GPUs as `configured_gpus - union(active_session_gpu_ids)`.
 - New session can only be created from free IDs; overlapping GPU IDs are not allowed.
-- GPU IDs are released when a session ends (release, timeout, container failure). Credit exhaustion pauses the session by default (`AXGT_SESSION_PRESERVE_ON_CREDIT_EXHAUST=true`) so the same container/desktop can resume after top-up; paused sessions still reserve GPUs until `AXGT_SESSION_PAUSED_MAX_MINUTES` elapses.
+- GPU IDs are released when a session ends (release, timeout, container failure). Credit exhaustion Docker-pauses the session container's host processes by default (`AXGT_SESSION_PRESERVE_ON_CREDIT_EXHAUST=true`) so those processes and the desktop resume in place after top-up; paused sessions are not billed but still reserve GPUs until `AXGT_SESSION_PAUSED_MAX_MINUTES` elapses. If the host processes cannot be verifiably frozen, the session is ended fail-closed instead of being left running unbilled.
+- Detach only disconnects the viewer. The session container keeps sending its own authenticated heartbeat, so jobs continue and usage remains billed across tab close/reload until the owner ends the session or credit exhaustion triggers a verified runtime freeze.
+- Pause/resume uses two-phase database states (`pausing`/`resuming`), generation-fenced launcher mutations, and verified runtime transitions; the public `paused` state is emitted only after Docker confirms that the container's host processes are frozen. Those processes stop scheduling new device work and resume from the same process state. Docker pause is neither an accelerator pause nor a CUDA checkpoint, and `.State.Paused` does not prove GPU idleness: already-enqueued GPU work can continue, and a persistent or long-running kernel may run for some or all of the paused interval. The assigned GPUs therefore remain reserved until resume or expiry.
+- Metered claims require isolated per-session containers. Legacy shared-desktop mode is rejected fail-closed because it cannot verifiably stop or freeze one tenant's arbitrary jobs without also affecting the central gate.
 
 ### Launcher adapter (Mode B)
 
-`session_manager.py` delegates user-session launch/stop to `session_launcher.py`:
+`session_manager.py` delegates user-session launch/pause/resume/stop to `session_launcher.py`:
 
 - `AXGT_SESSION_LAUNCHER_MODE=docker_cli` (default): local `docker run` / `docker rm -f`.
 - `AXGT_SESSION_LAUNCHER_MODE=http`: call external launcher service:
   - `POST {AXGT_SESSION_LAUNCHER_URL}/launch`
+  - `POST {AXGT_SESSION_LAUNCHER_URL}/pause`
+  - `POST {AXGT_SESSION_LAUNCHER_URL}/resume`
   - `POST {AXGT_SESSION_LAUNCHER_URL}/stop`
   - optional bearer auth via `AXGT_SESSION_LAUNCHER_TOKEN`.
-- `AXGT_SESSION_LAUNCHER_MODE=noop`: scheduler-only dry run (no runtime spawn/stop).
+- `AXGT_SESSION_LAUNCHER_MODE=noop`: scheduler-only dry run (no runtime lifecycle mutation).
 
 This Mode B split is the recommended production path when AxonOS itself is already running in a container and should not directly control host Docker.
 

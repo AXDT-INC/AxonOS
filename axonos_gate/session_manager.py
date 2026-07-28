@@ -401,12 +401,21 @@ def _session_cooldown_seconds() -> int:
 
 
 def _preserve_session_on_credit_exhaust() -> bool:
-    """Keep container/desktop alive when prepaid credit hits zero (resume after top-up)."""
-    return _truthy("AXGT_SESSION_PRESERVE_ON_CREDIT_EXHAUST", True)
+    """Freeze an isolated tenant container when prepaid credit hits zero.
+
+    The legacy shared-desktop runtime has no tenant boundary that can be frozen
+    or destroyed without also stopping the central gate.  Never advertise a
+    resumable pause there: arbitrary user processes could otherwise continue
+    after billing stopped.
+    """
+    return _truthy("AXGT_USER_CONTAINER_ENABLED", False) and _truthy(
+        "AXGT_SESSION_PRESERVE_ON_CREDIT_EXHAUST",
+        True,
+    )
 
 
 def _session_paused_max_seconds() -> int:
-    """How long a credit-paused session (and its container) may be resumed."""
+    """How long a frozen session (and its container) may be resumed."""
     raw = (os.getenv("AXGT_SESSION_PAUSED_MAX_MINUTES") or "").strip()
     try:
         minutes = int(raw)
@@ -415,6 +424,16 @@ def _session_paused_max_seconds() -> int:
     except (ValueError, TypeError):
         pass
     return 2 * 60 * 60  # default 2 hours
+
+
+def _lifecycle_transition_timeout_seconds() -> int:
+    """Age after which cleanup may recover an interrupted pause/resume."""
+    raw = (os.getenv("AXGT_SESSION_LIFECYCLE_TRANSITION_SECONDS") or "").strip()
+    try:
+        value = int(raw) if raw else 180
+        return max(30, min(600, value))
+    except (ValueError, TypeError):
+        return 180
 
 
 def _reset_script_path() -> Optional[str]:
@@ -494,7 +513,12 @@ def _ensure_tables(conn) -> None:
                 expires_at  DOUBLE PRECISION NOT NULL,
                 status      TEXT NOT NULL DEFAULT 'active',
                 files_key   TEXT,
-                ssh_enabled BOOLEAN NOT NULL DEFAULT FALSE
+                ssh_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+                pause_reason TEXT,
+                paused_at   DOUBLE PRECISION,
+                runtime_paused BOOLEAN NOT NULL DEFAULT FALSE,
+                transition_started_at DOUBLE PRECISION,
+                transition_token TEXT
             )
         """)
         # Add last_billed_at if table existed from before migration
@@ -524,6 +548,19 @@ def _ensure_tables(conn) -> None:
             # Persisted SSH mode so a page reload / status query can tell a headless
             # SSH session from a desktop one without the client re-asserting intent.
             ("ssh_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            # A paused row must say why it stopped and when its resumable TTL
+            # began.  ``last_heartbeat`` remains presence evidence instead of
+            # being overloaded as the pause timestamp.
+            ("pause_reason", "TEXT"),
+            ("paused_at", "DOUBLE PRECISION"),
+            # Cross-process pause/resume is two-phase. These fields let cleanup
+            # distinguish a confirmed frozen runtime from an interrupted
+            # lifecycle transition without trusting browser presence.
+            ("runtime_paused", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("transition_started_at", "DOUBLE PRECISION"),
+            # Generation fence: a delayed lifecycle worker may mutate Docker
+            # only while it still owns this exact token.
+            ("transition_token", "TEXT"),
         ):
             cur.execute(
                 """
@@ -552,6 +589,19 @@ def _ensure_tables(conn) -> None:
         # Ensure no NULL last_billed_at: bill from session start (fixes pre-migration or old migrations)
         cur.execute(
             f"UPDATE {_SESSION_TABLE} SET last_billed_at = started_at WHERE last_billed_at IS NULL"
+        )
+        # Older rows used one generic paused state and did not record a cause.
+        # Keep that uncertainty explicit; runtime reconciliation freezes these
+        # containers before they can be resumed under the new semantics.
+        cur.execute(
+            f"""UPDATE {_SESSION_TABLE}
+                SET pause_reason = COALESCE(pause_reason, 'legacy'),
+                    paused_at = COALESCE(paused_at, last_heartbeat),
+                    runtime_paused = CASE
+                        WHEN pause_reason IS NULL THEN FALSE
+                        ELSE runtime_paused
+                    END
+                WHERE status = 'paused'"""
         )
         cur.execute(f"""
             CREATE INDEX IF NOT EXISTS idx_{_SESSION_TABLE}_status
@@ -585,39 +635,6 @@ def _init_once() -> bool:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _pause_stale_sessions(cur, now: float, hb_cutoff: float) -> List[tuple]:
-    """Pause (not kill) active sessions whose heartbeats stopped.
-
-    Originally this only applied to zero-credit timeouts, but a heartbeat
-    timeout with credit left just means the browser went away (tab closed
-    while detached, crash, network loss) — killing the container there
-    destroyed the user's session storage. With preserve enabled, ALL
-    heartbeat-stale sessions pause instead: the container keeps running,
-    billing stops (billing is heartbeat-driven), and the owner can resume
-    within AXGT_SESSION_PAUSED_MAX_MINUTES; after that TTL —
-    or at an SSH session's hard cap — _expire_stale_paused_sessions ends it.
-    """
-    if not _preserve_session_on_credit_exhaust():
-        return []
-    cur.execute(
-        f"""SELECT id, wallet_address FROM {_SESSION_TABLE}
-            WHERE status = 'active' AND last_heartbeat < %s AND expires_at > %s""",
-        (hb_cutoff, now),
-    )
-    rows = cur.fetchall() or []
-    paused: List[tuple] = []
-    for session_id, wallet in rows:
-        cur.execute(
-            f"""UPDATE {_SESSION_TABLE}
-                SET status = 'paused', last_heartbeat = %s
-                WHERE id = %s AND status = 'active'
-                RETURNING wallet_address""",
-            (now, session_id),
-        )
-        if cur.fetchone():
-            paused.append((wallet, session_id))
-    return paused
-
 
 def session_grace_seconds() -> int:
     """Return the session grace period in seconds from AXGT_SESSION_GRACE_SECONDS (default 60)."""
@@ -631,48 +648,123 @@ def session_grace_seconds() -> int:
     return 60
 
 
-def _expire_stale_session(cur, now: float) -> Tuple[Optional[tuple], List[tuple]]:
-    """End or pause stale active sessions.
+def _expire_stale_session(cur, now: float) -> Tuple[List[tuple], List[tuple]]:
+    """End stale active sessions.
 
-    Heartbeat timeouts become ``paused`` when preserve is enabled (container kept,
-    resumable by the owner within the paused TTL). With preserve disabled — or when
-    ``expires_at`` itself lapsed (no heartbeat within ``AXGT_SESSION_MAX_MINUTES``)
-    or an SSH hard cap passed — the session ends and the container is removed.
+    Every compute container now owns its heartbeat, including desktop runtimes,
+    so browser Detach/reload is not a liveness signal. A missed runtime heartbeat
+    means the container/control path is unhealthy and is ended; only verified
+    credit exhaustion enters the resumable frozen state.
 
-    Returns (ended_session_or_none, paused_sessions).
+    Final usage is settled through ``now`` on the same transaction/cursor as
+    the active-to-ended compare-and-swap. Returns (ended_sessions,
+    paused_sessions).
     """
     hb_cutoff = now - _heartbeat_timeout_seconds()
-    paused = _pause_stale_sessions(cur, now, hb_cutoff)
     grace = session_grace_seconds()
     cur.execute(
-        f"""UPDATE {_SESSION_TABLE}
-            SET status = 'ended'
-            WHERE status = 'active'
-              AND (last_heartbeat < %s
-                   OR expires_at <= %s
-                   OR (hard_expires_at IS NOT NULL AND hard_expires_at + %s <= %s))
-            RETURNING wallet_address, id""",
-        (hb_cutoff, now, grace, now),
+        f"""WITH stale AS (
+                SELECT id,
+                       wallet_address,
+                       COALESCE(last_billed_at, started_at) AS bill_from,
+                       started_at,
+                       requested_profile,
+                       gpu_ids
+                FROM {_SESSION_TABLE}
+                WHERE status = 'active'
+                  AND (last_heartbeat < %s
+                       OR expires_at <= %s
+                       OR (hard_expires_at IS NOT NULL AND hard_expires_at + %s <= %s))
+                FOR UPDATE
+            )
+            UPDATE {_SESSION_TABLE} AS target
+            SET status = 'ended', last_billed_at = %s
+            FROM stale
+            WHERE target.id = stale.id AND target.status = 'active'
+            RETURNING stale.wallet_address,
+                      target.id,
+                      stale.bill_from,
+                      stale.started_at,
+                      stale.requested_profile,
+                      stale.gpu_ids""",
+        (hb_cutoff, now, grace, now, now),
     )
-    row = cur.fetchone()
-    ended = (row[0], row[1]) if row else None
-    return ended, paused
+    rows = list(cur.fetchall() or [])
+    rows.sort(key=lambda row: (str(row[0]).lower(), int(row[1])))
+    if rows:
+        deposit_ledger = _import_deposit_ledger()
+        ledger_ready = bool(deposit_ledger.init_once())
+        if not ledger_ready:
+            # Stop fail-closed even if accounting is unavailable. Leaving a
+            # stale compute runtime active would turn a ledger outage into
+            # unlimited free execution.
+            logger.error(
+                "session_manager: ending %d stale session(s) without final usage settlement; ledger unavailable",
+                len(rows),
+            )
+        for row in rows:
+            wallet, session_id = str(row[0]).lower(), int(row[1])
+            bill_from = row[2] if row[2] is not None else row[3]
+            wall_minutes = max(0.0, now - float(bill_from)) / 60.0
+            gpu_ids = _parse_gpu_ids(row[5])
+            profile = row[4] or "small"
+            minutes_delta = _usage_minutes_for_interval(
+                wall_minutes, gpu_ids, profile
+            )
+            if not ledger_ready or minutes_delta <= 0:
+                continue
+            ok, _remaining, error = deposit_ledger._deduct_usage_on_cursor(
+                cur,
+                wallet,
+                minutes_delta,
+                session_id=str(session_id),
+            )
+            if not ok:
+                logger.error(
+                    "session_manager: final stale usage settlement failed for session %s: %s",
+                    session_id,
+                    error or "unknown ledger error",
+                )
+    ended = [(str(row[0]).lower(), int(row[1])) for row in rows]
+    return ended, []
 
 
-def _apply_stale_session_maintenance(ended: Optional[tuple], paused_credit: List[tuple]) -> None:
-    for wallet, session_id in paused_credit:
-        _on_session_credit_paused(wallet, session_id)
-    if ended:
-        _on_session_ended(ended[0], ended[1])
+def _normalize_ended_sessions(ended: Any) -> List[Tuple[str, int]]:
+    """Accept the new ended-row list plus legacy single tuples from callers/tests."""
+    if not ended:
+        return []
+    if (
+        isinstance(ended, tuple)
+        and len(ended) >= 2
+        and not isinstance(ended[0], (tuple, list))
+    ):
+        return [(str(ended[0]).lower(), int(ended[1]))]
+    normalized: List[Tuple[str, int]] = []
+    for row in ended:
+        if row and len(row) >= 2:
+            normalized.append((str(row[0]).lower(), int(row[1])))
+    return normalized
+
+
+def _apply_stale_session_maintenance(ended: Any, paused_sessions: List[tuple]) -> None:
+    for paused in paused_sessions:
+        # Two-element tuples are accepted for compatibility with callers/tests
+        # created before pause cause and container identity were persisted.
+        wallet, session_id = paused[0], paused[1]
+        container_id = paused[2] if len(paused) > 2 else None
+        pause_reason = paused[3] if len(paused) > 3 else "heartbeat_timeout"
+        _on_session_credit_paused(wallet, session_id, container_id, pause_reason)
+    for wallet_ended, session_id_ended in _normalize_ended_sessions(ended):
+        _on_session_ended(wallet_ended, session_id_ended)
 
 
 def _cleanup_after_stale_maintenance(
-    ended: Optional[tuple],
-    paused_credit: List[tuple],
+    ended: Any,
+    paused_sessions: List[tuple],
     paused_ttl_ended: Optional[List[tuple]] = None,
 ) -> None:
     """Post-commit hooks for stale session DB updates."""
-    _apply_stale_session_maintenance(ended, paused_credit)
+    _apply_stale_session_maintenance(ended, paused_sessions)
     for wallet_ended, session_id_ended in paused_ttl_ended or []:
         logger.info(
             "session_manager: auto-ended stale session for %s",
@@ -715,6 +807,12 @@ def _session_row_to_dict(row) -> Dict[str, Any]:
         "files_key": row[10] if len(row) > 10 else None,
         "hard_expires_at": row[11] if len(row) > 11 else None,
         "ssh_enabled": bool(row[12]) if len(row) > 12 else False,
+        "pause_reason": row[13] if len(row) > 13 else None,
+        "paused_at": row[14] if len(row) > 14 else None,
+        "runtime_paused": bool(row[15]) if len(row) > 15 else False,
+        "transition_started_at": row[16] if len(row) > 16 else None,
+        "status": row[17] if len(row) > 17 else None,
+        "transition_token": row[18] if len(row) > 18 else None,
     }
 
 
@@ -722,7 +820,8 @@ def _get_active_rows(cur) -> List[Dict[str, Any]]:
     cur.execute(
         f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
                    started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at,
-                   ssh_enabled
+                   ssh_enabled, pause_reason, paused_at, runtime_paused, transition_started_at,
+                   status, transition_token
             FROM {_SESSION_TABLE}
             WHERE status = 'active'
             ORDER BY started_at ASC""",
@@ -732,14 +831,15 @@ def _get_active_rows(cur) -> List[Dict[str, Any]]:
 
 
 def _get_paused_rows(cur, now: float) -> List[Dict[str, Any]]:
-    """Credit-paused sessions still holding GPUs/container until paused TTL expires."""
+    """Frozen sessions still holding GPUs/container until their paused TTL expires."""
     cutoff = now - _session_paused_max_seconds()
     cur.execute(
         f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
                    started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at,
-                   ssh_enabled
+                   ssh_enabled, pause_reason, paused_at, runtime_paused, transition_started_at,
+                   status, transition_token
             FROM {_SESSION_TABLE}
-            WHERE status = 'paused' AND last_heartbeat >= %s
+            WHERE status = 'paused' AND COALESCE(paused_at, last_heartbeat) >= %s
             ORDER BY started_at ASC""",
         (cutoff,),
     )
@@ -747,18 +847,39 @@ def _get_paused_rows(cur, now: float) -> List[Dict[str, Any]]:
     return [_session_row_to_dict(r) for r in rows]
 
 
+def _get_transition_rows(cur, now: float) -> List[Dict[str, Any]]:
+    """Lifecycle transitions that still reserve their container and GPUs."""
+    # A wedged transition is still a real container/GPU reservation. Cleanup
+    # recovers it by generation token; capacity calculation must never make it
+    # disappear merely because its lease is old.
+    del now
+    cur.execute(
+        f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
+                   started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at,
+                   ssh_enabled, pause_reason, paused_at, runtime_paused, transition_started_at,
+                   status, transition_token
+            FROM {_SESSION_TABLE}
+            WHERE status IN ('pausing', 'resuming')
+            ORDER BY started_at ASC""",
+    )
+    rows = cur.fetchall() or []
+    return [_session_row_to_dict(r) for r in rows]
+
+
 def _get_gpu_reserved_rows(cur, now: float) -> List[Dict[str, Any]]:
-    """Active plus non-expired paused sessions (both reserve GPU IDs)."""
-    return _get_active_rows(cur) + _get_paused_rows(cur, now)
+    """Active, frozen, and transitioning sessions all reserve GPU IDs."""
+    return _get_active_rows(cur) + _get_paused_rows(cur, now) + _get_transition_rows(cur, now)
 
 
 def _paused_session_for_wallet(cur, wallet: str, now: float) -> Optional[Dict[str, Any]]:
     cur.execute(
         f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
                    started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at,
-                   ssh_enabled
+                   ssh_enabled, pause_reason, paused_at, runtime_paused, transition_started_at,
+                   status, transition_token
             FROM {_SESSION_TABLE}
-            WHERE status = 'paused' AND wallet_address = %s AND last_heartbeat >= %s
+            WHERE status = 'paused' AND wallet_address = %s
+              AND COALESCE(paused_at, last_heartbeat) >= %s
             ORDER BY started_at DESC
             LIMIT 1""",
         (wallet, now - _session_paused_max_seconds()),
@@ -778,9 +899,27 @@ def _active_session_for_wallet(cur, wallet: str) -> Optional[Dict[str, Any]]:
     cur.execute(
         f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
                    started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at,
-                   ssh_enabled
+                   ssh_enabled, pause_reason, paused_at, runtime_paused, transition_started_at,
+                   status, transition_token
             FROM {_SESSION_TABLE}
             WHERE status = 'active' AND wallet_address = %s
+            ORDER BY started_at DESC
+            LIMIT 1""",
+        (wallet,),
+    )
+    row = cur.fetchone()
+    return _session_row_to_dict(row) if row else None
+
+
+def _transition_session_for_wallet(cur, wallet: str) -> Optional[Dict[str, Any]]:
+    """Return an owned pause/resume transition regardless of its age."""
+    cur.execute(
+        f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
+                   started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at,
+                   ssh_enabled, pause_reason, paused_at, runtime_paused, transition_started_at,
+                   status, transition_token
+            FROM {_SESSION_TABLE}
+            WHERE status IN ('pausing', 'resuming') AND wallet_address = %s
             ORDER BY started_at DESC
             LIMIT 1""",
         (wallet,),
@@ -859,8 +998,259 @@ def _mask(addr: str) -> str:
     return f"{addr[:6]}...{addr[-4:]}"
 
 
-def _on_session_credit_paused(wallet_address: str, session_id: int) -> None:
-    """Credit exhausted: disconnect billing but keep container/desktop for resume."""
+def _new_transition_token() -> str:
+    """Return an unguessable generation fence for one lifecycle operation."""
+    return secrets.token_urlsafe(24)
+
+
+def _end_after_runtime_pause_failure(
+    wallet_address: str,
+    session_id: int,
+    transition_token: Optional[str] = None,
+) -> bool:
+    """Fence, stop, and end a transition only after removal is confirmed."""
+    # Claim this exact transition generation before touching Docker. A delayed
+    # pause worker must not stop a runtime that a newer Resume already owns.
+    stop_token = _new_transition_token()
+    claimed_at = time.time()
+    conn = _get_connection()
+    if not conn:
+        logger.error(
+            "session_manager: cannot fence failed pause for session %s; DB unavailable",
+            session_id,
+        )
+        return False
+    try:
+        with conn.cursor() as cur:
+            token_clause = (
+                "transition_token = %s"
+                if transition_token is not None
+                else "transition_token IS NULL"
+            )
+            params: List[Any] = [stop_token, claimed_at, session_id]
+            if transition_token is not None:
+                params.append(transition_token)
+            cur.execute(
+                f"""UPDATE {_SESSION_TABLE}
+                    SET status = 'pausing',
+                        transition_token = %s,
+                        transition_started_at = %s
+                    WHERE id = %s
+                      AND status IN ('pausing', 'paused', 'resuming')
+                      AND {token_clause}
+                    RETURNING id""",
+                tuple(params),
+            )
+            claimed = cur.fetchone() is not None
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        logger.error(
+            "session_manager: could not fence failed pause for session %s: %s",
+            session_id,
+            exc,
+        )
+        claimed = False
+    finally:
+        conn.close()
+    if not claimed:
+        logger.info(
+            "session_manager: stale failed-pause callback ignored for session %s",
+            session_id,
+        )
+        return False
+
+    launcher = _import_session_launcher()
+    try:
+        stopped = bool(
+            launcher.stop_session(
+                session_id=session_id,
+                container_id=None,
+                transition_token=stop_token,
+            )
+        )
+    except Exception as exc:
+        logger.error(
+            "session_manager: runtime stop raised for session %s: %s",
+            session_id,
+            exc,
+        )
+        stopped = False
+    if not stopped:
+        # Leave the transition row reserved. Periodic cleanup retries it; it
+        # must never be published as safely paused/ended on an ambiguous stop.
+        logger.critical(
+            "session_manager: session %s could neither pause nor confirm stop; retry required",
+            session_id,
+        )
+        return False
+
+    conn = _get_connection()
+    marked_ended = False
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""UPDATE {_SESSION_TABLE}
+                        SET status = 'ended',
+                            pause_reason = 'runtime_pause_failed',
+                            transition_started_at = NULL,
+                            transition_token = NULL
+                        WHERE id = %s AND status = 'pausing'
+                          AND transition_token = %s
+                        RETURNING wallet_address""",
+                    (session_id, stop_token),
+                )
+                marked_ended = cur.fetchone() is not None
+            conn.commit()
+        except Exception as exc:
+            conn.rollback()
+            logger.error(
+                "session_manager: could not mark failed pause for session %s ended: %s",
+                session_id,
+                exc,
+            )
+        finally:
+            conn.close()
+
+    # Runtime removal was already confirmed above. The normal hook records the
+    # ledger event and remains idempotent if stop is called a second time.
+    if marked_ended:
+        _on_session_ended(wallet_address, session_id)
+    return marked_ended
+
+
+def _on_session_credit_paused(
+    wallet_address: str,
+    session_id: int,
+    container_id: Optional[str] = None,
+    pause_reason: str = "credit_exhausted",
+    transition_token: Optional[str] = None,
+) -> bool:
+    """Complete ``pausing`` only after the runtime is verifiably frozen.
+
+    The historical function name is retained for import/test compatibility.
+    """
+    # Lease this exact generation before the external pause. Cleanup may replace
+    # an abandoned token, in which case this delayed callback becomes a no-op.
+    operation_token = _new_transition_token()
+    claimed_at = time.time()
+    conn = _get_connection()
+    if not conn:
+        logger.error(
+            "session_manager: cannot fence pause for session %s; DB unavailable",
+            session_id,
+        )
+        return False
+    try:
+        with conn.cursor() as cur:
+            token_clause = (
+                "transition_token = %s"
+                if transition_token is not None
+                else "transition_token IS NULL"
+            )
+            params: List[Any] = [
+                operation_token,
+                claimed_at,
+                pause_reason,
+                session_id,
+                wallet_address.lower(),
+            ]
+            if transition_token is not None:
+                params.append(transition_token)
+            cur.execute(
+                f"""UPDATE {_SESSION_TABLE}
+                    SET status = 'pausing',
+                        transition_token = %s,
+                        transition_started_at = %s,
+                        pause_reason = COALESCE(pause_reason, %s)
+                    WHERE id = %s
+                      AND wallet_address = %s
+                      AND status IN ('pausing', 'paused')
+                      AND {token_clause}
+                    RETURNING id""",
+                tuple(params),
+            )
+            claimed = cur.fetchone() is not None
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        logger.error(
+            "session_manager: could not fence pause for session %s: %s",
+            session_id,
+            exc,
+        )
+        claimed = False
+    finally:
+        conn.close()
+    if not claimed:
+        logger.info(
+            "session_manager: stale pause callback ignored for session %s",
+            session_id,
+        )
+        return False
+
+    if not _ensure_session_runtime_paused(
+        session_id, container_id, operation_token
+    ):
+        logger.error(
+            "session_manager: could not freeze session %s (%s); ending it fail-closed",
+            session_id,
+            pause_reason,
+        )
+        _end_after_runtime_pause_failure(
+            wallet_address, session_id, operation_token
+        )
+        return False
+
+    confirmed_at = time.time()
+    conn = _get_connection()
+    if not conn:
+        logger.error(
+            "session_manager: runtime frozen but pause finalization DB unavailable for session %s",
+            session_id,
+        )
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""UPDATE {_SESSION_TABLE}
+                    SET status = 'paused',
+                        runtime_paused = TRUE,
+                        paused_at = COALESCE(paused_at, %s),
+                        last_billed_at = %s,
+                        transition_started_at = NULL,
+                        transition_token = NULL
+                    WHERE id = %s
+                      AND wallet_address = %s
+                      AND status = 'pausing'
+                      AND transition_token = %s
+                    RETURNING id""",
+                (
+                    confirmed_at,
+                    confirmed_at,
+                    session_id,
+                    wallet_address.lower(),
+                    operation_token,
+                ),
+            )
+            finalized = cur.fetchone() is not None
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        logger.error(
+            "session_manager: could not finalize frozen session %s: %s",
+            session_id,
+            exc,
+        )
+        finalized = False
+    finally:
+        conn.close()
+    if not finalized:
+        # The container is safely frozen. Keep/recover the transition on the
+        # next cleanup cycle rather than claiming resumability prematurely.
+        return False
+
     deposit_ledger = _import_deposit_ledger()
     if deposit_ledger.init_once():
         remaining = deposit_ledger.get_remaining_minutes(wallet_address)
@@ -871,10 +1261,34 @@ def _on_session_credit_paused(wallet_address: str, session_id: int) -> None:
             session_id=str(session_id),
         )
     logger.info(
-        "session_manager: session %s paused for %s (container preserved)",
+        "session_manager: session %s frozen for %s (reason=%s)",
         session_id,
         _mask(wallet_address),
+        pause_reason,
     )
+    return True
+
+
+def _ensure_session_runtime_paused(
+    session_id: int,
+    container_id: Optional[str] = None,
+    transition_token: Optional[str] = None,
+) -> bool:
+    """Idempotently verify that a preserved session runtime is frozen."""
+    launcher = _import_session_launcher()
+    try:
+        return bool(launcher.pause_session(
+            session_id=session_id,
+            container_id=container_id,
+            transition_token=transition_token,
+        ))
+    except Exception as exc:
+        logger.error(
+            "session_manager: runtime pause raised for session %s: %s",
+            session_id,
+            exc,
+        )
+        return False
 
 
 def _on_session_ended(wallet_address: str, session_id: int) -> None:
@@ -893,14 +1307,14 @@ def _on_session_ended(wallet_address: str, session_id: int) -> None:
 
 
 def _expire_stale_paused_sessions(cur, now: float) -> List[tuple]:
-    """End paused sessions past resume TTL (container teardown)."""
+    """End frozen sessions past resume TTL (container teardown)."""
     cutoff = now - _session_paused_max_seconds()
     grace = session_grace_seconds()
     cur.execute(
         f"""UPDATE {_SESSION_TABLE}
             SET status = 'ended'
             WHERE status = 'paused'
-              AND (last_heartbeat < %s
+              AND (COALESCE(paused_at, last_heartbeat) < %s
                    OR (hard_expires_at IS NOT NULL AND hard_expires_at + %s <= %s))
             RETURNING wallet_address, id""",
         (cutoff, grace, now),
@@ -909,15 +1323,90 @@ def _expire_stale_paused_sessions(cur, now: float) -> List[tuple]:
     return [(r[0], r[1]) for r in rows]
 
 
+def _restore_paused_transition(
+    wallet: str,
+    session_id: int,
+    container_id: Optional[str],
+    transition_token: Optional[str] = None,
+    pause_reason: str = "credit_exhausted",
+) -> bool:
+    """Fence and re-freeze a failed ``resuming`` generation."""
+    compensation_token = _new_transition_token()
+    conn = _get_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""UPDATE {_SESSION_TABLE}
+                    SET status = 'pausing',
+                        transition_token = %s,
+                        transition_started_at = %s
+                    WHERE id = %s AND wallet_address = %s
+                      AND status = 'resuming'
+                      AND {('transition_token = %s' if transition_token is not None else 'transition_token IS NULL')}
+                    RETURNING id""",
+                (
+                    (
+                        compensation_token,
+                        time.time(),
+                        session_id,
+                        wallet.lower(),
+                        transition_token,
+                    )
+                    if transition_token is not None
+                    else (
+                        compensation_token,
+                        time.time(),
+                        session_id,
+                        wallet.lower(),
+                    )
+                ),
+            )
+            claimed = cur.fetchone() is not None
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        logger.error(
+            "session_manager: could not restore paused transition for session %s: %s",
+            session_id,
+            exc,
+        )
+        claimed = False
+    finally:
+        conn.close()
+    if not claimed:
+        logger.info(
+            "session_manager: stale resume compensation ignored for session %s",
+            session_id,
+        )
+        return False
+    return _on_session_credit_paused(
+        wallet,
+        session_id,
+        container_id,
+        pause_reason,
+        compensation_token,
+    )
+
+
 def _resume_paused_session(
     cur,
     wallet: str,
     paused: Dict[str, Any],
     now: float,
+    transition_token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Reactivate a credit-paused session without spawning a new container.
+    """Finalize a verified runtime unfreeze without spawning a new container.
 
-    Restores the same profile, GPU assignment, and container as before credit exhaustion.
+    The paused container's host processes are Docker-frozen, so they stop
+    scheduling new work while billing is stopped. Resume unfreezes those same
+    processes in the same container, profile, and GPU assignment. Docker pause is
+    not a CUDA checkpoint or proof of GPU idleness: already-enqueued device work
+    can continue, and a persistent or long-running kernel may run throughout the
+    paused interval.
+    The billing checkpoint advances atomically with reactivation so frozen wall
+    time is never charged.
     Client-supplied ``requested_profile`` is ignored for resume.
     """
     paused_profile = (paused.get("requested_profile") or "small").strip().lower()
@@ -927,10 +1416,22 @@ def _resume_paused_session(
         f"""UPDATE {_SESSION_TABLE}
             SET status = 'active',
                 last_heartbeat = %s,
-                expires_at = %s
-            WHERE id = %s AND status = 'paused' AND wallet_address = %s
+                last_billed_at = %s,
+                expires_at = %s,
+                pause_reason = NULL,
+                paused_at = NULL,
+                runtime_paused = FALSE,
+                transition_started_at = NULL,
+                transition_token = NULL
+            WHERE id = %s AND status = 'resuming' AND runtime_paused = TRUE
+              AND wallet_address = %s
+              AND {('transition_token = %s' if transition_token is not None else 'transition_token IS NULL')}
             RETURNING id, gpu_ids, container_id, expires_at, requested_profile""",
-        (now, now + max_secs, paused["id"], wallet),
+        (
+            (now, now, now + max_secs, paused["id"], wallet, transition_token)
+            if transition_token is not None
+            else (now, now, now + max_secs, paused["id"], wallet)
+        ),
     )
     row = cur.fetchone()
     if not row:
@@ -1104,7 +1605,7 @@ def get_active_session() -> Optional[Dict[str, Any]]:
 
 
 def get_session_for_wallet(wallet_address: str) -> Optional[Dict[str, Any]]:
-    """Active or credit-paused session row for *wallet_address*, or None.
+    """Active or frozen session row for *wallet_address*, or None.
 
     Paused sessions are included so wallets can still retrieve files while
     their container survives the paused TTL.
@@ -1141,6 +1642,20 @@ def try_claim_session(
     ``active_wallet`` (masked) when another session blocks access.
     """
     wallet = wallet_address.lower()
+    if not _truthy("AXGT_USER_CONTAINER_ENABLED", False):
+        # A shared desktop cannot provide a trustworthy per-tenant stop/freeze
+        # boundary.  In particular, its historical reset script does not stop
+        # arbitrary CPU/CUDA jobs, so accepting a metered claim could leave work
+        # running after the database says billing ended.  Fail before touching
+        # credit, allocation, or session state.
+        return {
+            "granted": False,
+            "configuration_error": True,
+            "reason": (
+                "Paid sessions require isolated user containers "
+                "(AXGT_USER_CONTAINER_ENABLED=true)."
+            ),
+        }
     profile_name, requested_gpus = _resolve_profile(requested_profile)
     if not _init_once():
         return {"granted": False, "reason": "Session DB unavailable"}
@@ -1170,11 +1685,43 @@ def try_claim_session(
 
             active_rows = _get_active_rows(cur)
             paused_rows = _get_paused_rows(cur, now)
-            reserved_rows = active_rows + paused_rows
+            transition_rows = _get_transition_rows(cur, now)
+            reserved_rows = active_rows + paused_rows + transition_rows
             active = active_rows[-1] if active_rows else None
-            blocking = active if active else (paused_rows[-1] if paused_rows else None)
+            blocking = active if active else (
+                paused_rows[-1] if paused_rows else (
+                    transition_rows[-1] if transition_rows else None
+                )
+            )
 
             is_owner = _active_session_for_wallet(cur, wallet) is not None
+            transition_owned = next(
+                (
+                    row
+                    for row in transition_rows
+                    if (row.get("wallet_address") or "").lower() == wallet
+                ),
+                None,
+            )
+            if transition_owned:
+                # A second Resume/claim must observe ownership of the existing
+                # lifecycle operation. Falling through here could allocate a
+                # second container for the same wallet while its first one is
+                # still being frozen or restored.
+                lifecycle_state = transition_owned.get("status") or "pausing"
+                conn.commit()
+                return {
+                    "granted": False,
+                    "reason": (
+                        "Session resume is in progress"
+                        if lifecycle_state == "resuming"
+                        else "Session pause is in progress"
+                    ),
+                    "lifecycle_in_progress": True,
+                    "lifecycle_state": lifecycle_state,
+                    "session_id": transition_owned["id"],
+                    "container_id": transition_owned.get("container_id"),
+                }
             paused = _paused_session_for_wallet(cur, wallet, now)
             if not is_owner and paused and _preserve_session_on_credit_exhaust():
                 paused_profile = (paused.get("requested_profile") or "small").strip().lower()
@@ -1185,8 +1732,133 @@ def try_claim_session(
                 if not ok_credit:
                     conn.commit()
                     return {"granted": False, "reason": credit_reason}
-                resume = _resume_paused_session(cur, wallet, paused, now)
+
+                # Legacy rows predate verified runtime freezing. Secure them
+                # before beginning Resume; the wallet advisory lock prevents a
+                # second claim from racing this migration path.
+                if not paused.get("runtime_paused"):
+                    legacy_token = _new_transition_token()
+                    cur.execute(
+                        f"""UPDATE {_SESSION_TABLE}
+                            SET status = 'pausing',
+                                transition_started_at = %s,
+                                transition_token = %s
+                            WHERE id = %s AND wallet_address = %s
+                              AND status = 'paused' AND runtime_paused = FALSE
+                            RETURNING id""",
+                        (time.time(), legacy_token, paused["id"], wallet),
+                    )
+                    legacy_transition = cur.fetchone() is not None
+                    conn.commit()
+                    if not legacy_transition or not _on_session_credit_paused(
+                        wallet,
+                        paused["id"],
+                        paused.get("container_id"),
+                        paused.get("pause_reason") or "legacy",
+                        legacy_token,
+                    ):
+                        return {
+                            "granted": False,
+                            "reason": "Saved session is still being secured; retry Resume",
+                            "paused_for_resume": True,
+                        }
+                    # Start a fresh transaction/lock after the external pause.
+                    cur.execute(
+                        "SELECT pg_advisory_xact_lock(hashtext(%s), %s)",
+                        (wallet, _CLAIM_ADVISORY_LOCK_NAMESPACE),
+                    )
+                    paused = _paused_session_for_wallet(cur, wallet, time.time())
+                    if not paused or not paused.get("runtime_paused"):
+                        conn.commit()
+                        return {
+                            "granted": False,
+                            "reason": "Saved session is not ready to resume",
+                            "paused_for_resume": True,
+                        }
+
+                transition_at = time.time()
+                resume_token = _new_transition_token()
+                cur.execute(
+                    f"""UPDATE {_SESSION_TABLE}
+                        SET status = 'resuming',
+                            transition_started_at = %s,
+                            last_heartbeat = %s,
+                            transition_token = %s
+                        WHERE id = %s AND wallet_address = %s
+                          AND status = 'paused' AND runtime_paused = TRUE
+                        RETURNING id""",
+                    (
+                        transition_at,
+                        transition_at,
+                        resume_token,
+                        paused["id"],
+                        wallet,
+                    ),
+                )
+                if cur.fetchone() is None:
+                    conn.commit()
+                    return {
+                        "granted": False,
+                        "reason": "Saved session lifecycle changed; retry Resume",
+                        "paused_for_resume": True,
+                    }
                 conn.commit()
+
+                launcher = _import_session_launcher()
+                runtime_resumed = False
+                try:
+                    runtime_resumed = bool(
+                        launcher.resume_session(
+                            session_id=paused["id"],
+                            container_id=paused.get("container_id"),
+                            transition_token=resume_token,
+                        )
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "session_manager: runtime resume raised for session %s: %s",
+                        paused["id"],
+                        exc,
+                    )
+                if not runtime_resumed:
+                    _restore_paused_transition(
+                        wallet,
+                        paused["id"],
+                        paused.get("container_id"),
+                        resume_token,
+                        paused.get("pause_reason") or "credit_exhausted",
+                    )
+                    return {
+                        "granted": False,
+                        "reason": "Saved session could not be resumed",
+                        "paused_for_resume": True,
+                    }
+
+                try:
+                    resume = _resume_paused_session(
+                        cur, wallet, paused, time.time(), resume_token
+                    )
+                    if not resume.get("granted"):
+                        conn.rollback()
+                        _restore_paused_transition(
+                            wallet,
+                            paused["id"],
+                            paused.get("container_id"),
+                            resume_token,
+                            paused.get("pause_reason") or "credit_exhausted",
+                        )
+                    else:
+                        conn.commit()
+                except Exception:
+                    conn.rollback()
+                    _restore_paused_transition(
+                        wallet,
+                        paused["id"],
+                        paused.get("container_id"),
+                        resume_token,
+                        paused.get("pause_reason") or "credit_exhausted",
+                    )
+                    raise
                 return resume
 
             if not is_owner:
@@ -1525,6 +2197,13 @@ def heartbeat(wallet_address: str, ssh_active: bool = False) -> Dict[str, Any]:
         now = time.time()
         cur = conn.cursor()
         try:
+            # Serialize active->pausing with same-wallet claim snapshots. Without
+            # this shared lock a claim could read ACTIVE before this transaction,
+            # miss PAUSING after it, and allocate a second container in between.
+            cur.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s), %s)",
+                (wallet, _CLAIM_ADVISORY_LOCK_NAMESPACE),
+            )
             ended, paused_credit = _expire_stale_session(cur, now)
             paused_ended = _expire_stale_paused_sessions(cur, now)
             cur.execute(
@@ -1537,14 +2216,46 @@ def heartbeat(wallet_address: str, ssh_active: bool = False) -> Dict[str, Any]:
             )
             row = cur.fetchone()
             if not row:
+                transition = _transition_session_for_wallet(cur, wallet)
                 paused = _paused_session_for_wallet(cur, wallet, now)
                 conn.commit()
                 _cleanup_after_stale_maintenance(ended, paused_credit, paused_ended)
-                if paused and _preserve_session_on_credit_exhaust():
+                if transition:
+                    lifecycle_state = transition.get("status") or "pausing"
                     return {
                         "ok": False,
-                        "reason": "Credit exhausted",
+                        "reason": (
+                            "Session resume is in progress"
+                            if lifecycle_state == "resuming"
+                            else "Session pause is in progress"
+                        ),
+                        "paused_for_resume": False,
+                        "lifecycle_in_progress": True,
+                        "lifecycle_state": lifecycle_state,
+                        "session_id": transition["id"],
+                        "container_id": transition.get("container_id"),
+                    }
+                if paused and _preserve_session_on_credit_exhaust():
+                    if not paused.get("runtime_paused"):
+                        return {
+                            "ok": False,
+                            "reason": "Session pause is still being secured",
+                            "paused_for_resume": False,
+                            "pause_transition": True,
+                            "session_id": paused["id"],
+                        }
+                    pause_reason = paused.get("pause_reason") or "unknown"
+                    if pause_reason == "credit_exhausted":
+                        reason = "Credit exhausted"
+                    elif pause_reason == "heartbeat_timeout":
+                        reason = "Session paused after disconnect"
+                    else:
+                        reason = "Saved session is paused"
+                    return {
+                        "ok": False,
+                        "reason": reason,
                         "paused_for_resume": True,
+                        "pause_reason": pause_reason,
                         "session_id": paused["id"],
                         "container_id": paused.get("container_id"),
                     }
@@ -1580,19 +2291,38 @@ def heartbeat(wallet_address: str, ssh_active: bool = False) -> Dict[str, Any]:
                     _cleanup_after_stale_maintenance(ended, paused_credit, paused_ended)
                     return {"ok": False, "reason": err or "Billing failed"}
                 if remaining <= 0:
-                    # Pause or end session (same cursor: lock still held). Commit before cleanup hooks.
+                    # Begin a two-phase runtime freeze (same cursor: billing
+                    # deduction and checkpoint stay atomic). ``paused`` is not
+                    # published until Docker confirms the frozen state.
+                    runtime_preserved = False
                     if _preserve_session_on_credit_exhaust():
+                        pause_token = _new_transition_token()
                         cur.execute(
                             f"""UPDATE {_SESSION_TABLE}
-                                SET status = 'paused', last_heartbeat = %s
+                                SET status = 'pausing',
+                                    last_heartbeat = %s,
+                                    last_billed_at = %s,
+                                    pause_reason = 'credit_exhausted',
+                                    paused_at = NULL,
+                                    runtime_paused = FALSE,
+                                    transition_started_at = %s,
+                                    transition_token = %s
                                 WHERE id = %s AND status = 'active'
-                                RETURNING wallet_address""",
-                            (now, session_id),
+                                RETURNING wallet_address, container_id""",
+                            (now, now, now, pause_token, session_id),
                         )
                         paused_row = cur.fetchone()
                         conn.commit()
                         if paused_row:
-                            _on_session_credit_paused(paused_row[0], session_id)
+                            runtime_preserved = bool(
+                                _on_session_credit_paused(
+                                    paused_row[0],
+                                    session_id,
+                                    paused_row[1] if len(paused_row) > 1 else container_id,
+                                    "credit_exhausted",
+                                    pause_token,
+                                )
+                            )
                     else:
                         cur.execute(
                             f"""UPDATE {_SESSION_TABLE} SET status = 'ended'
@@ -1611,7 +2341,8 @@ def heartbeat(wallet_address: str, ssh_active: bool = False) -> Dict[str, Any]:
                         "requested_profile": req_profile,
                         "assigned_gpu_ids": assigned_gpu_ids,
                         "container_id": container_id,
-                        "paused_for_resume": _preserve_session_on_credit_exhaust(),
+                        "paused_for_resume": runtime_preserved,
+                        "pause_reason": "credit_exhausted",
                         "gpu_billing_enabled": _gpu_billing_enabled(),
                         "billing_gpu_count": billing_gpu_count,
                     }
@@ -1694,7 +2425,8 @@ def release_session(wallet_address: str) -> Dict[str, Any]:
             cur.execute(
                 f"""UPDATE {_SESSION_TABLE}
                     SET status = 'ended'
-                    WHERE status IN ('active', 'paused') AND wallet_address = %s
+                    WHERE status IN ('active', 'pausing', 'paused', 'resuming')
+                      AND wallet_address = %s
                     RETURNING id, requested_profile, gpu_ids, container_id""",
                 (wallet,),
             )
@@ -1833,17 +2565,52 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
                     result["owner_ssh_enabled"] = bool(owned.get("ssh_enabled"))
                     if owned.get("ssh_enabled"):
                         result.update(_ssh_connection_fields(owned["id"]))
+                transition_owned = _transition_session_for_wallet(cur, wallet)
+                if transition_owned:
+                    transition_profile = (
+                        transition_owned.get("requested_profile") or "small"
+                    ).strip().lower()
+                    transition_gpus = transition_owned.get("gpu_ids", [])
+                    result["is_owner"] = True
+                    result["lifecycle_in_progress"] = True
+                    result["owner_lifecycle_state"] = (
+                        transition_owned.get("status") or "pausing"
+                    )
+                    result["owner_session_id"] = transition_owned["id"]
+                    result["owner_requested_profile"] = transition_profile
+                    result["owner_assigned_gpu_ids"] = transition_gpus
+                    result["owner_container_id"] = transition_owned.get("container_id")
+                    result["owner_allocation_status"] = (
+                        transition_owned.get("allocation_status") or "allocated"
+                    )
+                    result["owner_started_at"] = transition_owned.get("started_at")
+                    result["owner_gpu_count"] = (
+                        len(transition_gpus)
+                        if transition_gpus
+                        else _billing_gpu_count(
+                            transition_gpus, transition_profile
+                        )
+                    )
+                    result["owner_ssh_enabled"] = bool(
+                        transition_owned.get("ssh_enabled")
+                    )
                 paused_owned = _paused_session_for_wallet(cur, wallet, now)
-                if paused_owned and _preserve_session_on_credit_exhaust():
+                if (
+                    paused_owned
+                    and paused_owned.get("runtime_paused")
+                    and _preserve_session_on_credit_exhaust()
+                ):
                     paused_profile = paused_owned.get("requested_profile") or "small"
                     paused_gpus = paused_owned.get("gpu_ids", [])
                     billing_count = _billing_gpu_count(paused_gpus, paused_profile)
+                    paused_at = paused_owned.get("paused_at") or paused_owned["last_heartbeat"]
                     pause_remaining = max(
                         0,
-                        paused_owned["last_heartbeat"] + _session_paused_max_seconds() - now,
+                        paused_at + _session_paused_max_seconds() - now,
                     )
                     result["paused"] = True
                     result["can_resume"] = pause_remaining > 0
+                    result["paused_reason"] = paused_owned.get("pause_reason") or "unknown"
                     result["paused_session_id"] = paused_owned["id"]
                     result["paused_container_id"] = paused_owned.get("container_id")
                     result["paused_requested_profile"] = paused_profile
@@ -2138,7 +2905,7 @@ def refresh_webrtc_agent_capability(
                       AND ssh_enabled = FALSE
                       AND (
                           (status = 'active' AND expires_at > %s)
-                          OR (status = 'paused' AND last_heartbeat >= %s)
+                          OR (status = 'paused' AND COALESCE(paused_at, last_heartbeat) >= %s)
                       )
                     LIMIT 1
                     FOR UPDATE""",
@@ -2199,7 +2966,7 @@ def refresh_webrtc_agent_capability(
 def validate_session_files_key(wallet_address: str, files_key: str) -> bool:
     """True if *files_key* matches the active session's per-session secret for *wallet*.
 
-    Lets a headless/SSH session container authenticate its own heartbeats (no
+    Lets every session container authenticate its durable runtime heartbeat (no
     browser wallet token). The files_key is minted at claim, stored on the session
     row, and injected into the container env as AXGT_SESSION_FILES_KEY.
     """
@@ -2295,11 +3062,46 @@ def perform_session_cleanup() -> None:
 
             to_stop_ids, to_expire = _reconcile_containers(cur, now)
 
+            # Heal legacy rows immediately and lifecycle transitions only after
+            # their owner request has had time to finish. The transient status
+            # prevents cleanup from racing a live Resume/Pause operation. This
+            # CAS claims recovery *before* any Docker action, so a stale
+            # resuming snapshot can never freeze a row that already became active.
+            recovery_token = _new_transition_token()
+            cur.execute(
+                f"""UPDATE {_SESSION_TABLE}
+                    SET status = 'pausing',
+                        transition_started_at = %s,
+                        last_heartbeat = GREATEST(last_heartbeat, %s),
+                        transition_token = %s
+                    WHERE (status = 'paused' AND runtime_paused = FALSE)
+                       OR (status IN ('pausing', 'resuming')
+                           AND COALESCE(transition_started_at, last_heartbeat, 0) < %s)
+                    RETURNING wallet_address, id, container_id,
+                              COALESCE(pause_reason, 'legacy')""",
+                (
+                    now,
+                    now,
+                    recovery_token,
+                    now - _lifecycle_transition_timeout_seconds(),
+                ),
+            )
+            lifecycle_rows = cur.fetchall() or []
+
             conn.commit()
 
             # 1. Trigger post-commit stale session maintenance hooks
             if ended or paused_credit or paused_ended:
                 _cleanup_after_stale_maintenance(ended, paused_credit, paused_ended)
+
+            for wallet, s_id, container_id, pause_reason in lifecycle_rows:
+                _on_session_credit_paused(
+                    wallet,
+                    s_id,
+                    container_id,
+                    pause_reason,
+                    recovery_token,
+                )
 
             # 2. Trigger post-commit reconciliation expired hooks
             for wallet, s_id in to_expire:

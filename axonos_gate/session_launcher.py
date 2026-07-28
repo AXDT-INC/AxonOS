@@ -16,7 +16,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 try:
     from .docker_gpu_cli import (
@@ -110,6 +110,82 @@ def _launcher_mode() -> str:
     return (os.getenv("AXGT_SESSION_LAUNCHER_MODE") or "docker_cli").strip().lower()
 
 
+def _get_control_db_connection():
+    """Open the control DB used to fence direct Docker lifecycle mutations."""
+    db_url = (os.getenv("AXGT_CHALLENGE_DB_URL") or "").strip()
+    if not db_url:
+        return None
+    try:
+        import psycopg2
+
+        return psycopg2.connect(
+            db_url,
+            connect_timeout=_db_connect_timeout_seconds(),
+        )
+    except Exception as exc:
+        logger.warning("session_launcher: lifecycle DB connection failed: %s", exc)
+        return None
+
+
+def _run_generation_fenced_direct_mutation(
+    session_id: int,
+    transition_token: Optional[str],
+    expected_status: str,
+    mutation: Callable[[], bool],
+) -> bool:
+    """Hold the session row lock while an authorized direct mutation executes."""
+    token = str(transition_token or "").strip()
+    if not token:
+        logger.warning(
+            "session_launcher: refusing unfenced %s mutation for session %s",
+            expected_status,
+            session_id,
+        )
+        return False
+    conn = _get_control_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT transition_token
+                   FROM axgt_sessions
+                   WHERE id = %s AND status = %s
+                   FOR UPDATE""",
+                (int(session_id), expected_status),
+            )
+            row = cur.fetchone()
+            stored = str(row[0] or "") if row else ""
+            if not stored or not secrets.compare_digest(stored, token):
+                conn.rollback()
+                logger.info(
+                    "session_launcher: rejected stale %s generation for session %s",
+                    expected_status,
+                    session_id,
+                )
+                return False
+            ok = bool(mutation())
+        if ok:
+            conn.commit()
+        else:
+            conn.rollback()
+        return ok
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logger.warning(
+            "session_launcher: fenced %s mutation failed for session %s: %s",
+            expected_status,
+            session_id,
+            exc,
+        )
+        return False
+    finally:
+        conn.close()
+
+
 def _unmanaged_session_container_names_direct() -> Optional[List[str]]:
     """Find legacy direct-mode containers that this launcher must not adopt."""
     try:
@@ -195,7 +271,7 @@ def _persistent_storage_mount_path() -> str:
 
 
 def _launch_timeout_seconds() -> float:
-    """HTTP timeout for launch/stop calls to the host launcher.
+    """HTTP timeout for lifecycle calls to the host launcher.
 
     Default 90s (was 10s): `docker run -d` of a GPU desktop image routinely
     exceeds 10s on a cold image cache, during GPU/nvidia-runtime init, with
@@ -315,17 +391,84 @@ def launch_session(
         )
 
 
-def stop_session(session_id: int, container_id: Optional[str]) -> bool:
+def stop_session(
+    session_id: int,
+    container_id: Optional[str],
+    transition_token: Optional[str] = None,
+) -> bool:
     """Cleanup user session runtime resources."""
     if not _container_mode_enabled():
-        return True
+        # There is no per-tenant runtime to remove in the legacy shared desktop.
+        # Returning success here used to let the manager publish ``ended`` while
+        # arbitrary user jobs continued inside the central container.
+        logger.warning(
+            "session_launcher: cannot verify stop for session %s in shared-desktop mode",
+            session_id,
+        )
+        return False
     mode = _launcher_mode()
     if mode == "http":
-        return _stop_via_http(session_id, container_id)
+        return _stop_via_http(session_id, container_id, transition_token)
     if mode == "noop":
         return True
     with _session_operation_lock(session_id):
-        return _stop_via_docker_cli(session_id, container_id)
+        return _stop_via_docker_cli(
+            session_id, container_id, transition_token
+        )
+
+
+def pause_session(
+    session_id: int,
+    container_id: Optional[str],
+    transition_token: Optional[str] = None,
+) -> bool:
+    """Freeze one managed tenant runtime without releasing its resources.
+
+    Shared-desktop mode cannot truthfully pause one tenant, so it fails closed.
+    ``noop`` has no runtime to mutate and therefore succeeds as a no-op.
+    Caller-supplied container IDs are never trusted as Docker command targets.
+    """
+    if not _container_mode_enabled():
+        logger.warning(
+            "session_launcher: cannot pause session %s in shared-desktop mode",
+            session_id,
+        )
+        return False
+    mode = _launcher_mode()
+    if mode == "http":
+        return _pause_via_http(session_id, container_id, transition_token)
+    if mode == "noop":
+        return True
+    with _session_operation_lock(session_id):
+        return _pause_via_docker_cli(
+            session_id, container_id, transition_token
+        )
+
+
+def resume_session(
+    session_id: int,
+    container_id: Optional[str],
+    transition_token: Optional[str] = None,
+) -> bool:
+    """Unfreeze one managed tenant runtime after a successful billing resume.
+
+    See :func:`pause_session` for mode and identity semantics.
+    """
+    if not _container_mode_enabled():
+        logger.warning(
+            "session_launcher: cannot resume session %s in shared-desktop mode",
+            session_id,
+        )
+        return False
+    mode = _launcher_mode()
+    if mode == "http":
+        return _resume_via_http(session_id, container_id, transition_token)
+    if mode == "noop":
+        return True
+    with _session_operation_lock(session_id):
+        return _resume_via_docker_cli(
+            session_id, container_id, transition_token
+        )
 
 
 def list_running_sessions() -> List[int]:
@@ -457,6 +600,7 @@ def reconcile_session_networks() -> None:
                      AND (hard_expires_at IS NULL OR hard_expires_at + %s > %s)
                      AND (
                          (status = 'active' AND expires_at > %s)
+                         OR status IN ('pausing', 'resuming')
                          OR (status = 'paused' AND last_heartbeat >= %s)
                      )""",
                 (grace_seconds, now, now, paused_cutoff),
@@ -853,6 +997,60 @@ def _inspect_managed_container_ownership_direct(
     return "error", container_id, "invalid session container running state"
 
 
+def _inspect_managed_container_pause_state_direct(
+    session_id: int,
+) -> Tuple[str, Optional[str], str]:
+    """Classify the exact managed container as running, paused, or stopped.
+
+    This deliberately repeats the ownership labels used by stop instead of
+    accepting a caller-provided container ID.  ``.State.Running`` remains true
+    for a Docker-paused container, so ``.State.Paused`` must be inspected too.
+    """
+    ok, output = _run_docker_direct(
+        [
+            "docker",
+            "inspect",
+            "--format",
+            '{{.State.Running}}|{{.State.Paused}}|'
+            '{{index .Config.Labels "com.axonos.session-container"}}|'
+            '{{index .Config.Labels "com.axonos.session-id"}}|'
+            '{{index .Config.Labels "com.axonos.session-config-sha256"}}|{{.Id}}',
+            _container_name_for_session(session_id),
+        ]
+    )
+    if not ok:
+        if _docker_object_is_absent_direct(output):
+            return "absent", None, ""
+        return "error", None, output or "could not inspect session container"
+    parts = output.split("|", 5)
+    if len(parts) != 6:
+        return "error", None, "malformed session container inspection"
+    running = parts[0].strip().lower()
+    paused = parts[1].strip().lower()
+    config_digest = parts[4].strip()
+    container_id = parts[5].strip()[:64]
+    if not container_id:
+        return "error", None, "session container inspection omitted its id"
+    valid_digest = len(config_digest) == 64 and all(
+        character in "0123456789abcdef" for character in config_digest
+    )
+    if (
+        parts[2].strip().lower() != "true"
+        or parts[3].strip() != str(int(session_id))
+        or not valid_digest
+    ):
+        return "unmanaged", container_id, "refusing unowned same-name session container"
+    if running not in ("true", "false") or paused not in ("true", "false"):
+        return "error", container_id, "invalid session container lifecycle state"
+    if paused == "true":
+        if running != "true":
+            return "error", container_id, "invalid paused session container state"
+        return "owned_paused", container_id, ""
+    if running == "true":
+        return "owned_running", container_id, ""
+    return "owned_stopped", container_id, ""
+
+
 def _managed_container_runtime_matches_direct(
     session_id: int,
     expected_digest: str,
@@ -1134,7 +1332,9 @@ def _launch_via_docker_cli(
         return False, None, msg
 
 
-def _stop_via_docker_cli(session_id: int, container_id: Optional[str]) -> bool:
+def _mutate_stop_via_docker_cli(
+    session_id: int, container_id: Optional[str]
+) -> bool:
     try:
         ownership_state, target, ownership_error = (
             _inspect_managed_container_ownership_direct(session_id)
@@ -1154,10 +1354,17 @@ def _stop_via_docker_cli(session_id: int, container_id: Optional[str]) -> bool:
                 check=False,
                 env=subprocess_env_for_nested_docker(),
             )
-            if result.returncode != 0:
+            verified_state, _verified_target, verify_error = (
+                _inspect_managed_container_ownership_direct(session_id)
+            )
+            if verified_state != "absent":
                 logger.warning(
-                    "session_launcher: could not remove managed session container %s",
+                    "session_launcher: could not verify removal of managed session "
+                    "container %s (docker_rc=%s, state=%s): %s",
                     session_id,
+                    result.returncode,
+                    verified_state,
+                    verify_error,
                 )
                 return False
         cleanup_ok, cleanup_error = _cleanup_session_network_direct(session_id)
@@ -1176,6 +1383,139 @@ def _stop_via_docker_cli(session_id: int, container_id: Optional[str]) -> bool:
             exc,
         )
         return False
+
+
+def _stop_via_docker_cli(
+    session_id: int,
+    container_id: Optional[str],
+    transition_token: Optional[str] = None,
+) -> bool:
+    if transition_token is None:
+        return _mutate_stop_via_docker_cli(session_id, container_id)
+    return _run_generation_fenced_direct_mutation(
+        session_id,
+        transition_token,
+        "pausing",
+        lambda: _mutate_stop_via_docker_cli(session_id, container_id),
+    )
+
+
+def _mutate_paused_via_docker_cli(
+    session_id: int,
+    container_id: Optional[str],
+    *,
+    paused: bool,
+) -> bool:
+    """Apply and verify a Docker pause transition to the labeled tenant only."""
+    del container_id  # Untrusted hint retained only for the public API contract.
+    action = "pause" if paused else "unpause"
+    desired_state = "owned_paused" if paused else "owned_running"
+    try:
+        state, target, inspection_error = (
+            _inspect_managed_container_pause_state_direct(session_id)
+        )
+        if state in ("error", "unmanaged"):
+            logger.warning(
+                "session_launcher: refusing/inconclusive %s for session %s: %s",
+                action,
+                session_id,
+                inspection_error,
+            )
+            return False
+        if state in ("absent", "owned_stopped") or not target:
+            logger.warning(
+                "session_launcher: cannot %s non-running managed session %s",
+                action,
+                session_id,
+            )
+            return False
+        if state == desired_state:
+            return True
+
+        result = subprocess.run(
+            ["docker", action, target],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            env=subprocess_env_for_nested_docker(),
+        )
+        if result.returncode != 0:
+            logger.warning(
+                "session_launcher: docker %s failed for managed session %s",
+                action,
+                session_id,
+            )
+            return False
+
+        verified_state, verified_target, verify_error = (
+            _inspect_managed_container_pause_state_direct(session_id)
+        )
+        identity_matches = bool(verified_target) and secrets.compare_digest(
+            target,
+            verified_target,
+        )
+        if verified_state != desired_state or not identity_matches:
+            logger.warning(
+                "session_launcher: docker %s verification failed for session %s: %s",
+                action,
+                session_id,
+                verify_error or verified_state,
+            )
+            return False
+        return True
+    except Exception as exc:
+        logger.warning(
+            "session_launcher: docker %s failed for session %s: %s",
+            action,
+            session_id,
+            exc,
+        )
+        return False
+
+
+def _set_paused_via_docker_cli(
+    session_id: int,
+    container_id: Optional[str],
+    transition_token: Optional[str],
+    *,
+    paused: bool,
+) -> bool:
+    return _run_generation_fenced_direct_mutation(
+        session_id,
+        transition_token,
+        "pausing" if paused else "resuming",
+        lambda: _mutate_paused_via_docker_cli(
+            session_id,
+            container_id,
+            paused=paused,
+        ),
+    )
+
+
+def _pause_via_docker_cli(
+    session_id: int,
+    container_id: Optional[str],
+    transition_token: Optional[str],
+) -> bool:
+    return _set_paused_via_docker_cli(
+        session_id,
+        container_id,
+        transition_token,
+        paused=True,
+    )
+
+
+def _resume_via_docker_cli(
+    session_id: int,
+    container_id: Optional[str],
+    transition_token: Optional[str],
+) -> bool:
+    return _set_paused_via_docker_cli(
+        session_id,
+        container_id,
+        transition_token,
+        paused=False,
+    )
 
 
 def _launch_via_http(
@@ -1232,13 +1572,30 @@ def _launch_via_http(
     return False, None, reason
 
 
-def _stop_via_http(session_id: int, container_id: Optional[str]) -> bool:
+def _stop_via_http(
+    session_id: int,
+    container_id: Optional[str],
+    transition_token: Optional[str] = None,
+) -> bool:
     base_url = (os.getenv("AXGT_SESSION_LAUNCHER_URL") or "").strip().rstrip("/")
     if not base_url:
         return False
     payload = {"session_id": session_id, "container_id": container_id}
+    if transition_token is not None:
+        payload["transition_token"] = transition_token
     status, data, error = _http_json("POST", f"{base_url}/stop", payload)
-    ok = not error and status < 400 and isinstance(data, dict) and bool(data.get("ok"))
+    token_confirmed = transition_token is None or (
+        isinstance(data, dict)
+        and isinstance(data.get("transition_token"), str)
+        and secrets.compare_digest(data["transition_token"], transition_token)
+    )
+    ok = (
+        not error
+        and status < 400
+        and isinstance(data, dict)
+        and bool(data.get("ok"))
+        and token_confirmed
+    )
     if not ok:
         logger.warning(
             "session_launcher: host stop failed for session %s: %s",
@@ -1246,6 +1603,120 @@ def _stop_via_http(session_id: int, container_id: Optional[str]) -> bool:
             error or (data.get("error") if isinstance(data, dict) else f"http {status}"),
         )
     return ok
+
+
+def _set_paused_via_http(
+    session_id: int,
+    container_id: Optional[str],
+    transition_token: Optional[str],
+    *,
+    paused: bool,
+) -> bool:
+    base_url = (os.getenv("AXGT_SESSION_LAUNCHER_URL") or "").strip().rstrip("/")
+    if not base_url:
+        return False
+    token = str(transition_token or "").strip()
+    if not token:
+        logger.warning(
+            "session_launcher: refusing unfenced host lifecycle mutation for session %s",
+            session_id,
+        )
+        return False
+    operation = "pause" if paused else "resume"
+    payload = {
+        "session_id": session_id,
+        "container_id": container_id,
+        "transition_token": token,
+    }
+    url = f"{base_url}/{operation}"
+
+    def desired_state_confirmed(status: int, data: object, error: Optional[str]) -> bool:
+        return bool(
+            not error
+            and status < 400
+            and isinstance(data, dict)
+            and data.get("ok")
+            and data.get("paused") is paused
+            and isinstance(data.get("transition_token"), str)
+            and secrets.compare_digest(data["transition_token"], token)
+        )
+
+    status, data, error = _http_json("POST", url, payload)
+    if desired_state_confirmed(status, data, error):
+        return True
+
+    reason = error or (
+        data.get("error") if isinstance(data, dict) else f"http {status}"
+    )
+    # A transport failure or 5xx can arrive after the host changed Docker state.
+    # Retry the identical idempotent operation so the host's exact managed-ID
+    # inspection confirms the desired state. Auth/input 4xx responses are final.
+    ambiguous = bool(error) or status >= 500
+    if ambiguous:
+        attempts = max(1, _launch_verify_attempts())
+        interval = _launch_verify_interval_seconds()
+        for attempt in range(attempts):
+            if attempt > 0 and interval > 0:
+                time.sleep(interval)
+            status, data, retry_error = _http_json(
+                "POST",
+                url,
+                payload,
+                timeout_s=5.0,
+            )
+            if desired_state_confirmed(status, data, retry_error):
+                logger.warning(
+                    "session_launcher: host %s for session %s was inconclusive (%s) "
+                    "but an idempotent state retry succeeded",
+                    operation,
+                    session_id,
+                    reason,
+                )
+                return True
+            if not retry_error and status < 500:
+                reason = (
+                    data.get("error")
+                    if isinstance(data, dict)
+                    else f"http {status}"
+                )
+                break
+            reason = retry_error or (
+                data.get("error") if isinstance(data, dict) else f"http {status}"
+            )
+
+    logger.warning(
+        "session_launcher: host %s failed for session %s: %s",
+        operation,
+        session_id,
+        reason or "launcher rejected request",
+    )
+    return False
+
+
+def _pause_via_http(
+    session_id: int,
+    container_id: Optional[str],
+    transition_token: Optional[str],
+) -> bool:
+    return _set_paused_via_http(
+        session_id,
+        container_id,
+        transition_token,
+        paused=True,
+    )
+
+
+def _resume_via_http(
+    session_id: int,
+    container_id: Optional[str],
+    transition_token: Optional[str],
+) -> bool:
+    return _set_paused_via_http(
+        session_id,
+        container_id,
+        transition_token,
+        paused=False,
+    )
 
 
 def enumerate_host_gpus_via_http() -> Optional[List[int]]:
