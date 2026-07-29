@@ -3100,8 +3100,9 @@ Copyright (C) 2019 The noVNC Authors
                 var panel = document.getElementById(id);
                 if (panel) panel.hidden = !eligible;
             });
-            var dashboardButton = document.getElementById('axonos_dashboard_topup_btn');
-            if (dashboardButton) {
+            ['axonos_dashboard_topup_btn', 'axonos_sidebar_topup_btn'].forEach(function (id) {
+                var balanceButton = document.getElementById(id);
+                if (!balanceButton) return;
                 if (eligible) {
                     var grant = Number(window.axonosTestCreditGrantMinutes);
                     var cap = Number(window.axonosTestCreditMaxBalanceMinutes);
@@ -3111,20 +3112,20 @@ Copyright (C) 2019 The noVNC Authors
                     var grantLabel = boundedGrant !== null
                         ? String(Math.round(boundedGrant * 100) / 100)
                         : '';
-                    dashboardButton.textContent = grantLabel
+                    balanceButton.textContent = grantLabel
                         ? ('Add up to ' + grantLabel + ' test credits')
                         : 'Add test credits';
-                    dashboardButton.dataset.axonosTestCredit = 'true';
-                    dashboardButton.title = Number.isFinite(cap) && cap > 0
+                    balanceButton.dataset.axonosTestCredit = 'true';
+                    balanceButton.title = Number.isFinite(cap) && cap > 0
                         ? ('One click refills this eligible wallet toward the ' +
                             (Math.round(cap * 100) / 100) + '-credit test balance cap.')
                         : 'One click requests the bounded test-credit grant for this eligible wallet.';
                 } else {
-                    dashboardButton.textContent = 'Top up credits';
-                    dashboardButton.dataset.axonosTestCredit = 'false';
-                    dashboardButton.removeAttribute('title');
+                    balanceButton.textContent = 'Top up credits';
+                    balanceButton.dataset.axonosTestCredit = 'false';
+                    balanceButton.removeAttribute('title');
                 }
-            }
+            });
         }
 
         function axonosPaymentIdentityIsCurrent(wallet) {
@@ -4721,27 +4722,49 @@ Copyright (C) 2019 The noVNC Authors
 
         syncAxonosPrerequisiteTickerMirror();
 
-        /** Open wallet dialog for ETH top-up (keeps auth token; does not reconnect desktop). */
+        /** Open wallet credit dialog for top-up (keeps auth token; does not reconnect desktop). */
         window.axonosOpenWalletTopUpDialog = function (forcePayment) {
             var dlg = document.getElementById('noVNC_credentials_dlg');
             if (dlg) dlg.classList.add('noVNC_open');
             var wallet = window.verifiedWalletAddress;
             if (!wallet) {
                 setWalletUIState('axonos_wallet_state_disconnected');
-                return;
+                return Promise.resolve(null);
             }
-            var url = new URL('/api/auth/wallet-status', window.location.origin);
-            url.searchParams.set('wallet_address', wallet);
-            fetch(url.toString(), {
-                method: 'GET',
-                credentials: 'include',
-                headers: {
-                    'X-Wallet-Address': wallet,
-                    'X-AXGT-Auth-Token': window.verifiedWalletAuthToken || ''
-                }
-            })
-                .then(function (r) { return r.json(); })
-                .then(function (data) {
+
+            var showPaymentState = function (balanceDisplay) {
+                setWalletUIState('axonos_wallet_state_insufficient', {
+                    balanceDisplay: balanceDisplay
+                });
+                refreshDiscountQuote(wallet);
+                refreshUsdcDiscountQuote(wallet);
+            };
+
+            // A desktop top-up is an explicit payment action by an already signed-in
+            // wallet. Paint usable payment controls immediately instead of exposing
+            // runVerify()'s stale, hidden "Verifying wallet…" state while status loads.
+            if (forcePayment) {
+                showPaymentState('Refreshing credit balance…');
+            } else {
+                setWalletUIState('axonos_wallet_state_checking');
+            }
+
+            // Use the bounded, identity-guarded status helper. The old raw fetch
+            // could remain pending forever and strand this modal on its spinner.
+            return axonosFetchWalletAccessStatus(wallet)
+                .then(function (res) {
+                    if (!axonosPaymentIdentityIsCurrent(wallet) || (res && res.stale)) return null;
+                    if (!res || res.unavailable || res.ok === false) {
+                        if (forcePayment) {
+                            showPaymentState('Credit status unavailable · payment options remain available');
+                        } else {
+                            setWalletUIState('axonos_wallet_state_connect_error', {
+                                msg: 'Could not load the current credit balance. Check the connection and try again.'
+                            });
+                        }
+                        return null;
+                    }
+                    var data = res.data || {};
                     var remaining = typeof data.remaining_minutes === 'number' ? data.remaining_minutes : 0;
                     var balanceDisplay = (typeof data.remaining_minutes === 'number')
                         ? (data.remaining_minutes + ' min prepaid')
@@ -4752,13 +4775,20 @@ Copyright (C) 2019 The noVNC Authors
                             balanceDisplay: balanceDisplay
                         });
                     } else {
-                        setWalletUIState('axonos_wallet_state_insufficient', { balanceDisplay: balanceDisplay });
-                        refreshDiscountQuote(wallet);
-                        refreshUsdcDiscountQuote(wallet);
+                        showPaymentState(balanceDisplay);
                     }
+                    return data;
                 })
                 .catch(function () {
-                    setWalletUIState('axonos_wallet_state_insufficient', { balanceDisplay: '—' });
+                    if (!axonosPaymentIdentityIsCurrent(wallet)) return null;
+                    if (forcePayment) {
+                        showPaymentState('Credit status unavailable · payment options remain available');
+                    } else {
+                        setWalletUIState('axonos_wallet_state_connect_error', {
+                            msg: 'Could not load the current credit balance. Check the connection and try again.'
+                        });
+                    }
+                    return null;
                 });
         };
 
@@ -9023,9 +9053,21 @@ Copyright (C) 2019 The noVNC Authors
             const amountInput = document.getElementById('axonos_wizard_pay_amount');
             const amount = amountInput ? amountInput.value.trim() : '0';
 
+            // Give immediate feedback before the wallet-access preflight.  This
+            // request can take several seconds on a cold/backend-busy path; if we
+            // wait until claimSession() the wizard otherwise appears unresponsive.
+            showConnectionLoader('preparing');
+
             // Check if they already have enough credits to proceed directly without depositing
             axonosFetchWalletAccessStatus(wallet).then(function (res) {
                 if (!res || res.stale || !axonosPaymentIdentityIsCurrent(wallet)) return;
+                if (res.unavailable || res.ok === false) {
+                    hideConnectionLoader();
+                    if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                        UI.showStatus('Unable to check wallet credits. Please try launching again.', 'error');
+                    }
+                    return;
+                }
                 const data = (res && res.data) || {};
                 const remaining = data.remaining_minutes || 0;
                 const required = axonosGpuCountForProfile(axonosSelectedGpuProfile);
@@ -9071,6 +9113,10 @@ Copyright (C) 2019 The noVNC Authors
                     });
                 } else {
                     if (!axonosPaymentIdentityIsCurrent(wallet)) return;
+                    // This is a payment flow, not a compute launch yet.  Restore
+                    // the wizard before opening the wallet/payment interaction;
+                    // its own payment phase will reactivate the overlay once sent.
+                    hideConnectionLoader();
                     // Trigger MetaMask payment modal or dynamic deposit flow
                     // Sync inputs on original recharge modal elements so the core payment methods receive the values correctly
                     if (token === 'usdc') {
@@ -9099,6 +9145,12 @@ Copyright (C) 2019 The noVNC Authors
                         if (axgtBtn) axgtBtn.click();
                     }
                 }
+            }).catch(function () {
+                if (!axonosPaymentIdentityIsCurrent(wallet)) return;
+                hideConnectionLoader();
+                if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                    UI.showStatus('Unable to check wallet credits. Please try launching again.', 'error');
+                }
             });
         }
 
@@ -9123,33 +9175,40 @@ Copyright (C) 2019 The noVNC Authors
                 axonosStartWizard();
             });
         }
+
+        // Shared one-click refill for eligible release-test wallets. It only adds
+        // bounded credit; resumeCreditGraceOnly prevents this balance action from
+        // ever launching a brand-new GPU session as a side effect.
+        function axonosRequestBalanceCardTestCredit() {
+            const requestWallet = String(window.verifiedWalletAddress || '').toLowerCase();
+            const request = axonosRequestTestCredit('eth', null, {
+                resumeCreditGraceOnly: true
+            });
+            if (request && typeof request.then === 'function') {
+                request.then(function (result) {
+                    if (String(window.verifiedWalletAddress || '').toLowerCase() !== requestWallet) return;
+                    if (result && result.busy === true) return;
+                    if (result && (result.verified || (
+                        result.error_code === 'test_credit_capped' &&
+                        Number(result.remaining_minutes) > 0
+                    ))) return;
+                    var detail = result && (result.error || result.message);
+                    if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                        UI.showStatus(
+                            detail || 'Could not add test credit. Check the connection and retry.',
+                            'error'
+                        );
+                    }
+                });
+            }
+            return request;
+        }
+
         const dashTopupBtn = document.getElementById('axonos_dashboard_topup_btn');
         if (dashTopupBtn) {
             dashTopupBtn.addEventListener('click', () => {
                 if (window.axonosTestCreditEligible) {
-                    const requestWallet = String(window.verifiedWalletAddress || '').toLowerCase();
-                    const request = axonosRequestTestCredit('eth', null, {
-                        // A balance-card refill may restore the retained runtime,
-                        // but must never launch a brand-new GPU session by surprise.
-                        resumeCreditGraceOnly: true
-                    });
-                    if (request && typeof request.then === 'function') {
-                        request.then(function (result) {
-                            if (String(window.verifiedWalletAddress || '').toLowerCase() !== requestWallet) return;
-                            if (result && result.busy === true) return;
-                            if (result && (result.verified || (
-                                result.error_code === 'test_credit_capped' &&
-                                Number(result.remaining_minutes) > 0
-                            ))) return;
-                            var detail = result && (result.error || result.message);
-                            if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
-                                UI.showStatus(
-                                    detail || 'Could not add test credit. Check the connection and retry.',
-                                    'error'
-                                );
-                            }
-                        });
-                    }
+                    axonosRequestBalanceCardTestCredit();
                     return;
                 }
                 axonosStartWizard();
@@ -9184,10 +9243,12 @@ Copyright (C) 2019 The noVNC Authors
         const sidebarTopupBtn = document.getElementById('axonos_sidebar_topup_btn');
         if (sidebarTopupBtn) {
             sidebarTopupBtn.addEventListener('click', () => {
-                // Defer to credentials popup recharge layout
-                var dlg = document.getElementById('noVNC_credentials_dlg');
-                if (dlg) {
-                    dlg.classList.add('noVNC_open');
+                if (window.axonosTestCreditEligible) {
+                    axonosRequestBalanceCardTestCredit();
+                    return;
+                }
+                if (typeof window.axonosOpenWalletTopUpDialog === 'function') {
+                    window.axonosOpenWalletTopUpDialog(true);
                 }
             });
         }

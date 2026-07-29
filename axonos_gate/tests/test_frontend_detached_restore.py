@@ -86,14 +86,18 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
             apply_payload,
         )
 
-    def test_eligible_dashboard_refill_is_one_click_and_never_starts_a_new_session(self) -> None:
+    def test_eligible_balance_card_refill_is_one_click_and_never_starts_a_new_session(self) -> None:
         eligibility = self._page_between(
             "function axonosSyncTestCreditControls()",
             "function axonosPaymentIdentityIsCurrent(wallet)",
         )
-        dashboard_action = self._page_between(
+        refill = self._page_between(
+            "function axonosRequestBalanceCardTestCredit()",
             "const dashTopupBtn = document.getElementById('axonos_dashboard_topup_btn')",
-            "// Telemetry Sidebar Collapse Toggle",
+        )
+        balance_actions = self._page_between(
+            "const dashTopupBtn = document.getElementById('axonos_dashboard_topup_btn')",
+            "// Live Telemetry Loop when Connected",
         )
         success = self._page_between(
             "function axonosDepositVerifiedSuccess(d, wallet, operation, options)",
@@ -101,12 +105,16 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         )
 
         self.assertIn("Add up to ", eligibility)
+        self.assertIn("axonos_dashboard_topup_btn", eligibility)
+        self.assertIn("axonos_sidebar_topup_btn", eligibility)
         self.assertIn("test_credit_grant_minutes", self.page_source)
         self.assertIn("test_credit_max_balance_minutes", self.page_source)
-        self.assertIn("if (window.axonosTestCreditEligible)", dashboard_action)
-        self.assertIn("axonosRequestTestCredit('eth', null", dashboard_action)
-        self.assertIn("resumeCreditGraceOnly: true", dashboard_action)
-        self.assertIn("axonosStartWizard()", dashboard_action)
+        self.assertIn("axonosRequestTestCredit('eth', null", refill)
+        self.assertIn("resumeCreditGraceOnly: true", refill)
+        self.assertGreaterEqual(balance_actions.count("if (window.axonosTestCreditEligible)"), 2)
+        self.assertGreaterEqual(balance_actions.count("axonosRequestBalanceCardTestCredit()"), 2)
+        self.assertIn("axonosStartWizard()", balance_actions)
+        self.assertIn("window.axonosOpenWalletTopUpDialog(true)", balance_actions)
         self.assertIn("if (successOptions.resumeCreditGraceOnly)", success)
         self.assertIn("passiveWalletPreflight: successOptions.passiveWalletPreflight", success)
         self.assertIn("passiveWalletPreflight: true", self.page_source)
@@ -117,6 +125,22 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
             success.index("if (successOptions.resumeCreditGraceOnly)"),
             success.index("claimSession().then"),
         )
+
+    def test_desktop_top_up_never_reuses_or_waits_forever_on_verifying_state(self) -> None:
+        top_up = self._page_between(
+            "window.axonosOpenWalletTopUpDialog = function (forcePayment)",
+            "function setWalletUIState(state, data)",
+        )
+
+        self.assertIn("showPaymentState('Refreshing credit balance…')", top_up)
+        self.assertIn("axonosFetchWalletAccessStatus(wallet)", top_up)
+        self.assertLess(
+            top_up.index("showPaymentState('Refreshing credit balance…')"),
+            top_up.index("axonosFetchWalletAccessStatus(wallet)"),
+        )
+        self.assertIn("res.unavailable || res.ok === false", top_up)
+        self.assertGreaterEqual(top_up.count("Credit status unavailable"), 2)
+        self.assertNotIn("fetch(url.toString()", top_up)
 
     def test_resume_claim_is_bound_to_the_retained_session(self) -> None:
         page_claim = self._page_between(
@@ -372,6 +396,16 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         self.assertIn("axonosReconcileUncertainSessionClaim({", run_verify)
         self.assertIn(".catch(function (error)", wizard)
         self.assertIn("axonosReconcileUncertainSessionClaim({", wizard)
+        self.assertLess(
+            wizard.index("showConnectionLoader('preparing')"),
+            wizard.index("axonosFetchWalletAccessStatus(wallet)"),
+        )
+        preflight = wizard.split("axonosFetchWalletAccessStatus(wallet)", 1)[0]
+        self.assertNotIn("axonosTestCreditEligible", preflight)
+        self.assertNotIn("is_whitelisted", preflight)
+        self.assertIn("res.unavailable || res.ok === false", wizard)
+        self.assertIn("hideConnectionLoader();", wizard)
+        self.assertIn("Unable to check wallet credits", wizard)
         self.assertIn("retained session was not released", self.page_source)
         self.assertIn("running session exists and may be using credits", self.page_source)
 
