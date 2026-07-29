@@ -18,6 +18,11 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         self.assertIn(end, self.page_source)
         return self.page_source.split(start, 1)[1].split(end, 1)[0]
 
+    def _ui_between(self, start: str, end: str) -> str:
+        self.assertIn(start, self.ui_source)
+        self.assertIn(end, self.ui_source)
+        return self.ui_source.split(start, 1)[1].split(end, 1)[0]
+
     def test_detach_keeps_jobs_and_billing_alive_across_tab_close(self) -> None:
         detach = self.ui_source.split("async detach()", 1)[1].split(
             "async restartDesktopSession()", 1
@@ -158,8 +163,147 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         )
         self.assertIn("axonosWalletProviderRequest", preflight)
         self.assertIn("account_mismatch", preflight)
-        self.assertEqual(preflight.count("teardownSessionForWalletChange();"), 1)
-        self.assertEqual(preflight.count("clearWalletIdentityAndUi();"), 1)
+        self.assertIn("onWalletAccountsChanged(accounts, eth)", preflight)
+        self.assertIn("axonosMarkWalletProviderOutOfSync", preflight)
+        self.assertNotIn("teardownSessionForWalletChange", preflight)
+        self.assertNotIn("clearWalletIdentityAndUi", preflight)
+
+    def test_wallet_identity_cleanup_clears_all_browser_owned_state(self) -> None:
+        cleanup = self._page_between(
+            "function clearWalletIdentityAndUi()",
+            "function axonosDesktopSessionLive()",
+        )
+
+        for state_reset in (
+            "window.verifiedWalletAddress = null",
+            "window.verifiedWalletAuthToken = null",
+            "window.axonosOwnedSession = null",
+            "window.axonosDetachedSession = null",
+            "window.axonosSessionDetached = false",
+            "window.axonosPendingResumeClaim = null",
+            "window.axonosPausedResume = null",
+            "window.axonosSshEnabled = false",
+        ):
+            self.assertIn(state_reset, cleanup)
+        self.assertIn("localStorage.removeItem('axonos_last_wallet')", cleanup)
+        self.assertIn("clearInterval(UI._axgtStatusPollId)", cleanup)
+        self.assertIn("UI._axgtStatusPollId = null", cleanup)
+        self.assertIn("UI._axgtStopSessionTimer()", cleanup)
+        self.assertIn("UI.hideAxonosSshCard()", cleanup)
+
+    def test_explicit_wallet_sign_out_releases_before_identity_cleanup(self) -> None:
+        sign_out = self._page_between(
+            "window.axonosDisconnectWalletSession = function ()",
+            "window.axonosBeginWalletSwitch = function (opts)",
+        )
+
+        release = "teardownSessionForWalletChange({ forceRelease: true });"
+        clear = "clearWalletIdentityAndUi();"
+        self.assertIn(release, sign_out)
+        self.assertIn(clear, sign_out)
+        self.assertLess(sign_out.index(release), sign_out.index(clear))
+
+    def test_wallet_account_events_are_provider_aware_and_fail_closed(self) -> None:
+        account_change = self._page_between(
+            "function onWalletAccountsChanged(accounts, sourceProvider)",
+            "// AUTHORITATIVE preflight:",
+        )
+        idle_check = self._page_between(
+            "function axonosConfirmWalletIdentityIdle(wallet)",
+            "function teardownSessionForWalletChange(options)",
+        )
+        binding = self._page_between(
+            "function bindWalletAccountEvents(provider)",
+            "bindWalletAccountEvents(getSafeWindowEthereum());",
+        )
+
+        self.assertIn("sourceProvider !== activeProvider", account_change)
+        self.assertIn("window.axonosWalletAccountEventGeneration", account_change)
+        self.assertIn("window.axonosPendingWalletAccountEvent", account_change)
+        self.assertIn("axonosConfirmWalletIdentityIdle(oldAccount)", account_change)
+        self.assertIn("clearWalletIdentityAndUi();", account_change)
+        self.assertIn("window.axonosBeginWalletSwitch({", account_change)
+        self.assertIn("useExposedAccount: true", account_change)
+        self.assertNotIn("teardownSessionForWalletChange", account_change)
+        self.assertIn("sessionStatusForWallet(wallet)", idle_check)
+        self.assertIn("axonosSessionStatusIsAuthoritative(status)", idle_check)
+        self.assertIn("onWalletAccountsChanged(accounts, provider)", binding)
+
+    def test_page_claim_runs_passive_wallet_preflight_before_posting(self) -> None:
+        claim = self._page_between(
+            "function claimSession(options)",
+            "function sessionStatus()",
+        )
+
+        preflight = "window.axonosEnsureWalletSessionCurrent({ requestPermission: false })"
+        payload = "const payload = { wallet_address: wallet };"
+        self.assertIn(preflight, claim)
+        self.assertIn("walletPreflightDone: true", claim)
+        self.assertIn("wallet_preflight_failed: true", claim)
+        self.assertIn(payload, claim)
+        self.assertLess(claim.index(preflight), claim.index(payload))
+
+    def test_authoritative_ssh_claim_never_falls_through_to_desktop_connect(self) -> None:
+        route = self._page_between(
+            "function tryConnectAfterClaim(claim)",
+            "const connectButton = document.getElementById('noVNC_connect_button');",
+        )
+
+        remember = "window.axonosRememberOwnedSession(claim);"
+        ssh_branch = "if (granted && claim.ssh_enabled === true)"
+        desktop_loader = "showConnectionLoader();"
+        desktop_click = "launchBtn.click()"
+        self.assertIn(remember, route)
+        self.assertIn(ssh_branch, route)
+        self.assertIn("if (claim.ssh_port)", route)
+        self.assertIn("axonosRestoreSshSessionUi(Object.assign({}, claim", route)
+        self.assertIn("owner_hard_cap_remaining_seconds", route)
+        self.assertIn("SSH session is running, but its connection endpoint is unavailable", route)
+        self.assertGreaterEqual(route.count("return;"), 2)
+        self.assertIn(desktop_loader, route)
+        self.assertIn(desktop_click, route)
+        self.assertLess(route.index(remember), route.index(ssh_branch))
+        self.assertLess(route.index(ssh_branch), route.index(desktop_loader))
+        self.assertNotIn("UI.axonosSshEnabled()", route)
+
+    def test_ssh_restore_and_card_render_do_not_restart_poll_or_screen(self) -> None:
+        restore = self._page_between(
+            "function axonosRestoreSshSessionUi(st)",
+            "window.axonosRestoreSshSessionUi = axonosRestoreSshSessionUi;",
+        )
+        card = self._ui_between(
+            "showAxonosSshCard(claim, options = {})",
+            "_axonosUpdateSshCardCap(payload)",
+        )
+        ui_connect = self._ui_between(
+            "connect(event, password)",
+            "disconnect(options)",
+        )
+
+        self.assertEqual(restore.count("UI._axgtStartSessionBillingPoll();"), 1)
+        self.assertIn("!UI._axgtStatusPollId", restore)
+        self.assertNotIn("axonosUpdateActiveScreen('landing')", restore)
+        self.assertIn("landingAlreadyActive", card)
+        self.assertIn("!landingAlreadyActive", card)
+        self.assertIn("!preserveScreen", card)
+        ssh_connect = ui_connect.split(
+            "if (claim && claim.ssh_enabled === true)", 1
+        )[1].split("if (claim && claim.resumed === true", 1)[0]
+        self.assertIn("UI.openAxonosSshTerminal(claim)", ssh_connect)
+        terminal_open = self._ui_between(
+            "async openAxonosSshTerminal(claim, options = {})",
+            "showAxonosTemplateDetails(t)",
+        )
+        self.assertIn("if (!UI._axgtStatusPollId)", terminal_open)
+
+    def test_periodic_wallet_status_ignores_stale_identity_responses(self) -> None:
+        poll = self._ui_between(
+            "    _axgtPollWalletStatus() {",
+            "    _axgtSetupUsageOverlayButton() {",
+        )
+
+        self.assertIn("const pollIdentityIsCurrent", poll)
+        self.assertGreaterEqual(poll.count("if (!pollIdentityIsCurrent()) return;"), 2)
 
     def test_claim_and_post_claim_config_reads_are_bounded(self) -> None:
         page_claim = self._page_between(

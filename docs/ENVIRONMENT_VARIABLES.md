@@ -176,7 +176,7 @@ Agent-native HTTP-402 rail: `GET /api/x402/access` returns payment requirements,
 | `USDC_EIP712_VERSION` | `2` | EIP-712 domain version of the USDC token. |
 | `X402_RESOURCE` | `/api/x402/access` | Resource path advertised in the 402 challenge. |
 | `X402_RESOURCE_URL` | *(none)* | Absolute base URL for the advertised resource (the JS `x402-fetch` SDK requires an absolute `resource`). Falls back to `AXGT_PUBLIC_BASE_URL`, then the first CORS origin. |
-| `AXGT_PUBLIC_BASE_URL` | *(none)* | Public origin (e.g. `https://app.axonos.io`) used to build the absolute x402 resource URL. |
+| `AXGT_PUBLIC_BASE_URL` | *(none)* | Exact public origin (e.g. `https://app.axonos.io`) used for absolute x402 resource URLs and as the sole accepted terminal ticket/WebSocket browser Origin. For that exact Origin, a syntactically valid internal proxy `Host` is allowed and `X-Forwarded-Proto` may describe the internal hop. Without this setting, Origin, Host, and any supplied forwarded scheme must agree exactly. |
 
 ### Dynamic USD-equivalent pricing (price oracle)
 
@@ -489,15 +489,15 @@ Public subset exposed via `GET /api/config` and `GET /api/webrtc/config`.
 
 ---
 
-## File transfer (browser ↔ desktop)
+## File transfer and session telemetry (browser ↔ session)
 
-Browser ↔ desktop upload/download over `/api/files/*`, proxied by the gate to an in-container agent. Read by [`axonos_gate/file_transfer.py`](../axonos_gate/file_transfer.py) (gate side) and [`axonos_gate/file_agent.py`](../axonos_gate/file_agent.py) (in-container). Per-session auth is automatic — the gate mints a key at claim time and injects `AXGT_SESSION_FILES_KEY` into the session container; no shared secret to configure.
+Browser upload/download over `/api/files/*` and CPU/RAM/storage telemetry over `/api/files/stats` are proxied by the gate to an in-container agent. The agent runs for desktop and SSH-only sessions; sessions with both surfaces disabled leave it stopped. Read by [`axonos_gate/file_transfer.py`](../axonos_gate/file_transfer.py) (gate side) and [`axonos_gate/file_agent.py`](../axonos_gate/file_agent.py) (in-container). Per-session auth is automatic — the gate mints a key at claim time and injects `AXGT_SESSION_FILES_KEY` into the session container; no shared secret to configure. Its port remains private on the per-session container network and is never host-published.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `AXGT_FILES_ENABLED` | `true` | Enable the file-transfer rail + UI. |
 | `AXGT_FILES_PORT` | `8767` | Port the in-container agent listens on. |
-| `AXGT_FILES_ROOT` | `/home/aXonian` | Storage root the agent serves (the desktop home / persistent volume). |
+| `AXGT_FILES_ROOT` | `/home/aXonian` | Storage root the agent serves (the session home / persistent volume). |
 | `AXGT_FILES_BIND_HOST` | `0.0.0.0` | Bind address for the in-container agent. |
 | `AXGT_FILES_KEY_FILE` | `/tmp/.axgt_files_key` | File the agent reads the per-session key from. |
 | `AXGT_FILES_MIN_FREE_BYTES` | `1073741824` | Reject uploads that would leave less than this free (default 1 GiB). |

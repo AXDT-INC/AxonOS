@@ -68,7 +68,8 @@ Copyright (C) 2019 The noVNC Authors
 
     <!-- Stylesheets -->
     <link rel="stylesheet" href="app/styles/base.css">
-    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.1&t=20260724">
+    <link rel="stylesheet" href="app/vendor/xterm/xterm.css?v=6.0.0">
+    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.1&t=20260729c">
 
     <!-- Images that will later appear via CSS -->
     <link rel="preload" as="image" href="app/images/info.svg">
@@ -108,7 +109,7 @@ Copyright (C) 2019 The noVNC Authors
     </script>
     <script src="app/error-handler.js"></script>
     <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
-    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260724c"></script>
+    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260729c"></script>
 </head>
 
 <body>
@@ -677,6 +678,8 @@ Copyright (C) 2019 The noVNC Authors
                             reached. Extend adds more time; End it here, from the dashboard, or by signing out.
                         </p>
                         <div class="axonos-ssh-card__actions">
+                            <button type="button" id="axonos_ssh_web_terminal_btn"
+                                class="axonos-ssh-card__terminal">Open web terminal</button>
                             <button type="button" id="axonos_ssh_extend_btn"
                                 class="axonos-ssh-card__extend">Extend session</button>
                             <button type="button" id="axonos_ssh_end_btn" class="axonos-ssh-card__end">End
@@ -2716,6 +2719,12 @@ Copyright (C) 2019 The noVNC Authors
         /** Only true when wallet has prepaid minutes (VNC allowed). Token alone is not enough. */
         window.axonosAllowVncConnect = false;
         window.verifiedWalletAuthToken = null;
+        window.axonosWalletProviderUnavailable = false;
+        window.axonosWalletAccountMismatch = null;
+        window.axonosWalletSwitchInProgress = false;
+        window.axonosWalletSwitchTarget = null;
+        window.axonosPendingWalletAccountEvent = null;
+        window.axonosWalletAccountEventGeneration = 0;
 
         function showSessionUnavailableOverlay(data) {
             const overlay = document.getElementById('axonos_session_unavailable_overlay');
@@ -2836,6 +2845,29 @@ Copyright (C) 2019 The noVNC Authors
             var claimOptions = options && typeof options === 'object' ? options : {};
             const wallet = window.verifiedWalletAddress;
             if (!wallet) return Promise.resolve({ granted: false });
+            if (!claimOptions.walletPreflightDone &&
+                typeof window.axonosEnsureWalletSessionCurrent === 'function') {
+                return window.axonosEnsureWalletSessionCurrent({ requestPermission: false })
+                    .then(function (ok) {
+                        if (!ok) {
+                            return {
+                                granted: false,
+                                wallet_preflight_failed: true,
+                                reason: 'The active wallet account could not be confirmed. No compute claim was sent.'
+                            };
+                        }
+                        var verifiedOptions = Object.assign({}, claimOptions, {
+                            walletPreflightDone: true
+                        });
+                        return claimSession(verifiedOptions);
+                    }).catch(function () {
+                        return {
+                            granted: false,
+                            wallet_preflight_failed: true,
+                            reason: 'The active wallet account could not be confirmed. No compute claim was sent.'
+                        };
+                    });
+            }
             const payload = { wallet_address: wallet };
             var resumeMarker = window.axonosPausedResume;
             var resumeRequested = claimOptions.resumeOnly === true || !!resumeMarker;
@@ -3556,33 +3588,53 @@ Copyright (C) 2019 The noVNC Authors
             document.body.classList.toggle('axonos-resume-mode', !!resumeActive);
         }
 
-        /** Re-enter the headless-SSH session view from a session-status payload
-         *  (page reload, dashboard "SSH details"). Mirrors the granted-SSH claim
-         *  path in ui.js: card + detached-home heartbeat loop, no desktop viewer. */
+        /** Re-enter an SSH-only session from authoritative status. Prefer the
+         *  browser terminal; its failure path preserves the external SSH card. */
         function axonosRestoreSshSessionUi(st) {
-            if (!st || !st.owner_ssh_enabled || !st.ssh_port) return false;
+            if (!st || !st.owner_ssh_enabled ||
+                (!st.ssh_port && !st.owner_session_id && !st.session_id)) return false;
             window.axonosOwnedSession = axonosSessionProfileContextFromPayload(st);
             window.axonosSessionDetached = true;
             window.axonosDetachedSession = window.axonosOwnedSession;
             window.axonosSshEnabled = true;
             window.axonosPausedResume = null;
             axonosApplyResumeConnectUi(false);
-            axonosUpdateActiveScreen('landing');
             if (typeof UI !== 'undefined') {
                 if (typeof UI.persistAxonosSshState === 'function') UI.persistAxonosSshState();
                 if (typeof UI.updateAxonosSshUi === 'function') UI.updateAxonosSshUi();
-                if (typeof UI.showAxonosSshCard === 'function') {
-                    UI.showAxonosSshCard({
-                        ssh_user: st.ssh_user,
-                        ssh_host: st.ssh_host,
-                        ssh_port: st.ssh_port,
-                        hard_cap_remaining_seconds: st.owner_hard_cap_remaining_seconds,
-                        remaining_seconds: (typeof st.owner_remaining_seconds === 'number')
-                            ? st.owner_remaining_seconds
-                            : st.session_remaining_seconds
+                var terminalClaim = {
+                    granted: true,
+                    ssh_enabled: true,
+                    session_id: st.owner_session_id || st.session_id,
+                    ssh_user: st.ssh_user,
+                    ssh_host: st.ssh_host,
+                    ssh_port: st.ssh_port,
+                    hard_cap_remaining_seconds: st.owner_hard_cap_remaining_seconds,
+                    remaining_seconds: (typeof st.owner_remaining_seconds === 'number')
+                        ? st.owner_remaining_seconds
+                        : st.session_remaining_seconds
+                };
+                var terminalAuthReady = !!window.verifiedWalletAddress &&
+                    !!window.verifiedWalletAuthToken;
+                if (terminalAuthReady &&
+                    typeof UI.openAxonosSshTerminal === 'function' &&
+                    UI.connectionKind !== 'terminal' &&
+                    UI.terminalState !== 'connecting') {
+                    UI.openAxonosSshTerminal(terminalClaim);
+                } else if (UI.connectionKind !== 'terminal' &&
+                    UI.terminalState !== 'connecting' &&
+                    typeof UI.deferAxonosSshTerminalUntilAuthenticated === 'function') {
+                    UI.deferAxonosSshTerminalUntilAuthenticated(terminalClaim, {
+                        notify: !!window.verifiedWalletAddress,
+                        refresh: false
                     });
+                } else if (UI.connectionKind !== 'terminal' &&
+                    UI.terminalState !== 'connecting' &&
+                    typeof UI.showAxonosSshCard === 'function') {
+                    UI.showAxonosSshCard(terminalClaim, { preserveScreen: true });
                 }
-                if (typeof UI._axgtStartSessionBillingPoll === 'function' && window.verifiedWalletAddress) {
+                if (typeof UI._axgtStartSessionBillingPoll === 'function' &&
+                    terminalAuthReady && !UI._axgtStatusPollId) {
                     UI._axgtStartSessionBillingPoll();
                 }
                 if (typeof UI.updateSessionControlButtons === 'function') {
@@ -3596,10 +3648,9 @@ Copyright (C) 2019 The noVNC Authors
         function axonosApplySessionStatusToResumeUi(st, walletHint) {
             var wallet = (walletHint || window.verifiedWalletAddress || '').trim().toLowerCase();
             var inCreditGrace = axonosCreditGraceActive(st);
-            // Owned ACTIVE headless-SSH session: restore the SSH card instead of the
-            // desktop resume/launch UI — the container has no desktop stream to open.
-            // Skip the re-restore when the card is already up (periodic status
-            // refreshes must not yank the user back to the landing screen).
+            // Owned ACTIVE SSH-only session: restore its browser terminal (or the
+            // external SSH fallback card), never a desktop stream. Skip while either
+            // view is already active so periodic status cannot yank screens around.
             if (st && st.is_owner && st.owner_ssh_enabled && !inCreditGrace) {
                 var sshCard = document.getElementById('axonos_ssh_connect_card');
                 var sshCardVisible = !!(sshCard && !sshCard.classList.contains('axonos-ssh-card--hidden'));
@@ -3706,7 +3757,15 @@ Copyright (C) 2019 The noVNC Authors
                 axonosApplyResumeConnectUi(false);
                 return Promise.resolve(null);
             }
+            var probeWallet = String(wallet).trim().toLowerCase();
             return sessionStatusForWallet(wallet).then(function (st) {
+                var storedWallet = null;
+                try { storedWallet = localStorage.getItem('axonos_last_wallet'); } catch (e) { }
+                var verifiedNow = String(window.verifiedWalletAddress || '').trim().toLowerCase();
+                if (String(storedWallet || '').trim().toLowerCase() !== probeWallet ||
+                    (verifiedNow && verifiedNow !== probeWallet)) {
+                    return null;
+                }
                 if (!axonosSessionStatusIsAuthoritative(st)) return null;
                 axonosApplySessionStatusToResumeUi(st, wallet);
                 return st;
@@ -3782,7 +3841,8 @@ Copyright (C) 2019 The noVNC Authors
                 var performResumeClaim = function () {
                     return claimSession({
                         resumeOnly: resumeWasRequested,
-                        expectedSessionId: expectedResumeSessionId
+                        expectedSessionId: expectedResumeSessionId,
+                        walletPreflightDone: true
                     }).then(function (claim) {
                     if (!resumeIsCurrent()) {
                         if (claim && (claim.granted === true || claim.granted === 'true')) {
@@ -3799,15 +3859,8 @@ Copyright (C) 2019 The noVNC Authors
                         // A resumed headless SSH session has no desktop stream to
                         // connect to — restore the connect-string card instead
                         // (the server returns ssh fields on SSH resumes).
-                        if (claim.ssh_enabled) {
-                            if (typeof window.axonosHideConnectionLoader === 'function') {
-                                window.axonosHideConnectionLoader(true);
-                            }
-                            axonosRestoreSshSessionUi(Object.assign({}, claim, {
-                                owner_ssh_enabled: true,
-                                owner_hard_cap_remaining_seconds: claim.hard_cap_remaining_seconds,
-                                owner_remaining_seconds: claim.remaining_seconds
-                            }));
+                        if (claim.ssh_enabled === true) {
+                            tryConnectAfterClaim(claim);
                             return true;
                         }
                         // Reuse this exact, already-authorized claim while opening
@@ -3821,7 +3874,7 @@ Copyright (C) 2019 The noVNC Authors
                             walletPreflightDone: true
                         };
                         window.axonosPausedResume = null;
-                        tryConnectAfterClaim();
+                        tryConnectAfterClaim(claim);
                         return true;
                     }
                     if (claim && (claim.resume_expired === true || claim.session_mismatch === true ||
@@ -4062,10 +4115,83 @@ Copyright (C) 2019 The noVNC Authors
             handleSessionClaimDenied(claim, 'Session claim denied.');
         };
 
-        function tryConnectAfterClaim() {
+        function tryConnectAfterClaim(claim) {
             hideSessionUnavailableOverlay();
             const credentialsDialog = document.getElementById('noVNC_credentials_dlg');
             if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
+
+            var granted = claim && (claim.granted === true || claim.granted === 'true');
+            if (granted && typeof window.axonosRememberOwnedSession === 'function') {
+                // Close the account-change race between this authoritative outer
+                // claim and UI.connect's desktop re-claim: the browser already owns
+                // billable compute even though its viewer is not attached yet.
+                window.axonosRememberOwnedSession(claim);
+            }
+
+            // The page-level launch/payment flows already hold the authoritative
+            // claim response. An SSH-only allocation uses the browser-terminal
+            // transport and must never enter the desktop connect/status path.
+            // Never infer this from the launch-intent checkbox: only the stored
+            // session type returned by the server is authoritative.
+            if (granted && claim.ssh_enabled === true) {
+                window.axonosPendingResumeClaim = null;
+                window.axonosPausedResume = null;
+                if (typeof UI !== 'undefined' &&
+                    typeof UI.openAxonosSshTerminal === 'function' &&
+                    window.verifiedWalletAddress &&
+                    window.verifiedWalletAuthToken) {
+                    UI.openAxonosSshTerminal(claim);
+                    return;
+                }
+                if (typeof UI !== 'undefined' &&
+                    typeof UI.deferAxonosSshTerminalUntilAuthenticated === 'function') {
+                    UI.deferAxonosSshTerminalUntilAuthenticated(claim, {
+                        notify: true,
+                        refresh: false
+                    });
+                    return;
+                }
+
+                // Rolling-deployment fallback for an older ui.js: retain the
+                // external SSH card and never fall through to a desktop viewer.
+                if (typeof window.axonosHideConnectionLoader === 'function') {
+                    window.axonosHideConnectionLoader(true);
+                }
+                if (claim.ssh_port) {
+                    axonosRestoreSshSessionUi(Object.assign({}, claim, {
+                        owner_ssh_enabled: true,
+                        owner_hard_cap_remaining_seconds: claim.hard_cap_remaining_seconds,
+                        owner_remaining_seconds: claim.remaining_seconds
+                    }));
+                    if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                        UI.showStatus('SSH session ready — connect from your terminal.', 'normal', 3000);
+                    }
+                    return;
+                }
+
+                // An SSH allocation can never fall through to the desktop
+                // viewer. Keep it visible as owned/billed state and fail closed until
+                // an authoritative status refresh supplies its SSH endpoint.
+                window.axonosSessionDetached = true;
+                window.axonosDetachedSession = window.axonosOwnedSession || null;
+                if (typeof UI !== 'undefined') {
+                    if (!UI._axgtStatusPollId &&
+                        typeof UI._axgtStartSessionBillingPoll === 'function') {
+                        UI._axgtStartSessionBillingPoll();
+                    }
+                    if (typeof UI.showStatus === 'function') {
+                        UI.showStatus(
+                            'SSH session is running, but its connection endpoint is unavailable. Refresh the workspace before retrying.',
+                            'error'
+                        );
+                    }
+                }
+                if (typeof window.axonosReturnToWorkspace === 'function') {
+                    window.axonosReturnToWorkspace();
+                }
+                return;
+            }
+
             showConnectionLoader();
             const launchBtn = document.getElementById('noVNC_connect_button');
             if (launchBtn && typeof launchBtn.click === 'function') launchBtn.click();
@@ -5307,8 +5433,12 @@ Copyright (C) 2019 The noVNC Authors
             var eth = resolveEthereumProvider(provider);
             if (!eth) {
                 setWalletUIState('axonos_wallet_state_no_wallet');
+                axonosFinishWalletSwitchInProgress(walletAddress);
                 return Promise.resolve(false);
             }
+            selectedEthereumProvider = eth;
+            window.__axonosSelectedProvider = eth;
+            bindWalletAccountEvents(eth);
             setWalletUIState('axonos_wallet_state_checking');
             var challengeUrl = new URL('/api/auth/challenge', window.location.origin);
             challengeUrl.searchParams.set('wallet_address', walletAddress);
@@ -5381,6 +5511,7 @@ Copyright (C) 2019 The noVNC Authors
                         window.verifiedWalletAuthToken = data.auth_token || null;
                         axonosSetTestCreditEligibility(data);
                         window.axonosAllowVncConnect = true;
+                        axonosClearWalletProviderOutOfSync();
                         try { localStorage.setItem('axonos_last_wallet', walletAddress); } catch (e) { }
                         if (typeof axonosOnWalletVerified === 'function') {
                             axonosOnWalletVerified(walletAddress, data);
@@ -5401,7 +5532,7 @@ Copyright (C) 2019 The noVNC Authors
                                     return;
                                 }
                                 if (claim.granted) {
-                                    tryConnectAfterClaim();
+                                    tryConnectAfterClaim(claim);
                                 } else {
                                     handleSessionClaimDenied(claim, 'Session claim denied.');
                                 }
@@ -5444,6 +5575,7 @@ Copyright (C) 2019 The noVNC Authors
                     window.verifiedWalletAuthToken = data.auth_token;
                     axonosSetTestCreditEligibility(data);
                     window.axonosAllowVncConnect = false;
+                    axonosClearWalletProviderOutOfSync();
                     try { localStorage.setItem('axonos_last_wallet', walletAddress); } catch (e) { }
                     var errLower = String(data.error || data.reason || '').toLowerCase();
                     if (errLower.indexOf('ledger unavailable') >= 0 || st >= 500) {
@@ -5505,6 +5637,8 @@ Copyright (C) 2019 The noVNC Authors
                     }
                     setWalletUIState('axonos_wallet_state_connect_error', { msg: netMsg });
                     return false;
+                }).finally(function () {
+                    axonosFinishWalletSwitchInProgress(walletAddress);
                 });
         }
 
@@ -5716,7 +5850,7 @@ Copyright (C) 2019 The noVNC Authors
                         }
                         return;
                     }
-                    if (claim.granted) tryConnectAfterClaim();
+                    if (claim.granted) tryConnectAfterClaim(claim);
                     else {
                         handleSessionClaimDenied(claim, 'Session claim denied.');
                         if (!axonosClaimReasonNeedsWalletOrResume(claim)) {
@@ -5948,6 +6082,19 @@ Copyright (C) 2019 The noVNC Authors
             return 'Transaction sent. Waiting for confirmations…';
         }
 
+        function axonosWalletProviderAllowsSensitiveAction(messageEl) {
+            if (!window.axonosWalletProviderUnavailable &&
+                !window.axonosWalletAccountMismatch) {
+                return true;
+            }
+            if (messageEl) {
+                messageEl.textContent = window.axonosWalletAccountMismatch
+                    ? 'A different wallet account is selected. Confirm the switch or restore the signed-in account before paying.'
+                    : 'Unlock and reconnect the signed-in wallet before paying or changing credit.';
+            }
+            return false;
+        }
+
         function axonosPayAxgtFromWallet() {
             var eth = resolveEthereumProvider();
             var wallet = verifiedWalletAddress;
@@ -5956,6 +6103,7 @@ Copyright (C) 2019 The noVNC Authors
             var inp = document.getElementById('axonos_tx_hash_input');
             var contract = axonosConfig.axgt_contract_address;
             var revenue = axonosConfig.axgt_revenue_wallet;
+            if (!axonosWalletProviderAllowsSensitiveAction(msgEl)) return;
             if (!wallet || !tok) {
                 if (msgEl) msgEl.textContent = 'Connect and sign in first.';
                 return;
@@ -6016,6 +6164,7 @@ Copyright (C) 2019 The noVNC Authors
             var msgEl = document.getElementById('axonos_verify_deposit_msg');
             var inp = document.getElementById('axonos_tx_hash_input');
             var revenue = axonosConfig.axgt_revenue_wallet;
+            if (!axonosWalletProviderAllowsSensitiveAction(msgEl)) return;
             if (!wallet || !tok) {
                 if (msgEl) msgEl.textContent = 'Connect and sign in first.';
                 return;
@@ -6119,6 +6268,7 @@ Copyright (C) 2019 The noVNC Authors
             var inp = document.getElementById('axonos_tx_hash_input');
             var contract = axonosConfig.usdc_contract_address;
             var revenue = axonosConfig.axgt_revenue_wallet;
+            if (!axonosWalletProviderAllowsSensitiveAction(msgEl)) return;
             if (!wallet || !tok) {
                 if (msgEl) msgEl.textContent = 'Connect and sign in first.';
                 return;
@@ -6188,6 +6338,7 @@ Copyright (C) 2019 The noVNC Authors
             var inp = document.getElementById('axonos_tx_hash_input');
             var msgEl = document.getElementById('axonos_verify_deposit_msg');
             var tx = inp ? String(inp.value || '').trim() : '';
+            if (!axonosWalletProviderAllowsSensitiveAction(msgEl)) return;
             if (!wallet || !tok) {
                 if (msgEl) msgEl.textContent = 'Connect and sign in first.';
                 return;
@@ -6248,6 +6399,13 @@ Copyright (C) 2019 The noVNC Authors
             var tok = window.verifiedWalletAuthToken;
             var selectedRail = String(rail || '').trim().toLowerCase();
             var msgEl = messageEl || document.getElementById('axonos_verify_deposit_msg');
+            if (!axonosWalletProviderAllowsSensitiveAction(msgEl)) {
+                return Promise.resolve({
+                    verified: false,
+                    error_code: 'wallet_account_unavailable',
+                    error: 'Reconnect the signed-in wallet before changing credit.'
+                });
+            }
             if (axonosTestCreditBusy) return Promise.resolve({ busy: true });
             if (!wallet || !tok) {
                 if (msgEl) msgEl.textContent = 'Connect and sign in first.';
@@ -6375,10 +6533,11 @@ Copyright (C) 2019 The noVNC Authors
                 requestConnectedWallet(provider)
                     .then(function (account) {
                         if (connectAttempt !== axonosWalletConnectGeneration) return;
-                        runVerify(account, provider);
+                        return runVerify(account, provider);
                     })
                     .catch(function (err) {
                         if (connectAttempt !== axonosWalletConnectGeneration) return;
+                        axonosFinishWalletSwitchInProgress();
                         if (err && err.code === 'WRONG_NETWORK') {
                             setWalletUIState('axonos_wallet_state_wrong_network');
                         } else if (err && err.code === 'AXONOS_WALLET_TIMEOUT') {
@@ -6400,6 +6559,7 @@ Copyright (C) 2019 The noVNC Authors
             getWalletProviders().then(function (providers) {
                 if (connectAttempt !== axonosWalletConnectGeneration) return;
                 if (!providers || providers.length === 0) {
+                    axonosFinishWalletSwitchInProgress();
                     setWalletUIState('axonos_wallet_state_no_wallet');
                     return;
                 }
@@ -6424,6 +6584,7 @@ Copyright (C) 2019 The noVNC Authors
                 setWalletUIState('axonos_wallet_state_choose_wallet');
             }).catch(function (error) {
                 if (connectAttempt !== axonosWalletConnectGeneration) return;
+                axonosFinishWalletSwitchInProgress();
                 setWalletUIState('axonos_wallet_state_connect_error', {
                     msg: (error && error.message) || 'Could not discover a wallet provider. Retry.'
                 });
@@ -6612,12 +6773,10 @@ Copyright (C) 2019 The noVNC Authors
             });
         }
 
-        // Tear down any live/stale desktop session bound to the OLD wallet, then
-        // clear in-page wallet identity. Order matters: UI.disconnect() reads the
-        // current wallet/auth-token globals to release server-side ownership, so it
-        // must run BEFORE we null them. Default disconnect (no skipRelease) releases
-        // ownership so the old wallet's session ends cleanly and is not left running
-        // and billed behind a departed browser; the new wallet must authenticate.
+        // Clear all browser-side state bound to the current wallet. Callers that may
+        // own a server session MUST run teardownSessionForWalletChange() first:
+        // UI.disconnect() reads the address/auth-token globals to release ownership,
+        // so those credentials must remain intact until the release request starts.
         function clearWalletIdentityAndUi() {
             axonosPaymentOperationGeneration += 1;
             axonosWalletConnectGeneration += 1;
@@ -6627,6 +6786,48 @@ Copyright (C) 2019 The noVNC Authors
             if (typeof window.axonosHideConnectionLoader === 'function') {
                 window.axonosHideConnectionLoader(true);
             }
+            if (typeof UI !== 'undefined') {
+                UI.inhibitReconnect = true;
+                if (typeof UI._axonosCloseTerminalClient === 'function') {
+                    UI._axonosCloseTerminalClient();
+                }
+                UI.connectionKind = null;
+                UI._axonosSshClaim = null;
+                if (UI.reconnectCallback !== null && UI.reconnectCallback !== undefined) {
+                    clearTimeout(UI.reconnectCallback);
+                    UI.reconnectCallback = null;
+                }
+                if (UI._axgtStatusPollId) {
+                    clearInterval(UI._axgtStatusPollId);
+                    UI._axgtStatusPollId = null;
+                }
+                if (typeof UI._axgtStopSessionTimer === 'function') {
+                    UI._axgtStopSessionTimer();
+                }
+                if (typeof UI._axgtUpdateUsageOverlay === 'function') {
+                    UI._axgtUpdateUsageOverlay('hidden');
+                }
+                if (typeof UI.hideAxonosSshCard === 'function') {
+                    UI.hideAxonosSshCard();
+                }
+                if (typeof UI.resetAxonosSshLaunchIntent === 'function') {
+                    UI.resetAxonosSshLaunchIntent();
+                }
+            }
+            window.axonosSessionDetached = false;
+            if (typeof window.axonosClearDetachedSession === 'function') {
+                window.axonosClearDetachedSession();
+            } else {
+                window.axonosDetachedSession = null;
+                window.axonosOwnedSession = null;
+            }
+            window.axonosDetachedSession = null;
+            window.axonosOwnedSession = null;
+            window.axonosSshEnabled = false;
+            window.axonosBillingGpuCount = null;
+            window.axonosGpuBillingEnabled = null;
+            window.axonosWalletProviderUnavailable = false;
+            window.axonosWalletAccountMismatch = null;
             verifiedWalletAddress = null;
             window.verifiedWalletAddress = null;
             window.verifiedWalletAuthToken = null;
@@ -6634,10 +6835,17 @@ Copyright (C) 2019 The noVNC Authors
             window.axonosAllowVncConnect = false;
             window.axonosPendingResumeClaim = null;
             window.axonosPausedResume = null;
+            try { localStorage.removeItem('axonos_last_wallet'); } catch (e) { }
             axonosApplyResumeConnectUi(false);
             setWalletUIState('axonos_wallet_state_disconnected');
             if (typeof axonosSyncTopbar === 'function') {
                 axonosSyncTopbar(null, null);
+            }
+            if (typeof window.axonosReturnToWorkspace === 'function') {
+                window.axonosReturnToWorkspace();
+            }
+            if (typeof UI !== 'undefined' && typeof UI.updateSessionControlButtons === 'function') {
+                UI.updateSessionControlButtons();
             }
         }
 
@@ -6646,15 +6854,65 @@ Copyright (C) 2019 The noVNC Authors
         // phase, so we also detect the WebRTC peer / teardown directly. axonosWebRtcPc is
         // set early in negotiation (as soon as the peer is created), so it covers that too.
         function axonosDesktopSessionLive() {
+            var terminalLive = typeof UI !== 'undefined' &&
+                (UI.connectionKind === 'terminal' || UI.terminalState === 'connecting');
             var novncLive = (typeof UI !== 'undefined' && UI.connected &&
                 typeof UI._axgtSessionDesktopActive === 'function' && UI._axgtSessionDesktopActive()) ||
                 document.documentElement.classList.contains("noVNC_connected");
             var webrtcLive = !!window.axonosWebRtcPc ||
                 typeof window.axonosWebRtcTeardown === 'function';
-            return novncLive || webrtcLive;
+            return terminalLive || novncLive || webrtcLive;
         }
 
-        function teardownSessionForWalletChange() {
+        // Detached desktops, headless SSH sessions and credit-grace allocations live
+        // on the landing/dashboard screens but still belong to the verified wallet.
+        // They must never be mistaken for an idle browser merely because no viewer is
+        // attached. A pending strict-resume claim is protected for the same reason.
+        function axonosWalletHasOwnedServerState() {
+            return !!(window.axonosOwnedSession ||
+                window.axonosDetachedSession ||
+                window.axonosSessionDetached ||
+                window.axonosPausedResume ||
+                window.axonosPendingResumeClaim);
+        }
+
+        function axonosWalletHasProtectedSessionState() {
+            var connectButton = document.getElementById('noVNC_connect_button');
+            var launchInFlight = !!(connectButton &&
+                connectButton.getAttribute('aria-busy') === 'true');
+            return launchInFlight || axonosDesktopSessionLive() ||
+                axonosWalletHasOwnedServerState();
+        }
+
+        function axonosStatusHasProtectedWalletSession(status, wallet) {
+            if (!axonosSessionStatusIsAuthoritative(status)) return true;
+            return !!(axonosOwnedActiveSessionFromStatus(status, wallet) ||
+                axonosCreditGraceActive(status));
+        }
+
+        // Local flags can lag an already-created server allocation (reload, slow
+        // claim response). Automatic identity cleanup is allowed only after an
+        // authoritative status response proves the old wallet owns no active/grace
+        // session. Control-plane uncertainty therefore fails closed.
+        function axonosConfirmWalletIdentityIdle(wallet) {
+            if (axonosWalletHasProtectedSessionState()) {
+                return Promise.resolve({ idle: false, local: true, status: null });
+            }
+            return sessionStatusForWallet(wallet).then(function (status) {
+                if (!axonosSessionStatusIsAuthoritative(status)) {
+                    return { idle: false, unknown: true, status: status };
+                }
+                return {
+                    idle: !axonosStatusHasProtectedWalletSession(status, wallet),
+                    status: status
+                };
+            }).catch(function () {
+                return { idle: false, unknown: true, status: null };
+            });
+        }
+
+        function teardownSessionForWalletChange(options) {
+            var forceRelease = !!(options && options.forceRelease);
             // A live viewer is NOT the only server-side state this wallet can hold:
             // detached desktops, headless SSH sessions (both flagged via
             // axonosSessionDetached / axonosDetachedSession / axonosOwnedSession) and
@@ -6662,11 +6920,7 @@ Copyright (C) 2019 The noVNC Authors
             // reserved under the old wallet. Sign-out / wallet switch must release
             // them too, or they keep running and billing under an identity the
             // browser has abandoned.
-            var ownedServerState = !!(window.axonosOwnedSession ||
-                window.axonosDetachedSession ||
-                window.axonosSessionDetached ||
-                window.axonosPausedResume);
-            if (!ownedServerState && !axonosDesktopSessionLive()) {
+            if (!forceRelease && !axonosWalletHasProtectedSessionState()) {
                 return;
             }
 
@@ -6700,53 +6954,219 @@ Copyright (C) 2019 The noVNC Authors
             }
         }
 
-        // Wallet identity is now managed EXPLICITLY via the HUD (Manage → Switch Wallet /
-        // Sign out wallet), so an extension dropdown change must NOT tear down a live,
-        // paid-for desktop. The old auto-teardown was both disruptive (an idle account
-        // switch — or MetaMask auto-lock — would nuke a running session) and unavoidably
-        // over-broad: switching to an account that isn't connected to this site makes the
-        // wallet emit [], which is indistinguishable from a real disconnect, so it fired
-        // even on the very dropdown case we want to leave alone. We therefore only observe
-        // here. Correctness is enforced where it actually matters by
-        // axonosEnsureWalletSessionCurrent() — the Launch/Resume/Claim preflight — which
-        // re-checks the exposed account against the verified identity at the moment a
-        // billing action is attempted and tears down + blocks on any mismatch. Billing is
-        // server-side against the session owner, so a dropdown change can neither transfer
-        // ownership nor dodge billing while the desktop keeps running.
-        function onWalletAccountsChanged(accounts) {
-            var newAccount = (Array.isArray(accounts) && accounts[0]) ? String(accounts[0]).trim().toLowerCase() : '';
-            var oldAccount = (window.verifiedWalletAddress || '').trim().toLowerCase();
-            console.log('[AxonOS] accountsChanged fired (no auto-teardown; preflight governs):', { accounts: accounts, newAccount: newAccount, oldAccount: oldAccount });
+        function axonosFinishWalletSwitchInProgress(wallet) {
+            var target = String(window.axonosWalletSwitchTarget || '').trim().toLowerCase();
+            var finishedWallet = String(wallet || '').trim().toLowerCase();
+            if (target && finishedWallet && target !== finishedWallet) return;
+            window.axonosWalletSwitchInProgress = false;
+            window.axonosWalletSwitchTarget = null;
+            var pending = window.axonosPendingWalletAccountEvent;
+            window.axonosPendingWalletAccountEvent = null;
+            if (pending) {
+                window.setTimeout(function () {
+                    onWalletAccountsChanged(pending.accounts, pending.provider);
+                }, 0);
+            }
+        }
 
-            // If the wallet now exposes a DIFFERENT valid account than the one we verified
-            // while a desktop is live, the user has connected a new wallet to AxonOS. Rather
-            // than tear down silently (old behavior) or ignore it, route this through the
-            // exact same confirmed flow as the HUD's Switch Wallet button: prompt, and on
-            // confirm end the current desktop and verify the newly connected account. On
-            // cancel we do nothing here — the Launch/Resume/Claim preflight still gates the
-            // mismatch. Gated to live sessions so it can't interfere with the normal
-            // connect/verify flow (which runs only when no desktop is up), and guarded
-            // against duplicate prompts from rapid repeat events.
+        function axonosMarkWalletProviderOutOfSync(kind, account, message) {
+            axonosPaymentOperationGeneration += 1;
+            axonosTestCreditBusy = false;
+            setPayDepositButtonsBusy(false);
+            window.axonosWalletProviderUnavailable = true;
+            window.axonosWalletAccountMismatch = kind === 'mismatch'
+                ? String(account || '').trim().toLowerCase()
+                : null;
+            if (message && typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                UI.showStatus(message, 'warn', 7000);
+            }
+        }
+
+        function axonosClearWalletProviderOutOfSync() {
+            var wasUnavailable = !!window.axonosWalletProviderUnavailable;
+            window.axonosWalletProviderUnavailable = false;
+            window.axonosWalletAccountMismatch = null;
+            if (wasUnavailable && typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                UI.showStatus('Wallet connection restored.', 'normal', 2500);
+            }
+        }
+
+        // Keep browser identity synchronized with the provider without destroying
+        // paid compute on an ambiguous accountsChanged([]). Empty/invalid events are
+        // safe to clear only when an authoritative status read proves the old wallet
+        // owns no running/detached/SSH/grace state. A valid idle switch is signed in
+        // immediately; protected state still requires explicit release confirmation.
+        function onWalletAccountsChanged(accounts, sourceProvider) {
+            var activeProvider = window.__axonosSelectedProvider || selectedEthereumProvider;
+            if (activeProvider && sourceProvider && sourceProvider !== activeProvider) {
+                console.log('[AxonOS] Ignoring accountsChanged from non-selected provider');
+                return;
+            }
+
+            var eventAccounts = Array.isArray(accounts) ? accounts.slice() : [];
+            var newAccount = eventAccounts[0] ? String(eventAccounts[0]).trim().toLowerCase() : '';
+            if (window.axonosWalletSwitchInProgress) {
+                var switchTarget = String(window.axonosWalletSwitchTarget || '').trim().toLowerCase();
+                if (switchTarget && newAccount === switchTarget) {
+                    // Duplicate notification for the account already being verified.
+                    return;
+                }
+                // Do not drop a B→C (or B→A) event while the B confirmation is
+                // open. It invalidates that confirmation and is replayed afterward.
+                window.axonosWalletAccountEventGeneration =
+                    (window.axonosWalletAccountEventGeneration || 0) + 1;
+                axonosInvalidateWalletVerification();
+                window.axonosPendingWalletAccountEvent = {
+                    accounts: eventAccounts,
+                    provider: sourceProvider || activeProvider || null
+                };
+                return;
+            }
+
+            var eventGeneration = (window.axonosWalletAccountEventGeneration || 0) + 1;
+            window.axonosWalletAccountEventGeneration = eventGeneration;
+            var oldAccount = (window.verifiedWalletAddress || '').trim().toLowerCase();
             var validNew = /^0x[a-f0-9]{40}$/.test(newAccount);
-            if (oldAccount && validNew && newAccount !== oldAccount &&
-                axonosDesktopSessionLive() && !window.axonosWalletSwitchInProgress) {
+            console.log('[AxonOS] accountsChanged fired:', {
+                accounts: eventAccounts,
+                newAccount: newAccount,
+                oldAccount: oldAccount
+            });
+            if (!oldAccount) return;
+
+            var provider = sourceProvider || activeProvider || selectedEthereumProvider;
+            var eventIsCurrent = function () {
+                var selectedNow = window.__axonosSelectedProvider || selectedEthereumProvider;
+                return eventGeneration === window.axonosWalletAccountEventGeneration &&
+                    String(window.verifiedWalletAddress || '').trim().toLowerCase() === oldAccount &&
+                    (!provider || !selectedNow || provider === selectedNow);
+            };
+            var surfaceProtectedStatus = function (result) {
+                if (result && result.status &&
+                    axonosSessionStatusIsAuthoritative(result.status)) {
+                    axonosApplySessionStatusToResumeUi(result.status, oldAccount);
+                }
+            };
+            var verifyTargetAndBeginSwitch = function () {
+                if (!eventIsCurrent()) {
+                    axonosFinishWalletSwitchInProgress(newAccount);
+                    return;
+                }
+                if (!provider || typeof provider.request !== 'function') {
+                    axonosFinishWalletSwitchInProgress(newAccount);
+                    axonosMarkWalletProviderOutOfSync(
+                        'mismatch',
+                        newAccount,
+                        'The selected wallet provider is unavailable. The existing session was left unchanged.'
+                    );
+                    return;
+                }
+                axonosWalletProviderRequest(
+                    provider,
+                    { method: 'eth_accounts' },
+                    'Wallet account confirmation timed out. The existing session was left unchanged.',
+                    15000
+                ).then(function (latestAccounts) {
+                    if (!eventIsCurrent()) {
+                        axonosFinishWalletSwitchInProgress(newAccount);
+                        return;
+                    }
+                    var latest = Array.isArray(latestAccounts) && latestAccounts[0]
+                        ? String(latestAccounts[0]).trim().toLowerCase()
+                        : '';
+                    if (latest !== newAccount) {
+                        window.axonosPendingWalletAccountEvent = {
+                            accounts: Array.isArray(latestAccounts) ? latestAccounts : [],
+                            provider: provider
+                        };
+                        axonosFinishWalletSwitchInProgress(newAccount);
+                        return;
+                    }
+                    // The new account is already exposed; authenticate it directly
+                    // without reopening the account-selector permission prompt.
+                    window.axonosBeginWalletSwitch({
+                        useExposedAccount: true,
+                        provider: provider
+                    });
+                }).catch(function () {
+                    axonosFinishWalletSwitchInProgress(newAccount);
+                    axonosMarkWalletProviderOutOfSync(
+                        'mismatch',
+                        newAccount,
+                        'Could not confirm the newly selected wallet. The existing session was left unchanged.'
+                    );
+                });
+            };
+            var beginVerifiedSwitch = function () {
+                if (!eventIsCurrent()) return;
                 window.axonosWalletSwitchInProgress = true;
+                window.axonosWalletSwitchTarget = newAccount;
+                verifyTargetAndBeginSwitch();
+            };
+            var confirmProtectedSwitch = function (result) {
+                if (!eventIsCurrent()) return;
+                surfaceProtectedStatus(result);
+                window.axonosWalletSwitchInProgress = true;
+                window.axonosWalletSwitchTarget = newAccount;
                 axonosConfirmWalletAction(
                     'Switch to the newly connected wallet?',
-                    'Switching wallet will end the current desktop connection and require the new wallet to sign in.',
+                    'Switching wallet will end the current running session, including detached desktop or SSH jobs, and require the new wallet to sign in.',
                     'Switch Wallet'
                 ).then(function (ok) {
-                    window.axonosWalletSwitchInProgress = false;
-                    if (ok) {
-                        // The new account is already exposed (the user just connected it),
-                        // so verify it directly — no need to re-open the account selector.
-                        window.axonosBeginWalletSwitch({
-                            useExposedAccount: true,
-                            provider: selectedEthereumProvider
-                        });
+                    if (!ok || !eventIsCurrent()) {
+                        axonosFinishWalletSwitchInProgress(newAccount);
+                        return;
+                    }
+                    verifyTargetAndBeginSwitch();
+                }).catch(function () {
+                    axonosFinishWalletSwitchInProgress(newAccount);
+                });
+            };
+
+            if (!validNew) {
+                axonosMarkWalletProviderOutOfSync(
+                    'unavailable',
+                    null,
+                    'Wallet locked or disconnected. Any running session was left unchanged while AxonOS confirms its state.'
+                );
+                axonosConfirmWalletIdentityIdle(oldAccount).then(function (result) {
+                    if (!eventIsCurrent()) return;
+                    if (result.idle) {
+                        clearWalletIdentityAndUi();
+                        return;
+                    }
+                    surfaceProtectedStatus(result);
+                    if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                        UI.showStatus(
+                            result.unknown
+                                ? 'Wallet unavailable and session status could not be confirmed. Credentials and running jobs were preserved.'
+                                : 'Wallet unavailable. Your running session was preserved; reconnect the same wallet before the next protected action.',
+                            'warn',
+                            7000
+                        );
                     }
                 });
+                return;
             }
+
+            if (newAccount === oldAccount) {
+                axonosClearWalletProviderOutOfSync();
+                return;
+            }
+
+            axonosMarkWalletProviderOutOfSync(
+                'mismatch',
+                newAccount,
+                'A different wallet account is selected. New claims and payments are blocked until the change is confirmed.'
+            );
+            axonosConfirmWalletIdentityIdle(oldAccount).then(function (result) {
+                if (!eventIsCurrent()) return;
+                if (result.idle) {
+                    beginVerifiedSwitch();
+                } else {
+                    confirmProtectedSwitch(result);
+                }
+            });
         }
 
         // AUTHORITATIVE preflight: before a Launch / Resume / Claim we re-read the account
@@ -6765,9 +7185,10 @@ Copyright (C) 2019 The noVNC Authors
         //
         // Written against the generic EIP-1193 interface (request()/eth_accounts) — no
         // MetaMask-only behavior. Returns Promise<boolean>: true = exposed account still
-        // matches (proceed); false = unconfirmed/different, caller MUST abort. Only a proven,
-        // valid different account tears down the old wallet's session; cancellation, timeout,
-        // an empty response, or a missing provider leaves it running unchanged.
+        // matches (proceed); false = unconfirmed/different, caller MUST abort. Provider
+        // changes delegate to the same event reconciler above: idle identity may be
+        // replaced after an authoritative status read, while protected/unknown state
+        // is preserved until the user explicitly confirms release.
         // requestPermission:true => user-initiated Launch/Resume (eth_requestAccounts, may
         // prompt); false => passive check (eth_accounts).
         window.axonosEnsureWalletSessionCurrent = function (opts) {
@@ -6787,6 +7208,11 @@ Copyright (C) 2019 The noVNC Authors
             var eth = resolveEthereumProvider(window.__axonosSelectedProvider);
             if (!eth || typeof eth.request !== 'function') {
                 window.axonosWalletPreflightFailure = 'provider_unavailable';
+                axonosMarkWalletProviderOutOfSync(
+                    'unavailable',
+                    null,
+                    'The wallet provider is unavailable. New claims and payments are blocked; any running session was left unchanged.'
+                );
                 return Promise.resolve(false);
             }
 
@@ -6806,14 +7232,15 @@ Copyright (C) 2019 The noVNC Authors
                 var valid = /^0x[a-fA-F0-9]{40}$/.test(current);
                 if (!current || !valid) {
                     window.axonosWalletPreflightFailure = 'account_unavailable';
+                    onWalletAccountsChanged(accounts, eth);
                     return false;
                 }
                 if (current.toLowerCase() !== verifiedNormalized) {
                     window.axonosWalletPreflightFailure = 'account_mismatch';
-                    teardownSessionForWalletChange();
-                    clearWalletIdentityAndUi();
+                    onWalletAccountsChanged(accounts, eth);
                     return false;
                 }
+                axonosClearWalletProviderOutOfSync();
                 return true;
             }).catch(function (error) {
                 // Provider failure or a dismissed prompt is non-authoritative: block the
@@ -6821,6 +7248,11 @@ Copyright (C) 2019 The noVNC Authors
                 // perform a fresh preflight.
                 window.axonosWalletPreflightFailure = error && error.code === 'AXONOS_WALLET_TIMEOUT'
                     ? 'timeout' : 'request_failed';
+                axonosMarkWalletProviderOutOfSync(
+                    'unavailable',
+                    null,
+                    'Could not confirm the active wallet. New claims and payments are blocked; any running session was left unchanged.'
+                );
                 return false;
             });
         };
@@ -6840,7 +7272,7 @@ Copyright (C) 2019 The noVNC Authors
             if (typeof UI !== 'undefined') {
                 UI.inhibitReconnect = true;
             }
-            teardownSessionForWalletChange();
+            teardownSessionForWalletChange({ forceRelease: true });
             clearWalletIdentityAndUi();
         };
 
@@ -6853,10 +7285,10 @@ Copyright (C) 2019 The noVNC Authors
         // not auto-launched (only the existing connect flow decides that).
         window.axonosBeginWalletSwitch = function (opts) {
             opts = opts || {};
-            // Capture liveness BEFORE teardown: if a desktop was up, its teardown is async
-            // and we must defer the new connect flow until it returns home (see below). This
-            // matches exactly when teardownSessionForWalletChange() calls UI.disconnect().
-            var wasLive = axonosDesktopSessionLive();
+            // Capture protected ownership BEFORE teardown. Viewer, detached desktop,
+            // SSH and credit-grace release are all asynchronous; authenticate the new
+            // wallet only after UI.disconnect() has started and completed that release.
+            var hadProtectedSession = axonosWalletHasProtectedSessionState();
             window.axonosDisconnectWalletSession();
             // Forget the prior wallet so the dialog-open auto-reconnect observer (which
             // re-verifies axonos_last_wallet) can't race a stale-account verification
@@ -6881,14 +7313,14 @@ Copyright (C) 2019 The noVNC Authors
                 onConnectWalletClick(opts.provider || undefined);
             };
 
-            // No live desktop → nothing async is tearing down, so start immediately.
-            if (!wasLive) {
+            // Truly idle browser → nothing async is tearing down, so start immediately.
+            if (!hadProtectedSession) {
                 startConnect();
                 return;
             }
-            // Live desktop → the teardown is async and ends by returning to the home view,
-            // whose updateVisualState() closes the credentials dialog. Opening it now would
-            // get stomped (user lands on home, the half-finished connect races and crashes).
+            // Protected session → teardown is async and ends by returning home, whose
+            // updateVisualState() closes the credentials dialog. Opening it now would get
+            // stomped (the half-finished authentication races the release/home transition).
             // Defer until UI._axonosReturnToHomeAfterDisconnect fires this hook (the normal,
             // deterministic completion of the teardown). The timer is only a last-resort
             // fallback for a disconnect path that never reaches return-home — long enough to
@@ -7018,7 +7450,9 @@ Copyright (C) 2019 The noVNC Authors
                 try { provider.__axonosAccountsBound = true; } catch (e) { /* frozen provider */ }
             }
             try {
-                provider.on('accountsChanged', onWalletAccountsChanged);
+                provider.on('accountsChanged', function (accounts) {
+                    onWalletAccountsChanged(accounts, provider);
+                });
             } catch (e) {
                 // Provider may not support .on; ignore.
             }
@@ -7530,7 +7964,8 @@ Copyright (C) 2019 The noVNC Authors
          * slow status request can never leave the previous wizard step on screen.
          * axonosLoadDashboard owns the guarded asynchronous refresh only.
          */
-        function axonosReturnToWorkspace() {
+        function axonosReturnToWorkspace(options) {
+            const opts = options && typeof options === 'object' ? options : {};
             const wallet = axonosCurrentVerifiedWallet();
             if (!wallet) {
                 // Invalidate any response that was issued for the wallet we just left.
@@ -7539,6 +7974,13 @@ Copyright (C) 2019 The noVNC Authors
                 return Promise.resolve(null);
             }
             axonosUpdateActiveScreen('dashboard');
+            // Some callers already hold a more specific recovery view. In
+            // particular, terminal fallback renders the external SSH card and
+            // must not start an unrelated status refresh whose generic failure
+            // banner can overwrite the actionable terminal error.
+            if (opts.refresh === false) {
+                return Promise.resolve(null);
+            }
             return axonosLoadDashboard();
         }
         window.axonosReturnToWorkspace = axonosReturnToWorkspace;
@@ -7692,6 +8134,19 @@ Copyright (C) 2019 The noVNC Authors
             var expectedDashboardGeneration = axonosDashboardRequestGeneration;
             if (typeof window.axonosHideConnectionLoader === 'function') {
                 window.axonosHideConnectionLoader(true);
+            }
+
+            // An unverified status probe may have discovered an owned SSH
+            // allocation before verify-wallet returned this auth token. Resume
+            // that deferred terminal only now, after both credentials exist.
+            if (typeof UI !== 'undefined' &&
+                typeof UI.resumePendingAxonosSshTerminal === 'function') {
+                var pendingTerminalRetry = UI.resumePendingAxonosSshTerminal();
+                if (pendingTerminalRetry && typeof pendingTerminalRetry.catch === 'function') {
+                    pendingTerminalRetry.catch(function (error) {
+                        console.warn('[AxonOS] Deferred terminal retry failed:', error);
+                    });
+                }
             }
 
             // The verify response already contains the balance. Paint it immediately
@@ -7871,7 +8326,7 @@ Copyright (C) 2019 The noVNC Authors
                             const specsSuffix = isCreditGrace
                                 ? (' · ' + (graceTtl || 'Top up within 2h'))
                                 : (' · up ' + uptimeStr);
-                            const actionText = isCreditGrace ? 'Top up / Reconnect' : (isOwnSsh ? 'SSH details' : 'Open desktop');
+                            const actionText = isCreditGrace ? 'Top up / Reconnect' : (isOwnSsh ? 'Open terminal' : 'Open desktop');
 
                             card.innerHTML = `
                                 <div class="axonos-session-card__top">
@@ -8590,7 +9045,7 @@ Copyright (C) 2019 The noVNC Authors
                             return;
                         }
                         if (claim.granted) {
-                            tryConnectAfterClaim();
+                            tryConnectAfterClaim(claim);
                         } else {
                             handleSessionClaimDenied(claim, 'Session claim denied.');
                         }

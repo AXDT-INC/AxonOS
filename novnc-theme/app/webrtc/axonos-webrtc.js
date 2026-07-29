@@ -960,6 +960,7 @@ export async function connectAxonOSWebRTC(opts) {
     let recoveryStarted = false;
     function returnToWorkspaceAfterRecoveryFailure() {
         UI.connected = false;
+        if (UI.connectionKind === 'webrtc') UI.connectionKind = null;
         if (typeof UI._axonosReturnToHomeAfterDisconnect === 'function') {
             UI._axonosReturnToHomeAfterDisconnect();
             return;
@@ -1002,6 +1003,7 @@ export async function connectAxonOSWebRTC(opts) {
                 return;
             }
             UI.connected = false;
+            if (UI.connectionKind === 'webrtc') UI.connectionKind = null;
             try {
                 if (typeof UI.connect === 'function') {
                     // UI.connect owns wallet preflight, claim, the one bounded
@@ -1626,6 +1628,7 @@ export async function connectAxonOSWebRTC(opts) {
 
     _inFlightNegotiation = null;
     UI.connected = true;
+    UI.connectionKind = 'webrtc';
     window.axonosSessionDetached = false;
     // Mark the page as WebRTC-active so the theme hides RFB-only controls
     // (viewport drag, modifier keys, RFB encoding/transport settings) that do

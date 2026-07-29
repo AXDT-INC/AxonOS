@@ -13,9 +13,9 @@ gate against the active or retained credit-grace row — no browser wallet token
 needed.
 
 Each heartbeat also reports ``ssh_active`` — whether an ESTABLISHED TCP
-connection to the container's sshd (:22) exists — which the gate uses to renew
-the SSH hard billing cap while a user is actually connected (presence-based
-extension; see session_manager.heartbeat).
+connection to the container's sshd (:22) or private browser-terminal agent
+exists — which the gate uses to renew the SSH hard billing cap while a user is
+actually connected (presence-based extension; see session_manager.heartbeat).
 
 Env (injected at session launch):
   AXGT_WALLET_ADDRESS       the session's wallet
@@ -38,6 +38,7 @@ WALLET = (os.getenv("AXGT_WALLET_ADDRESS") or "").strip()
 FILES_KEY = (os.getenv("AXGT_SESSION_FILES_KEY") or "").strip()
 SESSION_ID = (os.getenv("AXGT_SESSION_ID") or "?").strip()
 GATE = (os.getenv("AXGT_GATE_HEARTBEAT_URL") or "http://127.0.0.1:8889").rstrip("/")
+TERMINAL_AGENT_PORT = 8791
 
 
 def _interval() -> int:
@@ -52,13 +53,14 @@ def _interval() -> int:
 
 
 def _ssh_connection_active() -> bool:
-    """True when at least one ESTABLISHED TCP connection to local port 22 exists.
+    """True when native SSH or the authenticated web terminal is attached.
 
     Read straight from /proc/net/tcp{,6} (hex local_address:port, state 01 =
     ESTABLISHED) so no external tools are needed. This is the "user present"
     signal: the gate renews the SSH hard billing cap while someone is actually
     connected and lets it lapse when nobody is.
     """
+    presence_ports = {22, TERMINAL_AGENT_PORT}
     for path in ("/proc/net/tcp", "/proc/net/tcp6"):
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -71,7 +73,7 @@ def _ssh_connection_active() -> bool:
                         local_port = int(parts[1].rsplit(":", 1)[1], 16)
                     except (ValueError, IndexError):
                         continue
-                    if local_port == 22:
+                    if local_port in presence_ports:
                         return True
         except OSError:
             continue

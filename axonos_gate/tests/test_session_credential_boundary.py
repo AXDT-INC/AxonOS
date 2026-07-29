@@ -1228,7 +1228,7 @@ class StaticTenantBoundaryTests(unittest.TestCase):
             inline_comment_prefixes=(";", "#"),
         )
         parser.read_string(self.supervisor)
-        for program in ("webrtc-agent-gate", "webrtc-agent", "sshd"):
+        for program in ("webrtc-agent-gate", "webrtc-agent", "file-agent", "sshd"):
             with self.subTest(program=program):
                 command = parser.get(f"program:{program}", "command")
                 argv = shlex.split(command)

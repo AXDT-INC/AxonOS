@@ -1,6 +1,24 @@
 import os
+import re
 import time
 from typing import Optional, Set, Tuple
+
+
+_TERMINAL_WS_LOG_QUERY_RE = re.compile(
+    r"(/api/terminal/ws)\?[^\s'\"<>]*"
+)
+
+
+def redact_terminal_websocket_query(value):
+    """Remove terminal capability queries from log-bound text.
+
+    Websockify logs both ``self.path`` and HTTP request lines. Terminal tickets
+    are one-use capabilities, so retain the useful route while removing the
+    entire query in either representation. Other routes are left unchanged.
+    """
+    if not isinstance(value, str):
+        return value
+    return _TERMINAL_WS_LOG_QUERY_RE.sub(r"\1?[query-redacted]", value)
 
 
 def parse_cors_allowlist(value: Optional[str]) -> Tuple[bool, Set[str]]:
@@ -77,4 +95,3 @@ def get_rate_limiter_from_env() -> Optional[SimpleRateLimiter]:
     if n <= 0:
         return None
     return SimpleRateLimiter(limit=n, window_seconds=60)
-

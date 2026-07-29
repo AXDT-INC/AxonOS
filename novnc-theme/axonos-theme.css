@@ -4893,7 +4893,8 @@ html.axonos-mic-live::after {
 
 .axonos-ssh-card__copy,
 .axonos-ssh-card__end,
-.axonos-ssh-card__extend {
+.axonos-ssh-card__extend,
+.axonos-ssh-card__terminal {
   cursor: pointer;
   border-radius: 8px;
   border: 1px solid var(--rule-strong);
@@ -4905,7 +4906,8 @@ html.axonos-mic-live::after {
 
 .axonos-ssh-card__copy:hover,
 .axonos-ssh-card__end:hover,
-.axonos-ssh-card__extend:hover {
+.axonos-ssh-card__extend:hover,
+.axonos-ssh-card__terminal:hover {
   border-color: var(--cyan);
   color: var(--cyan);
 }
@@ -4934,9 +4936,25 @@ html.axonos-mic-live::after {
 }
 
 .axonos-ssh-card__end,
-.axonos-ssh-card__extend {
-  flex: 1 1 50%;
+.axonos-ssh-card__extend,
+.axonos-ssh-card__terminal {
+  flex: 1 1 33.333%;
   padding: 9px 0;
+}
+
+.axonos-ssh-card__terminal {
+  cursor: pointer;
+  border-radius: 8px;
+  border: 1px solid rgba(123, 108, 255, 0.55);
+  background: linear-gradient(180deg, #8b7cff, #6a57f2);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.axonos-ssh-card__terminal:disabled {
+  cursor: wait;
+  opacity: 0.7;
 }
 
 /* Custom Confirmation Modals aligned with AxonOS Theme */
@@ -7269,6 +7287,47 @@ html.noVNC_connected #noVNC_container {
   transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* SSH-only sessions use the same viewer surface as RFB/WebRTC, but xterm owns
+   its own focus and resize lifecycle. The local noVNC keyboard shim remains in
+   the DOM for later desktop connections and stays behind the terminal mount. */
+#noVNC_container.axonos-terminal-active {
+  overflow: hidden !important;
+}
+
+.axonos-terminal-viewer {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 0;
+  padding: 14px 14px 10px;
+  overflow: hidden;
+  background: #080910;
+}
+
+.axonos-terminal-viewer:focus {
+  outline: none;
+}
+
+.axonos-terminal-viewer>.xterm,
+.axonos-terminal-viewer .xterm-screen {
+  height: 100%;
+}
+
+/* Desktop-only controls would be inert against a PTY. xterm handles text
+   selection, copy/paste, and mobile keyboard focus inside its own textarea. */
+html.axonos-terminal-active #axonos_mic_button,
+html.axonos-terminal-active #noVNC_mobile_buttons,
+html.axonos-terminal-active #noVNC_clipboard_button,
+html.axonos-terminal-active #noVNC_clipboard,
+html.axonos-terminal-active #noVNC_files_button,
+html.axonos-terminal-active #noVNC_files,
+html.axonos-terminal-active #noVNC_restart_session_button,
+html.axonos-terminal-active .axonos-rfb-only {
+  display: none !important;
+}
+
 /* Rail collapsed → viewer takes the whole width */
 html.noVNC_connected:has(.axonos-session-sidebar.collapsed) #noVNC_container {
   width: 100% !important;
@@ -7674,6 +7733,39 @@ html.noVNC_connected:-ms-fullscreen .axonos-sidebar-toggle {
 /* Landing screen session rail and layout alignment */
 #noVNC_connect_dlg:not(.axonos-state-dashboard):not(.axonos-state-wizard) .axonos-connect-wrapper {
   display: none !important;
+}
+
+/* An SSH-only claim has no desktop viewer to fall back to. When terminal
+ * authorization or WebSocket setup fails outside the dashboard, replace the
+ * marketing/catalog content with the actual external-SSH recovery card. */
+#noVNC_connect_dlg.axonos-state-landing.axonos-ssh-card-active .axonos-hero,
+#noVNC_connect_dlg.axonos-state-landing.axonos-ssh-card-active .axonos-ready-envs-section,
+#noVNC_connect_dlg.axonos-state-landing.axonos-ssh-card-active .axonos-steps,
+#noVNC_connect_dlg.axonos-state-landing.axonos-ssh-card-active .axonos-footer-banner {
+  display: none !important;
+}
+
+#noVNC_connect_dlg.axonos-state-landing.axonos-ssh-card-active .axonos-landing-main {
+  display: block !important;
+  max-width: 620px !important;
+  margin: 32px auto 80px !important;
+}
+
+#noVNC_connect_dlg.axonos-state-landing.axonos-ssh-card-active .axonos-connect-wrapper {
+  display: block !important;
+  position: static !important;
+  width: 100%;
+  max-width: 620px;
+  margin: 0 auto;
+}
+
+#noVNC_connect_dlg.axonos-state-landing.axonos-ssh-card-active .axonos-connect-wrapper>* {
+  display: none !important;
+}
+
+#noVNC_connect_dlg.axonos-state-landing.axonos-ssh-card-active #axonos_ssh_connect_card {
+  display: block !important;
+  margin-top: 0;
 }
 
 #noVNC_connect_dlg:not(.axonos-state-dashboard):not(.axonos-state-wizard) .axonos-landing-main {

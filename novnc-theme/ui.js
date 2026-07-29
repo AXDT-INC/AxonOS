@@ -241,6 +241,14 @@ window.AXONOS_TEMPLATES = AXONOS_TEMPLATES;
 const UI = {
 
     connected: false,
+    /** Active viewer transport. `connected` remains the upstream RFB/WebRTC flag. */
+    connectionKind: null,
+    terminalClient: null,
+    terminalState: 'idle',
+    _axonosTerminalOpenGeneration: 0,
+    _axonosTerminalOpenAbort: null,
+    _axonosPendingTerminalClaim: null,
+    _axonosSshClaim: null,
     desktopName: "",
 
     statusTimeout: null,
@@ -562,8 +570,8 @@ const UI = {
         }
     },
 
-    /** Tab close on a CONNECTED viewer → release; F5/Ctrl+R → keep session
-     *  (reload); detached/SSH sessions are never released by tab close. */
+    /** Tab close on a desktop viewer → release; F5/Ctrl+R → keep session
+     *  (reload); detached and SSH/web-terminal sessions survive tab close. */
     addAxonosSessionLifecycleHandlers() {
         if (window.axonosSessionLifecycleHandlersInstalled) {
             return;
@@ -1137,6 +1145,13 @@ const UI = {
                 UI.disconnect();
             });
         }
+        const webTerminalBtn = document.getElementById('axonos_ssh_web_terminal_btn');
+        if (webTerminalBtn) {
+            webTerminalBtn.addEventListener('click', () => {
+                if (!UI._axonosSshClaim || webTerminalBtn.disabled) return;
+                UI.openAxonosSshTerminal(UI._axonosSshClaim, { manual: true });
+            });
+        }
         const extendBtn = document.getElementById('axonos_ssh_extend_btn');
         if (extendBtn) {
             // Extend = owner re-claim: the gate renews the hard billing cap to
@@ -1192,10 +1207,12 @@ const UI = {
     },
 
     /** Render the SSH connect-string card from a granted SSH claim. */
-    showAxonosSshCard(claim) {
+    showAxonosSshCard(claim, options = {}) {
         const card = document.getElementById('axonos_ssh_connect_card');
         const cmdEl = document.getElementById('axonos_ssh_connect_cmd');
         if (!card || !cmdEl) return;
+        const preserveScreen = options && options.preserveScreen === true;
+        UI._axonosSshClaim = { ...(claim || {}), ssh_enabled: true };
         // Keep the landing dialog open (the card lives inside it) but hide the
         // launch controls while the session is active.
         UI.openConnectPanel();
@@ -1203,13 +1220,27 @@ const UI = {
         // wizard leaves the dialog in the wizard screen state (landing section
         // display:none), which rendered the connect-string invisibly — force
         // the landing screen whenever the card must be shown.
-        if (typeof window.axonosUpdateActiveScreen === 'function') {
+        const connectDialog = document.getElementById('noVNC_connect_dlg');
+        if (connectDialog) connectDialog.classList.add('axonos-ssh-card-active');
+        const landingAlreadyActive = !!(connectDialog &&
+            connectDialog.classList.contains('axonos-state-landing'));
+        if (!preserveScreen && !landingAlreadyActive &&
+            typeof window.axonosUpdateActiveScreen === 'function') {
             window.axonosUpdateActiveScreen('landing');
         }
         const user = claim.ssh_user || 'aXonian';
         const host = claim.ssh_host || window.location.hostname;
         const port = claim.ssh_port;
-        cmdEl.textContent = `ssh -p ${port} ${user}@${host}`;
+        cmdEl.textContent = port
+            ? `ssh -p ${port} ${user}@${host}`
+            : 'External SSH endpoint unavailable';
+        const copyBtn = document.getElementById('axonos_ssh_copy_btn');
+        if (copyBtn) copyBtn.disabled = !port;
+        const terminalBtn = document.getElementById('axonos_ssh_web_terminal_btn');
+        if (terminalBtn) {
+            terminalBtn.disabled = false;
+            terminalBtn.textContent = 'Open web terminal';
+        }
         UI._axonosUpdateSshCardCap(claim);
         UI._axonosToggleSshLaunchControls(true);
         card.classList.remove('axonos-ssh-card--hidden');
@@ -1242,7 +1273,308 @@ const UI = {
     hideAxonosSshCard() {
         const card = document.getElementById('axonos_ssh_connect_card');
         if (card) card.classList.add('axonos-ssh-card--hidden');
+        const connectDialog = document.getElementById('noVNC_connect_dlg');
+        if (connectDialog) connectDialog.classList.remove('axonos-ssh-card-active');
         UI._axonosToggleSshLaunchControls(false);
+    },
+
+    /** A dashboard already exposes the owned SSH command and retry action.
+     *  Wizard/landing flows do not, so their recovery must reveal the dedicated
+     *  SSH card instead of routing to a potentially empty workspace. */
+    _axonosSshDashboardActive() {
+        const connectDialog = document.getElementById('noVNC_connect_dlg');
+        return !!(connectDialog &&
+            connectDialog.classList.contains('axonos-state-dashboard'));
+    },
+
+    _axonosCloseTerminalClient() {
+        UI._axonosTerminalOpenGeneration += 1;
+        UI._axonosPendingTerminalClaim = null;
+        if (UI._axonosTerminalOpenAbort) {
+            try { UI._axonosTerminalOpenAbort.abort(); } catch (error) { /* ignore */ }
+            UI._axonosTerminalOpenAbort = null;
+        }
+        const client = UI.terminalClient;
+        UI.terminalClient = null;
+        UI.terminalState = 'idle';
+        if (UI.connectionKind === 'terminal') UI.connectionKind = null;
+        document.documentElement.classList.remove('axonos-terminal-active');
+        if (client && typeof client.close === 'function') {
+            try {
+                client.close();
+            } catch (error) {
+                Log.Warn('AxonOS terminal close failed: ' + error);
+            }
+        }
+    },
+
+    /** Keep an SSH allocation usable while wallet authentication is incomplete.
+     *  Status probes can discover the address/session before verify-wallet has
+     *  returned its auth token. Never spend a one-use terminal ticket in that
+     *  gap; retain the claim and retry from axonosOnWalletVerified instead. */
+    deferAxonosSshTerminalUntilAuthenticated(claim, options = {}) {
+        const sshClaim = { ...(claim || {}), ssh_enabled: true };
+        const preserveWorkspace = UI._axonosSshDashboardActive();
+        UI._axonosSshClaim = sshClaim;
+        UI._axonosPendingTerminalClaim = sshClaim;
+        UI.terminalState = 'idle';
+        if (UI.connectionKind === 'terminal') UI.connectionKind = null;
+        document.documentElement.classList.remove('axonos-terminal-active');
+        window.axonosSessionDetached = true;
+        if (window.axonosOwnedSession) {
+            window.axonosDetachedSession = window.axonosOwnedSession;
+        }
+        if (typeof window.axonosHideConnectionLoader === 'function') {
+            window.axonosHideConnectionLoader(true);
+        }
+        UI.updateVisualState('disconnected');
+        UI.openControlbar();
+        UI.openConnectPanel();
+        if (preserveWorkspace && typeof UI._axonosReturnToWorkspace === 'function') {
+            UI._axonosReturnToWorkspace({
+                refresh: options.refresh === true,
+                reason: 'terminal-auth-pending',
+            });
+        }
+        // A dashboard already contains a visible command/retry row. A fresh
+        // wizard claim does not, so reveal the dedicated landing recovery card.
+        UI.showAxonosSshCard(sshClaim, { preserveScreen: preserveWorkspace });
+        UI.updateSessionControlButtons();
+        if (options.notify !== false) {
+            const walletKnown = !!String(window.verifiedWalletAddress || '').trim();
+            UI.showStatus(
+                walletKnown
+                    ? (preserveWorkspace
+                        ? _('Wallet sign-in is still finishing. The web terminal will open automatically; external SSH remains available in the workspace.')
+                        : _('Wallet sign-in is still finishing. The web terminal will open automatically; external SSH is available on this page.'))
+                    : _('Verify the session wallet to open the web terminal. External SSH remains available.'),
+                'normal',
+                8000
+            );
+        }
+        return false;
+    },
+
+    resumePendingAxonosSshTerminal() {
+        const claim = UI._axonosPendingTerminalClaim;
+        const wallet = String(window.verifiedWalletAddress || '').trim();
+        const authToken = String(window.verifiedWalletAuthToken || '').trim();
+        if (!claim || !wallet || !authToken) return false;
+        UI._axonosPendingTerminalClaim = null;
+        return UI.openAxonosSshTerminal(claim, { authRetry: true });
+    },
+
+    _axonosTerminalErrorDetail(error) {
+        const code = String((error && error.code) || '').trim().toLowerCase();
+        const raw = String((error && error.message) || '').trim();
+        if (/valid auth token|required.*auth|wallet verification/i.test(raw) ||
+            code === 'wallet_required' || code === 'auth_pending') {
+            return _('Wallet authentication is not ready. Reconnect the wallet and retry.');
+        }
+        if (code === 'ticket_timeout') {
+            return _('The terminal authorization request timed out. Retry in a moment.');
+        }
+        if (code === 'connect_timeout') {
+            return _('The secure terminal connection timed out. Retry in a moment.');
+        }
+        if (code === 'socket_failed' || code === 'socket_closed') {
+            return _('The secure WebSocket could not be opened. Retry or use external SSH.');
+        }
+        if (code === 'unsafe_endpoint') {
+            return _('The server returned an invalid terminal endpoint. Refresh before retrying.');
+        }
+        if (code === 'renderer_unavailable' ||
+            /failed to fetch dynamically imported module|module script/i.test(raw)) {
+            return _('The terminal viewer assets could not be loaded. Refresh before retrying.');
+        }
+        if (/failed to fetch|networkerror|network request failed/i.test(raw)) {
+            return _('The terminal authorization request could not reach the server.');
+        }
+        // Server terminal errors are intentionally client-safe. Redact browser
+        // capability/query values and wallet addresses before putting an
+        // otherwise useful bounded reason in the visible status banner.
+        return raw
+            .replace(/([?&](?:ticket|auth_token)=)[^&\s]+/gi, '$1[redacted]')
+            .replace(/\b0x[a-f0-9]{40}\b/gi, '[wallet]')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 180);
+    },
+
+    _axonosFallbackToSshCard(claim, error, options = {}) {
+        const sshClaim = claim || UI._axonosSshClaim || {};
+        const preserveWorkspace = UI._axonosSshDashboardActive();
+        UI.connected = false;
+        UI.terminalState = 'idle';
+        UI._axonosPendingTerminalClaim = null;
+        if (UI.connectionKind === 'terminal') UI.connectionKind = null;
+        document.documentElement.classList.remove('axonos-terminal-active');
+        window.axonosSessionDetached = true;
+        if (window.axonosOwnedSession) {
+            window.axonosDetachedSession = window.axonosOwnedSession;
+        }
+        if (typeof window.axonosHideConnectionLoader === 'function') {
+            window.axonosHideConnectionLoader(true);
+        }
+        UI.updateVisualState('disconnected');
+        UI.openControlbar();
+        UI.openConnectPanel();
+        if (preserveWorkspace && typeof UI._axonosReturnToWorkspace === 'function') {
+            UI._axonosReturnToWorkspace({ refresh: false, reason: 'terminal-fallback' });
+        }
+        UI.showAxonosSshCard(sshClaim, {
+            preserveScreen: preserveWorkspace,
+        });
+        if (!UI._axgtStatusPollId && window.verifiedWalletAddress &&
+            window.verifiedWalletAuthToken) {
+            UI._axgtStartSessionBillingPoll();
+        }
+        UI.updateSessionControlButtons();
+        const externalAvailable = !!sshClaim.ssh_port;
+        const detail = UI._axonosTerminalErrorDetail(error);
+        if (options.normalExit === true) {
+            UI.showStatus(
+                _('Terminal closed — the SSH allocation remains available.'),
+                'normal',
+                5000
+            );
+        } else {
+            UI.showStatus(
+                externalAvailable
+                    ? (detail
+                        ? _(`Web terminal unavailable: ${detail} External SSH remains available ${preserveWorkspace ? 'in the workspace' : 'on this page'}.`)
+                        : _(`Web terminal unavailable. External SSH remains available ${preserveWorkspace ? 'in the workspace' : 'on this page'}.`))
+                    : (detail
+                        ? _(`Web terminal unavailable: ${detail} No external SSH endpoint was returned; refresh the workspace and retry.`)
+                        : _('Web terminal unavailable and no external SSH endpoint was returned. Refresh the workspace and retry.')),
+                'warn',
+                12000
+            );
+            if (detail) {
+                const detailCode = error && error.code ? ` [${error.code}]` : '';
+                Log.Warn('AxonOS terminal fallback' + detailCode + ': ' + detail);
+            }
+        }
+    },
+
+    /** Open a granted SSH-only allocation inside the shared viewer surface. */
+    async openAxonosSshTerminal(claim, options = {}) {
+        if (!claim || claim.ssh_enabled !== true) {
+            UI.showStatus(_('The server did not identify this as an SSH session.'), 'error');
+            return false;
+        }
+        const sshClaim = { ...claim };
+        UI._axonosSshClaim = sshClaim;
+        if (UI.connectionKind === 'terminal' && UI.terminalClient &&
+            UI.terminalState === 'connected') {
+            UI.terminalClient.focus();
+            return true;
+        }
+        if (UI.terminalState === 'connecting') {
+            return false;
+        }
+        const wallet = String(window.verifiedWalletAddress || '').trim();
+        const authToken = String(window.verifiedWalletAuthToken || '').trim();
+        if (!wallet || !authToken) {
+            UI.deferAxonosSshTerminalUntilAuthenticated(sshClaim, {
+                notify: options.authRetry !== true,
+                refresh: false,
+            });
+            return false;
+        }
+        UI._axonosPendingTerminalClaim = null;
+
+        const generation = ++UI._axonosTerminalOpenGeneration;
+        const openAbort = typeof AbortController !== 'undefined'
+            ? new AbortController()
+            : null;
+        UI._axonosTerminalOpenAbort = openAbort;
+        UI.terminalState = 'connecting';
+        const terminalBtn = document.getElementById('axonos_ssh_web_terminal_btn');
+        if (terminalBtn) {
+            terminalBtn.disabled = true;
+            terminalBtn.textContent = 'Opening…';
+        }
+        if (options.manual === true) {
+            UI.showStatus(_('Opening secure web terminal…'), 'normal', 2500);
+        }
+
+        try {
+            const terminalModule = await import('./terminal/axonos-terminal.js?v=20260729c');
+            const client = await terminalModule.openAxonosTerminal({
+                container: document.getElementById('noVNC_container'),
+                wallet,
+                authToken,
+                ...(openAbort ? { signal: openAbort.signal } : {}),
+                onExit: (detail) => {
+                    const code = detail && Number.isInteger(detail.code) ? detail.code : null;
+                    UI.showStatus(
+                        code === null ? _('Terminal process exited.') : _(`Terminal process exited (${code}).`),
+                        code === 0 ? 'normal' : 'warn',
+                        5000
+                    );
+                },
+                onError: (terminalError) => {
+                    Log.Warn('AxonOS terminal protocol error: ' + terminalError);
+                },
+                onClose: (detail) => {
+                    if (generation !== UI._axonosTerminalOpenGeneration ||
+                        detail.intentional === true) {
+                        return;
+                    }
+                    UI.terminalClient = null;
+                    const closeError = detail && detail.error instanceof Error
+                        ? detail.error
+                        : new Error(detail.reason || 'Terminal connection closed.');
+                    UI._axonosFallbackToSshCard(
+                        sshClaim,
+                        closeError,
+                        { normalExit: !!detail.exit }
+                    );
+                },
+            });
+            if (generation !== UI._axonosTerminalOpenGeneration ||
+                String(window.verifiedWalletAddress || '').trim().toLowerCase() !==
+                    wallet.toLowerCase()) {
+                client.close();
+                return false;
+            }
+
+            UI.terminalClient = client;
+            UI.terminalState = 'connected';
+            UI.connectionKind = 'terminal';
+            document.documentElement.classList.add('axonos-terminal-active');
+            // Deliberately do not set UI.connected: upstream noVNC treats that flag
+            // as an RFB/WebRTC connection and routes keyboard/clipboard operations.
+            UI.connected = false;
+            window.axonosSessionDetached = false;
+            window.axonosDetachedSession = null;
+            UI.inhibitReconnect = true;
+            UI.hideAxonosSshCard();
+            UI.closeConnectPanel();
+            UI.updateVisualState('connected');
+            if (typeof window.axonosHideConnectionLoader === 'function') {
+                window.axonosHideConnectionLoader(true);
+            }
+            if (!UI._axgtStatusPollId) UI._axgtStartSessionBillingPoll();
+            UI.updateSessionControlButtons();
+            UI.showStatus(_('Secure web terminal connected.'), 'normal', 2500);
+            client.focus();
+            return true;
+        } catch (error) {
+            if (generation !== UI._axonosTerminalOpenGeneration) return false;
+            UI._axonosFallbackToSshCard(sshClaim, error);
+            return false;
+        } finally {
+            if (UI._axonosTerminalOpenAbort === openAbort) {
+                UI._axonosTerminalOpenAbort = null;
+            }
+            if (terminalBtn && generation === UI._axonosTerminalOpenGeneration &&
+                UI.terminalState !== 'connecting') {
+                terminalBtn.disabled = false;
+                terminalBtn.textContent = 'Open web terminal';
+            }
+        }
     },
 
     showAxonosTemplateDetails(t) {
@@ -1706,8 +2038,9 @@ const UI = {
                 return;
         }
 
-        if (UI.connected) {
-            UI.updateViewClip();
+        const viewerAttached = UI._axonosViewerAttached();
+        if (viewerAttached) {
+            if (UI.connectionKind !== 'terminal') UI.updateViewClip();
 
             UI.disableSetting('encrypt');
             UI.disableSetting('shared');
@@ -1718,6 +2051,7 @@ const UI = {
 
             // Hide the controlbar after 2 seconds
             UI.closeControlbarTimeout = setTimeout(UI.closeControlbar, 2000);
+            UI.updateSessionControlButtons();
         } else {
             UI.enableSetting('encrypt');
             UI.enableSetting('shared');
@@ -1800,6 +2134,11 @@ const UI = {
     },
 
     focusRemoteDesktop() {
+        if (UI.connectionKind === 'terminal' && UI.terminalClient &&
+            typeof UI.terminalClient.focus === 'function') {
+            UI.terminalClient.focus();
+            return;
+        }
         if (UI.rfb && typeof UI.rfb.focus === 'function') {
             UI.rfb.focus();
             return;
@@ -2236,7 +2575,7 @@ const UI = {
     },
 
     async endSession() {
-        if (!UI.connected && !window.axonosSessionDetached) {
+        if (!UI._axonosViewerAttached() && !window.axonosSessionDetached) {
             return;
         }
         const storageEnabled = window.axonosConfig && window.axonosConfig.persistent_storage_enabled;
@@ -2265,12 +2604,15 @@ const UI = {
     },
 
     async detach() {
-        if (!UI.connected) {
+        if (!UI._axonosViewerAttached()) {
             return;
         }
+        const terminalViewer = UI.connectionKind === 'terminal';
         const confirmed = await UI.showConfirm(
-            _("Detach from the remote view?"),
-            _("You return to the home screen, but your desktop and jobs keep running and prepaid minutes keep counting — even if you close this tab. Reconnect with the same wallet to return.\n\nUse End session when you are fully done. If credit runs out, viewer access and compute billing stop while the same running container, jobs, and GPUs are retained for the 2-hour top-up grace."),
+            terminalViewer ? _("Detach from the web terminal?") : _("Detach from the remote view?"),
+            terminalViewer
+                ? _("The current terminal and its foreground processes close, and you return to the SSH details card. The container keeps running and prepaid minutes keep counting. Use nohup or a session manager for work that must survive closing the terminal. Reopen the web terminal or use the external SSH command to return.\n\nUse End session when you are fully done.")
+                : _("You return to the home screen, but your desktop and jobs keep running and prepaid minutes keep counting — even if you close this tab. Reconnect with the same wallet to return.\n\nUse End session when you are fully done. If credit runs out, viewer access and compute billing stop while the same running container, jobs, and GPUs are retained for the 2-hour top-up grace."),
             {
                 confirmText: _("Detach"),
                 confirmType: 'primary'
@@ -2341,6 +2683,13 @@ const UI = {
         return !!(UI.rfb && UI.rfb.viewOnly);
     },
 
+    _axonosViewerAttached() {
+        if (UI.connectionKind === 'terminal') {
+            return UI.terminalState === 'connected' && !!UI.terminalClient;
+        }
+        return UI.connected && UI._axgtSessionDesktopActive();
+    },
+
     updateSessionControlButtons() {
         const endBtn = document.getElementById('noVNC_power_button');
         const detachBtn = document.getElementById('noVNC_disconnect_button');
@@ -2348,8 +2697,9 @@ const UI = {
             return;
         }
         const viewOnly = UI._axonosViewerViewOnly();
-        const showEnd = (UI.connected || window.axonosSessionDetached) && !viewOnly;
-        const showDetach = UI.connected && !window.axonosSessionDetached && !viewOnly;
+        const viewerAttached = UI._axonosViewerAttached();
+        const showEnd = (viewerAttached || window.axonosSessionDetached) && !viewOnly;
+        const showDetach = viewerAttached && !window.axonosSessionDetached && !viewOnly;
         endBtn.classList.toggle('noVNC_hidden', !showEnd);
         detachBtn.classList.toggle('noVNC_hidden', !showDetach);
     },
@@ -2768,6 +3118,11 @@ const UI = {
         if (window.axonosSessionDetached) {
             return false;
         }
+        // Closing a browser terminal is equivalent to closing an external SSH
+        // client, never an instruction to end the underlying compute allocation.
+        if (UI.connectionKind === 'terminal' || UI.terminalState === 'connecting') {
+            return false;
+        }
         return !!(UI.connected || UI._axgtStatusPollId);
     },
 
@@ -2843,6 +3198,8 @@ const UI = {
     _axonosReturnToHomeAfterDisconnect(options) {
         const opts = options && typeof options === 'object' ? options : {};
         UI._axonosInvalidateConnectAttempt();
+        UI._axonosCloseTerminalClient();
+        UI.connectionKind = null;
         if (opts.resetWebRtc !== false) {
             UI._axonosCancelWebRtcClient();
         }
@@ -2914,6 +3271,8 @@ const UI = {
     _axonosCompleteDetachUI(options) {
         const opts = options && typeof options === 'object' ? options : {};
         UI._axonosInvalidateConnectAttempt();
+        UI._axonosCloseTerminalClient();
+        UI.connectionKind = null;
         UI._axonosCancelWebRtcClient();
         UI.connected = false;
         UI.hideStatus();
@@ -2949,6 +3308,10 @@ const UI = {
         }
         if (typeof window.axonosOnDetachedToHome === 'function') {
             window.axonosOnDetachedToHome();
+        }
+        if (opts.terminal === true && !opts.creditExhausted && UI._axonosSshClaim) {
+            UI.showAxonosSshCard(UI._axonosSshClaim);
+            UI.showStatus(_('Web terminal detached — the SSH allocation remains available.'), 'normal', 4000);
         }
     },
 
@@ -3227,26 +3590,11 @@ const UI = {
                 if (typeof window.axonosRememberOwnedSession === 'function') {
                     window.axonosRememberOwnedSession(claim);
                 }
-                if (claim && claim.ssh_enabled) {
-                    // Headless SSH session: no browser viewer. Show the connect-string
-                    // The container heartbeat keeps compute alive; the detached-home
-                    // poll only refreshes billing/status while this tab is open.
-                    window.axonosSessionDetached = true;
-                    if (typeof window.axonosHideConnectionLoader === 'function') {
-                        window.axonosHideConnectionLoader(true);
-                    } else if (typeof window.axonosSetLaunchBusy === 'function') {
-                        window.axonosSetLaunchBusy(false);
-                    }
-                    UI.showAxonosSshCard(claim);
-                    UI._axgtStartSessionBillingPoll();
-                    if (typeof UI.updateSessionControlButtons === 'function') {
-                        UI.updateSessionControlButtons();
-                    }
-                    if (Array.isArray(claim.assigned_gpu_ids) && claim.assigned_gpu_ids.length > 0) {
-                        UI.showStatus(`SSH session active on GPU(s): ${claim.assigned_gpu_ids.join(',')}`, 'normal', 3000);
-                    } else {
-                        UI.showStatus(_('SSH session ready — connect from your terminal.'), 'normal', 3000);
-                    }
+                if (claim && claim.ssh_enabled === true) {
+                    // Authoritative SSH allocations use the browser terminal transport.
+                    // Its own failure path preserves the allocation and falls back to
+                    // the external SSH card; it must never enter RFB/WebRTC negotiation.
+                    UI.openAxonosSshTerminal(claim);
                     return;
                 }
                 if (claim && claim.resumed === true && typeof window.axonosRefreshPausedResumeStatus === 'function') {
@@ -3319,7 +3667,7 @@ const UI = {
                         try {
                             // A stable module URL keeps negotiation generation/cancellation
                             // state shared across retries and rapid user reconnects.
-                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260724c');
+                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260729c');
                             if (!connectAttemptIsCurrent()) {
                                 return;
                             }
@@ -3446,9 +3794,9 @@ const UI = {
         // Conservative wallet preflight before claim/WebRTC. UI.connect is the single
         // choke point that fresh Launch (button click) and Resume (tryConnectAfterClaim ->
         // button click; axonosResumeDesktopConnectIfPaused) both pass through, so verifying
-        // the exposed provider account here covers Launch / Resume / Claim. On mismatch the
-        // preflight tears down + clears identity and returns false; we abort so claim/WebRTC
-        // never run under a stale account.
+        // the exposed provider account here covers Launch / Resume / Claim. A mismatch or
+        // unavailable provider blocks the action and delegates reconciliation to the page;
+        // it is not, by itself, permission to release a retained server session.
         const proceedAfterPreflight = () => {
             if (!connectAttemptIsCurrent()) {
                 return;
@@ -3515,6 +3863,8 @@ const UI = {
         const skipRelease = opts.skipRelease === true;
         const detach = opts.detach === true;
         const creditExhausted = opts.creditExhausted === true;
+        const terminalDisconnect = UI.connectionKind === 'terminal' ||
+            UI.terminalState === 'connecting';
 
         if (!detach && !skipRelease) {
             UI._axgtEndingSession = true;
@@ -3526,6 +3876,10 @@ const UI = {
         // an intentional End/Detach with an automatic reconnect.
         UI.inhibitReconnect = true;
         const disconnectGeneration = UI._axonosInvalidateConnectAttempt();
+        // A terminal has no RFB disconnect event to finish this transition. Close
+        // it synchronously before an End release, Detach, wallet cleanup, or credit
+        // grace can leave an authenticated socket accepting input.
+        if (terminalDisconnect) UI._axonosCloseTerminalClient();
         const webRtcCancelPromise = UI._axonosCancelWebRtcClient();
         if (typeof window.axonosHideConnectionLoader === 'function') {
             window.axonosHideConnectionLoader(true);
@@ -3619,13 +3973,13 @@ const UI = {
                 } catch (err) {
                     Log.Warn("AxonOS disconnect failed: " + err);
                     if (detach || window.axonosSessionDetached) {
-                        UI._axonosCompleteDetachUI({ creditExhausted });
+                        UI._axonosCompleteDetachUI({ creditExhausted, terminal: terminalDisconnect });
                     } else {
                         UI._axonosReturnToHomeAfterDisconnect({ creditExhausted });
                     }
                 }
             } else if (detach || window.axonosSessionDetached) {
-                UI._axonosCompleteDetachUI({ creditExhausted });
+                UI._axonosCompleteDetachUI({ creditExhausted, terminal: terminalDisconnect });
             } else {
                 UI._axonosReturnToHomeAfterDisconnect({ creditExhausted });
             }
@@ -3643,6 +3997,9 @@ const UI = {
     /** Final billing heartbeat enters credit grace, then disconnect the viewer. */
     _axgtDisconnectForCreditExhaustion(overlayMessage) {
         UI.inhibitReconnect = true;
+        if (UI.connectionKind === 'terminal' || UI.terminalState === 'connecting') {
+            UI._axonosCloseTerminalClient();
+        }
         if (typeof window !== 'undefined') {
             window.axonosAllowVncConnect = false;
         }
@@ -3734,6 +4091,7 @@ const UI = {
 
     connectFinished(e) {
         UI.connected = true;
+        UI.connectionKind = 'rfb';
         window.axonosSessionDetached = false;
         UI.inhibitReconnect = false;
         if (typeof window.axonosHideConnectionLoader === 'function') {
@@ -3768,6 +4126,7 @@ const UI = {
         UI._axonosInvalidateConnectAttempt();
         UI._axonosCancelWebRtcClient();
         UI.connected = false;
+        UI.connectionKind = null;
         UI.stopClipboardAutoSync();
 
         UI.rfb = undefined;
@@ -3843,6 +4202,10 @@ const UI = {
 
     /** True when server session should receive heartbeats (viewer or detached home). */
     _axgtSessionBillingActive() {
+        if (UI.connectionKind === 'terminal' && UI.terminalState === 'connected' &&
+            window.verifiedWalletAddress) {
+            return true;
+        }
         if (window.axonosSessionDetached && window.verifiedWalletAddress) {
             return true;
         }
@@ -4033,7 +4396,7 @@ const UI = {
                 Log.Warn('AxonOS queue overlay reset failed: ' + err);
             }
         }
-        if (UI.connected || typeof window.axonosWebRtcTeardown === 'function') {
+        if (UI._axonosViewerAttached() || typeof window.axonosWebRtcTeardown === 'function') {
             UI.disconnect({ skipRelease: true });
             return;
         }
@@ -4052,6 +4415,9 @@ const UI = {
         }
         const wallet = window.verifiedWalletAddress;
         const token = window.verifiedWalletAuthToken || null;
+        const walletNormalized = String(wallet).trim().toLowerCase();
+        const pollIdentityIsCurrent = () =>
+            String(window.verifiedWalletAddress || '').trim().toLowerCase() === walletNormalized;
         const headers = { 'X-Wallet-Address': wallet };
         if (token) headers['X-AXGT-Auth-Token'] = token;
 
@@ -4064,6 +4430,7 @@ const UI = {
         })
             .then((r) => (r.ok ? r.json() : null))
             .then((hb) => {
+                if (!pollIdentityIsCurrent()) return;
                 if (hb && typeof hb.billing_gpu_count === 'number') {
                     window.axonosBillingGpuCount = hb.billing_gpu_count;
                 }
@@ -4114,6 +4481,7 @@ const UI = {
         fetch(url.toString(), opts)
             .then((r) => r.json().then((data) => ({ ok: r.ok, data })))
             .then(({ ok, data }) => {
+                if (!pollIdentityIsCurrent()) return;
                 if (!ok) {
                     return;
                 }

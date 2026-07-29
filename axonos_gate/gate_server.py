@@ -4,6 +4,7 @@
 import os
 import sys
 import logging
+import json
 import secrets
 import time
 import threading
@@ -181,6 +182,14 @@ except ImportError:
         from axonos_gate import file_transfer as _file_transfer
     except ImportError:
         _file_transfer = None
+
+try:
+    import terminal_gateway as _terminal_gateway
+except ImportError:
+    try:
+        from axonos_gate import terminal_gateway as _terminal_gateway
+    except ImportError:
+        _terminal_gateway = None
 
 _files_connection_class = None
 if _file_transfer is not None:
@@ -380,7 +389,9 @@ def after_request(response):
         response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Wallet-Address, X-AXGT-Auth-Token"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     # WebRTC status must never be cached (CDN/browser); stale JSON caused endless polling on wrong state.
-    if request.path.startswith("/api/webrtc/status"):
+    if request.path.startswith("/api/webrtc/status") or request.path.startswith(
+        "/api/terminal/"
+    ):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
         response.headers["Pragma"] = "no-cache"
     return response
@@ -1595,6 +1606,115 @@ def _require_auth_token(wallet_address: str):
     return None
 
 
+def _terminal_origin_from_request():
+    if _terminal_gateway is None:
+        return None
+    return _terminal_gateway.exact_request_origin(
+        request.headers.get("Origin"),
+        request.headers.get("Host"),
+        request.headers.get("X-Forwarded-Proto"),
+        request.environ.get("wsgi.url_scheme") or request.scheme,
+        _terminal_gateway.configured_public_origin(),
+    )
+
+
+@app.route('/api/terminal/ticket', methods=['POST', 'OPTIONS'])
+def api_terminal_ticket():
+    """Mint a one-use capability for an exact active SSH session."""
+    if request.method == 'OPTIONS':
+        return '', 200
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        data = {}
+    wallet_address = (data.get("wallet_address") or "").strip()
+    if _terminal_gateway is None or not _session_mgr_available:
+        logger.warning(
+            "terminal_ticket outcome=unavailable gateway=%s session_manager=%s wallet=%s",
+            _terminal_gateway is not None,
+            _session_mgr_available,
+            mask_wallet_address(wallet_address),
+        )
+        return jsonify({"ok": False, "error": "Web terminal unavailable"}), 503
+    origin = _terminal_origin_from_request()
+    if not origin:
+        logger.warning(
+            "terminal_ticket outcome=origin_rejected wallet=%s origin_present=%s "
+            "host_present=%s forwarded_proto_present=%s",
+            mask_wallet_address(wallet_address),
+            bool(request.headers.get("Origin")),
+            bool(request.headers.get("Host")),
+            bool(request.headers.get("X-Forwarded-Proto")),
+        )
+        return jsonify({"ok": False, "error": "Exact same-origin request required"}), 403
+    if not wallet_address or not validate_wallet_address(wallet_address):
+        logger.info("terminal_ticket outcome=wallet_rejected wallet=***")
+        return jsonify({"ok": False, "error": "Valid wallet_address required"}), 400
+    if _rate_limiter is not None:
+        client_ip = (
+            request.headers.get("X-Forwarded-For")
+            or request.remote_addr
+            or "unknown"
+        ).split(",", 1)[0].strip()
+        if not _rate_limiter.allow(
+            f"{client_ip}|terminal-ticket|{wallet_address.lower()}"
+        ):
+            logger.warning(
+                "terminal_ticket outcome=rate_limited wallet=%s",
+                mask_wallet_address(wallet_address),
+            )
+            return jsonify({"ok": False, "error": "Rate limit exceeded"}), 429
+    auth_err = _require_auth_token(wallet_address)
+    if auth_err:
+        logger.warning(
+            "terminal_ticket outcome=auth_rejected wallet=%s token_present=%s",
+            mask_wallet_address(wallet_address),
+            bool(
+                request.cookies.get(
+                    os.getenv("AXGT_AUTH_COOKIE_NAME", "axgt_auth_token").strip()
+                )
+                or request.headers.get("X-AXGT-Auth-Token")
+                or request.args.get("auth_token")
+            ),
+        )
+        return auth_err
+    try:
+        payload = _terminal_gateway.issue_terminal_ticket(wallet_address, origin)
+    except _terminal_gateway.TerminalGatewayError as exc:
+        logger.warning(
+            "terminal_ticket outcome=issue_failed wallet=%s code=%s status=%s",
+            mask_wallet_address(wallet_address),
+            exc.code,
+            exc.status,
+        )
+        return jsonify({
+            "ok": False,
+            "error": exc.message,
+            "code": exc.code,
+            "error_code": exc.code,
+        }), exc.status
+    except Exception as exc:
+        logger.error(
+            "terminal_ticket outcome=issue_failed wallet=%s code=internal_error "
+            "error_type=%s",
+            mask_wallet_address(wallet_address),
+            type(exc).__name__,
+        )
+        return jsonify({
+            "ok": False,
+            "error": "Terminal ticket service is temporarily unavailable",
+            "code": "ticket_store_unavailable",
+            "error_code": "ticket_store_unavailable",
+        }), 503
+    logger.info(
+        "terminal_ticket outcome=issued wallet=%s",
+        mask_wallet_address(wallet_address),
+    )
+    response = jsonify(payload)
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return response, 200
+
+
 @app.route('/api/session/status', methods=['GET', 'OPTIONS'])
 def api_session_status():
     if request.method == 'OPTIONS':
@@ -2102,6 +2222,228 @@ def _extract_auth_cookie_from_environ(environ) -> str | None:
     return None
 
 
+def _terminal_context_from_environ(environ):
+    """Consume a terminal ticket from an exact same-origin WS request."""
+    if _terminal_gateway is None:
+        raise RuntimeError("Web terminal unavailable")
+    origin = _terminal_gateway.exact_request_origin(
+        environ.get("HTTP_ORIGIN"),
+        environ.get("HTTP_HOST"),
+        environ.get("HTTP_X_FORWARDED_PROTO"),
+        environ.get("wsgi.url_scheme"),
+        _terminal_gateway.configured_public_origin(),
+    )
+    if not origin:
+        raise _terminal_gateway.TerminalGatewayError(
+            "Exact same-origin WebSocket required", 403, "invalid_origin"
+        )
+    query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
+    # In particular, reject auth_token/wallet query parameters.  The one-use
+    # ticket is the only browser credential accepted by this WebSocket route.
+    if set(query) != {"ticket"} or len(query.get("ticket", [])) != 1:
+        raise _terminal_gateway.TerminalGatewayError(
+            "A single terminal ticket is required", 403, "invalid_ticket"
+        )
+    return _terminal_gateway.consume_terminal_ticket(query["ticket"][0], origin)
+
+
+def _terminal_recv_line(sock, limit: int) -> bytes:
+    data = bytearray()
+    while len(data) <= limit:
+        chunk = sock.recv(1)
+        if not chunk:
+            break
+        data.extend(chunk)
+        if chunk == b"\n":
+            return bytes(data)
+    raise _terminal_gateway.TerminalGatewayError(
+        "Terminal agent handshake failed", 502, "agent_unavailable"
+    )
+
+
+def _handle_terminal_proxy(environ, start_response):
+    """Authenticate /api/terminal/ws and bridge framed WS traffic to its PTY agent."""
+    ws = environ.get("wsgi.websocket")
+    if not ws:
+        start_response('400 Bad Request', [('Content-Type', 'text/plain')])
+        return [b'WebSocket expected']
+
+    try:
+        context = _terminal_context_from_environ(environ)
+    except Exception as exc:
+        reason = (
+            exc.message
+            if _terminal_gateway is not None
+            and isinstance(exc, _terminal_gateway.TerminalGatewayError)
+            else "Web terminal unavailable"
+        )
+        try:
+            ws.close(code=1008, reason=reason[:120])
+        except Exception:
+            pass
+        return []
+
+    backend = None
+    try:
+        import gevent
+        from gevent import socket as gevent_socket
+        from gevent.event import Event
+        from gevent.lock import Semaphore
+
+        timeout = _terminal_gateway.connect_timeout_seconds()
+        backend = _terminal_gateway.connect_terminal_agent(
+            context,
+            gevent_socket.create_connection,
+            sleep=gevent.sleep,
+        )
+        backend.settimeout(timeout)
+        backend.sendall(_terminal_gateway.agent_handshake_payload(context))
+        response_line = _terminal_recv_line(
+            backend, _terminal_gateway.MAX_HANDSHAKE_LINE
+        )
+        _terminal_gateway.validate_agent_handshake_response(response_line)
+        backend.settimeout(None)
+    except Exception as exc:
+        logger.warning(
+            "Terminal agent connection failed for session %s: %s",
+            context.session_id,
+            exc,
+        )
+        if backend is not None:
+            try:
+                backend.close()
+            except Exception:
+                pass
+        try:
+            error_frame = _terminal_gateway.encode_frame(
+                "E", b'{"error":"Terminal agent unavailable"}'
+            )
+            ws.send(error_frame)
+            ws.close(code=1011, reason="Terminal agent unavailable")
+        except Exception:
+            pass
+        return []
+
+    stopped = Event()
+    upstream_lock = Semaphore(1)
+    browser_lock = Semaphore(1)
+    upstream_timeout = _terminal_gateway.connect_timeout_seconds()
+
+    def stop_transport():
+        if stopped.is_set():
+            return
+        stopped.set()
+        try:
+            backend.shutdown(2)
+        except Exception:
+            pass
+        try:
+            backend.close()
+        except Exception:
+            pass
+
+    def send_browser(frame: bytes):
+        with browser_lock:
+            ws.send(frame)
+
+    def send_upstream(frame: bytes):
+        with upstream_lock:
+            with gevent.Timeout(
+                upstream_timeout, OSError("Terminal agent write timed out")
+            ):
+                backend.sendall(frame)
+
+    def client_to_agent():
+        try:
+            while not stopped.is_set():
+                message = ws.receive()
+                if message is None:
+                    break
+                frame = _terminal_gateway.validate_client_frame(message)
+                send_upstream(frame)
+                if frame[:1] == b"C":
+                    break
+        except _terminal_gateway.TerminalGatewayError as exc:
+            try:
+                send_browser(
+                    _terminal_gateway.encode_frame(
+                        "E", json.dumps({"error": exc.message}).encode("utf-8")
+                    )
+                )
+            except Exception:
+                pass
+        except Exception:
+            pass
+        finally:
+            stop_transport()
+
+    def agent_to_client():
+        buffer = bytearray()
+        try:
+            while not stopped.is_set():
+                chunk = backend.recv(64 * 1024)
+                if not chunk:
+                    break
+                buffer.extend(chunk)
+                for frame in _terminal_gateway.extract_agent_frames(buffer):
+                    send_browser(frame)
+                    if frame[:1] in (b"X", b"E"):
+                        return
+        except Exception:
+            pass
+        finally:
+            stop_transport()
+            try:
+                with browser_lock:
+                    ws.close()
+            except Exception:
+                pass
+
+    def authorization_monitor():
+        revalidate_every = _terminal_gateway.revalidate_interval_seconds()
+        presence_every = _terminal_gateway.presence_interval_seconds()
+        next_presence = time.monotonic() + presence_every
+        while not stopped.wait(timeout=revalidate_every):
+            if not _terminal_gateway.terminal_context_is_authorized(context):
+                try:
+                    send_browser(
+                        _terminal_gateway.encode_frame(
+                            "E",
+                            b'{"error":"Terminal authorization expired"}',
+                        )
+                    )
+                except Exception:
+                    pass
+                stop_transport()
+                try:
+                    with browser_lock:
+                        ws.close(code=1008, reason="Terminal authorization expired")
+                except Exception:
+                    pass
+                return
+            if time.monotonic() >= next_presence:
+                try:
+                    send_upstream(_terminal_gateway.encode_frame("P"))
+                except Exception:
+                    stop_transport()
+                    return
+                next_presence = time.monotonic() + presence_every
+
+    logger.info(
+        "Terminal WebSocket started for %s session %s",
+        mask_wallet_address(context.wallet_address),
+        context.session_id,
+    )
+    workers = [
+        gevent.spawn(client_to_agent),
+        gevent.spawn(agent_to_client),
+        gevent.spawn(authorization_monitor),
+    ]
+    gevent.joinall(workers)
+    stop_transport()
+    return []
+
+
 def _handle_websockify_proxy(environ, start_response):
     """Handle /websockify WebSocket: validate wallet+token, proxy to websockify_gate on 6080."""
     ws = environ.get('wsgi.websocket')
@@ -2196,9 +2538,11 @@ def _handle_websockify_proxy(environ, start_response):
 
 
 def _application(environ, start_response):
-    """WSGI app: /websockify with Upgrade: websocket -> proxy; else Flask."""
+    """WSGI app: route WebSocket transports, otherwise delegate to Flask."""
     path = (environ.get('PATH_INFO') or '').strip()
     is_ws = (environ.get('HTTP_UPGRADE') or '').lower() == 'websocket'
+    if path == '/api/terminal/ws' and is_ws and environ.get('wsgi.websocket'):
+        return _handle_terminal_proxy(environ, start_response)
     if path == '/websockify' and is_ws and environ.get('wsgi.websocket'):
         return _handle_websockify_proxy(environ, start_response)
     return app.wsgi_app(environ, start_response)

@@ -12,6 +12,8 @@ import logging
 import json
 import time
 import secrets
+import select
+import socket
 from http.cookies import SimpleCookie
 from threading import Lock
 from urllib.parse import parse_qs, urlparse
@@ -22,6 +24,7 @@ from security_utils import (
     cors_origin_for_request,
     get_rate_limiter_from_env,
     parse_cors_allowlist,
+    redact_terminal_websocket_query,
 )
 
 # Add system Python path for Ubuntu 22.04 packages (websockify) FIRST
@@ -31,6 +34,7 @@ if '/usr/lib/python3/dist-packages' not in sys.path:
 # Import websockify early
 try:
     import websockify
+    from websockify import websockifyserver as _websockifyserver
     # Check if WebSocketProxy is available
     if not hasattr(websockify, 'WebSocketProxy'):
         # Try importing from websockifyserver
@@ -188,6 +192,14 @@ except ImportError:
     except ImportError:
         _file_transfer = None
 
+try:
+    import terminal_gateway as _terminal_gateway
+except ImportError:
+    try:
+        from axonos_gate import terminal_gateway as _terminal_gateway
+    except ImportError:
+        _terminal_gateway = None
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -198,6 +210,8 @@ _allow_any, _allowlist = parse_cors_allowlist(os.getenv("AXGT_CORS_ORIGINS"))
 _rate_limiter = get_rate_limiter_from_env()
 
 _webrtc_sig_ws = None
+
+_MAX_TERMINAL_TICKET_BODY_BYTES = 16 * 1024
 
 
 def _webrtc_ws_rate_allow(wallet_key: str, headers, client_ip: str) -> bool:
@@ -740,6 +754,51 @@ def _extract_auth_token_from_path_and_headers(path: str, headers) -> str | None:
     return None
 
 
+def _terminal_origin_for_handler(handler) -> str | None:
+    if _terminal_gateway is None:
+        return None
+    forwarded_proto = handler.headers.get("X-Forwarded-Proto")
+    request_scheme = "https" if getattr(handler.server, "ssl_only", False) else "http"
+    return _terminal_gateway.exact_request_origin(
+        handler.headers.get("Origin"),
+        handler.headers.get("Host"),
+        forwarded_proto,
+        request_scheme,
+        _terminal_gateway.configured_public_origin(),
+    )
+
+
+def _terminal_context_for_handler(handler):
+    if _terminal_gateway is None:
+        raise RuntimeError("Web terminal unavailable")
+    origin = _terminal_origin_for_handler(handler)
+    if not origin:
+        raise _terminal_gateway.TerminalGatewayError(
+            "Exact same-origin WebSocket required", 403, "invalid_origin"
+        )
+    parsed = urlparse(handler.path or "/")
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    if set(query) != {"ticket"} or len(query.get("ticket", [])) != 1:
+        raise _terminal_gateway.TerminalGatewayError(
+            "A single terminal ticket is required", 403, "invalid_ticket"
+        )
+    return _terminal_gateway.consume_terminal_ticket(query["ticket"][0], origin)
+
+
+def _terminal_recv_line(sock, limit: int) -> bytes:
+    data = bytearray()
+    while len(data) <= limit:
+        chunk = sock.recv(1)
+        if not chunk:
+            break
+        data.extend(chunk)
+        if chunk == b"\n":
+            return bytes(data)
+    raise _terminal_gateway.TerminalGatewayError(
+        "Terminal agent handshake failed", 502, "agent_unavailable"
+    )
+
+
 class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
     """
     Extends websockify's HTTP handler to:
@@ -752,6 +811,12 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
     # (and upstream proxies) serve stale vnc.html / app JS after a deploy, so client
     # fixes appear not to take effect. JS/CSS get no-cache too, not just HTML.
     _response_no_cache: bool = False
+
+    def log_message(self, format, *args):
+        """Preserve access logs without exposing one-use terminal tickets."""
+        safe_format = redact_terminal_websocket_query(format)
+        safe_args = tuple(redact_terminal_websocket_query(arg) for arg in args)
+        return super().log_message(safe_format, *safe_args)
 
     def send_header(self, keyword, value):
         if keyword.lower() == 'content-type':
@@ -814,6 +879,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             or self.path.startswith('/api/config')
             or self.path.startswith('/api/session/')
             or self.path.startswith('/api/webrtc/')
+            or self.path.startswith('/api/terminal/')
             or self.path.startswith('/api/public/')
             or self.path.startswith('/api/files/')
             or self.path.startswith('/api/x402/')
@@ -1400,6 +1466,40 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         except Exception:
             return {}
 
+    def _read_bounded_json_body(self, max_bytes: int) -> tuple[dict, str | None]:
+        """Consume a small JSON request body or force the connection closed.
+
+        Reading an accepted Content-Length in full is important on HTTP/1.1:
+        otherwise an early response leaves those bytes to be parsed as the next
+        request.  Oversized or unframed bodies are not drained indefinitely;
+        their connection is closed so residual bytes cannot be reused.
+        """
+        if self.headers.get("Transfer-Encoding"):
+            self.close_connection = True
+            return {}, "invalid"
+        try:
+            content_length = int(self.headers.get("Content-Length") or "0")
+        except ValueError:
+            self.close_connection = True
+            return {}, "invalid"
+        if content_length < 0:
+            self.close_connection = True
+            return {}, "invalid"
+        if content_length > max(0, int(max_bytes)):
+            self.close_connection = True
+            return {}, "too_large"
+        raw = self.rfile.read(content_length) if content_length else b""
+        if len(raw) != content_length:
+            self.close_connection = True
+            return {}, "invalid"
+        try:
+            payload = json.loads(raw.decode("utf-8") or "{}")
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return {}, "invalid"
+        if not isinstance(payload, dict):
+            return {}, "invalid"
+        return payload, None
+
     def _handle_files_request(self, method: str):
         """Authenticated streaming proxy for /api/files/* to the wallet's desktop file agent."""
         if _file_transfer is None or not _file_transfer.files_enabled():
@@ -1474,6 +1574,127 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
 
         if ponly.startswith('/api/files/'):
             return self._handle_files_request('POST')
+
+        if ponly == '/api/terminal/ticket':
+            # Always consume the bounded POST body before an availability or
+            # origin response. Leaving it unread corrupts the next HTTP/1.1
+            # keep-alive request (for example: '{...}GET /api/session/status').
+            data, body_error = self._read_bounded_json_body(
+                _MAX_TERMINAL_TICKET_BODY_BYTES
+            )
+            if body_error:
+                status = 413 if body_error == "too_large" else 400
+                logger.info(
+                    "terminal_ticket outcome=body_rejected reason=%s",
+                    body_error,
+                )
+                return self._send_json(
+                    status,
+                    {"ok": False, "error": "Invalid terminal ticket request body"},
+                    no_cache=True,
+                )
+            wallet = (data.get("wallet_address") or "").strip()
+            if _terminal_gateway is None or not _session_mgr_available:
+                logger.warning(
+                    "terminal_ticket outcome=unavailable gateway=%s session_manager=%s wallet=%s",
+                    _terminal_gateway is not None,
+                    _session_mgr_available,
+                    mask_wallet_address(wallet),
+                )
+                return self._send_json(
+                    503,
+                    {"ok": False, "error": "Web terminal unavailable"},
+                    no_cache=True,
+                )
+            origin = _terminal_origin_for_handler(self)
+            if not origin:
+                logger.warning(
+                    "terminal_ticket outcome=origin_rejected wallet=%s origin_present=%s "
+                    "host_present=%s forwarded_proto_present=%s",
+                    mask_wallet_address(wallet),
+                    bool(self.headers.get("Origin")),
+                    bool(self.headers.get("Host")),
+                    bool(self.headers.get("X-Forwarded-Proto")),
+                )
+                return self._send_json(
+                    403,
+                    {"ok": False, "error": "Exact same-origin request required"},
+                    no_cache=True,
+                )
+            if not wallet or not validate_wallet_address(wallet):
+                logger.info("terminal_ticket outcome=wallet_rejected wallet=***")
+                return self._send_json(
+                    400,
+                    {"ok": False, "error": "Valid wallet_address required"},
+                    no_cache=True,
+                )
+            if _rate_limiter is not None and not _rate_limiter.allow(
+                f"{client_ip}|terminal-ticket|{wallet.lower()}"
+            ):
+                logger.warning(
+                    "terminal_ticket outcome=rate_limited wallet=%s",
+                    mask_wallet_address(wallet),
+                )
+                return self._send_json(
+                    429,
+                    {"ok": False, "error": "Rate limit exceeded"},
+                    no_cache=True,
+                )
+            auth_token = _extract_auth_token_from_path_and_headers(
+                self.path, self.headers
+            )
+            if not auth_token or not _is_auth_token_valid(auth_token, wallet.lower()):
+                logger.warning(
+                    "terminal_ticket outcome=auth_rejected wallet=%s token_present=%s",
+                    mask_wallet_address(wallet),
+                    bool(auth_token),
+                )
+                return self._send_json(
+                    401,
+                    {"ok": False, "error": "Valid auth token required"},
+                    no_cache=True,
+                )
+            try:
+                payload = _terminal_gateway.issue_terminal_ticket(wallet, origin)
+            except _terminal_gateway.TerminalGatewayError as exc:
+                logger.warning(
+                    "terminal_ticket outcome=issue_failed wallet=%s code=%s status=%s",
+                    mask_wallet_address(wallet),
+                    exc.code,
+                    exc.status,
+                )
+                return self._send_json(
+                    exc.status,
+                    {
+                        "ok": False,
+                        "error": exc.message,
+                        "code": exc.code,
+                        "error_code": exc.code,
+                    },
+                    no_cache=True,
+                )
+            except Exception as exc:
+                logger.error(
+                    "terminal_ticket outcome=issue_failed wallet=%s code=internal_error "
+                    "error_type=%s",
+                    mask_wallet_address(wallet),
+                    type(exc).__name__,
+                )
+                return self._send_json(
+                    503,
+                    {
+                        "ok": False,
+                        "error": "Terminal ticket service is temporarily unavailable",
+                        "code": "ticket_store_unavailable",
+                        "error_code": "ticket_store_unavailable",
+                    },
+                    no_cache=True,
+                )
+            logger.info(
+                "terminal_ticket outcome=issued wallet=%s",
+                mask_wallet_address(wallet),
+            )
+            return self._send_json(200, payload, no_cache=True)
 
         if webrtc_service and ponly.startswith("/api/webrtc/"):
             data = self._read_json_body()
@@ -1949,7 +2170,168 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         logger.info("Wallet signed in, no prepaid credit: %s", mask_wallet_address(wallet_address))
         return self._send_json(200, denied, set_cookie=_build_auth_cookie(token, ttl))
 
+    def _terminal_do_proxy(self, target, context):
+        """Proxy validated framed terminal traffic without shared target state."""
+        agent_buffer = bytearray()
+        browser_pending = False
+        revalidate_every = _terminal_gateway.revalidate_interval_seconds()
+        presence_every = _terminal_gateway.presence_interval_seconds()
+        next_revalidate = time.monotonic() + revalidate_every
+        next_presence = time.monotonic() + presence_every
+
+        def send_target(frame):
+            target.settimeout(_terminal_gateway.connect_timeout_seconds())
+            try:
+                target.sendall(frame)
+            finally:
+                target.settimeout(None)
+
+        while True:
+            read_list = [self.request]
+            # Apply backpressure at the private socket when browser output is
+            # pending instead of growing an unbounded gateway queue.
+            if not browser_pending:
+                read_list.append(target)
+            write_list = [self.request] if browser_pending else []
+            try:
+                readable, writable, exceptional = select.select(
+                    read_list, write_list, [], 1.0
+                )
+            except (OSError, ValueError) as exc:
+                raise self.CClose(1011, "Terminal transport failed") from exc
+            if exceptional:
+                raise self.CClose(1011, "Terminal transport failed")
+
+            if self.request in writable:
+                browser_pending = self.send_frames()
+
+            if self.request in readable:
+                messages, closed = self.recv_frames()
+                for message in messages:
+                    try:
+                        frame = _terminal_gateway.validate_client_frame(message)
+                    except _terminal_gateway.TerminalGatewayError as exc:
+                        self.send_frames(
+                            [_terminal_gateway.encode_frame(
+                                "E", json.dumps({"error": exc.message}).encode("utf-8")
+                            )]
+                        )
+                        raise self.CClose(1008, "Invalid terminal frame")
+                    send_target(frame)
+                if closed:
+                    raise self.CClose(closed["code"], closed["reason"])
+
+            if target in readable:
+                chunk = target.recv(64 * 1024)
+                if not chunk:
+                    raise self.CClose(1000, "Terminal agent closed")
+                agent_buffer.extend(chunk)
+                frames = list(_terminal_gateway.extract_agent_frames(agent_buffer))
+                if frames:
+                    browser_pending = self.send_frames(frames)
+
+            now = time.monotonic()
+            if now >= next_revalidate:
+                if not _terminal_gateway.terminal_context_is_authorized(context):
+                    self.send_frames(
+                        [_terminal_gateway.encode_frame(
+                            "E", b'{"error":"Terminal authorization expired"}'
+                        )]
+                    )
+                    raise self.CClose(1008, "Terminal authorization expired")
+                next_revalidate = now + revalidate_every
+            if now >= next_presence:
+                send_target(_terminal_gateway.encode_frame("P"))
+                next_presence = now + presence_every
+
+    def _terminal_websocket_client(self, context):
+        target = None
+        try:
+            timeout = _terminal_gateway.connect_timeout_seconds()
+            target = _terminal_gateway.connect_terminal_agent(
+                context,
+                socket.create_connection,
+                sleep=time.sleep,
+            )
+            target.settimeout(timeout)
+            target.sendall(_terminal_gateway.agent_handshake_payload(context))
+            response_line = _terminal_recv_line(
+                target, _terminal_gateway.MAX_HANDSHAKE_LINE
+            )
+            _terminal_gateway.validate_agent_handshake_response(response_line)
+            target.settimeout(None)
+            logger.info(
+                "Terminal WebSocket started for %s session %s",
+                mask_wallet_address(context.wallet_address),
+                context.session_id,
+            )
+            self._terminal_do_proxy(target, context)
+        except self.CClose:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "Terminal agent connection failed for session %s: %s",
+                context.session_id,
+                exc,
+            )
+            try:
+                self.send_frames(
+                    [_terminal_gateway.encode_frame(
+                        "E", b'{"error":"Terminal agent unavailable"}'
+                    )]
+                )
+            except Exception:
+                pass
+            raise self.CClose(1011, "Terminal agent unavailable")
+        finally:
+            if target is not None:
+                try:
+                    target.shutdown(2)
+                except Exception:
+                    pass
+                try:
+                    target.close()
+                except Exception:
+                    pass
+
+    def new_websocket_client(self):
+        context = getattr(self, "_terminal_context", None)
+        if context is not None:
+            return self._terminal_websocket_client(context)
+        return super().new_websocket_client()
+
     def handle_upgrade(self):
+        request_path = urlparse(self.path or "/").path
+        if (
+            _terminal_gateway is not None
+            and request_path == _terminal_gateway.WEBSOCKET_PATH
+        ):
+            try:
+                # Atomic consume occurs before the public handshake completes
+                # and before any private endpoint connection is attempted.
+                self._terminal_context = _terminal_context_for_handler(self)
+            except Exception as exc:
+                status = (
+                    exc.status
+                    if _terminal_gateway is not None
+                    and isinstance(exc, _terminal_gateway.TerminalGatewayError)
+                    else 503
+                )
+                message = (
+                    exc.message
+                    if _terminal_gateway is not None
+                    and isinstance(exc, _terminal_gateway.TerminalGatewayError)
+                    else "Web terminal unavailable"
+                )
+                self.send_error(status, message)
+                return
+            # Skip ProxyRequestHandler/WebSockifyRequestHandler target plugins:
+            # those mutate shared VNC target_host/target_port.  The terminal's
+            # request-local target is opened in new_websocket_client instead.
+            return super(
+                _websockifyserver.WebSockifyRequestHandler, self
+            ).handle_upgrade()
+
         # Diagnostic: confirms the WebSocket upgrade request reached this process (helps debug 1006 in proxy chains)
         logger.info("WebSocket upgrade request received for /websockify (chain reached AxonOS)")
         wallet_address = _extract_wallet_from_path_and_headers(self.path, self.headers)
