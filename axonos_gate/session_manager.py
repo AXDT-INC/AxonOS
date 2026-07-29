@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 logger = logging.getLogger(__name__)
 
 _SESSION_TABLE = "axgt_sessions"
+_STORAGE_VOLUME_TABLE = "axgt_storage_volumes"
 
 # Namespace key for the per-wallet claim advisory lock (pg_advisory_xact_lock's
 # two-int form). Serializes concurrent claims for one wallet so the UI's racing
@@ -152,14 +153,19 @@ def _prepaid_credit_allows_profile(
 
 
 def billing_context_for_wallet(wallet_address: str) -> Dict[str, Any]:
-    """Active-session GPU billing context for wallet-status / UI warnings."""
+    """GPU billing context plus requested and provisioned storage capacity.
+
+    The latest request is only a UI preference hint.  The provisioned floor
+    comes from host-observed ext4 metadata recorded by the trusted launcher.
+    """
     enabled = _gpu_billing_enabled()
     ctx: Dict[str, Any] = {
         "gpu_billing_enabled": enabled,
         "billing_gpu_count": 1,
         "gpu_profiles": _configured_profiles() if enabled else None,
+        "storage_growth_only": True,
     }
-    if not enabled or not _init_once():
+    if not _init_once():
         return ctx
     wallet = (wallet_address or "").strip().lower()
     if not wallet:
@@ -169,7 +175,31 @@ def billing_context_for_wallet(wallet_address: str) -> Dict[str, Any]:
         return ctx
     try:
         with conn.cursor() as cur:
-            owned = _active_session_for_wallet(cur, wallet)
+            owned = _active_session_for_wallet(cur, wallet) if enabled else None
+            cur.execute(
+                f"""
+                SELECT
+                    (SELECT requested_storage_gb
+                       FROM {_SESSION_TABLE}
+                      WHERE wallet_address = %s
+                        AND requested_storage_gb IS NOT NULL
+                      ORDER BY id DESC
+                      LIMIT 1),
+                    (SELECT provisioned_bytes
+                       FROM {_STORAGE_VOLUME_TABLE}
+                      WHERE wallet_address = %s)
+                """,
+                (wallet, wallet),
+            )
+            row_storage = cur.fetchone()
+            if row_storage and row_storage[0] is not None:
+                ctx["requested_storage_gb"] = int(row_storage[0])
+            if row_storage and row_storage[1] is not None:
+                gib = 1024**3
+                ctx["provisioned_storage_gb"] = (
+                    int(row_storage[1]) + gib - 1
+                ) // gib
+                ctx["minimum_storage_gb"] = ctx["provisioned_storage_gb"]
         if owned:
             gpu_ids = owned.get("gpu_ids") or []
             profile = owned.get("requested_profile")
@@ -206,6 +236,22 @@ def _explicit_gpu_ids_from_env() -> Optional[List[int]]:
     if count > 0:
         return list(range(count))
     return None
+
+
+def _provisioned_storage_gb_for_wallet(cur, wallet_address: str) -> Optional[int]:
+    """Return the trusted launcher's last observed ext4 capacity in GiB."""
+    cur.execute(
+        f"SELECT provisioned_bytes FROM {_STORAGE_VOLUME_TABLE} WHERE wallet_address = %s",
+        ((wallet_address or "").strip().lower(),),
+    )
+    row = cur.fetchone()
+    if not row or row[0] is None:
+        return None
+    provisioned_bytes = int(row[0])
+    if provisioned_bytes <= 0:
+        return None
+    gib = 1024**3
+    return (provisioned_bytes + gib - 1) // gib
 
 
 def _gpu_device_cache_ttl_seconds() -> float:
@@ -506,6 +552,18 @@ def _ensure_tables(conn) -> None:
                 files_key   TEXT,
                 ssh_enabled BOOLEAN NOT NULL DEFAULT FALSE,
                 credit_grace_started_at DOUBLE PRECISION
+            )
+        """)
+        # Trusted launcher projection of physical ext4 capacity.  Session
+        # requests are not authoritative: resize may complete before a later
+        # container/finalization step fails, and old image files may be larger
+        # than their filesystem.
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {_STORAGE_VOLUME_TABLE} (
+                wallet_address TEXT PRIMARY KEY,
+                volume_name TEXT NOT NULL,
+                provisioned_bytes BIGINT NOT NULL CHECK (provisioned_bytes > 0),
+                observed_at DOUBLE PRECISION NOT NULL
             )
         """)
         # Add last_billed_at if table existed from before migration
@@ -1309,6 +1367,15 @@ def try_claim_session(
             "session_mismatch": False,
         }
     profile_name, requested_gpus = _resolve_profile(requested_profile)
+    requested_storage_explicit = requested_storage_gb is not None
+    try:
+        storage_gb_val = (
+            max(10, min(500, int(requested_storage_gb)))
+            if requested_storage_explicit
+            else 100
+        )
+    except (TypeError, ValueError):
+        return {"granted": False, "reason": "Invalid persistent storage size"}
     if not _init_once():
         return {"granted": False, "reason": "Session DB unavailable"}
     conn = _get_connection()
@@ -1513,6 +1580,51 @@ def try_claim_session(
                 }
 
             if _multi_session_enabled():
+                provisioned_storage_gb = _provisioned_storage_gb_for_wallet(
+                    cur, wallet
+                )
+                if (
+                    provisioned_storage_gb is not None
+                    and provisioned_storage_gb > 500
+                ):
+                    conn.commit()
+                    return {
+                        "granted": False,
+                        "allocation_status": "rejected",
+                        "error_code": "storage_capacity_unsupported",
+                        "provisioned_storage_gb": provisioned_storage_gb,
+                        "minimum_storage_gb": provisioned_storage_gb,
+                        "storage_growth_only": True,
+                        "reason": (
+                            "The existing persistent volume exceeds the current "
+                            "500 GB launch limit. Contact an administrator."
+                        ),
+                    }
+                if (
+                    requested_storage_explicit
+                    and provisioned_storage_gb is not None
+                    and storage_gb_val < provisioned_storage_gb
+                ):
+                    conn.commit()
+                    return {
+                        "granted": False,
+                        "allocation_status": "rejected",
+                        "error_code": "storage_below_provisioned",
+                        "requested_storage_gb": storage_gb_val,
+                        "provisioned_storage_gb": provisioned_storage_gb,
+                        "minimum_storage_gb": provisioned_storage_gb,
+                        "storage_growth_only": True,
+                        "reason": (
+                            "Persistent storage cannot be reduced from "
+                            f"{provisioned_storage_gb} GB to {storage_gb_val} GB. "
+                            "Choose the current size or a larger volume."
+                        ),
+                    }
+                if provisioned_storage_gb is not None:
+                    # Legacy clients may omit storage.  Preserve their existing
+                    # volume instead of interpreting omission as a 100 GB shrink.
+                    storage_gb_val = max(storage_gb_val, provisioned_storage_gb)
+
                 allocated_gpu_ids = _choose_allocation(reserved_rows, requested_gpus)
                 if not allocated_gpu_ids:
                     cap_meta = _gpu_capacity_fields(requested_gpus, reserved_rows, profile_name)
@@ -1548,7 +1660,6 @@ def try_claim_session(
                     cap_secs = _ssh_hard_cap_seconds(_remaining_minutes_for(wallet))
                     if cap_secs is not None:
                         hard_expires_at = now + cap_secs
-                storage_gb_val = max(10, min(500, int(requested_storage_gb))) if requested_storage_gb is not None else 100
                 cur.execute(
                     f"""INSERT INTO {_SESSION_TABLE}
                         (wallet_address, requested_profile, gpu_ids, container_id, allocation_status,

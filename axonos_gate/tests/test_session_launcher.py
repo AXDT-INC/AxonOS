@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import os
+import subprocess
 import sys
 import unittest
 from unittest.mock import patch, MagicMock
@@ -227,7 +228,317 @@ class SessionLauncherTests(unittest.TestCase):
         cmd, err = _build_launch_cmd(payload)
         self.assertIsNone(err)
         self.assertIsNotNone(cmd)
-        mock_ensure_vol.assert_called_once_with("axgt-user-storage-0xabc123-xyz_", 200)
+        mock_ensure_vol.assert_called_once_with(
+            "axgt-user-storage-0xabc123-xyz_",
+            200,
+            "0xabc123-xyz_!!",
+        )
+
+    def test_service_repairs_filesystem_smaller_than_existing_image(self) -> None:
+        import session_launcher_service as service
+
+        gib = 1024 * 1024 * 1024
+        block_size = 4096
+        filesystem_sizes = iter((100 * gib, 200 * gib))
+
+        def check_output(cmd, **_kwargs):
+            if cmd[:2] == ["losetup", "-j"]:
+                return "/dev/loop7: []: (/storage/user.ext4)\n"
+            if cmd[:2] == ["dumpe2fs", "-h"]:
+                size = next(filesystem_sizes)
+                return f"Block count: {size // block_size}\nBlock size: {block_size}\n"
+            if cmd[:2] == ["docker", "ps"]:
+                return ""
+            if cmd[:3] == ["docker", "volume", "inspect"]:
+                return '[{"Options":{"type":"ext4","device":"/dev/loop7"}}]'
+            raise AssertionError(f"unexpected check_output command: {cmd}")
+
+        os.environ["AXGT_REAL_STORAGE_TEST"] = "1"
+        with patch.object(service, "_tool_path", side_effect=lambda name: name), \
+             patch.object(service.os, "makedirs"), \
+             patch.object(service.os.path, "exists", return_value=True), \
+             patch.object(service.os.path, "getsize", return_value=500 * gib), \
+             patch.object(service.subprocess, "check_output", side_effect=check_output), \
+             patch.object(service.subprocess, "run", return_value=MagicMock(returncode=1, stdout="repaired")) as mock_run, \
+             patch.object(service.subprocess, "check_call") as mock_check_call:
+            ok, error = service._ensure_persistent_storage_volume("user", 200)
+
+        self.assertTrue(ok, error)
+        self.assertIsNone(error)
+        calls = [entry.args[0] for entry in mock_check_call.call_args_list]
+        self.assertIn(["losetup", "-c", "/dev/loop7"], calls)
+        resize_command = ["resize2fs", "/dev/loop7", str((200 * gib) // block_size)]
+        self.assertIn(resize_command, calls)
+        mock_run.assert_called_once_with(
+            ["e2fsck", "-f", "-p", "/dev/loop7"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        self.assertLess(
+            calls.index(["losetup", "-c", "/dev/loop7"]),
+            calls.index(resize_command),
+        )
+        self.assertFalse(any(command[0] == "truncate" for command in calls))
+        self.assertFalse(any("/storage/user.ext4" in part for command in calls for part in command))
+
+    def test_service_rejects_request_below_observed_filesystem_capacity(self) -> None:
+        import session_launcher_service as service
+
+        gib = 1024**3
+        block_size = 4096
+        wallet = "0x" + "1" * 40
+
+        def check_output(cmd, **_kwargs):
+            if cmd[:2] == ["losetup", "-j"]:
+                return "/dev/loop7: []: (/storage/user.ext4)\n"
+            if cmd[:2] == ["dumpe2fs", "-h"]:
+                return (
+                    f"Block count: {(250 * gib) // block_size}\n"
+                    f"Block size: {block_size}\n"
+                )
+            raise AssertionError(f"unexpected check_output command: {cmd}")
+
+        os.environ["AXGT_REAL_STORAGE_TEST"] = "1"
+        with patch.object(service, "_tool_path", side_effect=lambda name: name), \
+             patch.object(service.os, "makedirs"), \
+             patch.object(service.os.path, "exists", return_value=True), \
+             patch.object(service.os.path, "getsize", return_value=250 * gib), \
+             patch.object(service.subprocess, "check_output", side_effect=check_output), \
+             patch.object(
+                 service,
+                 "_record_persistent_storage_capacity",
+                 return_value=(True, 250 * gib, None),
+             ) as record_capacity, \
+             patch.object(service.subprocess, "run") as mock_run, \
+             patch.object(service.subprocess, "check_call") as mock_check_call:
+            ok, error = service._ensure_persistent_storage_volume(
+                "axgt-user-storage-" + wallet,
+                100,
+                wallet,
+            )
+
+        self.assertFalse(ok)
+        self.assertIn("cannot be reduced from 250 GB to 100 GB", error or "")
+        record_capacity.assert_called_once_with(
+            wallet,
+            "axgt-user-storage-" + wallet,
+            250 * gib,
+        )
+        mock_run.assert_not_called()
+        mock_check_call.assert_not_called()
+
+    def test_service_registry_high_water_is_part_of_host_floor(self) -> None:
+        import session_launcher_service as service
+
+        gib = 1024**3
+        block_size = 4096
+        wallet = "0x" + "2" * 40
+
+        def check_output(cmd, **_kwargs):
+            if cmd[:2] == ["losetup", "-j"]:
+                return "/dev/loop7: []: (/storage/user.ext4)\n"
+            if cmd[:2] == ["dumpe2fs", "-h"]:
+                return (
+                    f"Block count: {(250 * gib) // block_size}\n"
+                    f"Block size: {block_size}\n"
+                )
+            raise AssertionError(f"unexpected check_output command: {cmd}")
+
+        os.environ["AXGT_REAL_STORAGE_TEST"] = "1"
+        with patch.object(service, "_tool_path", side_effect=lambda name: name), \
+             patch.object(service.os, "makedirs"), \
+             patch.object(service.os.path, "exists", return_value=True), \
+             patch.object(service.os.path, "getsize", return_value=250 * gib), \
+             patch.object(service.subprocess, "check_output", side_effect=check_output), \
+             patch.object(
+                 service,
+                 "_record_persistent_storage_capacity",
+                 return_value=(True, 300 * gib, None),
+             ), \
+             patch.object(service.subprocess, "run") as mock_run, \
+             patch.object(service.subprocess, "check_call") as mock_check_call:
+            ok, error = service._ensure_persistent_storage_volume(
+                "axgt-user-storage-" + wallet,
+                250,
+                wallet,
+            )
+
+        self.assertFalse(ok)
+        self.assertIn("cannot be reduced from 300 GB to 250 GB", error or "")
+        mock_run.assert_not_called()
+        mock_check_call.assert_not_called()
+
+    def test_capacity_recorder_keeps_monotonic_host_observation(self) -> None:
+        import session_launcher_service as service
+
+        gib = 1024**3
+        conn = MagicMock()
+        cur = MagicMock()
+        conn.cursor.return_value.__enter__.return_value = cur
+        cur.fetchone.return_value = (300 * gib,)
+        os.environ["AXGT_CHALLENGE_DB_URL"] = "postgresql://storage-registry"
+
+        with patch("psycopg2.connect", return_value=conn):
+            ok, recorded_bytes, error = service._record_persistent_storage_capacity(
+                "0x" + "3" * 40,
+                "axgt-user-storage-" + "0x" + "3" * 40,
+                250 * gib,
+            )
+
+        self.assertTrue(ok, error)
+        self.assertEqual(recorded_bytes, 300 * gib)
+        sql = "\n".join(str(call.args[0]) for call in cur.execute.call_args_list)
+        self.assertIn("GREATEST(", sql)
+        self.assertIn("RETURNING provisioned_bytes", sql)
+        self.assertIn("ELSE axgt_storage_volumes.observed_at", sql)
+        conn.commit.assert_called_once()
+        conn.close.assert_called_once()
+
+    def test_startup_sync_backfills_existing_wallet_filesystem_capacity(self) -> None:
+        import session_launcher_service as service
+
+        gib = 1024**3
+        wallet = "0x" + "4" * 40
+        volume_name = "axgt-user-storage-" + wallet
+        entry = MagicMock()
+        entry.name = volume_name + ".ext4"
+        entry.path = "/storage/" + entry.name
+
+        with patch.object(service.os, "scandir", return_value=[entry]), \
+             patch.object(
+                 service,
+                 "_ext4_filesystem_size",
+                 return_value=(250 * gib, 4096, None),
+             ) as inspect_fs, \
+             patch.object(
+                 service,
+                 "_record_persistent_storage_capacity",
+                 return_value=(True, 250 * gib, None),
+             ) as record_capacity:
+            count = service._sync_persistent_storage_capacity_records()
+
+        self.assertEqual(count, 1)
+        inspect_fs.assert_called_once_with(entry.path)
+        record_capacity.assert_called_once_with(wallet, volume_name, 250 * gib)
+
+    def test_startup_sync_fails_closed_when_capacity_cannot_be_recorded(self) -> None:
+        import session_launcher_service as service
+
+        wallet = "0x" + "5" * 40
+        entry = MagicMock()
+        entry.name = "axgt-user-storage-" + wallet + ".ext4"
+        entry.path = "/storage/" + entry.name
+
+        with patch.object(service.os, "scandir", return_value=[entry]), \
+             patch.object(
+                 service,
+                 "_ext4_filesystem_size",
+                 return_value=(250 * 1024**3, 4096, None),
+             ), patch.object(
+                 service,
+                 "_record_persistent_storage_capacity",
+                 return_value=(False, None, "database unavailable"),
+             ):
+            with self.assertRaisesRegex(RuntimeError, entry.name):
+                service._sync_persistent_storage_capacity_records()
+
+    def test_service_refuses_resize_while_volume_is_in_use(self) -> None:
+        import session_launcher_service as service
+
+        gib = 1024 * 1024 * 1024
+        block_size = 4096
+
+        def check_output(cmd, **_kwargs):
+            if cmd[:2] == ["losetup", "-j"]:
+                return "/dev/loop7: []: (/storage/user.ext4)\n"
+            if cmd[:2] == ["dumpe2fs", "-h"]:
+                return f"Block count: {(100 * gib) // block_size}\nBlock size: {block_size}\n"
+            if cmd[:2] == ["docker", "ps"]:
+                return "running-container-id\n"
+            raise AssertionError(f"unexpected check_output command: {cmd}")
+
+        os.environ["AXGT_REAL_STORAGE_TEST"] = "1"
+        with patch.object(service, "_tool_path", side_effect=lambda name: name), \
+             patch.object(service.os, "makedirs"), \
+             patch.object(service.os.path, "exists", return_value=True), \
+             patch.object(service.os.path, "getsize", return_value=200 * gib), \
+             patch.object(service.subprocess, "check_output", side_effect=check_output), \
+             patch.object(service.subprocess, "check_call") as mock_check_call:
+            ok, error = service._ensure_persistent_storage_volume("user", 200)
+
+        self.assertFalse(ok)
+        self.assertIn("while a container is using it", error or "")
+        mock_check_call.assert_not_called()
+
+    def test_service_refuses_resize_when_e2fsck_cannot_auto_repair(self) -> None:
+        import session_launcher_service as service
+
+        gib = 1024 * 1024 * 1024
+        block_size = 4096
+
+        def check_output(cmd, **_kwargs):
+            if cmd[:2] == ["losetup", "-j"]:
+                return "/dev/loop7: []: (/storage/user.ext4)\n"
+            if cmd[:2] == ["dumpe2fs", "-h"]:
+                return f"Block count: {(100 * gib) // block_size}\nBlock size: {block_size}\n"
+            if cmd[:2] == ["docker", "ps"]:
+                return ""
+            raise AssertionError(f"unexpected check_output command: {cmd}")
+
+        os.environ["AXGT_REAL_STORAGE_TEST"] = "1"
+        with patch.object(service, "_tool_path", side_effect=lambda name: name), \
+             patch.object(service.os, "makedirs"), \
+             patch.object(service.os.path, "exists", return_value=True), \
+             patch.object(service.os.path, "getsize", return_value=200 * gib), \
+             patch.object(service.subprocess, "check_output", side_effect=check_output), \
+             patch.object(
+                 service.subprocess,
+                 "run",
+                 return_value=MagicMock(returncode=4, stdout="manual repair required"),
+             ), \
+             patch.object(service.subprocess, "check_call") as mock_check_call:
+            ok, error = service._ensure_persistent_storage_volume("user", 200)
+
+        self.assertFalse(ok)
+        self.assertIn("e2fsck could not safely prepare /dev/loop7 (exit 4)", error or "")
+        calls = [entry.args[0] for entry in mock_check_call.call_args_list]
+        self.assertIn(["losetup", "-c", "/dev/loop7"], calls)
+        self.assertFalse(any(command[0] == "resize2fs" for command in calls))
+
+    def test_service_fails_closed_when_ext4_size_is_unreadable(self) -> None:
+        import session_launcher_service as service
+
+        def check_output(cmd, **_kwargs):
+            if cmd[:2] == ["losetup", "-j"]:
+                return "/dev/loop7: []: (/storage/user.ext4)\n"
+            if cmd[:2] == ["dumpe2fs", "-h"]:
+                raise subprocess.CalledProcessError(1, cmd)
+            raise AssertionError(f"unexpected check_output command: {cmd}")
+
+        import subprocess
+
+        os.environ["AXGT_REAL_STORAGE_TEST"] = "1"
+        with patch.object(service, "_tool_path", side_effect=lambda name: name), \
+             patch.object(service.os, "makedirs"), \
+             patch.object(service.os.path, "exists", return_value=True), \
+             patch.object(service.os.path, "getsize", return_value=200 * 1024**3), \
+             patch.object(service.subprocess, "check_output", side_effect=check_output), \
+             patch.object(service.subprocess, "check_call") as mock_check_call:
+            ok, error = service._ensure_persistent_storage_volume("user", 200)
+
+        self.assertFalse(ok)
+        self.assertIn("Could not inspect volume", error or "")
+        mock_check_call.assert_not_called()
+
+    def test_service_inspects_existing_runtime_before_storage_side_effects(self) -> None:
+        from session_launcher_service import launch
+
+        source = inspect.getsource(launch)
+        self.assertLess(
+            source.index("_inspect_managed_container_contract("),
+            source.index("_build_launch_cmd(payload)"),
+        )
 
     def test_service_build_launch_cmd_enabled(self) -> None:
         os.environ["AXGT_HOST_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"

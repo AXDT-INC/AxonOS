@@ -223,10 +223,10 @@ def collect_container_stats() -> dict:
                           / _cgroup_cpu_limit_count())
 
     mem_used, mem_total = _cgroup_memory_bytes()
-    disk_free = disk_total = None
+    disk_free = disk_total = disk_used = None
     try:
         disk = shutil.disk_usage(files_root())
-        disk_free, disk_total = disk.free, disk.total
+        disk_free, disk_total, disk_used = disk.free, disk.total, disk.used
     except OSError:
         pass
     return {
@@ -237,6 +237,7 @@ def collect_container_stats() -> dict:
         "mem_total_bytes": int(mem_total) if mem_total is not None else None,
         "disk_free_bytes": disk_free,
         "disk_total_bytes": disk_total,
+        "disk_used_bytes": disk_used,
     }
 
 

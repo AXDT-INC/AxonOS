@@ -74,6 +74,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
+_STORAGE_VOLUME_TABLE = "axgt_storage_volumes"
+
 _FORBIDDEN_SESSION_ENV_NAMES = {
     "AXGT_ADMIN_SECRET",
     "AXGT_CHALLENGE_DB_URL",
@@ -125,6 +127,74 @@ def _db_connect_timeout_seconds() -> int:
         return max(1, min(30, int(raw)))
     except ValueError:
         return 5
+
+
+def _record_persistent_storage_capacity(
+    wallet_address: str,
+    volume_name: str,
+    provisioned_bytes: int,
+) -> Tuple[bool, Optional[int], Optional[str]]:
+    """Persist capacity only after the host has read verified ext4 metadata."""
+    db_url = (os.getenv("AXGT_CHALLENGE_DB_URL") or "").strip()
+    wallet = (wallet_address or "").strip().lower()
+    if not db_url:
+        return False, None, "launcher control database is not configured"
+    if not wallet or not volume_name or provisioned_bytes <= 0:
+        return False, None, "invalid persistent storage capacity observation"
+    conn = None
+    try:
+        import psycopg2
+
+        conn = psycopg2.connect(
+            db_url,
+            connect_timeout=_db_connect_timeout_seconds(),
+        )
+        with conn.cursor() as cur:
+            # The launcher may be upgraded/restarted before the gate process
+            # runs its additive migration, so keep this creation idempotent here.
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS {_STORAGE_VOLUME_TABLE} (
+                    wallet_address TEXT PRIMARY KEY,
+                    volume_name TEXT NOT NULL,
+                    provisioned_bytes BIGINT NOT NULL CHECK (provisioned_bytes > 0),
+                    observed_at DOUBLE PRECISION NOT NULL
+                )
+            """)
+            cur.execute(
+                f"""INSERT INTO {_STORAGE_VOLUME_TABLE}
+                        (wallet_address, volume_name, provisioned_bytes, observed_at)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (wallet_address) DO UPDATE SET
+                        volume_name = EXCLUDED.volume_name,
+                        provisioned_bytes = GREATEST(
+                            {_STORAGE_VOLUME_TABLE}.provisioned_bytes,
+                            EXCLUDED.provisioned_bytes
+                        ),
+                        observed_at = CASE
+                            WHEN EXCLUDED.provisioned_bytes >=
+                                 {_STORAGE_VOLUME_TABLE}.provisioned_bytes
+                            THEN EXCLUDED.observed_at
+                            ELSE {_STORAGE_VOLUME_TABLE}.observed_at
+                        END
+                    RETURNING provisioned_bytes""",
+                (wallet, volume_name, int(provisioned_bytes), time.time()),
+            )
+            row = cur.fetchone()
+            recorded_bytes = int(row[0]) if row and row[0] is not None else 0
+            if recorded_bytes <= 0:
+                raise RuntimeError("capacity upsert returned no value")
+        conn.commit()
+        return True, recorded_bytes, None
+    except Exception as exc:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, None, f"could not record persistent storage capacity: {exc}"
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def _credit_grace_max_seconds() -> int:
@@ -211,7 +281,102 @@ def _get_or_attach_loop_device(img_path: str) -> Optional[str]:
     return None
 
 
-def _ensure_persistent_storage_volume(volume_name: str, requested_storage_gb: int) -> Tuple[bool, Optional[str]]:
+def _ext4_filesystem_size(img_or_device: str) -> Tuple[Optional[int], Optional[int], Optional[str]]:
+    """Return ext4 byte size and block size, failing closed on unreadable metadata."""
+    dumpe2fs_bin = _tool_path("dumpe2fs")
+    try:
+        dump_out = subprocess.check_output(
+            [dumpe2fs_bin, "-h", img_or_device],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+        block_count = block_size = 0
+        for line in dump_out.splitlines():
+            field, separator, raw_value = line.partition(":")
+            if not separator:
+                continue
+            if field.strip() == "Block count":
+                block_count = int(raw_value.strip())
+            elif field.strip() == "Block size":
+                block_size = int(raw_value.strip())
+        if block_count <= 0 or block_size <= 0:
+            return None, None, "dumpe2fs omitted ext4 size metadata"
+        return block_count * block_size, block_size, None
+    except Exception as exc:
+        return None, None, f"could not read ext4 size metadata: {exc}"
+
+
+def _sync_persistent_storage_capacity_records() -> int:
+    """Backfill trusted capacity records for volumes created before this release."""
+    storage_dir = os.getenv(
+        "AXGT_PERSISTENT_STORAGE_DIR",
+        "/var/lib/docker/axonos_storage",
+    ).strip()
+    prefix = _persistent_storage_volume_prefix()
+    if not prefix:
+        return 0
+    try:
+        entries = list(os.scandir(storage_dir))
+    except OSError as exc:
+        logger.warning("Could not scan persistent storage images: %s", exc)
+        return 0
+
+    recorded_count = 0
+    failures: List[str] = []
+    for entry in entries:
+        filename = entry.name
+        if not filename.startswith(prefix) or not filename.endswith(".ext4"):
+            continue
+        volume_name = filename[:-5]
+        wallet = volume_name[len(prefix):].lower()
+        if (
+            len(wallet) != 42
+            or not wallet.startswith("0x")
+            or any(ch not in "0123456789abcdef" for ch in wallet[2:])
+        ):
+            logger.warning("Skipping storage image with invalid wallet suffix: %s", filename)
+            continue
+        fs_bytes, _block_size, fs_error = _ext4_filesystem_size(entry.path)
+        if fs_error or fs_bytes is None:
+            logger.warning("Could not inspect legacy storage image %s: %s", filename, fs_error)
+            failures.append(filename)
+            continue
+        recorded, _recorded_bytes, record_error = _record_persistent_storage_capacity(
+            wallet,
+            volume_name,
+            fs_bytes,
+        )
+        if recorded:
+            recorded_count += 1
+        else:
+            logger.warning("Could not backfill capacity for %s: %s", filename, record_error)
+            failures.append(filename)
+    if failures:
+        raise RuntimeError(
+            "persistent storage capacity backfill failed for: "
+            + ", ".join(failures[:10])
+        )
+    return recorded_count
+
+
+def _volume_has_running_container(volume_name: str) -> Tuple[Optional[bool], Optional[str]]:
+    """Ask Docker whether a running container currently mounts this volume."""
+    try:
+        output = subprocess.check_output(
+            ["docker", "ps", "--filter", f"volume={volume_name}", "--quiet"],
+            text=True,
+            stderr=subprocess.STDOUT,
+        )
+        return bool(output.strip()), None
+    except Exception as exc:
+        return None, f"could not verify whether volume is in use: {exc}"
+
+
+def _ensure_persistent_storage_volume(
+    volume_name: str,
+    requested_storage_gb: int,
+    wallet_address: Optional[str] = None,
+) -> Tuple[bool, Optional[str]]:
     if "unittest" in sys.modules and os.getenv("AXGT_REAL_STORAGE_TEST") != "1":
         return True, None
     storage_dir = os.getenv("AXGT_PERSISTENT_STORAGE_DIR", "/var/lib/docker/axonos_storage").strip()
@@ -225,7 +390,12 @@ def _ensure_persistent_storage_volume(volume_name: str, requested_storage_gb: in
     truncate_bin = _tool_path("truncate")
     mkfs_bin = _tool_path("mkfs.ext4")
     resize_bin = _tool_path("resize2fs")
+    e2fsck_bin = _tool_path("e2fsck")
     losetup_bin = _tool_path("losetup")
+    loop_dev: Optional[str] = None
+    fs_bytes: Optional[int] = None
+    block_size: Optional[int] = None
+    capacity_recorded = False
 
     if not os.path.exists(img_path):
         logger.info("Creating new %d GB loop volume image at %s", requested_storage_gb, img_path)
@@ -236,20 +406,110 @@ def _ensure_persistent_storage_volume(volume_name: str, requested_storage_gb: in
             return False, f"Failed to initialize image file {img_path}: {exc}"
     else:
         curr_bytes = os.path.getsize(img_path)
-        if target_bytes > curr_bytes:
-            logger.info("Expanding volume %s from %d GB to %d GB", volume_name, curr_bytes // (1024**3), requested_storage_gb)
+        loop_dev = _get_or_attach_loop_device(img_path)
+        if not loop_dev:
+            return False, f"Could not bind loop device for {img_path}"
+        fs_bytes, block_size, fs_error = _ext4_filesystem_size(loop_dev)
+        if fs_error or fs_bytes is None or block_size is None:
+            return False, f"Could not inspect volume {volume_name}: {fs_error or 'unknown ext4 metadata error'}"
+
+        capacity_floor_bytes = fs_bytes
+        if wallet_address:
+            recorded, recorded_bytes, record_error = _record_persistent_storage_capacity(
+                wallet_address, volume_name, fs_bytes
+            )
+            if not recorded or recorded_bytes is None:
+                return False, record_error or "could not record persistent storage capacity"
+            capacity_floor_bytes = max(capacity_floor_bytes, recorded_bytes)
+            capacity_recorded = True
+
+        if target_bytes < capacity_floor_bytes:
+            gib = 1024**3
+            provisioned_gb = (capacity_floor_bytes + gib - 1) // gib
+            return False, (
+                f"Persistent storage cannot be reduced from {provisioned_gb} GB "
+                f"to {requested_storage_gb} GB. Existing volumes are growth-only; "
+                f"choose at least {provisioned_gb} GB."
+            )
+
+        needs_truncate = target_bytes > curr_bytes
+        needs_resize = target_bytes > fs_bytes
+        if needs_truncate or needs_resize:
+            logger.info(
+                "Expanding volume %s: file %d GB -> %d GB, fs %d GB -> %d GB",
+                volume_name, curr_bytes // (1024**3), requested_storage_gb,
+                fs_bytes // (1024**3), requested_storage_gb,
+            )
+            in_use, usage_error = _volume_has_running_container(volume_name)
+            if usage_error or in_use is None:
+                return False, f"Could not safely expand volume {volume_name}: {usage_error or 'unknown Docker usage state'}"
+            if in_use:
+                return False, f"Cannot expand volume {volume_name} while a container is using it"
             try:
-                subprocess.check_call([truncate_bin, "-s", f"{requested_storage_gb}G", img_path])
-                loop_dev = _get_or_attach_loop_device(img_path)
-                if loop_dev:
-                    subprocess.call([losetup_bin, "-c", loop_dev])
-                    subprocess.check_call([resize_bin, loop_dev])
+                if needs_truncate:
+                    subprocess.check_call([truncate_bin, "-s", f"{requested_storage_gb}G", img_path])
+                subprocess.check_call([losetup_bin, "-c", loop_dev])
+                # resize2fs requires a forced check after some interrupted or
+                # legacy growth attempts, even when the ext4 superblock says
+                # the filesystem is clean.  The Docker usage check above is
+                # the authoritative guard here because the launcher and Docker
+                # daemon have different mount namespaces.
+                fsck_result = subprocess.run(
+                    [e2fsck_bin, "-f", "-p", loop_dev],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+                if fsck_result.returncode not in (0, 1):
+                    fsck_detail = (fsck_result.stdout or "").strip()[-1000:]
+                    raise RuntimeError(
+                        f"e2fsck could not safely prepare {loop_dev} "
+                        f"(exit {fsck_result.returncode})"
+                        + (f": {fsck_detail}" if fsck_detail else "")
+                    )
+                # An image may already be larger than this particular request
+                # (for example, a legacy 500 GB image with a 100 GB filesystem
+                # and a new 200 GB request).  Bare resize2fs would consume the
+                # whole device, so pass the requested ext4 block count exactly.
+                target_blocks = target_bytes // block_size
+                subprocess.check_call([resize_bin, loop_dev, str(target_blocks)])
+                resized_bytes, resized_block_size, resized_error = _ext4_filesystem_size(loop_dev)
+                if (
+                    resized_error
+                    or resized_bytes is None
+                    or resized_block_size is None
+                    or resized_bytes + resized_block_size < target_bytes
+                ):
+                    raise RuntimeError(resized_error or "ext4 filesystem did not reach requested size")
+                fs_bytes = resized_bytes
+                block_size = resized_block_size
+                if wallet_address:
+                    recorded, recorded_bytes, record_error = _record_persistent_storage_capacity(
+                        wallet_address, volume_name, fs_bytes
+                    )
+                    if not recorded or recorded_bytes is None:
+                        raise RuntimeError(
+                            record_error or "could not record resized storage capacity"
+                        )
+                    capacity_recorded = True
             except Exception as exc:
                 return False, f"Failed to expand volume {volume_name}: {exc}"
 
-    loop_dev = _get_or_attach_loop_device(img_path)
+    loop_dev = loop_dev or _get_or_attach_loop_device(img_path)
     if not loop_dev:
         return False, f"Could not bind loop device for {img_path}"
+
+    if fs_bytes is None or block_size is None:
+        fs_bytes, block_size, fs_error = _ext4_filesystem_size(loop_dev)
+        if fs_error or fs_bytes is None or block_size is None:
+            return False, f"Could not inspect volume {volume_name}: {fs_error or 'unknown ext4 metadata error'}"
+
+    if wallet_address and not capacity_recorded:
+        recorded, _recorded_bytes, record_error = _record_persistent_storage_capacity(
+            wallet_address, volume_name, fs_bytes
+        )
+        if not recorded:
+            return False, record_error
 
     try:
         inspect_out = subprocess.check_output(
@@ -837,6 +1097,10 @@ def _launch_row_authorized(payload: Dict[str, object]) -> Tuple[bool, str]:
         files_key = str(payload.get("files_key") or "").strip()
         ssh_enabled = bool(payload.get("ssh_enabled"))
         requested_profile = str(payload.get("requested_profile") or "small").strip().lower()
+        raw_storage_gb = payload.get("requested_storage_gb")
+        requested_storage_gb = int(raw_storage_gb) if raw_storage_gb is not None else None
+        if requested_storage_gb is not None and (requested_storage_gb < 10 or requested_storage_gb > 500):
+            raise ValueError("requested storage is outside supported bounds")
     except (TypeError, ValueError):
         return False, "invalid launch allocation identity"
     conn = None
@@ -849,7 +1113,7 @@ def _launch_row_authorized(payload: Dict[str, object]) -> Tuple[bool, str]:
         )
         with conn.cursor() as cur:
             cur.execute(
-                """SELECT gpu_ids, files_key, ssh_enabled, requested_profile
+                """SELECT gpu_ids, files_key, ssh_enabled, requested_profile, requested_storage_gb
                    FROM axgt_sessions
                    WHERE id = %s
                      AND wallet_address = %s
@@ -877,6 +1141,15 @@ def _launch_row_authorized(payload: Dict[str, object]) -> Tuple[bool, str]:
     except ValueError:
         return False, "allocation GPU identity is invalid"
     stored_key = row[1] if isinstance(row[1], str) else ""
+    try:
+        stored_storage_gb = int(row[4])
+    except (TypeError, ValueError):
+        return False, "allocation storage identity is invalid"
+    if requested_storage_gb is None:
+        # Older gate versions omitted this field. Keep the database authoritative
+        # instead of silently falling back to a potentially divergent 100 GB.
+        requested_storage_gb = stored_storage_gb
+        payload["requested_storage_gb"] = stored_storage_gb
     if (
         stored_gpus != requested_gpus
         or not stored_key
@@ -884,6 +1157,7 @@ def _launch_row_authorized(payload: Dict[str, object]) -> Tuple[bool, str]:
         or not secrets.compare_digest(stored_key, files_key)
         or bool(row[2]) != ssh_enabled
         or str(row[3] or "small").strip().lower() != requested_profile
+        or stored_storage_gb != requested_storage_gb
     ):
         return False, "launch allocation identity mismatch"
     return True, ""
@@ -1106,7 +1380,11 @@ def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], 
                 requested_storage_gb = max(10, min(500, int(raw_storage_gb)))
             except (TypeError, ValueError):
                 requested_storage_gb = 100
-        ok_vol, vol_err = _ensure_persistent_storage_volume(volume_name, requested_storage_gb)
+        ok_vol, vol_err = _ensure_persistent_storage_volume(
+            volume_name,
+            requested_storage_gb,
+            wallet,
+        )
         if not ok_vol:
             return None, f"Failed to provision user storage volume: {vol_err}"
         cmd.extend(["-v", f"{volume_name}:{mount_path}"])
@@ -1316,12 +1594,6 @@ def launch():
         authorized, authorization_error = _launch_row_authorized(payload)
         if not authorized:
             return jsonify({"ok": False, "error": authorization_error}), 409
-        try:
-            cmd, build_err = _build_launch_cmd(payload)
-        except ValueError as exc:
-            return jsonify({"ok": False, "error": f"invalid launcher arguments: {exc}"}), 400
-        if build_err:
-            return jsonify({"ok": False, "error": build_err}), 400
         runtime_digest, runtime_network = _runtime_contract_for_payload(payload)
 
         contract_state, existing_id, contract_error = _inspect_managed_container_contract(
@@ -1380,6 +1652,12 @@ def launch():
                         "error": "could not remove stale managed session container",
                     }
                 ), 500
+        try:
+            cmd, build_err = _build_launch_cmd(payload)
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": f"invalid launcher arguments: {exc}"}), 400
+        if build_err:
+            return jsonify({"ok": False, "error": build_err}), 400
         cleanup_ok, cleanup_error = _cleanup_session_network(session_id)
         if not cleanup_ok:
             logger.warning(
@@ -1722,6 +2000,8 @@ def main():
         port = 8090
 
     if _persistent_storage_enabled():
+        synced = _sync_persistent_storage_capacity_records()
+        logger.info("Synchronized %d persistent storage capacity record(s)", synced)
         import threading
         t = threading.Thread(target=_prune_inactive_volumes_loop, daemon=True)
         t.start()

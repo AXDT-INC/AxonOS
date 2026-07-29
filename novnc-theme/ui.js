@@ -1500,7 +1500,7 @@ const UI = {
         }
 
         try {
-            const terminalModule = await import('./terminal/axonos-terminal.js?v=20260729c');
+            const terminalModule = await import('./terminal/axonos-terminal.js?v=20260729d');
             const client = await terminalModule.openAxonosTerminal({
                 container: document.getElementById('noVNC_container'),
                 wallet,
@@ -3053,12 +3053,9 @@ const UI = {
             if (window.axonosSelectedTemplateId) {
                 payload.requested_template = window.axonosSelectedTemplateId;
             }
-            const storageSlider = document.getElementById('axonos_wizard_storage_slider');
-            if (storageSlider && storageSlider.value) {
-                const storageGb = parseInt(storageSlider.value, 10);
-                if (Number.isInteger(storageGb) && storageGb >= 10 && storageGb <= 500) {
-                    payload.requested_storage_gb = storageGb;
-                }
+            if (typeof window.axonosRequestedStorageGbForClaim === 'function') {
+                payload.requested_storage_gb =
+                    window.axonosRequestedStorageGbForClaim(wallet);
             }
         }
         // SSH intent is sent on every claim (including reload re-claims) so the
@@ -3674,7 +3671,7 @@ const UI = {
                         try {
                             // A stable module URL keeps negotiation generation/cancellation
                             // state shared across retries and rapid user reconnects.
-                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260729c');
+                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260729d');
                             if (!connectAttemptIsCurrent()) {
                                 return;
                             }

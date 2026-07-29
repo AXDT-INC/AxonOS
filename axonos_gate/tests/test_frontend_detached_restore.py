@@ -12,6 +12,9 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         cls.ui_source = (repo / "novnc-theme" / "ui.js").read_text(
             encoding="utf-8"
         )
+        cls.proxy_source = (repo / "axonos_gate" / "websockify_gate.py").read_text(
+            encoding="utf-8"
+        )
 
     def _page_between(self, start: str, end: str) -> str:
         self.assertIn(start, self.page_source)
@@ -214,6 +217,232 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         self.assertIn("UI._axgtStatusPollId = null", cleanup)
         self.assertIn("UI._axgtStopSessionTimer()", cleanup)
         self.assertIn("UI.hideAxonosSshCard()", cleanup)
+
+    def test_storage_context_is_generation_and_wallet_scoped(self) -> None:
+        storage_helpers = self._page_between(
+            "var axonosWizardStorageUserEdited = false;",
+            "function axonosStartWizard()",
+        )
+        apply_context = self._page_between(
+            "function axonosApplyWizardStorageContext(wallet, data, generation)",
+            "function axonosShowStorageGrowthOnlyWarning()",
+        )
+        wizard_start = self._page_between(
+            "function axonosStartWizard()",
+            "window.axonosStartWizard = axonosStartWizard;",
+        )
+        step_three = self._page_between(
+            "// Wallet view state checks in Step 3",
+            "window.axonosGoToWizardStep = axonosGoToWizardStep;",
+        )
+        launch = self._page_between(
+            "function axonosTriggerLaunchFromWizard()",
+            "// Stepper click binding for unconnected wallet connect",
+        )
+
+        self.assertIn("var axonosWizardStorageGeneration = 0", storage_helpers)
+        self.assertIn("var axonosWizardStorageFloorWallet = ''", storage_helpers)
+        self.assertIn("generation !== axonosWizardStorageGeneration", apply_context)
+        self.assertIn("walletKey !== axonosWizardStorageFloorWallet", apply_context)
+        self.assertIn("!axonosPaymentIdentityIsCurrent(wallet)", apply_context)
+
+        self.assertIn(
+            "const storageGeneration = ++axonosWizardStorageGeneration",
+            wizard_start,
+        )
+        for flow in (wizard_start, step_three, launch):
+            self.assertIn("res.stale", flow)
+            self.assertIn("!axonosPaymentIdentityIsCurrent(", flow)
+            self.assertIn("axonosApplyWizardStorageContext(", flow)
+            self.assertIn("storageGeneration", flow)
+            self.assertLess(
+                flow.index("res.stale"),
+                flow.index("axonosApplyWizardStorageContext("),
+            )
+
+    def test_storage_floor_is_authoritative_and_preserves_larger_choice(self) -> None:
+        storage_helpers = self._page_between(
+            "var axonosWizardStorageUserEdited = false;",
+            "function axonosStartWizard()",
+        )
+        apply_context = self._page_between(
+            "function axonosApplyWizardStorageContext(wallet, data, generation)",
+            "function axonosShowStorageGrowthOnlyWarning()",
+        )
+        wizard_start = self._page_between(
+            "function axonosStartWizard()",
+            "window.axonosStartWizard = axonosStartWizard;",
+        )
+        step_three = self._page_between(
+            "// Wallet view state checks in Step 3",
+            "window.axonosGoToWizardStep = axonosGoToWizardStep;",
+        )
+
+        self.assertIn("function axonosReadStoragePreference(wallet)", storage_helpers)
+        self.assertIn("function axonosWriteStoragePreference(wallet, value)", storage_helpers)
+        self.assertIn(
+            "storageGb = Math.max(storageGb, axonosWizardStorageFloorGb)",
+            storage_helpers,
+        )
+        self.assertIn("data.minimum_storage_gb != null", apply_context)
+        self.assertIn("data.provisioned_storage_gb", apply_context)
+        self.assertLess(
+            apply_context.index("data.minimum_storage_gb"),
+            apply_context.index("data.provisioned_storage_gb"),
+        )
+        self.assertIn(
+            "axonosWizardStorageFloorGb = Math.max(",
+            apply_context,
+        )
+        self.assertIn("selectedGb < axonosWizardStorageFloorGb", apply_context)
+        self.assertIn(
+            "axonosApplyStorageSelection(axonosWizardStorageFloorGb)",
+            apply_context,
+        )
+        self.assertIn(
+            "provisionedStorageGb: axonosWizardStorageFloorGb",
+            apply_context,
+        )
+
+        self.assertIn("axonosWizardStorageUserEdited = false", wizard_start)
+        self.assertIn("axonosRestoreStoragePreference(", wizard_start)
+        self.assertIn("axonosWizardStorageUserEdited = true", wizard_start)
+        self.assertIn("requestedGb < axonosWizardStorageFloorGb", wizard_start)
+        self.assertIn("axonosShowStorageGrowthOnlyWarning()", wizard_start)
+        self.assertIn("axonosWriteStoragePreference(w, slider.value)", wizard_start)
+        self.assertIn("serverStorageGb = axonosNormalizeStorageGb", apply_context)
+        self.assertIn("!axonosWizardStorageUserEdited", apply_context)
+        self.assertIn("savedStorageGb === null", apply_context)
+        self.assertIn("axonosApplyWizardStorageContext(", step_three)
+        self.assertNotIn("slider.value = data.requested_storage_gb", step_three)
+
+    def test_growth_only_floor_updates_slider_label_warning_and_copy(self) -> None:
+        floor_ui = self._page_between(
+            "function axonosUpdateStorageFloorUi()",
+            "function axonosResetStorageFloor(wallet)",
+        )
+        warning = self._page_between(
+            "function axonosShowStorageGrowthOnlyWarning()",
+            "function axonosRequestedStorageGbForClaim(wallet)",
+        )
+
+        self.assertIn('id="axonos_wizard_storage_slider"', self.page_source)
+        self.assertIn('id="axonos_wizard_storage_min"', self.page_source)
+        self.assertIn('id="axonos_wizard_storage_desc"', self.page_source)
+        self.assertIn('role="status" aria-live="polite"', self.page_source)
+        normalized_page = " ".join(self.page_source.split())
+        self.assertIn("Volumes can grow but cannot be reduced", normalized_page)
+        self.assertIn("increasing this setting raises the minimum", normalized_page)
+
+        self.assertIn("slider.min = String(axonosWizardStorageFloorGb)", floor_ui)
+        self.assertIn(
+            "minLabel.textContent = axonosWizardStorageFloorGb + ' GB'",
+            floor_ui,
+        )
+        self.assertIn("This wallet already has a ", floor_ui)
+        self.assertIn("GB persistent volume. It cannot be reduced", floor_ui)
+        self.assertIn("GB is the minimum for future sessions", floor_ui)
+        self.assertIn("Increasing this setting raises that future minimum", floor_ui)
+        self.assertIn("Your existing volume is ", warning)
+        self.assertIn("GB and cannot be reduced", warning)
+        self.assertIn("Review the updated storage setting, then launch again", warning)
+        self.assertIn("'warn'", warning)
+
+    def test_both_claim_paths_use_floor_checked_storage_selection(self) -> None:
+        page_claim = self._page_between(
+            "function claimSession(options)",
+            "function sessionStatus()",
+        )
+        ui_claim = self.ui_source.split("_axonosFetchSessionClaim(options)", 1)[1].split(
+            "_axonosReleaseSessionHeaders()", 1
+        )[0]
+
+        expected = "window.axonosRequestedStorageGbForClaim(wallet)"
+        for claim in (page_claim, ui_claim):
+            self.assertIn("payload.requested_storage_gb", claim)
+            self.assertIn(expected, claim)
+            self.assertNotIn("axonos_wizard_storage_slider", claim)
+
+    def test_launch_preflight_aborts_when_authoritative_floor_adjusts(self) -> None:
+        launch = self._page_between(
+            "function axonosTriggerLaunchFromWizard()",
+            "// Stepper click binding for unconnected wallet connect",
+        )
+
+        self.assertIn("const storageGeneration = axonosWizardStorageGeneration", launch)
+        self.assertIn("axonosFetchWalletAccessStatus(wallet)", launch)
+        self.assertIn("axonosApplyWizardStorageContext(", launch)
+        self.assertLess(
+            launch.index("axonosApplyWizardStorageContext("),
+            launch.index("claimSession().then"),
+        )
+
+        not_applied = launch.split("if (!storageContext.applied)", 1)[1].split(
+            "if (storageContext.adjusted)", 1
+        )[0]
+        self.assertIn("hideConnectionLoader();", not_applied)
+        self.assertIn("return;", not_applied)
+
+        adjusted = launch.split("if (storageContext.adjusted)", 1)[1].split(
+            "const remaining", 1
+        )[0]
+        self.assertIn("hideConnectionLoader();", adjusted)
+        self.assertIn("axonosGoToWizardStep(2);", adjusted)
+        self.assertIn("axonosShowStorageGrowthOnlyWarning();", adjusted)
+        self.assertIn("return;", adjusted)
+
+    def test_structured_storage_rejection_returns_to_hardware_step(self) -> None:
+        denied = self._page_between(
+            "function handleSessionClaimDenied(claim, fallbackReason)",
+            "/** Called from ui.js when Launch runs connect while session is not claimed. */",
+        )
+        storage_rejection = denied.split(
+            "if (claim && claim.error_code === 'storage_below_provisioned')", 1
+        )[1].split("if (axonosClaimReasonNeedsWalletOrResume(claim))", 1)[0]
+
+        self.assertIn("axonosApplyWizardStorageContext(", storage_rejection)
+        self.assertIn("claim,", storage_rejection)
+        self.assertIn("axonosWizardStorageGeneration", storage_rejection)
+        self.assertIn("if (storageContext.applied)", storage_rejection)
+        self.assertIn("axonosUpdateActiveScreen('wizard');", storage_rejection)
+        self.assertIn("axonosGoToWizardStep(2);", storage_rejection)
+        self.assertIn("axonosShowStorageGrowthOnlyWarning();", storage_rejection)
+        self.assertIn("return;", storage_rejection)
+
+    def test_storage_telemetry_uses_allocated_blocks_not_total_minus_free(self) -> None:
+        renderer = self._page_between(
+            "function axonosRenderStorageUsage(usedBytes, totalBytes)",
+            "function axonosTickTelemetry()",
+        )
+        telemetry = self._page_between(
+            "function axonosTickTelemetry()",
+            "// Listen for VNC connection events to manage the loop.",
+        )
+
+        self.assertIn(
+            "axonosRenderStorageUsage(st.disk_used_bytes, st.disk_total_bytes)",
+            telemetry,
+        )
+        self.assertNotIn("disk_free_bytes", telemetry)
+        self.assertIn("Math.min(totalBytes, usedBytes)", renderer)
+        self.assertNotIn("totalBytes -", renderer)
+        self.assertNotIn("freeBytes", renderer)
+
+    def test_same_origin_claim_route_forwards_requested_storage(self) -> None:
+        claim_route = self.proxy_source.split(
+            "if _session_mgr_available and self.path.startswith('/api/session/claim'):",
+            1,
+        )[1].split(
+            "if _session_mgr_available and self.path.startswith('/api/session/heartbeat'):",
+            1,
+        )[0]
+
+        self.assertIn("raw_storage_gb = data.get('requested_storage_gb')", claim_route)
+        self.assertIn(
+            "requested_storage_gb = min(500, max(10, int(raw_storage_gb)))",
+            claim_route,
+        )
+        self.assertIn("requested_storage_gb=requested_storage_gb", claim_route)
 
     def test_explicit_wallet_sign_out_releases_before_identity_cleanup(self) -> None:
         sign_out = self._page_between(

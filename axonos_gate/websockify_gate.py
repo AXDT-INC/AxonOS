@@ -1790,6 +1790,13 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             wallet_address = (data.get('wallet_address') or '').strip()
             requested_profile = (data.get('requested_profile') or '').strip() or None
             requested_template = (data.get('requested_template') or '').strip() or None
+            raw_storage_gb = data.get('requested_storage_gb')
+            requested_storage_gb = None
+            if raw_storage_gb is not None:
+                try:
+                    requested_storage_gb = min(500, max(10, int(raw_storage_gb)))
+                except (TypeError, ValueError):
+                    requested_storage_gb = None
             resume_only_raw = data.get('resume_only', False)
             if not isinstance(resume_only_raw, bool):
                 return self._send_json(400, {
@@ -1828,6 +1835,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 ssh_pubkey=ssh_pubkey,
                 resume_only=resume_only,
                 expected_session_id=expected_session_id,
+                requested_storage_gb=requested_storage_gb,
             )
             return self._send_json(200, result)
 

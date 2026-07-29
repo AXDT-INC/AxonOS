@@ -36,7 +36,7 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
         conn = MagicMock()
         cur = MagicMock()
         cur.__enter__.return_value = cur
-        cur.fetchone.return_value = ("0,2", "session-files-key", False, "small")
+        cur.fetchone.return_value = ("0,2", "session-files-key", False, "small", 200)
         conn.cursor.return_value = cur
         payload = {
             "session_id": 37,
@@ -44,6 +44,7 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
             "assigned_gpu_ids": [2, 0],
             "files_key": "session-files-key",
             "ssh_enabled": False,
+            "requested_storage_gb": 200,
         }
         environment = {
             "AXGT_HOST_SESSION_NETWORK_ISOLATION": "true",
@@ -70,7 +71,16 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
         self.assertIn("allocation_status in ('allocating', 'allocated')", normalized)
         self.assertEqual(params[0:2], (37, "0xabc123"))
 
-        cur.fetchone.return_value = ("0,1", "session-files-key", False, "small")
+        cur.fetchone.return_value = ("0,1", "session-files-key", False, "small", 200)
+        with patch.dict(os.environ, environment, clear=True), patch(
+            "psycopg2.connect",
+            return_value=conn,
+        ):
+            allowed, error = launcher._launch_row_authorized(payload)
+        self.assertFalse(allowed)
+        self.assertEqual(error, "launch allocation identity mismatch")
+
+        cur.fetchone.return_value = ("0,2", "session-files-key", False, "small", 100)
         with patch.dict(os.environ, environment, clear=True), patch(
             "psycopg2.connect",
             return_value=conn,
@@ -85,7 +95,7 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
         conn = MagicMock()
         cur = MagicMock()
         cur.__enter__.return_value = cur
-        cur.fetchone.return_value = ("0", "session-files-key", False, "small")
+        cur.fetchone.return_value = ("0", "session-files-key", False, "small", 100)
         conn.cursor.return_value = cur
         payload = {
             "session_id": 37,
@@ -106,6 +116,7 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
             allowed, error = launcher._launch_row_authorized(payload)
 
         self.assertTrue(allowed, error)
+        self.assertEqual(payload["requested_storage_gb"], 100)
         connect.assert_called_once()
         sql = " ".join(cur.execute.call_args.args[0].split()).lower()
         self.assertIn("id = %s", sql)

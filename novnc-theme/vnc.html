@@ -69,7 +69,7 @@ Copyright (C) 2019 The noVNC Authors
     <!-- Stylesheets -->
     <link rel="stylesheet" href="app/styles/base.css">
     <link rel="stylesheet" href="app/vendor/xterm/xterm.css?v=6.0.0">
-    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.1&t=20260729c">
+    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.1&t=20260729d">
 
     <!-- Images that will later appear via CSS -->
     <link rel="preload" as="image" href="app/images/info.svg">
@@ -109,7 +109,7 @@ Copyright (C) 2019 The noVNC Authors
     </script>
     <script src="app/error-handler.js"></script>
     <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
-    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260729c"></script>
+    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260729d"></script>
 </head>
 
 <body>
@@ -1030,13 +1030,15 @@ Copyright (C) 2019 The noVNC Authors
                                     <span class="axonos-storage-slider-title">Persistent storage volume</span>
                                     <span id="axonos_wizard_storage_val" class="axonos-storage-slider-val">100 GB</span>
                                 </div>
-                                <p class="axonos-storage-slider-desc">Your home folder is automatically saved to your
-                                    wallet between sessions. Storage is billed at 0.05 credits per GB/hour while active
-                                    or saved.</p>
+                                <p id="axonos_wizard_storage_desc" class="axonos-storage-slider-desc"
+                                    role="status" aria-live="polite">Your home folder is automatically saved to your
+                                    wallet between sessions. Volumes can grow but cannot be reduced; increasing this
+                                    setting raises the minimum for future sessions. Storage is billed at 0.05 credits
+                                    per GB/hour while active or saved.</p>
                                 <input type="range" id="axonos_wizard_storage_slider" class="axonos-storage-slider"
                                     min="10" max="500" step="10" value="100">
                                 <div class="axonos-storage-slider-limits">
-                                    <span>10 GB</span>
+                                    <span id="axonos_wizard_storage_min">10 GB</span>
                                     <span>500 GB</span>
                                 </div>
                             </div>
@@ -2897,12 +2899,9 @@ Copyright (C) 2019 The noVNC Authors
                 if (window.axonosSelectedTemplateId) {
                     payload.requested_template = window.axonosSelectedTemplateId;
                 }
-                var _storageSlider = document.getElementById('axonos_wizard_storage_slider');
-                if (_storageSlider && _storageSlider.value) {
-                    var _storageGb = parseInt(_storageSlider.value, 10);
-                    if (Number.isInteger(_storageGb) && _storageGb >= 10 && _storageGb <= 500) {
-                        payload.requested_storage_gb = _storageGb;
-                    }
+                if (typeof window.axonosRequestedStorageGbForClaim === 'function') {
+                    payload.requested_storage_gb =
+                        window.axonosRequestedStorageGbForClaim(wallet);
                 }
             }
             // SSH intent must ride this claim too: it races (and may win) the ui.js
@@ -4098,6 +4097,20 @@ Copyright (C) 2019 The noVNC Authors
         function handleSessionClaimDenied(claim, fallbackReason) {
             if (typeof window.axonosHideConnectionLoader === 'function') {
                 window.axonosHideConnectionLoader(true);
+            }
+            if (claim && claim.error_code === 'storage_below_provisioned') {
+                var storageWallet = window.verifiedWalletAddress || verifiedWalletAddress;
+                var storageContext = axonosApplyWizardStorageContext(
+                    storageWallet,
+                    claim,
+                    axonosWizardStorageGeneration
+                );
+                if (storageContext.applied) {
+                    axonosUpdateActiveScreen('wizard');
+                    axonosGoToWizardStep(2);
+                    axonosShowStorageGrowthOnlyWarning();
+                    return;
+                }
             }
             if (axonosClaimReasonNeedsWalletOrResume(claim)) {
                 axonosRouteClaimDeniedToRechargeOrResume(claim);
@@ -8585,9 +8598,182 @@ Copyright (C) 2019 The noVNC Authors
         // handlers, and the SSH toggle card (a click-to-toggle) then flipped the
         // checkbox N times per click: with an even count it visibly did nothing.
         var axonosWizardEventsWired = false;
+        var axonosWizardStorageUserEdited = false;
+        var axonosWizardStorageGeneration = 0;
+        var axonosWizardStorageFloorGb = 10;
+        var axonosWizardStorageFloorWallet = '';
+
+        function axonosNormalizeStorageGb(value) {
+            var storageGb = parseInt(value, 10);
+            if (!Number.isInteger(storageGb) || storageGb < 10 || storageGb > 500) return null;
+            return storageGb;
+        }
+
+        function axonosStoragePreferenceKey(wallet) {
+            var normalizedWallet = String(wallet || '').trim().toLowerCase();
+            return normalizedWallet ? 'axonos_last_storage_gb_' + normalizedWallet : null;
+        }
+
+        function axonosStorageWalletKey(wallet) {
+            return String(wallet || '').trim().toLowerCase();
+        }
+
+        function axonosReadStoragePreference(wallet) {
+            var key = axonosStoragePreferenceKey(wallet);
+            if (!key) return null;
+            try {
+                return axonosNormalizeStorageGb(localStorage.getItem(key));
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function axonosWriteStoragePreference(wallet, value) {
+            var key = axonosStoragePreferenceKey(wallet);
+            var storageGb = axonosNormalizeStorageGb(value);
+            if (!key || storageGb === null) return;
+            try { localStorage.setItem(key, String(storageGb)); } catch (e) { }
+        }
+
+        function axonosApplyStorageSelection(value) {
+            var storageGb = axonosNormalizeStorageGb(value);
+            if (storageGb === null) return false;
+            storageGb = Math.max(storageGb, axonosWizardStorageFloorGb);
+            var slider = document.getElementById('axonos_wizard_storage_slider');
+            var sliderVal = document.getElementById('axonos_wizard_storage_val');
+            if (!slider) return false;
+            slider.value = String(storageGb);
+            if (sliderVal) sliderVal.textContent = storageGb + ' GB';
+            return true;
+        }
+
+        function axonosUpdateStorageFloorUi() {
+            var slider = document.getElementById('axonos_wizard_storage_slider');
+            var desc = document.getElementById('axonos_wizard_storage_desc');
+            var minLabel = document.getElementById('axonos_wizard_storage_min');
+            if (slider) slider.min = String(axonosWizardStorageFloorGb);
+            if (minLabel) minLabel.textContent = axonosWizardStorageFloorGb + ' GB';
+            if (desc) {
+                desc.textContent = axonosWizardStorageFloorGb > 10
+                    ? 'This wallet already has a ' + axonosWizardStorageFloorGb +
+                        ' GB persistent volume. It cannot be reduced; ' +
+                        axonosWizardStorageFloorGb + ' GB is the minimum for future sessions. ' +
+                        'Increasing this setting raises that future minimum. ' +
+                        'Storage is billed at 0.05 credits per GB/hour while active or saved.'
+                    : 'Your home folder is automatically saved to your wallet between sessions. ' +
+                        'Volumes can grow but cannot be reduced; increasing this setting raises ' +
+                        'the minimum for future sessions. Storage is billed at ' +
+                        '0.05 credits per GB/hour while active or saved.';
+            }
+        }
+
+        function axonosResetStorageFloor(wallet) {
+            axonosWizardStorageFloorWallet = axonosStorageWalletKey(wallet);
+            axonosWizardStorageFloorGb = 10;
+            axonosUpdateStorageFloorUi();
+        }
+
+        function axonosApplyWizardStorageContext(wallet, data, generation) {
+            var walletKey = axonosStorageWalletKey(wallet);
+            if (!walletKey || generation !== axonosWizardStorageGeneration ||
+                walletKey !== axonosWizardStorageFloorWallet ||
+                !axonosPaymentIdentityIsCurrent(wallet)) {
+                return { applied: false, adjusted: false };
+            }
+            data = data || {};
+            var provisionedGb = axonosNormalizeStorageGb(
+                data.minimum_storage_gb != null
+                    ? data.minimum_storage_gb
+                    : data.provisioned_storage_gb
+            );
+            if (provisionedGb !== null) {
+                // Within one wizard, a late response may only raise the floor.
+                axonosWizardStorageFloorGb = Math.max(
+                    axonosWizardStorageFloorGb,
+                    provisionedGb
+                );
+            }
+            axonosUpdateStorageFloorUi();
+
+            var slider = document.getElementById('axonos_wizard_storage_slider');
+            var selectedGb = slider ? axonosNormalizeStorageGb(slider.value) : null;
+            var adjusted = selectedGb === null || selectedGb < axonosWizardStorageFloorGb;
+            if (adjusted) {
+                axonosApplyStorageSelection(axonosWizardStorageFloorGb);
+                axonosWriteStoragePreference(wallet, axonosWizardStorageFloorGb);
+            }
+
+            var serverStorageGb = axonosNormalizeStorageGb(data.requested_storage_gb);
+            var savedStorageGb = axonosReadStoragePreference(wallet);
+            if (serverStorageGb !== null && !axonosWizardStorageUserEdited &&
+                savedStorageGb === null) {
+                axonosApplyStorageSelection(Math.max(
+                    serverStorageGb,
+                    axonosWizardStorageFloorGb
+                ));
+                if (slider) axonosWriteStoragePreference(wallet, slider.value);
+            }
+            axonosUpdateWizardSummaryRail();
+            return {
+                applied: true,
+                adjusted: adjusted,
+                provisionedStorageGb: axonosWizardStorageFloorGb
+            };
+        }
+
+        function axonosShowStorageGrowthOnlyWarning() {
+            if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                UI.showStatus(
+                    'Your existing volume is ' + axonosWizardStorageFloorGb +
+                    ' GB and cannot be reduced. Review the updated storage setting, then launch again.',
+                    'warn',
+                    7000
+                );
+            }
+        }
+
+        function axonosRequestedStorageGbForClaim(wallet) {
+            var walletKey = axonosStorageWalletKey(wallet);
+            var floorGb = walletKey && walletKey === axonosWizardStorageFloorWallet
+                ? axonosWizardStorageFloorGb : 10;
+            var slider = document.getElementById('axonos_wizard_storage_slider');
+            var selectedGb = slider ? axonosNormalizeStorageGb(slider.value) : null;
+            var storageGb = Math.max(selectedGb === null ? 100 : selectedGb, floorGb);
+            axonosApplyStorageSelection(storageGb);
+            axonosWriteStoragePreference(wallet, storageGb);
+            axonosUpdateWizardSummaryRail();
+            return storageGb;
+        }
+        window.axonosRequestedStorageGbForClaim = axonosRequestedStorageGbForClaim;
+
+        function axonosRestoreStoragePreference(wallet) {
+            var savedStorageGb = axonosReadStoragePreference(wallet);
+            axonosApplyStorageSelection(savedStorageGb === null ? 100 : savedStorageGb);
+            return savedStorageGb;
+        }
 
         function axonosStartWizard() {
             axonosCurrentWizardStep = 1;
+            axonosWizardStorageUserEdited = false;
+            const storageGeneration = ++axonosWizardStorageGeneration;
+            const wizardWallet = window.verifiedWalletAddress || verifiedWalletAddress;
+            axonosResetStorageFloor(wizardWallet);
+            axonosRestoreStoragePreference(wizardWallet);
+            if (wizardWallet) {
+                axonosFetchWalletAccessStatus(wizardWallet).then(function (res) {
+                    if (!res || res.stale || !axonosPaymentIdentityIsCurrent(wizardWallet)) return;
+                    const data = (res && res.data) || {};
+                    const storageContext = axonosApplyWizardStorageContext(
+                        wizardWallet,
+                        data,
+                        storageGeneration
+                    );
+                    if (storageContext.adjusted && axonosCurrentWizardStep > 1) {
+                        axonosGoToWizardStep(2);
+                        axonosShowStorageGrowthOnlyWarning();
+                    }
+                });
+            }
 
             // Direct SSH is a per-launch opt-in. Opening a fresh launch wizard
             // must always start in desktop mode, even if this tab previously
@@ -8666,7 +8852,17 @@ Copyright (C) 2019 The noVNC Authors
                 const sliderVal = document.getElementById('axonos_wizard_storage_val');
                 if (slider && sliderVal) {
                     slider.addEventListener('input', (e) => {
-                        sliderVal.textContent = e.target.value + ' GB';
+                        const requestedGb = axonosNormalizeStorageGb(e.target.value);
+                        if (requestedGb === null) return;
+                        if (requestedGb < axonosWizardStorageFloorGb) {
+                            axonosApplyStorageSelection(axonosWizardStorageFloorGb);
+                            axonosShowStorageGrowthOnlyWarning();
+                        } else {
+                            axonosApplyStorageSelection(requestedGb);
+                        }
+                        axonosWizardStorageUserEdited = true;
+                        const w = window.verifiedWalletAddress || verifiedWalletAddress;
+                        axonosWriteStoragePreference(w, slider.value);
                         axonosUpdateWizardSummaryRail();
                     });
                 }
@@ -8839,6 +9035,11 @@ Copyright (C) 2019 The noVNC Authors
                 const railBalanceVal = document.getElementById('axonos_wizard_rail_balance');
 
                 if (wallet) {
+                    const storageGeneration = axonosWizardStorageGeneration;
+                    const savedStorageGb = axonosReadStoragePreference(wallet);
+                    if (!axonosWizardStorageUserEdited && savedStorageGb !== null) {
+                        axonosApplyStorageSelection(savedStorageGb);
+                    }
                     if (unconnectedPanel) unconnectedPanel.style.display = 'none';
                     if (connectedPanel) connectedPanel.style.display = 'block';
                     if (railBalanceRow) railBalanceRow.style.display = 'flex';
@@ -8846,6 +9047,17 @@ Copyright (C) 2019 The noVNC Authors
                     axonosFetchWalletAccessStatus(wallet).then(res => {
                         if (!res || res.stale || !axonosPaymentIdentityIsCurrent(wallet)) return;
                         const data = (res && res.data) || {};
+                        const storageContext = axonosApplyWizardStorageContext(
+                            wallet,
+                            data,
+                            storageGeneration
+                        );
+                        if (!storageContext.applied) return;
+                        if (storageContext.adjusted) {
+                            axonosGoToWizardStep(2);
+                            axonosShowStorageGrowthOnlyWarning();
+                            return;
+                        }
                         const balStr = (data.remaining_minutes != null) ? Math.round(data.remaining_minutes) + ' cr' : '—';
                         if (railBalanceVal) railBalanceVal.textContent = balStr;
                     });
@@ -9053,6 +9265,7 @@ Copyright (C) 2019 The noVNC Authors
         function axonosTriggerLaunchFromWizard() {
             const wallet = window.verifiedWalletAddress || verifiedWalletAddress;
             if (!wallet) return;
+            const storageGeneration = axonosWizardStorageGeneration;
 
             console.log('[AxonOS] Triggering launch/deposit from Step 3 payment');
 
@@ -9076,6 +9289,21 @@ Copyright (C) 2019 The noVNC Authors
                     return;
                 }
                 const data = (res && res.data) || {};
+                const storageContext = axonosApplyWizardStorageContext(
+                    wallet,
+                    data,
+                    storageGeneration
+                );
+                if (!storageContext.applied) {
+                    hideConnectionLoader();
+                    return;
+                }
+                if (storageContext.adjusted) {
+                    hideConnectionLoader();
+                    axonosGoToWizardStep(2);
+                    axonosShowStorageGrowthOnlyWarning();
+                    return;
+                }
                 const remaining = data.remaining_minutes || 0;
                 const required = axonosGpuCountForProfile(axonosSelectedGpuProfile);
 
@@ -9303,21 +9531,23 @@ Copyright (C) 2019 The noVNC Authors
             }
         }
 
-        function axonosRenderStorageUsage(freeBytes, totalBytes) {
+        function axonosRenderStorageUsage(usedBytes, totalBytes) {
             const quotaEl = document.getElementById('axonos_sidebar_storage_quota');
             const progressEl = document.getElementById('axonos_sidebar_storage_progress');
-            if (typeof freeBytes !== 'number' || typeof totalBytes !== 'number' || totalBytes <= 0) {
+            if (typeof usedBytes !== 'number' || !Number.isFinite(usedBytes) ||
+                typeof totalBytes !== 'number' || !Number.isFinite(totalBytes) ||
+                totalBytes <= 0) {
                 if (quotaEl) quotaEl.textContent = '—';
                 if (progressEl) progressEl.style.width = '0%';
                 return;
             }
             const gib = 1024 * 1024 * 1024;
-            const usedBytes = Math.max(0, totalBytes - freeBytes);
-            const usedGb = usedBytes / gib;
+            const boundedUsedBytes = Math.max(0, Math.min(totalBytes, usedBytes));
+            const usedGb = boundedUsedBytes / gib;
             const totalGb = totalBytes / gib;
             const fmt = (v) => (v >= 100 ? Math.round(v) : Math.round(v * 10) / 10);
             if (quotaEl) quotaEl.textContent = fmt(usedGb) + ' / ' + fmt(totalGb) + ' GB';
-            if (progressEl) progressEl.style.width = Math.min(100, (usedBytes / totalBytes) * 100) + '%';
+            if (progressEl) progressEl.style.width = Math.min(100, (boundedUsedBytes / totalBytes) * 100) + '%';
         }
 
         function axonosTickTelemetry() {
@@ -9364,7 +9594,7 @@ Copyright (C) 2019 The noVNC Authors
                         typeof st.mem_total_bytes === 'number' && st.mem_total_bytes > 0)
                         ? (st.mem_used_bytes / st.mem_total_bytes) * 100 : null;
                     axonosSetTelemetryRow('axonos_telemetry_ram_val', 'axonos_telemetry_ram_progress', ramPct, 90);
-                    axonosRenderStorageUsage(st.disk_free_bytes, st.disk_total_bytes);
+                    axonosRenderStorageUsage(st.disk_used_bytes, st.disk_total_bytes);
                 })
                 .catch(() => {
                     axonosSetTelemetryRow('axonos_telemetry_cpu_val', 'axonos_telemetry_cpu_progress', null);

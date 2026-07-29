@@ -29,6 +29,33 @@ class TestAccessControl(unittest.TestCase):
     def tearDown(self):
         self.env.stop()
 
+    def test_storage_preference_is_returned_when_gpu_billing_is_disabled(self):
+        from axonos_gate import session_manager
+
+        conn = MagicMock()
+        cur = MagicMock()
+        conn.cursor.return_value.__enter__.return_value = cur
+        gib = 1024**3
+        cur.fetchone.return_value = (200, 250 * gib)
+        wallet = "0x1234567890123456789012345678901234567890"
+
+        with patch.object(session_manager, "_gpu_billing_enabled", return_value=False), \
+             patch.object(session_manager, "_init_once", return_value=True), \
+             patch.object(session_manager, "_get_connection", return_value=conn), \
+             patch.object(session_manager, "_active_session_for_wallet") as mock_active:
+            context = session_manager.billing_context_for_wallet(wallet)
+
+        self.assertEqual(context["requested_storage_gb"], 200)
+        self.assertEqual(context["provisioned_storage_gb"], 250)
+        self.assertEqual(context["minimum_storage_gb"], 250)
+        self.assertTrue(context["storage_growth_only"])
+        self.assertFalse(context["gpu_billing_enabled"])
+        mock_active.assert_not_called()
+        storage_query = cur.execute.call_args
+        self.assertIn("axgt_storage_volumes", storage_query.args[0])
+        self.assertEqual(storage_query.args[1], (wallet, wallet))
+        conn.close.assert_called_once()
+
     def test_get_wallet_access_status_no_deposit(self):
         from axonos_gate import axgt_verifier
         with patch("axonos_gate.deposit_ledger.init_once", return_value=True), \
@@ -580,6 +607,134 @@ class TestBillingAndSession(unittest.TestCase):
             
         self.assertFalse(result["granted"])
         self.assertEqual(result["reason"], "No GPUs available for profile \"Dual\" (2 GPU(s) required)")
+
+    def test_explicit_storage_request_below_observed_capacity_is_rejected(self):
+        from axonos_gate import session_manager
+
+        wallet = "0x1234567890123456789012345678901234567890"
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.__enter__.return_value = cur
+        conn.cursor.return_value = cur
+
+        with patch.dict(
+            os.environ,
+            {
+                "AXGT_USER_CONTAINER_ENABLED": "true",
+                "AXGT_MULTI_SESSION_ENABLED": "true",
+            },
+            clear=False,
+        ), patch.object(session_manager, "_init_once", return_value=True), patch.object(
+            session_manager, "_get_connection", return_value=conn
+        ), patch.object(
+            session_manager, "_run_stale_session_maintenance_locked"
+        ), patch.object(
+            session_manager, "_get_active_rows", return_value=[]
+        ), patch.object(
+            session_manager, "_get_credit_grace_rows", return_value=[]
+        ), patch.object(
+            session_manager, "_active_session_for_wallet", return_value=None
+        ), patch.object(
+            session_manager, "_credit_grace_session_for_wallet", return_value=None
+        ), patch.object(
+            session_manager,
+            "_prepaid_credit_allows_profile",
+            return_value=(True, None),
+        ), patch.object(
+            session_manager, "_provisioned_storage_gb_for_wallet", return_value=250
+        ), patch.object(
+            session_manager, "_choose_allocation"
+        ) as choose, patch.object(
+            session_manager, "_spawn_session_container"
+        ) as spawn:
+            result = session_manager.try_claim_session(
+                wallet,
+                "small",
+                requested_storage_gb=100,
+            )
+
+        self.assertFalse(result["granted"])
+        self.assertEqual(result["allocation_status"], "rejected")
+        self.assertEqual(result["error_code"], "storage_below_provisioned")
+        self.assertEqual(result["requested_storage_gb"], 100)
+        self.assertEqual(result["provisioned_storage_gb"], 250)
+        self.assertEqual(result["minimum_storage_gb"], 250)
+        self.assertTrue(result["storage_growth_only"])
+        self.assertIn("cannot be reduced from 250 GB to 100 GB", result["reason"])
+        choose.assert_not_called()
+        spawn.assert_not_called()
+        self.assertFalse(
+            any(
+                invocation.args and "INSERT INTO axgt_sessions" in invocation.args[0]
+                for invocation in cur.execute.call_args_list
+            )
+        )
+
+    def test_omitted_storage_request_preserves_observed_capacity_floor(self):
+        from axonos_gate import session_manager
+
+        wallet = "0x1234567890123456789012345678901234567890"
+        primary = MagicMock()
+        primary_cur = MagicMock()
+        primary_cur.__enter__.return_value = primary_cur
+        primary_cur.fetchone.return_value = (73,)
+        primary.cursor.return_value = primary_cur
+
+        finalizer = MagicMock()
+        finalizer_cur = MagicMock()
+        finalizer_cur.__enter__.return_value = finalizer_cur
+        finalizer_cur.rowcount = 1
+        finalizer.cursor.return_value = finalizer_cur
+
+        with patch.dict(
+            os.environ,
+            {
+                "AXGT_USER_CONTAINER_ENABLED": "true",
+                "AXGT_MULTI_SESSION_ENABLED": "true",
+                "WEBRTC_ENABLED": "true",
+            },
+            clear=False,
+        ), patch.object(session_manager, "_init_once", return_value=True), patch.object(
+            session_manager, "_get_connection", side_effect=(primary, finalizer)
+        ), patch.object(
+            session_manager, "_run_stale_session_maintenance_locked"
+        ), patch.object(
+            session_manager, "_get_active_rows", return_value=[]
+        ), patch.object(
+            session_manager, "_get_credit_grace_rows", return_value=[]
+        ), patch.object(
+            session_manager, "_active_session_for_wallet", return_value=None
+        ), patch.object(
+            session_manager, "_credit_grace_session_for_wallet", return_value=None
+        ), patch.object(
+            session_manager,
+            "_prepaid_credit_allows_profile",
+            return_value=(True, None),
+        ), patch.object(
+            session_manager, "_provisioned_storage_gb_for_wallet", return_value=250
+        ), patch.object(
+            session_manager, "_choose_allocation", return_value=[0]
+        ), patch.object(
+            session_manager,
+            "_issue_webrtc_agent_capability",
+            return_value="signed-capability",
+        ), patch.object(
+            session_manager,
+            "_spawn_session_container",
+            return_value=(True, "container-id", None),
+        ) as spawn:
+            result = session_manager.try_claim_session(wallet, "small")
+
+        self.assertTrue(result["granted"])
+        self.assertEqual(spawn.call_args.kwargs["requested_storage_gb"], 250)
+        insert_call = next(
+            invocation
+            for invocation in primary_cur.execute.call_args_list
+            if invocation.args
+            and "INSERT INTO axgt_sessions" in invocation.args[0]
+            and "requested_storage_gb" in invocation.args[0]
+        )
+        self.assertEqual(insert_call.args[1][-1], 250)
 
     def test_desktop_claim_fails_before_spawn_when_capability_cannot_be_issued(self):
         from axonos_gate import session_manager
