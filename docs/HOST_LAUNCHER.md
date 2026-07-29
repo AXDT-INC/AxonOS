@@ -185,7 +185,7 @@ python3 axonos_gate/session_launcher_service.py
    - `docker compose ps`
    - `docker compose logs axonos-launcher`
 
-In compose mode, only `axonos-launcher` has `/var/run/docker.sock`.
+In compose mode, `axonos-launcher` runs with `privileged: true` and mounts `/var/run/docker.sock`, `/var/lib/docker/axonos_storage`, and `/dev` to support host kernel loop device binding (`losetup`), sparse ext4 volume provisioning (`truncate`), and dynamic live expansion (`resize2fs`).
 The main `axonos` gate container remains non-nested. Postgres and the launcher use
 `axonos_control`; the central gate also joins tenant networks on demand.
 

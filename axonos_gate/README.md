@@ -49,11 +49,13 @@ This module implements **prepaid deposit-credit billing** for AxonOS remote desk
 ### Persistent storage (new)
 
 - `AXGT_PERSISTENT_STORAGE_ENABLED`: Enable user persistent named volumes (default `true`).
+- `AXGT_PERSISTENT_STORAGE_DIR`: Directory on Docker host for backing `.ext4` sparse image files (default `/var/lib/docker/axonos_storage`).
 - `AXGT_PERSISTENT_STORAGE_VOLUME_PREFIX`: Docker volume prefix (default `axgt-user-storage-`).
 - `AXGT_PERSISTENT_STORAGE_MOUNT_PATH`: Mount path inside desktop sessions (default `/home/aXonian`).
 - `AXGT_PERSISTENT_STORAGE_CLEANUP_INTERVAL_SECONDS`: Billing sweep interval (default `3600` / 1 hour).
 - `AXGT_PERSISTENT_STORAGE_MIN_BALANCE_LIMIT_MINUTES`: Max negative credit debt allowed before volume pruning (default `-1440.0`).
 - `AXGT_PERSISTENT_STORAGE_GB_HOUR_COST_MINUTES`: Offline storage charge rate per GB/hour (default `0.05` compute minutes).
+- **Storage Slider & Dynamic Resizing**: Users configure requested capacity (10 GB – 500 GB, default 100 GB) in the launch wizard. The backend automatically initializes sparse `.ext4` loop images and expands existing volumes online (`truncate` + `losetup -c` + `resize2fs`). Billing is based on actual data stored (`du -s`), not virtual capacity.
 
 ### USDC / x402 (stablecoin + agent rail)
 

@@ -306,6 +306,7 @@ def launch_session(
     ssh_enabled: bool = False,
     ssh_pubkey: Optional[str] = None,
     webrtc_agent_token: Optional[str] = None,
+    requested_storage_gb: Optional[int] = None,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     """Launch user session runtime; returns (ok, container_id, error)."""
     if not _container_mode_enabled():
@@ -322,6 +323,7 @@ def launch_session(
             ssh_enabled,
             ssh_pubkey,
             webrtc_agent_token,
+            requested_storage_gb,
         )
     if mode == "noop":
         # Useful when validating scheduler/queue logic without runtime orchestration.
@@ -340,6 +342,7 @@ def launch_session(
             ssh_enabled,
             ssh_pubkey,
             webrtc_agent_token,
+            requested_storage_gb,
         )
 
 
@@ -1005,6 +1008,7 @@ def _launch_via_docker_cli(
     ssh_enabled: bool = False,
     ssh_pubkey: Optional[str] = None,
     webrtc_agent_token: Optional[str] = None,
+    requested_storage_gb: Optional[int] = None,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     image = (os.getenv("AXGT_SESSION_CONTAINER_IMAGE") or "").strip()
     if not image:
@@ -1233,6 +1237,7 @@ def _launch_via_http(
     ssh_enabled: bool = False,
     ssh_pubkey: Optional[str] = None,
     webrtc_agent_token: Optional[str] = None,
+    requested_storage_gb: Optional[int] = None,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     base_url = (os.getenv("AXGT_SESSION_LAUNCHER_URL") or "").strip().rstrip("/")
     if not base_url:
@@ -1247,6 +1252,7 @@ def _launch_via_http(
         "ssh_enabled": ssh_enabled,
         "ssh_pubkey": ssh_pubkey,
         "webrtc_agent_token": webrtc_agent_token,
+        "requested_storage_gb": requested_storage_gb,
     }
     status, data, err = _http_json("POST", f"{base_url}/launch", payload)
     launch_ok = (not err) and status < 400 and isinstance(data, dict) and bool(data.get("ok"))

@@ -538,6 +538,7 @@ def _ensure_tables(conn) -> None:
             # Credit exhaustion is a logical billing state: the runtime remains
             # live while this timestamp anchors the bounded top-up grace period.
             ("credit_grace_started_at", "DOUBLE PRECISION"),
+            ("requested_storage_gb", "INTEGER DEFAULT 100"),
         ):
             cur.execute(
                 """
@@ -1168,6 +1169,7 @@ def _spawn_session_container(
     ssh_enabled: bool = False,
     ssh_pubkey: Optional[str] = None,
     webrtc_agent_token: Optional[str] = None,
+    requested_storage_gb: Optional[int] = None,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     launcher = _import_session_launcher()
     return launcher.launch_session(
@@ -1180,6 +1182,7 @@ def _spawn_session_container(
         ssh_enabled=ssh_enabled,
         ssh_pubkey=ssh_pubkey,
         webrtc_agent_token=webrtc_agent_token,
+        requested_storage_gb=requested_storage_gb,
     )
 
 
@@ -1279,6 +1282,7 @@ def try_claim_session(
     ssh_pubkey: Optional[str] = None,
     resume_only: bool = False,
     expected_session_id: Optional[int] = None,
+    requested_storage_gb: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Attempt to claim the desktop session for *wallet_address*.
 
@@ -1544,12 +1548,13 @@ def try_claim_session(
                     cap_secs = _ssh_hard_cap_seconds(_remaining_minutes_for(wallet))
                     if cap_secs is not None:
                         hard_expires_at = now + cap_secs
+                storage_gb_val = max(10, min(500, int(requested_storage_gb))) if requested_storage_gb is not None else 100
                 cur.execute(
                     f"""INSERT INTO {_SESSION_TABLE}
                         (wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
                          started_at, last_heartbeat, last_billed_at, expires_at, status, files_key, hard_expires_at,
-                         ssh_enabled)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s, %s, %s)
+                         ssh_enabled, requested_storage_gb)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s, %s, %s, %s)
                         RETURNING id""",
                     (
                         wallet,
@@ -1564,6 +1569,7 @@ def try_claim_session(
                         files_key,
                         hard_expires_at,
                         bool(requested_ssh),
+                        storage_gb_val,
                     ),
                 )
                 session_id = cur.fetchone()[0]
@@ -1623,6 +1629,7 @@ def try_claim_session(
                         ssh_enabled=requested_ssh,
                         ssh_pubkey=ssh_pubkey,
                         webrtc_agent_token=webrtc_agent_token,
+                        requested_storage_gb=storage_gb_val,
                     )
                 except Exception as exc:
                     spawn_error = str(exc)

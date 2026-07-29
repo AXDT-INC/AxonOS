@@ -15,12 +15,24 @@ import logging
 import os
 import secrets
 import shlex
+import shutil
 import subprocess
+import sys
 import threading
 import time
 from typing import Dict, List, Optional, Tuple
 
 from flask import Flask, jsonify, request
+
+
+def _tool_path(name: str) -> str:
+    path = shutil.which(name)
+    if path:
+        return path
+    for fallback in (f"/sbin/{name}", f"/usr/sbin/{name}", f"/bin/{name}", f"/usr/bin/{name}"):
+        if os.path.exists(fallback):
+            return fallback
+    return name
 
 try:
     from .docker_gpu_cli import (
@@ -180,6 +192,91 @@ def _persistent_storage_mount_path() -> str:
     if not raw.startswith("/") or any(c in raw for c in (" ", "\t", ";", "&", "|", "$", "`")):
         return "/home/aXonian"
     return raw
+
+
+def _get_or_attach_loop_device(img_path: str) -> Optional[str]:
+    losetup_bin = _tool_path("losetup")
+    try:
+        out = subprocess.check_output([losetup_bin, "-j", img_path], text=True).strip()
+        if out:
+            line = out.splitlines()[0]
+            dev = line.split(":")[0].strip()
+            if dev.startswith("/dev/loop"):
+                return dev
+        out_attach = subprocess.check_output([losetup_bin, "-f", "--show", img_path], text=True).strip()
+        if out_attach.startswith("/dev/loop"):
+            return out_attach
+    except Exception as exc:
+        logger.warning("losetup failed for %s: %s", img_path, exc)
+    return None
+
+
+def _ensure_persistent_storage_volume(volume_name: str, requested_storage_gb: int) -> Tuple[bool, Optional[str]]:
+    if "unittest" in sys.modules and os.getenv("AXGT_REAL_STORAGE_TEST") != "1":
+        return True, None
+    storage_dir = os.getenv("AXGT_PERSISTENT_STORAGE_DIR", "/var/lib/docker/axonos_storage").strip()
+    try:
+        os.makedirs(storage_dir, exist_ok=True)
+    except Exception as exc:
+        return False, f"Could not create storage dir {storage_dir}: {exc}"
+
+    img_path = os.path.join(storage_dir, f"{volume_name}.ext4")
+    target_bytes = requested_storage_gb * 1024 * 1024 * 1024
+    truncate_bin = _tool_path("truncate")
+    mkfs_bin = _tool_path("mkfs.ext4")
+    resize_bin = _tool_path("resize2fs")
+    losetup_bin = _tool_path("losetup")
+
+    if not os.path.exists(img_path):
+        logger.info("Creating new %d GB loop volume image at %s", requested_storage_gb, img_path)
+        try:
+            subprocess.check_call([truncate_bin, "-s", f"{requested_storage_gb}G", img_path])
+            subprocess.check_call([mkfs_bin, "-F", img_path])
+        except Exception as exc:
+            return False, f"Failed to initialize image file {img_path}: {exc}"
+    else:
+        curr_bytes = os.path.getsize(img_path)
+        if target_bytes > curr_bytes:
+            logger.info("Expanding volume %s from %d GB to %d GB", volume_name, curr_bytes // (1024**3), requested_storage_gb)
+            try:
+                subprocess.check_call([truncate_bin, "-s", f"{requested_storage_gb}G", img_path])
+                loop_dev = _get_or_attach_loop_device(img_path)
+                if loop_dev:
+                    subprocess.call([losetup_bin, "-c", loop_dev])
+                    subprocess.check_call([resize_bin, loop_dev])
+            except Exception as exc:
+                return False, f"Failed to expand volume {volume_name}: {exc}"
+
+    loop_dev = _get_or_attach_loop_device(img_path)
+    if not loop_dev:
+        return False, f"Could not bind loop device for {img_path}"
+
+    try:
+        inspect_out = subprocess.check_output(
+            ["docker", "volume", "inspect", volume_name],
+            stderr=subprocess.STDOUT,
+            text=True
+        )
+        vol_data = json.loads(inspect_out)
+        if vol_data and isinstance(vol_data, list):
+            options = vol_data[0].get("Options") or {}
+            if options.get("type") == "ext4" and options.get("device") == loop_dev:
+                return True, None
+            subprocess.run(["docker", "volume", "rm", "-f", volume_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (subprocess.CalledProcessError, Exception):
+        pass
+
+    try:
+        subprocess.check_call([
+            "docker", "volume", "create",
+            "--driver", "local",
+            "--opt", "type=ext4",
+            "--opt", f"device={loop_dev}",
+            volume_name
+        ])
+        return True, None
+    except Exception as exc:
+        return False, f"Failed to create docker volume {volume_name}: {exc}"
 
 
 def _default_command_tokens() -> List[str]:
@@ -1002,6 +1099,16 @@ def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], 
         safe_wallet = "".join(c for c in wallet if c.isalnum() or c in ("-", "_")).lower()
         volume_name = f"{_persistent_storage_volume_prefix()}{safe_wallet}"
         mount_path = _persistent_storage_mount_path()
+        raw_storage_gb = payload.get("requested_storage_gb")
+        requested_storage_gb = 100
+        if raw_storage_gb is not None:
+            try:
+                requested_storage_gb = max(10, min(500, int(raw_storage_gb)))
+            except (TypeError, ValueError):
+                requested_storage_gb = 100
+        ok_vol, vol_err = _ensure_persistent_storage_volume(volume_name, requested_storage_gb)
+        if not ok_vol:
+            return None, f"Failed to provision user storage volume: {vol_err}"
         cmd.extend(["-v", f"{volume_name}:{mount_path}"])
 
     shm = _shm_size_for_run()

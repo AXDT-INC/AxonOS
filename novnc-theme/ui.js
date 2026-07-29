@@ -3053,6 +3053,13 @@ const UI = {
             if (window.axonosSelectedTemplateId) {
                 payload.requested_template = window.axonosSelectedTemplateId;
             }
+            const storageSlider = document.getElementById('axonos_wizard_storage_slider');
+            if (storageSlider && storageSlider.value) {
+                const storageGb = parseInt(storageSlider.value, 10);
+                if (Number.isInteger(storageGb) && storageGb >= 10 && storageGb <= 500) {
+                    payload.requested_storage_gb = storageGb;
+                }
+            }
         }
         // SSH intent is sent on every claim (including reload re-claims) so the
         // gate can return the connect-string for an already-owned SSH session.

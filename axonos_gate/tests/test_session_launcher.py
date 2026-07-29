@@ -209,6 +209,26 @@ class SessionLauncherTests(unittest.TestCase):
         
         self.assertNotIn("-v", cmd)
 
+    @patch("session_launcher_service._ensure_persistent_storage_volume")
+    def test_service_build_launch_cmd_with_requested_storage_gb(self, mock_ensure_vol: MagicMock) -> None:
+        mock_ensure_vol.return_value = (True, None)
+        os.environ["AXGT_HOST_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"
+        os.environ["AXGT_PERSISTENT_STORAGE_ENABLED"] = "true"
+        
+        from session_launcher_service import _build_launch_cmd
+        payload = {
+            "session_id": 42,
+            "wallet_address": "0xAbC123-xyz_!!",
+            "requested_profile": "small",
+            "assigned_gpu_ids": [0],
+            "webrtc_agent_token": "signed-capability",
+            "requested_storage_gb": 200,
+        }
+        cmd, err = _build_launch_cmd(payload)
+        self.assertIsNone(err)
+        self.assertIsNotNone(cmd)
+        mock_ensure_vol.assert_called_once_with("axgt-user-storage-0xabc123-xyz_", 200)
+
     def test_service_build_launch_cmd_enabled(self) -> None:
         os.environ["AXGT_HOST_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"
         os.environ["AXGT_PERSISTENT_STORAGE_ENABLED"] = "true"
@@ -222,7 +242,8 @@ class SessionLauncherTests(unittest.TestCase):
             "assigned_gpu_ids": [0],
             "webrtc_agent_token": "signed-capability",
         }
-        cmd, err = _build_launch_cmd(payload)
+        with patch("session_launcher_service._ensure_persistent_storage_volume", return_value=(True, None)):
+            cmd, err = _build_launch_cmd(payload)
         self.assertIsNone(err)
         self.assertIsNotNone(cmd)
         

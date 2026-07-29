@@ -1,6 +1,8 @@
 # Persistent Storage Volume Retention & Cleanup Policy
 
-AxonOS provides users with persistent storage for their desktop sessions backed by Docker named volumes (`axgt-user-storage-<sanitized_wallet>`).
+AxonOS provides users with persistent storage for their desktop sessions backed by loop-backed `ext4` Docker volumes (`axgt-user-storage-<sanitized_wallet>`). Volumes are provisioned as sparse `.ext4` image files under `/var/lib/docker/axonos_storage/`.
+
+Users select their desired storage capacity (10 GB – 500 GB, default 100 GB) via the launch wizard slider. Volumes automatically scale up online when a user requests a larger size (`truncate` + `losetup -c` + `resize2fs`) without downtime or data migration. Storage billing is calculated based on **actual files stored** (`du -s`), so allocating larger virtual capacity does not over-charge the user or consume physical host space for empty unwritten blocks.
 
 AxonOS bills users for storage disk usage when they are offline, allows balances to go negative (representing debt), and prunes their volumes once they exceed their debt threshold limit.
 

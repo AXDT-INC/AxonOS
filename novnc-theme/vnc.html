@@ -2897,6 +2897,13 @@ Copyright (C) 2019 The noVNC Authors
                 if (window.axonosSelectedTemplateId) {
                     payload.requested_template = window.axonosSelectedTemplateId;
                 }
+                var _storageSlider = document.getElementById('axonos_wizard_storage_slider');
+                if (_storageSlider && _storageSlider.value) {
+                    var _storageGb = parseInt(_storageSlider.value, 10);
+                    if (Number.isInteger(_storageGb) && _storageGb >= 10 && _storageGb <= 500) {
+                        payload.requested_storage_gb = _storageGb;
+                    }
+                }
             }
             // SSH intent must ride this claim too: it races (and may win) the ui.js
             // claim, so if it omits requested_ssh it would spawn a desktop session
