@@ -634,26 +634,28 @@ const UI = {
         }
         window.axonosSelectedTemplateId = restored;
 
-        // Bind landing page View all button and set count dynamically
+        // Bind both landing browse entry points to a read-only catalog. Browsing
+        // templates must never require or initiate wallet authentication.
         const viewAllBtn = document.getElementById('axonos_landing_view_all_btn');
         const viewAllCount = document.getElementById('axonos_landing_view_all_count');
         if (viewAllCount && typeof AXONOS_TEMPLATES !== 'undefined') {
             viewAllCount.textContent = AXONOS_TEMPLATES.length;
         }
         if (viewAllBtn) {
-            viewAllBtn.addEventListener('click', () => {
-                const wallet = window.verifiedWalletAddress;
-                if (wallet) {
-                    if (typeof axonosStartWizard === 'function') axonosStartWizard();
-                } else {
-                    const dlg = document.getElementById('noVNC_credentials_dlg');
-                    if (dlg) dlg.classList.add('noVNC_open');
-                    if (typeof window.onConnectWalletClick === 'function') {
-                        window.onConnectWalletClick();
-                    }
-                }
-            });
+            viewAllBtn.addEventListener('click', UI.openAxonosCatalogModal);
         }
+
+        const catalogModal = document.getElementById('axonos_catalog_modal');
+        const catalogClose = document.getElementById('axonos_catalog_modal_close');
+        const catalogOverlay = document.getElementById('axonos_catalog_modal_overlay');
+        const closeCatalog = () => {
+            if (!catalogModal) return;
+            catalogModal.classList.remove('active');
+            catalogModal.setAttribute('aria-hidden', 'true');
+        };
+        if (catalogClose) catalogClose.addEventListener('click', closeCatalog);
+        if (catalogOverlay) catalogOverlay.addEventListener('click', closeCatalog);
+        window.axonosOpenCatalogModal = UI.openAxonosCatalogModal;
 
         // Close Modal Event Listeners
         const modal = document.getElementById('axonos_template_modal');
@@ -674,6 +676,10 @@ const UI = {
             modalOverlay.addEventListener('click', closeModal);
         }
         window.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && catalogModal && catalogModal.classList.contains('active')) {
+                closeCatalog();
+                return;
+            }
             if (e.key === 'Escape' && modal && modal.classList.contains('active')) {
                 closeModal();
             }
@@ -683,6 +689,51 @@ const UI = {
         UI.renderLandingFeaturedTemplates();
         UI.renderDashboardQuickLaunch();
         UI.updateAxonosSelectedTemplateBanner();
+    },
+
+    openAxonosCatalogModal() {
+        const modal = document.getElementById('axonos_catalog_modal');
+        const grid = document.getElementById('axonos_catalog_modal_grid');
+        if (!modal || !grid) return;
+
+        grid.replaceChildren();
+        const parser = new DOMParser();
+        AXONOS_TEMPLATES.forEach((template) => {
+            const card = document.createElement('article');
+            card.className = 'axonos-catalog-card';
+
+            const icon = document.createElement('div');
+            icon.className = 'axonos-template-icon-wrap';
+            try {
+                icon.appendChild(parser.parseFromString(template.icon, 'image/svg+xml').documentElement);
+            } catch (err) {
+                icon.textContent = '🧬';
+            }
+
+            const copy = document.createElement('div');
+            const title = document.createElement('h3');
+            title.textContent = template.title;
+            const tags = document.createElement('p');
+            tags.textContent = template.tags.join(' · ');
+            const desc = document.createElement('p');
+            desc.className = 'axonos-catalog-card-desc';
+            desc.textContent = template.desc;
+            copy.append(title, tags, desc);
+
+            const details = document.createElement('button');
+            details.type = 'button';
+            details.className = 'axonos-template-btn info-btn';
+            details.textContent = 'View details';
+            details.addEventListener('click', () => UI.showAxonosTemplateDetails(template));
+
+            card.append(icon, copy, details);
+            grid.appendChild(card);
+        });
+
+        modal.classList.add('active');
+        modal.setAttribute('aria-hidden', 'false');
+        const close = document.getElementById('axonos_catalog_modal_close');
+        if (close) close.focus();
     },
 
     renderLandingFeaturedTemplates() {
@@ -747,21 +798,7 @@ const UI = {
             btn.appendChild(textWrap);
 
             btn.addEventListener('click', () => {
-                const wallet = window.verifiedWalletAddress;
-                if (wallet) {
-                    window.axonosSelectedTemplateId = t.id;
-                    UI.persistAxonosSelectedTemplate();
-                    UI.updateAxonosSelectedTemplateBanner();
-                    if (typeof axonosStartWizard === 'function') {
-                        axonosStartWizard();
-                    }
-                } else {
-                    const dlg = document.getElementById('noVNC_credentials_dlg');
-                    if (dlg) dlg.classList.add('noVNC_open');
-                    if (typeof window.onConnectWalletClick === 'function') {
-                        window.onConnectWalletClick();
-                    }
-                }
+                UI.showAxonosTemplateDetails(t);
             });
 
             grid.appendChild(btn);
@@ -1732,6 +1769,40 @@ const UI = {
 
         verifySec.appendChild(cmdBox);
         modalBody.appendChild(verifySec);
+
+        // Action section to select environment from details modal
+        const actionSec = document.createElement('div');
+        actionSec.className = 'axonos-m-section';
+        actionSec.style.cssText = 'margin-top:24px;display:flex;justify-content:flex-end;';
+
+        const selectBtn = document.createElement('button');
+        selectBtn.type = 'button';
+        selectBtn.className = 'axonos-cta axonos-cta--primary';
+        selectBtn.style.cssText = 'padding:10px 22px;font-size:14px;cursor:pointer;border-radius:10px;font-weight:600;';
+        selectBtn.textContent = 'Select Environment';
+        selectBtn.addEventListener('click', () => {
+            window.axonosSelectedTemplateId = t.id;
+            UI.persistAxonosSelectedTemplate();
+            UI.updateAxonosSelectedTemplateBanner();
+            if (modal) {
+                modal.classList.remove('active');
+                modal.setAttribute('aria-hidden', 'true');
+            }
+            const wallet = window.verifiedWalletAddress;
+            if (wallet) {
+                if (typeof axonosStartWizard === 'function') {
+                    axonosStartWizard();
+                }
+            } else {
+                const dlg = document.getElementById('noVNC_credentials_dlg');
+                if (dlg) dlg.classList.add('noVNC_open');
+                if (typeof window.onConnectWalletClick === 'function') {
+                    window.onConnectWalletClick();
+                }
+            }
+        });
+        actionSec.appendChild(selectBtn);
+        modalBody.appendChild(actionSec);
 
         // Show Modal
         modal.classList.add('active');

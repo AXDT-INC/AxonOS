@@ -218,6 +218,24 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         self.assertIn("UI._axgtStopSessionTimer()", cleanup)
         self.assertIn("UI.hideAxonosSshCard()", cleanup)
 
+    def test_environment_catalog_is_browsable_without_wallet_authentication(self) -> None:
+        init = self._ui_between(
+            "initAxonosTemplates()",
+            "renderLandingFeaturedTemplates()",
+        )
+        catalog = self._ui_between(
+            "openAxonosCatalogModal()",
+            "renderLandingFeaturedTemplates()",
+        )
+
+        self.assertIn("viewAllBtn.addEventListener('click', UI.openAxonosCatalogModal)", init)
+        self.assertNotIn("onConnectWalletClick", init)
+        self.assertNotIn("verifiedWalletAddress", init)
+        self.assertIn("AXONOS_TEMPLATES.forEach", catalog)
+        self.assertIn("window.axonosOpenCatalogModal", self.ui_source)
+        self.assertIn('id="axonos_hero_browse_btn"', self.page_source)
+        self.assertIn('>Read the docs</a>', self.page_source)
+
     def test_storage_context_is_generation_and_wallet_scoped(self) -> None:
         storage_helpers = self._page_between(
             "var axonosWizardStorageUserEdited = false;",

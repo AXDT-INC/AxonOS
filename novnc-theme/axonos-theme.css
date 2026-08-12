@@ -4285,6 +4285,80 @@ html:not(.noVNC_connected) body::after {
   box-shadow: 0 0 10px rgba(255, 95, 87, 0.3);
 }
 
+.axonos-catalog-modal-content {
+  width: min(1120px, 94vw);
+  max-width: 1120px;
+  padding: 34px;
+}
+
+.axonos-catalog-modal-header h2 {
+  margin: 6px 0 8px;
+  color: var(--axonos-light);
+  font-family: var(--font-display);
+  font-size: clamp(1.6rem, 3vw, 2.2rem);
+}
+
+.axonos-catalog-modal-header p {
+  margin: 0 44px 24px 0;
+  color: var(--ink-mute);
+}
+
+.axonos-catalog-modal-kicker {
+  color: #a9a2ff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.axonos-catalog-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.axonos-catalog-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 14px;
+  background: rgba(10, 24, 44, 0.55);
+}
+
+.axonos-catalog-card h3,
+.axonos-catalog-card p {
+  margin: 0;
+}
+
+.axonos-catalog-card h3 {
+  color: var(--axonos-light);
+  font-size: 1rem;
+}
+
+.axonos-catalog-card p {
+  margin-top: 5px;
+  color: var(--violet-fg);
+  font-size: 0.72rem;
+}
+
+.axonos-catalog-card .axonos-catalog-card-desc {
+  color: var(--ink-mute);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.axonos-catalog-card > button {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+@media (max-width: 600px) {
+  .axonos-catalog-modal-content {
+    padding: 24px 18px;
+  }
+}
+
 /* Modal Body elements */
 .axonos-m-title-wrap {
   display: flex;
@@ -5462,6 +5536,7 @@ html.noVNC_connected .axonos-landing-bg {
   font-size: 15px;
   font-weight: 600;
   font-family: var(--font-body);
+  text-decoration: none;
   cursor: pointer;
   transition: filter 0.18s ease, transform 0.18s ease, background 0.18s ease;
 }
@@ -7907,8 +7982,7 @@ button.axonos-topbar__brand {
   text-decoration: underline;
 }
 
-/* Topbar secondary nav (Docs) — ghost pill, same vocabulary as the hero's
-   "Browse environments" button, so the gradient stays unique to Connect wallet */
+/* Legacy topbar secondary-nav style retained for non-landing views. */
 .axonos-topbar-ghost {
   display: inline-flex;
   align-items: center;

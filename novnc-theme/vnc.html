@@ -477,11 +477,6 @@ Copyright (C) 2019 The noVNC Authors
                             <span id="axonos_topbar_wallet_addr">—</span>
                         </button>
                     </div>
-                    <!-- Secondary nav: ghost style so Connect wallet stays the single primary CTA.
-                         New tab on purpose: same-tab navigation unloads the page and kills
-                         session heartbeats. -->
-                    <a href="https://docs.axonos.io" target="_blank" rel="noopener noreferrer"
-                        class="axonos-topbar-ghost">Docs</a>
                     <button type="button" id="axonos_topbar_connect_btn" class="axonos-topbar-cta">Connect
                         wallet</button>
                 </div>
@@ -502,6 +497,9 @@ Copyright (C) 2019 The noVNC Authors
                     <div class="axonos-hero__ctas">
                         <button type="button" id="axonos_hero_browse_btn" class="axonos-cta axonos-cta--ghost">Browse
                             environments</button>
+                        <!-- New tab preserves active session heartbeats in this page. -->
+                        <a href="https://docs.axonos.io" target="_blank" rel="noopener noreferrer"
+                            class="axonos-cta axonos-cta--ghost">Read the docs</a>
                     </div>
                     <p id="axonos_session_storage_hint" class="axonos-hero__note">
                         Sessions feature <strong>persistent storage</strong> — files in your home folder are
@@ -1892,6 +1890,22 @@ Copyright (C) 2019 The noVNC Authors
         </div>
     </div>
 
+    <!-- Read-only environment browser; available before wallet authentication. -->
+    <div id="axonos_catalog_modal" class="axonos-modal" aria-hidden="true" role="dialog"
+        aria-modal="true" aria-labelledby="axonos_catalog_modal_title">
+        <div class="axonos-modal-overlay" id="axonos_catalog_modal_overlay"></div>
+        <div class="axonos-modal-content axonos-catalog-modal-content">
+            <button type="button" id="axonos_catalog_modal_close" class="axonos-modal-close"
+                aria-label="Close environment browser">&times;</button>
+            <div class="axonos-catalog-modal-header">
+                <div class="axonos-catalog-modal-kicker">READY-TO-RUN ENVIRONMENTS</div>
+                <h2 id="axonos_catalog_modal_title">Browse scientific stacks</h2>
+                <p>Explore every preconfigured environment. No wallet connection required.</p>
+            </div>
+            <div id="axonos_catalog_modal_grid" class="axonos-catalog-modal-grid"></div>
+        </div>
+    </div>
+
 
     <!-- Template Details Modal -->
     <div id="axonos_template_modal" class="axonos-modal" aria-hidden="true" role="dialog"
@@ -2170,12 +2184,13 @@ Copyright (C) 2019 The noVNC Authors
                 }).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
                 start();
 
-                // Hero CTAs: scroll to the session rail / environment catalog.
+                // Hero CTAs: browse the environment catalog without wallet authentication.
                 var browseBtn = document.getElementById('axonos_hero_browse_btn');
-                var main = document.querySelector('.axonos-landing-main');
-                if (browseBtn && main) {
+                if (browseBtn) {
                     browseBtn.addEventListener('click', function () {
-                        main.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        if (typeof window.axonosOpenCatalogModal === 'function') {
+                            window.axonosOpenCatalogModal();
+                        }
                     });
                 }
 
