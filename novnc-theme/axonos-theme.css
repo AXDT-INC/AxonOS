@@ -3187,17 +3187,25 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
   }
 
   #noVNC_credentials_dlg {
-    position: relative !important;
-    top: auto !important;
-    left: auto !important;
-    transform: none !important;
-    margin: 20px auto !important;
-    width: 100% !important;
-    max-width: min(600px, 95vw) !important;
+    /* Keep the wallet card anchored to the viewport. Making this relative put
+       it back into document flow after the landing footer, so browser zoom
+       that crossed this breakpoint appeared to drop the modal below the page. */
+    position: fixed !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    margin: 0 !important;
+    width: min(600px, calc(100vw - 24px)) !important;
+    max-width: calc(100vw - 24px) !important;
+    max-height: calc(100vh - 24px) !important;
+    max-height: calc(100dvh - 24px) !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
   }
 
   #noVNC_credentials_dlg:has(#axonos_wallet_state_insufficient:not(.axonos-wallet-state--hidden)) {
-    max-width: min(860px, 95vw) !important;
+    width: min(860px, calc(100vw - 24px)) !important;
+    max-width: calc(100vw - 24px) !important;
   }
 
   html:not(.noVNC_connected) #noVNC_connect_dlg {
