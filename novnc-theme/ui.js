@@ -3392,12 +3392,16 @@ const UI = {
 
         return new Promise((resolve) => {
             let settled = false;
+            let reconciliationTimer = null;
+            let reconciliationAttempt = 0;
+            const reconciliationDelays = [750, 1500, 3000];
             const controller = typeof AbortController === 'function'
                 ? new AbortController() : null;
             const finish = (released, details) => {
                 if (settled) return;
                 settled = true;
                 clearTimeout(timeoutId);
+                if (reconciliationTimer) clearTimeout(reconciliationTimer);
                 Object.assign(releaseContext, details || {}, {
                     released,
                     completedAt: Date.now(),
@@ -3411,6 +3415,45 @@ const UI = {
                     reason: _('The session-end request timed out.'),
                 });
             }, UI._axonosSessionReleaseTimeoutMs());
+
+            // Container/network cleanup may keep the POST open after the session
+            // row has authoritatively ended. Reconcile in parallel so the user is
+            // not trapped behind the full-screen End state or shown a false timeout.
+            const reconcileReleaseState = () => {
+                if (settled || typeof window.axonosConfirmSessionReleaseState !== 'function') {
+                    return;
+                }
+                Promise.resolve(window.axonosConfirmSessionReleaseState(releaseContext))
+                    .then((outcome) => {
+                        if (settled) return;
+                        if (outcome && outcome.confirmed === true) {
+                            finish(true, {
+                                confirmedByStatus: true,
+                                billingEnded: outcome.billingEnded === true,
+                                failure: null,
+                                reason: null,
+                            });
+                            return;
+                        }
+                        if (reconciliationAttempt < reconciliationDelays.length) {
+                            reconciliationTimer = setTimeout(
+                                reconcileReleaseState,
+                                reconciliationDelays[reconciliationAttempt++]
+                            );
+                        }
+                    }).catch(() => {
+                        if (!settled && reconciliationAttempt < reconciliationDelays.length) {
+                            reconciliationTimer = setTimeout(
+                                reconcileReleaseState,
+                                reconciliationDelays[reconciliationAttempt++]
+                            );
+                        }
+                    });
+            };
+            reconciliationTimer = setTimeout(
+                reconcileReleaseState,
+                reconciliationDelays[reconciliationAttempt++]
+            );
 
             const requestOptions = {
                 method: 'POST',
@@ -4015,7 +4058,7 @@ const UI = {
                         try {
                             // A stable module URL keeps negotiation generation/cancellation
                             // state shared across retries and rapid user reconnects.
-                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260729d');
+                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260729e');
                             if (!connectAttemptIsCurrent()) {
                                 return;
                             }
@@ -4026,6 +4069,9 @@ const UI = {
                                 UI,
                                 computeSessionId,
                                 onProgress: onWebRtcProgress,
+                                // This attempt has an automatic retry. Keep its
+                                // provisional error inside the loading experience.
+                                deferFailureUi: true,
                             });
                             captureWebRtcFailure();
                         } catch (weErr) {

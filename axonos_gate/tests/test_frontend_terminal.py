@@ -183,8 +183,8 @@ class FrontendTerminalContractTests(unittest.TestCase):
 
     def test_frontend_module_cache_tokens_stay_in_lockstep(self) -> None:
         self.assertIn("axonos-theme.css?v=20.2&t=20260812a", self.page)
-        self.assertIn("app/ui.js?v=20260729d", self.page)
-        self.assertIn("./webrtc/axonos-webrtc.js?v=20260729d", self.ui)
+        self.assertIn("app/ui.js?v=20260729e", self.page)
+        self.assertIn("./webrtc/axonos-webrtc.js?v=20260729e", self.ui)
         self.assertIn("./terminal/axonos-terminal.js?v=20260729d", self.ui)
 
     def test_terminal_fallback_does_not_start_a_dashboard_status_refresh(self) -> None:

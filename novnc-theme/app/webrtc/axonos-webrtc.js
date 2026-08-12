@@ -225,6 +225,7 @@ function _normalizeSdp(sdp) {
  * @param {import('../ui.js').UI} opts.UI - noVNC UI object
  * @param {number|string} opts.computeSessionId - claimed compute-session identifier
  * @param {(phase: string) => void} [opts.onProgress] - truthful loader phase callback
+ * @param {boolean} [opts.deferFailureUi] - keep a retryable attempt's failure inside the loader
  * @returns {Promise<boolean>} true if WebRTC owns the session UI
  */
 export async function connectAxonOSWebRTC(opts) {
@@ -232,6 +233,15 @@ export async function connectAxonOSWebRTC(opts) {
     const wallet = window.verifiedWalletAddress;
     const token = window.verifiedWalletAuthToken;
     const computeSessionId = Number(opts.computeSessionId);
+    const deferFailureUi = opts.deferFailureUi === true;
+    const showFailure = (text, state, timeoutMs) => {
+        if (deferFailureUi) {
+            _hideBanner();
+            return;
+        }
+        _setBanner(text, state);
+        setTimeout(_hideBanner, timeoutMs);
+    };
     const reportProgress = (phase) => {
         const callback = typeof opts.onProgress === 'function'
             ? opts.onProgress
@@ -284,11 +294,9 @@ export async function connectAxonOSWebRTC(opts) {
 
     if (typeof RTCPeerConnection === 'undefined') {
         if (webrtcFallbackOk) {
-            _setBanner('WebRTC not supported in this browser — using classic stream.', 'fallback');
-            setTimeout(_hideBanner, 5000);
+            showFailure('WebRTC not supported in this browser — using classic stream.', 'fallback', 5000);
         } else {
-            _setBanner('WebRTC not supported in this browser.', 'failed');
-            setTimeout(_hideBanner, 5000);
+            showFailure('WebRTC not supported in this browser.', 'failed', 5000);
         }
         return false;
     }
@@ -514,11 +522,10 @@ export async function connectAxonOSWebRTC(opts) {
         }
         await _cleanup(pc, video, sessionId, wallet);
         if (webrtcFallbackOk) {
-            _setBanner('WebRTC negotiation failed — falling back.', 'fallback');
+            showFailure('WebRTC negotiation failed — falling back.', 'fallback', 4000);
         } else {
-            _setBanner('WebRTC negotiation failed.', 'failed');
+            showFailure('WebRTC negotiation failed.', 'failed', 4000);
         }
-        setTimeout(_hideBanner, 4000);
         return false;
     }
     reportProgress('webrtc-waiting');
@@ -545,11 +552,10 @@ export async function connectAxonOSWebRTC(opts) {
                 await _cleanup(pc, video, sessionId, wallet);
                 const msg = 'WebRTC auth expired — sign in again or use classic VNC if enabled.';
                 if (webrtcFallbackOk) {
-                    _setBanner(msg + ' Falling back.', 'fallback');
+                    showFailure(msg + ' Falling back.', 'fallback', 8000);
                 } else {
-                    _setBanner(msg, 'failed');
+                    showFailure(msg, 'failed', 8000);
                 }
-                setTimeout(_hideBanner, 8000);
                 return false;
             }
             break;
@@ -574,11 +580,10 @@ export async function connectAxonOSWebRTC(opts) {
             await _cleanup(pc, video, sessionId, wallet);
             const msg = failure.message;
             if (webrtcFallbackOk) {
-                _setBanner(`${msg} — falling back.`, 'fallback');
+                showFailure(`${msg} — falling back.`, 'fallback', 8000);
             } else {
-                _setBanner(msg, 'failed');
+                showFailure(msg, 'failed', 8000);
             }
-            setTimeout(_hideBanner, 8000);
             return false;
         }
         if (j.state === 'closed') {
@@ -587,11 +592,10 @@ export async function connectAxonOSWebRTC(opts) {
             }
             await _cleanup(pc, video, sessionId, wallet);
             if (webrtcFallbackOk) {
-                _setBanner('WebRTC session closed — falling back.', 'fallback');
+                showFailure('WebRTC session closed — falling back.', 'fallback', 5000);
             } else {
-                _setBanner('WebRTC session closed.', 'failed');
+                showFailure('WebRTC session closed.', 'failed', 5000);
             }
-            setTimeout(_hideBanner, 5000);
             return false;
         }
         if (j.has_answer && j.answer && j.answer.sdp) {
@@ -630,11 +634,10 @@ export async function connectAxonOSWebRTC(opts) {
         }
         await _cleanup(pc, video, sessionId, wallet);
         if (webrtcFallbackOk) {
-            _setBanner('WebRTC timed out — falling back.', 'fallback');
+            showFailure('WebRTC timed out — falling back.', 'fallback', 4000);
         } else {
-            _setBanner('WebRTC timed out.', 'failed');
+            showFailure('WebRTC timed out.', 'failed', 4000);
         }
-        setTimeout(_hideBanner, 4000);
         return false;
     }
 
@@ -1606,15 +1609,16 @@ export async function connectAxonOSWebRTC(opts) {
             releasePointer: releaseMouseOnFocusLoss,
         });
         if (webrtcFallbackOk) {
-            _setBanner('WebRTC ICE failed — falling back.', 'fallback');
+            showFailure('WebRTC ICE failed — falling back.', 'fallback', 5000);
         } else {
-            _setBanner('WebRTC ICE failed.', 'failed');
+            showFailure('WebRTC ICE failed.', 'failed', 5000);
         }
-        setTimeout(_hideBanner, 5000);
-        if (typeof UI.updateVisualState === 'function') {
+        if (!deferFailureUi && typeof UI.updateVisualState === 'function') {
             UI.updateVisualState('disconnected');
         }
-        UI.showStatus('WebRTC connection failed (ICE).', 'error');
+        if (!deferFailureUi) {
+            UI.showStatus('WebRTC connection failed (ICE).', 'error');
+        }
         return false;
     }
 

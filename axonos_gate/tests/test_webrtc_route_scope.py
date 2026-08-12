@@ -230,6 +230,13 @@ class WebRtcBrowserScopeContractTests(unittest.TestCase):
         self.assertEqual(len(attempts), 2)
         for options in attempts:
             self.assertRegex(options, r"\bcomputeSessionId\b")
+        self.assertIn("deferFailureUi: true", attempts[0])
+        self.assertNotIn("deferFailureUi", attempts[1])
+
+    def test_retryable_first_attempt_does_not_publish_terminal_failure_ui(self) -> None:
+        self.assertIn("const deferFailureUi = opts.deferFailureUi === true", self.webrtc_source)
+        self.assertIn("if (deferFailureUi)", self.webrtc_source)
+        self.assertIn("if (!deferFailureUi)", self.webrtc_source)
 
     def test_webrtc_module_requires_compute_id(self) -> None:
         self.assertIn(

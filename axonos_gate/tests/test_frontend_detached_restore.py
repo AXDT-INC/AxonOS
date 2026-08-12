@@ -766,6 +766,9 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         self.assertIn("requestBody.expected_session_id", request)
         self.assertIn("data.released === true", request)
         self.assertIn("data.session_mismatch === true", request)
+        self.assertIn("axonosConfirmSessionReleaseState", request)
+        self.assertIn("confirmedByStatus: true", request)
+        self.assertIn("reconciliationDelays = [750, 1500, 3000]", request)
         self.assertIn("_axonosExplicitReleasePromise", retry)
         self.assertIn("return retryPromise", retry)
         self.assertIn("_axonosExplicitReleasePromise", disconnect)
@@ -854,6 +857,20 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         self.assertIn("return true", release_only)
         self.assertNotIn("axonosOnWalletVerified", release_only)
         self.assertNotIn("claimSession", release_only)
+
+    def test_release_status_reconciliation_is_authoritative_and_new_session_safe(self) -> None:
+        reconcile = self._page_between(
+            "window.axonosConfirmSessionReleaseState = function (context)",
+            "// Local flags can lag an already-created server allocation",
+        )
+
+        self.assertIn("sessionStatusForWallet(wallet)", reconcile)
+        self.assertIn("axonosSessionStatusIsAuthoritative(status)", reconcile)
+        self.assertIn("axonosOwnedActiveSessionFromStatus(status, wallet)", reconcile)
+        self.assertIn("axonosCreditGraceActive(status)", reconcile)
+        self.assertIn("activeId !== expectedId", reconcile)
+        self.assertIn("confirmed: true", reconcile)
+        self.assertIn("billingEnded: true", reconcile)
 
 
 if __name__ == "__main__":

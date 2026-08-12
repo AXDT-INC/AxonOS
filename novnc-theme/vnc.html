@@ -109,7 +109,7 @@ Copyright (C) 2019 The noVNC Authors
     </script>
     <script src="app/error-handler.js"></script>
     <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
-    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260729d"></script>
+    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260729e"></script>
 </head>
 
 <body>
@@ -7147,6 +7147,48 @@ Copyright (C) 2019 The noVNC Authors
             return !!(axonosOwnedActiveSessionFromStatus(status, wallet) ||
                 axonosCreditGraceActive(status));
         }
+
+        // The release endpoint deliberately waits for infrastructure cleanup, which
+        // can outlive the compute container and its billing row. Let the viewer leave
+        // its blocking End screen as soon as an independent authoritative status read
+        // confirms that this wallet has no active/grace allocation. A newer exact
+        // session is never mistaken for the released target.
+        window.axonosConfirmSessionReleaseState = function (context) {
+            var source = context && typeof context === 'object' ? context : {};
+            var wallet = String(source.wallet || '').trim();
+            if (!wallet || axonosNormalizeReleaseIdentity(window.verifiedWalletAddress) !==
+                axonosNormalizeReleaseIdentity(wallet)) {
+                return Promise.resolve({ confirmed: false, reason: 'wallet_changed' });
+            }
+            return sessionStatusForWallet(wallet).then(function (status) {
+                if (!axonosSessionStatusIsAuthoritative(status)) {
+                    return { confirmed: false, authoritative: false, status: status };
+                }
+                var active = axonosOwnedActiveSessionFromStatus(status, wallet);
+                var grace = axonosCreditGraceActive(status);
+                if (active || grace) {
+                    var activeId = active && active.sessionId != null
+                        ? String(active.sessionId) : null;
+                    var expectedId = source.sessionId != null
+                        ? String(source.sessionId) : null;
+                    return {
+                        confirmed: false,
+                        authoritative: true,
+                        sessionMismatch: !!(activeId && expectedId && activeId !== expectedId),
+                        activeSessionId: activeId,
+                        status: status
+                    };
+                }
+                return {
+                    confirmed: true,
+                    authoritative: true,
+                    billingEnded: true,
+                    status: status
+                };
+            }).catch(function () {
+                return { confirmed: false, authoritative: false };
+            });
+        };
 
         // Local flags can lag an already-created server allocation (reload, slow
         // claim response). Automatic identity cleanup is allowed only after an
