@@ -500,8 +500,9 @@ Copyright (C) 2019 The noVNC Authors
                         virtualization, no setup. Pick an environment, choose your hardware, and pay by the minute in
                         crypto.</p>
                     <div class="axonos-hero__ctas">
-                        <button type="button" id="axonos_hero_launch_btn" class="axonos-cta axonos-cta--primary">Connect
-                            wallet<svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <button type="button" id="axonos_hero_launch_btn" class="axonos-cta axonos-cta--primary"><span
+                                id="axonos_hero_launch_label">Connect wallet</span><svg width="17" height="17"
+                                viewBox="0 0 24 24" fill="none" aria-hidden="true">
                                 <path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2"
                                     stroke-linecap="round" stroke-linejoin="round" />
                             </svg></button>
@@ -8153,15 +8154,18 @@ Copyright (C) 2019 The noVNC Authors
             const userWrap = document.getElementById('axonos_topbar_user_wrap');
             const addrEl = document.getElementById('axonos_topbar_wallet_addr');
             const creditsEl = document.getElementById('axonos_topbar_credits_val');
+            const heroLaunchLabel = document.getElementById('axonos_hero_launch_label');
 
             if (wallet) {
                 if (connectBtn) connectBtn.style.display = 'none';
                 if (userWrap) userWrap.style.display = 'flex';
                 if (addrEl) addrEl.textContent = wallet.slice(0, 6) + '…' + wallet.slice(-4);
                 if (creditsEl) creditsEl.textContent = (credits != null) ? Math.round(credits) : '0';
+                if (heroLaunchLabel) heroLaunchLabel.textContent = 'Launch Workstation';
             } else {
                 if (connectBtn) connectBtn.style.display = 'block';
                 if (userWrap) userWrap.style.display = 'none';
+                if (heroLaunchLabel) heroLaunchLabel.textContent = 'Connect wallet';
             }
         }
         window.axonosSyncTopbar = axonosSyncTopbar;

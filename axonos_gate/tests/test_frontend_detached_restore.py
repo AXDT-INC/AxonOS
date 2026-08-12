@@ -218,6 +218,17 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         self.assertIn("UI._axgtStopSessionTimer()", cleanup)
         self.assertIn("UI.hideAxonosSshCard()", cleanup)
 
+    def test_topbar_sync_updates_hero_cta_from_verified_identity(self) -> None:
+        sync = self._page_between(
+            "function axonosSyncTopbar(wallet, credits)",
+            "window.axonosSyncTopbar = axonosSyncTopbar",
+        )
+
+        self.assertIn('id="axonos_hero_launch_label">Connect wallet</span>', self.page_source)
+        self.assertIn("heroLaunchLabel.textContent = 'Launch Workstation'", sync)
+        self.assertIn("heroLaunchLabel.textContent = 'Connect wallet'", sync)
+        self.assertNotIn("heroLaunchBtn.innerHTML", sync)
+
     def test_storage_context_is_generation_and_wallet_scoped(self) -> None:
         storage_helpers = self._page_between(
             "var axonosWizardStorageUserEdited = false;",
