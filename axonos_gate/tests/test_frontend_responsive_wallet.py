@@ -13,9 +13,13 @@ class ResponsiveWalletDialogContractTests(unittest.TestCase):
 
     def test_compact_view_notice_explains_mobile_window_and_zoom_triggers(self) -> None:
         self.assertIn("More screen space recommended", self.page)
+        self.assertIn(
+            "AxonOS is designed for desktop use. You're using a compact", self.page
+        )
         self.assertIn("phone or", self.page)
         self.assertIn("in a narrow window, or at higher browser zoom", self.page)
         self.assertIn("widen the window or reduce", self.page)
+        self.assertIn("to a laptop or desktop to continue", self.page)
 
     def test_wallet_dialog_remains_viewport_fixed_at_tablet_breakpoint(self) -> None:
         responsive = self.css.split("@media (max-width: 992px) {", 1)[1].split(

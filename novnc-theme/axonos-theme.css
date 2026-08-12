@@ -8033,6 +8033,14 @@ button.axonos-topbar__brand {
   filter: brightness(1.08);
 }
 
+/* AxonOS is designed for desktop use. Hide the wallet CTA in the compact mobile
+   view even when the topbar state code applies display: block inline. */
+@media (max-width: 600px) {
+  .axonos-topbar-cta {
+    display: none !important;
+  }
+}
+
 .axonos-topbar-credits {
   display: flex;
   align-items: center;
