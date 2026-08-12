@@ -3167,9 +3167,13 @@ const UI = {
         }
     },
 
-    _axonosReleaseSessionHeaders() {
+    _axonosReleaseSessionHeaders(expectedWallet) {
         const wallet = window.verifiedWalletAddress;
         if (!wallet) {
+            return null;
+        }
+        if (expectedWallet && String(wallet).trim().toLowerCase() !==
+            String(expectedWallet).trim().toLowerCase()) {
             return null;
         }
         const headers = {
@@ -3180,6 +3184,121 @@ const UI = {
             headers['X-AXGT-Auth-Token'] = window.verifiedWalletAuthToken;
         }
         return headers;
+    },
+
+    /**
+     * Capture the non-secret identity of an explicit release attempt before any
+     * disconnect caller is allowed to clear wallet/session UI state. The snapshot
+     * is intentionally memory-only and never contains the wallet auth token.
+     */
+    _axonosSessionReleaseContext(options) {
+        const opts = options && typeof options === 'object' ? options : {};
+        const previous = opts.previous && typeof opts.previous === 'object'
+            ? opts.previous : {};
+        const source = opts.source || 'disconnect';
+        const owned = window.axonosOwnedSession || window.axonosDetachedSession ||
+            window.axonosPausedResume || window.axonosPendingResumeClaim || null;
+        const sessionId = previous.sessionId || (owned && (
+            owned.id || owned.session_id || owned.sessionId || owned.expectedSessionId
+        )) || null;
+        const viewerAttached = UI._axonosViewerAttached();
+        UI._axonosSessionReleaseSequence = (UI._axonosSessionReleaseSequence || 0) + 1;
+        const context = {
+            attemptId: UI._axonosSessionReleaseSequence,
+            retryOf: previous.attemptId || null,
+            wallet: String(opts.wallet || previous.wallet || window.verifiedWalletAddress || '').trim(),
+            sessionId: sessionId === null ? null : String(sessionId),
+            requestedAt: Date.now(),
+            source,
+            // A retry is a new attempt, but it must retain whether the original
+            // action was merely End session or a wallet sign-out/switch.
+            intentSource: previous.intentSource || previous.source || source,
+            connectionKind: previous.connectionKind || UI.connectionKind || null,
+            wasDetached: previous.wasDetached === true || !!window.axonosSessionDetached,
+            hadOwnedSession: previous.hadOwnedSession === true || !!owned,
+            hadServerSession: previous.hadServerSession === true || !!owned ||
+                viewerAttached || !!UI._axgtStatusPollId,
+            released: null,
+            failure: null,
+            reason: null,
+            status: null,
+        };
+        if (typeof window.axonosBeginSessionReleaseOperation === 'function') {
+            context.operationId = window.axonosBeginSessionReleaseOperation(context);
+        }
+        return context;
+    },
+
+    _axonosNotifySessionReleaseResult(context) {
+        if (typeof window.axonosSessionReleaseResultIsCurrent === 'function' &&
+            !window.axonosSessionReleaseResultIsCurrent(context)) {
+            return false;
+        }
+        const released = context && context.released === true;
+        UI._axonosSessionReleaseFailureContext = released ? null : context;
+        const hookName = released
+            ? 'axonosHandleSessionReleaseSuccess'
+            : 'axonosHandleSessionReleaseFailure';
+        const hook = window[hookName];
+        if (typeof hook === 'function') {
+            try {
+                const hookResult = hook(context);
+                if (hookResult && typeof hookResult.catch === 'function') {
+                    hookResult.catch((err) => {
+                        Log.Warn('AxonOS session release result hook failed: ' + err);
+                    });
+                }
+                return true;
+            } catch (err) {
+                Log.Warn('AxonOS session release result hook failed: ' + err);
+            }
+        }
+        if (!released) {
+            UI.showStatus(
+                _('Could not confirm that the session ended. It may still be running and billing; retry End session.'),
+                'error'
+            );
+        }
+        return true;
+    },
+
+    _axonosSessionReleaseTimeoutMs() {
+        const cfg = window.axonosConfig || {};
+        const configuredMs = Number(cfg.session_release_timeout_ms);
+        if (Number.isFinite(configuredMs) && configuredMs > 0) {
+            return Math.max(15000, configuredMs);
+        }
+        const configuredSeconds = Number(cfg.session_release_timeout_seconds);
+        if (Number.isFinite(configuredSeconds) && configuredSeconds > 0) {
+            return Math.max(15000, configuredSeconds * 1000);
+        }
+        const launcherSeconds = Number(cfg.session_launcher_timeout_seconds);
+        return Math.max(
+            15000,
+            (Number.isFinite(launcherSeconds) && launcherSeconds > 0
+                ? launcherSeconds + 15 : 105) * 1000
+        );
+    },
+
+    _axonosApplyConfirmedSessionRelease() {
+        UI._axonosSessionReleaseFailureContext = null;
+        window.axonosSessionDetached = false;
+        window.axonosPendingResumeClaim = null;
+        window.axonosPausedResume = null;
+        if (typeof window.axonosClearDetachedSession === 'function') {
+            window.axonosClearDetachedSession();
+        }
+        if (typeof window.axonosApplyResumeConnectUi === 'function') {
+            window.axonosApplyResumeConnectUi(false);
+        }
+        if (UI._axgtStatusPollId) {
+            clearInterval(UI._axgtStatusPollId);
+            UI._axgtStatusPollId = null;
+        }
+        if (typeof UI._axgtStopSessionTimer === 'function') {
+            UI._axgtStopSessionTimer();
+        }
+        UI.updateSessionControlButtons();
     },
 
     _axonosSessionOwnsServerSlot() {
@@ -3209,7 +3328,20 @@ const UI = {
             return;
         }
         const url = new URL('/api/session/release', window.location.origin).toString();
-        const body = JSON.stringify({ wallet_address: wallet });
+        const payload = { wallet_address: wallet };
+        const owned = window.axonosOwnedSession || window.axonosDetachedSession || null;
+        const rawExpectedSessionId = owned && (
+            owned.id || owned.session_id || owned.sessionId
+        );
+        if (rawExpectedSessionId !== null && rawExpectedSessionId !== undefined) {
+            const expectedSessionId = Number(rawExpectedSessionId);
+            if (!Number.isSafeInteger(expectedSessionId) || expectedSessionId <= 0) {
+                Log.Warn('AxonOS pagehide release skipped: invalid session identity');
+                return;
+            }
+            payload.expected_session_id = expectedSessionId;
+        }
+        const body = JSON.stringify(payload);
         fetch(url, {
             method: 'POST',
             credentials: 'include',
@@ -3225,34 +3357,173 @@ const UI = {
         });
     },
 
-    /** POST /api/session/release — best effort on user-triggered disconnect. */
-    _axonosReleaseSessionBestEffort() {
-        const wallet = window.verifiedWalletAddress;
-        if (!wallet) return Promise.resolve(false);
-
-        const url = new URL('/api/session/release', window.location.origin).toString();
-        const headers = UI._axonosReleaseSessionHeaders();
-        if (!headers) {
+    /**
+     * POST /api/session/release with a bounded wait. Resolves to true only when
+     * the server confirms that the session was released or is already absent,
+     * while enriching the supplied non-secret context with a recoverable failure
+     * reason.
+     */
+    _axonosReleaseSessionBestEffort(context) {
+        const releaseContext = context && typeof context === 'object'
+            ? context : (UI._axonosPendingSessionReleaseContext ||
+                UI._axonosSessionReleaseContext());
+        const wallet = releaseContext.wallet;
+        if (!wallet) {
+            Object.assign(releaseContext, {
+                released: false,
+                failure: 'wallet_missing',
+                reason: _('Wallet verification required to end the session.'),
+                completedAt: Date.now(),
+            });
             return Promise.resolve(false);
         }
 
-        const request = fetch(url, {
-            method: 'POST',
-            credentials: 'include',
-            headers,
-            body: JSON.stringify({ wallet_address: wallet }),
-        }).then((r) => {
-            const ct = (r.headers.get('content-type') || '');
-            if (!ct.includes('application/json')) return {};
-            return r.json();
-        }).then((data) => data && data.released === true)
-          .catch(() => false);
+        const url = new URL('/api/session/release', window.location.origin).toString();
+        const headers = UI._axonosReleaseSessionHeaders(wallet);
+        if (!headers) {
+            Object.assign(releaseContext, {
+                released: false,
+                failure: 'wallet_changed',
+                reason: _('The verified wallet changed before the session could be ended.'),
+                completedAt: Date.now(),
+            });
+            return Promise.resolve(false);
+        }
 
-        // Don't block disconnect indefinitely if the release endpoint is slow/unreachable.
-        const timeout = new Promise((resolve) => {
-            setTimeout(() => resolve(false), 1500);
+        return new Promise((resolve) => {
+            let settled = false;
+            const controller = typeof AbortController === 'function'
+                ? new AbortController() : null;
+            const finish = (released, details) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timeoutId);
+                Object.assign(releaseContext, details || {}, {
+                    released,
+                    completedAt: Date.now(),
+                });
+                resolve(released);
+            };
+            const timeoutId = setTimeout(() => {
+                if (controller) controller.abort();
+                finish(false, {
+                    failure: 'timeout',
+                    reason: _('The session-end request timed out.'),
+                });
+            }, UI._axonosSessionReleaseTimeoutMs());
+
+            const requestOptions = {
+                method: 'POST',
+                credentials: 'include',
+                headers,
+                body: null,
+            };
+            const requestBody = { wallet_address: wallet };
+            if (releaseContext.sessionId !== null && releaseContext.sessionId !== undefined) {
+                const expectedSessionId = Number(releaseContext.sessionId);
+                if (!Number.isSafeInteger(expectedSessionId) || expectedSessionId <= 0) {
+                    finish(false, {
+                        failure: 'session_identity_invalid',
+                        reason: _('The retained session identity is invalid; refresh the workspace before ending it.'),
+                    });
+                    return;
+                }
+                requestBody.expected_session_id = expectedSessionId;
+            }
+            requestOptions.body = JSON.stringify(requestBody);
+            if (controller) requestOptions.signal = controller.signal;
+
+            let request;
+            try {
+                request = fetch(url, requestOptions);
+            } catch (err) {
+                finish(false, {
+                    failure: 'network',
+                    reason: _('The session-end request could not be sent.'),
+                });
+                return;
+            }
+            Promise.resolve(request).then((response) => {
+                const ct = response.headers.get('content-type') || '';
+                const dataPromise = ct.includes('application/json')
+                    ? response.json().catch(() => ({}))
+                    : Promise.resolve({});
+                return dataPromise.then((data) => ({ response, data }));
+            }).then(({ response, data }) => {
+                if (response.ok && data && data.released === true) {
+                    finish(true, {
+                        alreadyAbsent: data.already_absent === true,
+                        failure: null,
+                        reason: null,
+                        status: response.status,
+                    });
+                    return;
+                }
+                const reason = data && (data.reason || data.error);
+                // Release is intentionally not idempotent at the API layer: a
+                // retry after an ambiguous timeout returns released:false once
+                // the first request already ended the session. That authoritative
+                // absence is still success for the user's requested end state.
+                if (response.ok && reason &&
+                    /^No active(?: or credit-grace)? session for this wallet$/i.test(String(reason).trim())) {
+                    finish(true, {
+                        alreadyAbsent: true,
+                        failure: null,
+                        reason: null,
+                        status: response.status,
+                    });
+                    return;
+                }
+                finish(false, {
+                    failure: 'rejected',
+                    reason: reason ? String(reason) : _(
+                        response.ok
+                            ? 'The server did not confirm that the session ended.'
+                            : 'The session-end request was rejected by the server.'
+                    ),
+                    status: response.status,
+                    sessionMismatch: data && data.session_mismatch === true,
+                    activeSessionId: data && data.active_session_id != null
+                        ? String(data.active_session_id) : null,
+                });
+            }).catch((err) => {
+                if (settled) return;
+                finish(false, {
+                    failure: 'network',
+                    reason: _('The session-end request could not reach the server.'),
+                });
+            });
         });
-        return Promise.race([request, timeout]);
+    },
+
+    /** Retry a failed explicit release without persisting or copying auth secrets. */
+    retryAxonosSessionRelease(snapshot) {
+        if (UI._axonosExplicitReleasePromise) {
+            return UI._axonosExplicitReleasePromise;
+        }
+        const previous = snapshot && typeof snapshot === 'object'
+            ? snapshot : UI._axonosSessionReleaseFailureContext;
+        const context = UI._axonosSessionReleaseContext({
+            previous,
+            wallet: previous && previous.wallet,
+            source: 'retry',
+        });
+        UI.showStatus(_('Ending session… Waiting for server confirmation.'), 'normal');
+        const retryPromise = UI._axonosReleaseSessionBestEffort(context).then((released) => {
+            if (typeof window.axonosSessionReleaseResultIsCurrent === 'function' &&
+                !window.axonosSessionReleaseResultIsCurrent(context)) {
+                return false;
+            }
+            if (released) UI._axonosApplyConfirmedSessionRelease();
+            UI._axonosNotifySessionReleaseResult(context);
+            return released;
+        }).finally(() => {
+            if (UI._axonosExplicitReleasePromise === retryPromise) {
+                UI._axonosExplicitReleasePromise = null;
+            }
+        });
+        UI._axonosExplicitReleasePromise = retryPromise;
+        return retryPromise;
     },
 
     /** Cancel in-flight WebRTC negotiation and clear stale peer UI globals. */
@@ -3345,12 +3616,14 @@ const UI = {
 
     _axonosCompleteDetachUI(options) {
         const opts = options && typeof options === 'object' ? options : {};
+        const releaseFailed = opts.releaseFailed === true ||
+            !!UI._axonosSessionReleaseFailureContext;
         UI._axonosInvalidateConnectAttempt();
         UI._axonosCloseTerminalClient();
         UI.connectionKind = null;
         UI._axonosCancelWebRtcClient();
         UI.connected = false;
-        UI.hideStatus();
+        if (!releaseFailed) UI.hideStatus();
         if (typeof window.axonosHideConnectionLoader === 'function') {
             window.axonosHideConnectionLoader(true);
         }
@@ -3361,7 +3634,7 @@ const UI = {
                 'warn',
                 12000
             );
-        } else {
+        } else if (!releaseFailed) {
             UI.showStatus(
                 _("Detached — desktop and jobs are still running, and billing continues even if this tab closes. Reconnect or End session when done."),
                 'normal'
@@ -3938,6 +4211,16 @@ const UI = {
         const skipRelease = opts.skipRelease === true;
         const detach = opts.detach === true;
         const creditExhausted = opts.creditExhausted === true;
+        // Destructive controls can be reached from the viewer, SSH card, wallet
+        // menu, and provider callbacks. Coalesce overlapping explicit releases so
+        // a late failure cannot overwrite another attempt's confirmed success.
+        if (!skipRelease && UI._axonosExplicitReleasePromise) {
+            return UI._axonosExplicitReleasePromise;
+        }
+        const releaseContext = skipRelease ? null : UI._axonosSessionReleaseContext({
+            source: typeof opts.releaseSource === 'string' ? opts.releaseSource : 'disconnect',
+        });
+        let releaseFailed = false;
         const terminalDisconnect = UI.connectionKind === 'terminal' ||
             UI.terminalState === 'connecting';
 
@@ -3976,14 +4259,14 @@ const UI = {
             }
         } else if (!skipRelease) {
             window.axonosSessionDetached = false;
-            if (typeof window.axonosClearDetachedSession === 'function') {
-                window.axonosClearDetachedSession();
-            }
         }
 
         UI.connected = false;
 
-        if (!detach && !window.axonosSessionDetached) {
+        // Explicit release keeps the remembered server state until the response
+        // is known. On ambiguity it becomes a detached, recoverable session;
+        // detach/credit paths retain their existing immediate poll behavior.
+        if (skipRelease && !detach && !window.axonosSessionDetached) {
             if (UI._axgtStatusPollId) {
                 clearInterval(UI._axgtStatusPollId);
                 UI._axgtStatusPollId = null;
@@ -4048,25 +4331,71 @@ const UI = {
                 } catch (err) {
                     Log.Warn("AxonOS disconnect failed: " + err);
                     if (detach || window.axonosSessionDetached) {
-                        UI._axonosCompleteDetachUI({ creditExhausted, terminal: terminalDisconnect });
+                        UI._axonosCompleteDetachUI({
+                            creditExhausted,
+                            terminal: terminalDisconnect,
+                            releaseFailed,
+                        });
                     } else {
-                        UI._axonosReturnToHomeAfterDisconnect({ creditExhausted });
+                        UI._axonosReturnToHomeAfterDisconnect({
+                            creditExhausted,
+                            preserveStatus: releaseFailed,
+                        });
                     }
                 }
             } else if (detach || window.axonosSessionDetached) {
-                UI._axonosCompleteDetachUI({ creditExhausted, terminal: terminalDisconnect });
+                UI._axonosCompleteDetachUI({
+                    creditExhausted,
+                    terminal: terminalDisconnect,
+                    releaseFailed,
+                });
             } else {
-                UI._axonosReturnToHomeAfterDisconnect({ creditExhausted });
+                UI._axonosReturnToHomeAfterDisconnect({
+                    creditExhausted,
+                    preserveStatus: releaseFailed,
+                });
             }
         };
 
         // Credit grace / Detach must not release the session (container retained).
         if (skipRelease) {
             doDisconnect();
-            return;
+            return Promise.resolve(true);
         }
-        // Best-effort server-side release first so reconnect doesn't get trapped behind stale ownership.
-        UI._axonosReleaseSessionBestEffort().finally(doDisconnect);
+        // Wait for a bounded, confirmed server-side release first so callers can
+        // preserve identity and offer recovery when ownership remains ambiguous.
+        UI._axonosPendingSessionReleaseContext = releaseContext;
+        UI.showStatus(_('Ending session… Waiting for server confirmation.'), 'normal');
+        const releasePromise = UI._axonosReleaseSessionBestEffort(releaseContext).then((released) => {
+            if (typeof window.axonosSessionReleaseResultIsCurrent === 'function' &&
+                !window.axonosSessionReleaseResultIsCurrent(releaseContext)) {
+                return false;
+            }
+            releaseFailed = !released;
+            if (released) {
+                UI._axonosApplyConfirmedSessionRelease();
+            } else if (releaseContext.hadServerSession) {
+                // The viewer is closed below, but the unconfirmed server session
+                // remains owned, visible, heartbeating, and retryable.
+                window.axonosSessionDetached = true;
+                UI._axgtEndingSession = false;
+                if (typeof window.axonosSyncDetachedProfileUiImmediate === 'function') {
+                    window.axonosSyncDetachedProfileUiImmediate();
+                }
+            }
+            UI._axonosNotifySessionReleaseResult(releaseContext);
+            return released;
+        }).finally(() => {
+            if (UI._axonosPendingSessionReleaseContext === releaseContext) {
+                UI._axonosPendingSessionReleaseContext = null;
+            }
+            if (UI._axonosExplicitReleasePromise === releasePromise) {
+                UI._axonosExplicitReleasePromise = null;
+            }
+            doDisconnect();
+        });
+        UI._axonosExplicitReleasePromise = releasePromise;
+        return releasePromise;
     },
 
     /** Final billing heartbeat enters credit grace, then disconnect the viewer. */
@@ -5275,6 +5604,8 @@ if (l10n.language === "en" || l10n.dictionary !== undefined) {
 // inline wallet/session code's bare `UI.*` references silently fail to resolve.
 if (typeof window !== 'undefined') {
     window.UI = UI;
+    window.axonosRetrySessionRelease = (snapshot) =>
+        UI.retryAxonosSessionRelease(snapshot);
 }
 
 export default UI;

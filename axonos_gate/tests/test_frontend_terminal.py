@@ -151,7 +151,7 @@ class FrontendTerminalContractTests(unittest.TestCase):
         self.assertIn("UI._axonosCloseTerminalClient()", disconnect)
         self.assertLess(
             disconnect.index("UI._axonosCloseTerminalClient()"),
-            disconnect.index("UI._axonosReleaseSessionBestEffort()"),
+            disconnect.index("UI._axonosReleaseSessionBestEffort(releaseContext)"),
         )
         self.assertIn("UI._axonosCloseTerminalClient()", credit)
         self.assertIn("UI._axonosCloseTerminalClient()", cleanup)

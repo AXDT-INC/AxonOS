@@ -1821,6 +1821,16 @@ def api_session_release():
     wallet_address = (data.get('wallet_address') or '').strip()
     if not wallet_address or not validate_wallet_address(wallet_address):
         return jsonify({"released": False, "error": "Valid wallet_address required"}), 400
+    expected_session_id = data.get("expected_session_id")
+    if expected_session_id is not None and (
+        isinstance(expected_session_id, bool)
+        or not isinstance(expected_session_id, int)
+        or expected_session_id <= 0
+    ):
+        return jsonify({
+            "released": False,
+            "error": "expected_session_id must be a positive integer",
+        }), 400
     # Auth: wallet token OR per-session files_key (headless/SSH self-release —
     # explicit "stop" for sessions with no browser End-session UI).
     session_key = (request.headers.get('X-AXGT-Session-Key') or data.get('session_key') or '').strip()
@@ -1828,7 +1838,10 @@ def api_session_release():
         auth_err = _require_auth_token(wallet_address)
         if auth_err:
             return auth_err
-    return jsonify(release_session(wallet_address))
+    return jsonify(release_session(
+        wallet_address,
+        expected_session_id=expected_session_id,
+    ))
 
 
 @app.route('/api/session/restart', methods=['POST', 'OPTIONS'])

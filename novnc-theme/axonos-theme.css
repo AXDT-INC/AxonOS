@@ -1144,6 +1144,143 @@ input[type="password"]::placeholder {
   color: rgba(255, 95, 87, 0.98);
 }
 
+/* Persistent wallet/session safety notice. It is deliberately non-modal and
+   leaves the viewer usable; only its explicit recovery actions accept input. */
+.axonos-wallet-unavailable-banner {
+  position: fixed;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  /* Above the viewer and HUD, below destructive confirmation/queue overlays. */
+  z-index: 9998;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: min(760px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 11px 13px;
+  transform: translateX(-50%);
+  border: 1px solid rgba(242, 193, 78, 0.55);
+  border-radius: 12px;
+  background: rgba(31, 25, 13, 0.96);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
+  color: #f5e7bd;
+  font-family: var(--font-body);
+  pointer-events: none;
+}
+
+.axonos-wallet-unavailable-banner--hidden {
+  display: none !important;
+}
+
+.axonos-wallet-unavailable-banner--release-failed {
+  border-color: rgba(255, 95, 87, 0.58);
+  background: rgba(38, 17, 20, 0.97);
+  color: #ffd4d1;
+}
+
+.axonos-wallet-unavailable-banner__icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  border-radius: 50%;
+  background: rgba(242, 193, 78, 0.17);
+  color: #f2c14e;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.axonos-wallet-unavailable-banner--release-failed .axonos-wallet-unavailable-banner__icon {
+  background: rgba(255, 95, 87, 0.17);
+  color: #ff8d86;
+}
+
+.axonos-wallet-unavailable-banner__copy {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.axonos-wallet-unavailable-banner__copy strong {
+  color: #fff5d7;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.axonos-wallet-unavailable-banner--release-failed .axonos-wallet-unavailable-banner__copy strong {
+  color: #ffe9e7;
+}
+
+.axonos-wallet-unavailable-banner__actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.axonos-wallet-unavailable-banner__btn {
+  min-height: 32px;
+  padding: 6px 11px;
+  border: 1px solid rgba(242, 193, 78, 0.44);
+  border-radius: 8px;
+  background: rgba(242, 193, 78, 0.12);
+  color: #fff1c4;
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.axonos-wallet-unavailable-banner__btn:hover,
+.axonos-wallet-unavailable-banner__btn:focus-visible {
+  background: rgba(242, 193, 78, 0.22);
+}
+
+.axonos-wallet-unavailable-banner__btn:focus-visible {
+  outline: 2px solid #fff5d7;
+  outline-offset: 2px;
+}
+
+.axonos-wallet-unavailable-banner__btn--danger {
+  border-color: rgba(255, 95, 87, 0.48);
+  background: rgba(255, 95, 87, 0.12);
+  color: #ffb0ab;
+}
+
+.axonos-wallet-unavailable-banner__btn--danger:hover,
+.axonos-wallet-unavailable-banner__btn--danger:focus-visible {
+  background: rgba(255, 95, 87, 0.24);
+}
+
+.axonos-wallet-unavailable-banner__btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+@media (max-width: 680px) {
+  .axonos-wallet-unavailable-banner {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    width: calc(100vw - 20px);
+  }
+
+  .axonos-wallet-unavailable-banner__copy {
+    flex-basis: calc(100% - 40px);
+  }
+
+  .axonos-wallet-unavailable-banner__actions {
+    width: 100%;
+    padding-left: 37px;
+  }
+}
+
 .axonos-usage-overlay {
   position: fixed;
   inset: 0;

@@ -37,6 +37,31 @@ class ResponsiveWalletDialogContractTests(unittest.TestCase):
         self.assertNotIn("position: relative", dialog)
         self.assertNotIn("top: auto", dialog)
 
+    def test_wallet_session_warning_is_persistent_nonmodal_and_responsive(self) -> None:
+        banner = self.css.split(".axonos-wallet-unavailable-banner {", 1)[1].split(
+            "}", 1
+        )[0]
+        hidden = self.css.split(
+            ".axonos-wallet-unavailable-banner--hidden {", 1
+        )[1].split("}", 1)[0]
+        actions = self.css.split(
+            ".axonos-wallet-unavailable-banner__actions {", 1
+        )[1].split("}", 1)[0]
+        focus = self.css.rsplit(
+            ".axonos-wallet-unavailable-banner__btn:focus-visible {", 1
+        )[1].split("}", 1)[0]
+        mobile = self.css.split("@media (max-width: 680px) {", 1)[1].split(
+            "}", 1
+        )[0]
+
+        self.assertIn("position: fixed", banner)
+        self.assertIn("width: min(760px, calc(100vw - 32px))", banner)
+        self.assertNotIn("inset: 0", banner)
+        self.assertIn("display: none !important", hidden)
+        self.assertIn("pointer-events: auto", actions)
+        self.assertIn("outline: 2px solid", focus)
+        self.assertIn("flex-wrap: wrap", mobile)
+
 
 if __name__ == "__main__":
     unittest.main()

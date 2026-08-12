@@ -1892,6 +1892,27 @@ Copyright (C) 2019 The noVNC Authors
         </div>
     </div>
 
+    <!-- Persistent, non-modal safety notice. Wallet-provider loss never ends paid
+         compute automatically: the user can restore the same wallet or explicitly
+         end the retained session. Release failures reuse this surface and retain
+         the authenticated wallet so the user can retry safely. -->
+    <div id="axonos_wallet_unavailable_banner"
+        class="axonos-wallet-unavailable-banner axonos-wallet-unavailable-banner--hidden" role="status"
+        aria-live="polite" aria-atomic="true" aria-hidden="true" translate="no">
+        <div class="axonos-wallet-unavailable-banner__icon" aria-hidden="true">!</div>
+        <div class="axonos-wallet-unavailable-banner__copy">
+            <strong id="axonos_wallet_unavailable_title">Wallet unavailable</strong>
+            <span id="axonos_wallet_unavailable_message">Your session is still running and billing may continue.</span>
+        </div>
+        <div class="axonos-wallet-unavailable-banner__actions">
+            <button type="button" id="axonos_wallet_reconnect_btn"
+                class="axonos-wallet-unavailable-banner__btn">Reconnect wallet</button>
+            <button type="button" id="axonos_wallet_end_session_btn"
+                class="axonos-wallet-unavailable-banner__btn axonos-wallet-unavailable-banner__btn--danger">End
+                session</button>
+        </div>
+    </div>
+
     <!-- Read-only environment browser; available before wallet authentication. -->
     <div id="axonos_catalog_modal" class="axonos-modal" aria-hidden="true" role="dialog"
         aria-modal="true" aria-labelledby="axonos_catalog_modal_title">
@@ -2716,10 +2737,19 @@ Copyright (C) 2019 The noVNC Authors
         window.verifiedWalletAuthToken = null;
         window.axonosWalletProviderUnavailable = false;
         window.axonosWalletAccountMismatch = null;
+        window.axonosWalletProviderIssueKind = null;
+        window.axonosWalletUnavailableSessionPreserved = false;
+        // Kept independently of the live session flags. A failed explicit
+        // release retains wallet credentials and needs a visible retry surface;
+        // the snapshot itself contains no auth secret and is memory-only.
+        window.axonosSessionReleaseFailure = null;
         window.axonosWalletSwitchInProgress = false;
         window.axonosWalletSwitchTarget = null;
         window.axonosPendingWalletAccountEvent = null;
         window.axonosWalletAccountEventGeneration = 0;
+        window.axonosWalletProviderEventGeneration = 0;
+        window.axonosSessionReleaseOperationGeneration = 0;
+        window.axonosCurrentSessionReleaseOperation = null;
 
         function showSessionUnavailableOverlay(data) {
             const overlay = document.getElementById('axonos_session_unavailable_overlay');
@@ -3329,6 +3359,8 @@ Copyright (C) 2019 The noVNC Authors
 
         function axonosSessionProfileContextFromPayload(payload) {
             var data = payload || {};
+            var sessionId = data.session_id || data.owner_session_id ||
+                data.credit_grace_session_id || data.paused_session_id || null;
             var profile = axonosNormalizeProfileName(
                 data.requested_profile || data.owner_requested_profile ||
                 data.credit_grace_requested_profile || data.paused_requested_profile || 'small'
@@ -3342,11 +3374,21 @@ Copyright (C) 2019 The noVNC Authors
                     : (typeof data.paused_gpu_count === 'number'
                         ? data.paused_gpu_count
                         : (gpuIds.length || axonosGpuCountForProfile(profile))));
-            return { profile: profile, gpuCount: gpuCount, gpuIds: gpuIds };
+            return {
+                profile: profile,
+                gpuCount: gpuCount,
+                gpuIds: gpuIds,
+                sessionId: sessionId
+            };
         }
 
         window.axonosRememberOwnedSession = function (payload) {
-            window.axonosOwnedSession = axonosSessionProfileContextFromPayload(payload);
+            var remembered = axonosSessionProfileContextFromPayload(payload);
+            if (remembered.sessionId == null && window.axonosOwnedSession &&
+                window.axonosOwnedSession.sessionId != null) {
+                remembered.sessionId = window.axonosOwnedSession.sessionId;
+            }
+            window.axonosOwnedSession = remembered;
             if (window.axonosSessionDetached) {
                 window.axonosDetachedSession = window.axonosOwnedSession;
                 axonosApplyDetachedSessionUi(true);
@@ -3587,6 +3629,7 @@ Copyright (C) 2019 The noVNC Authors
             }
             document.body.classList.toggle('axonos-resume-mode', !!resumeActive);
         }
+        window.axonosApplyResumeConnectUi = axonosApplyResumeConnectUi;
 
         /** Re-enter an SSH-only session from authoritative status. Prefer the
          *  browser terminal; its failure path preserves the external SSH card. */
@@ -5465,7 +5508,8 @@ Copyright (C) 2019 The noVNC Authors
             });
         }
 
-        function runVerify(walletAddress, provider) {
+        function runVerify(walletAddress, provider, options) {
+            var verifyOptions = options && typeof options === 'object' ? options : {};
             // A new authentication attempt supersedes any payment/test-credit work
             // captured under the previous wallet identity.
             axonosPaymentOperationGeneration += 1;
@@ -5556,6 +5600,12 @@ Copyright (C) 2019 The noVNC Authors
                         window.axonosAllowVncConnect = true;
                         axonosClearWalletProviderOutOfSync();
                         try { localStorage.setItem('axonos_last_wallet', walletAddress); } catch (e) { }
+                        // Release-only re-auth refreshes proof of wallet ownership
+                        // without entering the workspace, claiming compute, restoring
+                        // SSH, or auto-resuming a credit-grace session before End.
+                        if (verifyOptions.releaseOnly === true) {
+                            return true;
+                        }
                         if (typeof axonosOnWalletVerified === 'function') {
                             axonosOnWalletVerified(walletAddress, data);
                         } else {
@@ -5649,6 +5699,9 @@ Copyright (C) 2019 The noVNC Authors
                         window.axonosAllowVncConnect = false;
                         setWalletUIState('axonos_wallet_state_connect_error', { msg: data.error || 'Signature did not verify. Request a new challenge and try again.' });
                         return;
+                    }
+                    if (verifyOptions.releaseOnly === true && st < 400) {
+                        return true;
                     }
                     var balanceDisplay = (data.balance_axgt != null) ? (String(data.balance_axgt) + ' AXGT') : ((typeof data.remaining_minutes === 'number') ? (data.remaining_minutes + ' min prepaid') : '—');
                     var vmsg = document.getElementById('axonos_verify_deposit_msg');
@@ -6823,6 +6876,13 @@ Copyright (C) 2019 The noVNC Authors
         function clearWalletIdentityAndUi() {
             axonosPaymentOperationGeneration += 1;
             axonosWalletConnectGeneration += 1;
+            // Intentional identity teardown invalidates every older asynchronous
+            // release result.  It must also remove a warning for a session that an
+            // authoritative status check has since shown to be absent.
+            window.axonosSessionReleaseOperationGeneration =
+                (window.axonosSessionReleaseOperationGeneration || 0) + 1;
+            window.axonosCurrentSessionReleaseOperation = null;
+            window.axonosSessionReleaseFailure = null;
             axonosInvalidateWalletVerification();
             axonosTestCreditBusy = false;
             setPayDepositButtonsBusy(false);
@@ -6871,6 +6931,8 @@ Copyright (C) 2019 The noVNC Authors
             window.axonosGpuBillingEnabled = null;
             window.axonosWalletProviderUnavailable = false;
             window.axonosWalletAccountMismatch = null;
+            window.axonosWalletProviderIssueKind = null;
+            window.axonosWalletUnavailableSessionPreserved = false;
             verifiedWalletAddress = null;
             window.verifiedWalletAddress = null;
             window.verifiedWalletAuthToken = null;
@@ -6890,6 +6952,7 @@ Copyright (C) 2019 The noVNC Authors
             if (typeof UI !== 'undefined' && typeof UI.updateSessionControlButtons === 'function') {
                 UI.updateSessionControlButtons();
             }
+            axonosSyncWalletUnavailableIndicator();
         }
 
         // True when a remote desktop is on screen OR mid-negotiation ("Connecting
@@ -6926,6 +6989,158 @@ Copyright (C) 2019 The noVNC Authors
             return launchInFlight || axonosDesktopSessionLive() ||
                 axonosWalletHasOwnedServerState();
         }
+
+        function axonosSyncWalletUnavailableIndicator() {
+            var banner = document.getElementById('axonos_wallet_unavailable_banner');
+            if (!banner) return;
+            var title = document.getElementById('axonos_wallet_unavailable_title');
+            var message = document.getElementById('axonos_wallet_unavailable_message');
+            var reconnectBtn = document.getElementById('axonos_wallet_reconnect_btn');
+            var endBtn = document.getElementById('axonos_wallet_end_session_btn');
+            var releaseFailure = window.axonosSessionReleaseFailure;
+            var providerProblem = !!(window.axonosWalletProviderUnavailable ||
+                window.axonosWalletAccountMismatch);
+            var protectedState = !!window.axonosWalletUnavailableSessionPreserved ||
+                axonosWalletHasProtectedSessionState();
+            var visible = !!releaseFailure || (providerProblem && protectedState);
+
+            if (!visible) {
+                banner.classList.add('axonos-wallet-unavailable-banner--hidden');
+                banner.classList.remove('axonos-wallet-unavailable-banner--release-failed');
+                banner.setAttribute('aria-hidden', 'true');
+                return;
+            }
+
+            banner.classList.toggle('axonos-wallet-unavailable-banner--release-failed', !!releaseFailure);
+            banner.classList.remove('axonos-wallet-unavailable-banner--hidden');
+            banner.setAttribute('aria-hidden', 'false');
+            if (releaseFailure) {
+                if (releaseFailure.sessionMismatch) {
+                    if (title) title.textContent = 'A newer session is active';
+                    if (message) message.textContent =
+                        'The original End request did not touch the newer session. Review it in the workspace, or explicitly end the current session.';
+                    if (endBtn) endBtn.textContent = 'End current session';
+                } else {
+                    if (title) title.textContent = 'Session end not confirmed';
+                    if (message) {
+                        var releaseReason = String(releaseFailure.reason || '').trim();
+                        var releaseNeedsAuth = releaseFailure.status === 401 ||
+                            /auth token|wallet verification required|verified wallet changed/i.test(releaseReason);
+                        message.textContent = (releaseReason ? releaseReason + ' ' : '') +
+                            'The session may still be running and billing. ' +
+                            (releaseNeedsAuth
+                                ? 'Re-authenticate the wallet, then retry End session.'
+                                : 'Retry End session. Re-authenticate first if needed.');
+                    }
+                    if (endBtn) endBtn.textContent = 'Retry End session';
+                }
+            } else if (window.axonosWalletAccountMismatch) {
+                if (title) title.textContent = 'Wallet account changed';
+                if (message) message.textContent =
+                    'Your session is still running and billing. Restore the signed-in wallet or explicitly end the session before switching.';
+                if (endBtn) endBtn.textContent = 'End session';
+            } else {
+                if (title) title.textContent = 'Wallet unavailable';
+                if (message) message.textContent =
+                    'Your session is still running and billing. Reconnect the same wallet before the next claim or payment.';
+                if (endBtn) endBtn.textContent = 'End session';
+            }
+            if (reconnectBtn) {
+                reconnectBtn.hidden = !(providerProblem || releaseFailure);
+                reconnectBtn.textContent = releaseFailure
+                    ? 'Re-authenticate wallet' : 'Reconnect wallet';
+            }
+        }
+        window.axonosSyncWalletUnavailableIndicator = axonosSyncWalletUnavailableIndicator;
+
+        function axonosNormalizeReleaseIdentity(value) {
+            return String(value == null ? '' : value).trim().toLowerCase();
+        }
+
+        window.axonosBeginSessionReleaseOperation = function (context) {
+            var source = context && typeof context === 'object' ? context : {};
+            var operationId = (window.axonosSessionReleaseOperationGeneration || 0) + 1;
+            window.axonosSessionReleaseOperationGeneration = operationId;
+            window.axonosCurrentSessionReleaseOperation = {
+                operationId: operationId,
+                wallet: axonosNormalizeReleaseIdentity(source.wallet),
+                sessionId: source.sessionId == null ? null : String(source.sessionId),
+                source: String(source.source || 'session-release')
+            };
+            return operationId;
+        };
+
+        window.axonosSessionReleaseResultIsCurrent = function (context) {
+            var source = context && typeof context === 'object' ? context : {};
+            var current = window.axonosCurrentSessionReleaseOperation;
+            if (!current || source.operationId !== current.operationId) return false;
+            var sourceWallet = axonosNormalizeReleaseIdentity(source.wallet);
+            if (current.wallet && sourceWallet && current.wallet !== sourceWallet) return false;
+            var sourceSessionId = source.sessionId == null ? null : String(source.sessionId);
+            if (current.sessionId && sourceSessionId && current.sessionId !== sourceSessionId) {
+                return false;
+            }
+            return true;
+        };
+
+        function axonosReleaseFailureSnapshot(context) {
+            var source = context && typeof context === 'object' ? context : {};
+            return {
+                attemptId: source.attemptId == null ? null : source.attemptId,
+                retryOf: source.retryOf == null ? null : source.retryOf,
+                operationId: source.operationId == null ? null : source.operationId,
+                wallet: String(source.wallet || window.verifiedWalletAddress || '').trim(),
+                sessionId: source.sessionId == null ? null : String(source.sessionId),
+                requestedAt: source.requestedAt || Date.now(),
+                completedAt: source.completedAt || Date.now(),
+                source: String(source.source || 'disconnect'),
+                intentSource: String(source.intentSource || source.source || 'disconnect'),
+                connectionKind: source.connectionKind || null,
+                wasDetached: source.wasDetached === true,
+                hadOwnedSession: source.hadOwnedSession === true,
+                hadServerSession: source.hadServerSession === true,
+                released: false,
+                failure: String(source.failure || 'unconfirmed'),
+                reason: String(source.reason || 'The server did not confirm that the session ended.'),
+                status: source.status == null ? null : source.status,
+                sessionMismatch: source.sessionMismatch === true,
+                activeSessionId: source.activeSessionId == null
+                    ? null : String(source.activeSessionId)
+            };
+        }
+
+        window.axonosHandleSessionReleaseFailure = function (context) {
+            if (!window.axonosSessionReleaseResultIsCurrent(context)) return false;
+            window.axonosSessionReleaseFailure = axonosReleaseFailureSnapshot(context);
+            axonosSyncWalletUnavailableIndicator();
+            if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                UI.showStatus(
+                    'Could not confirm that the session ended. It may still be running and billing; retry End session.',
+                    'error'
+                );
+            }
+            return false;
+        };
+
+        window.axonosClearSessionReleaseFailure = function () {
+            window.axonosSessionReleaseFailure = null;
+            axonosSyncWalletUnavailableIndicator();
+        };
+
+        window.axonosHandleSessionReleaseSuccess = function () {
+            var context = arguments[0];
+            if (!window.axonosSessionReleaseResultIsCurrent(context)) return false;
+            window.axonosCurrentSessionReleaseOperation = null;
+            window.axonosWalletUnavailableSessionPreserved = false;
+            window.axonosClearSessionReleaseFailure();
+            if (typeof axonosLoadDashboard === 'function' &&
+                window.verifiedWalletAddress &&
+                document.getElementById('noVNC_connect_dlg') &&
+                document.getElementById('noVNC_connect_dlg').classList.contains('axonos-state-dashboard')) {
+                axonosLoadDashboard();
+            }
+            return true;
+        };
 
         function axonosStatusHasProtectedWalletSession(status, wallet) {
             if (!axonosSessionStatusIsAuthoritative(status)) return true;
@@ -6964,7 +7179,28 @@ Copyright (C) 2019 The noVNC Authors
             // them too, or they keep running and billing under an identity the
             // browser has abandoned.
             if (!forceRelease && !axonosWalletHasProtectedSessionState()) {
-                return;
+                return Promise.resolve(true);
+            }
+            // An idle sign-out/switch has nothing to POST to /release (that route
+            // reports released:false when no row exists). Confirm absence through
+            // the authoritative status endpoint; uncertainty falls through to the
+            // explicit release attempt and therefore remains fail-closed.
+            if (forceRelease && options && options.confirmIdleBeforeRelease &&
+                !axonosWalletHasProtectedSessionState()) {
+                var expectedWallet = String(window.verifiedWalletAddress || '').trim().toLowerCase();
+                return axonosConfirmWalletIdentityIdle(expectedWallet).then(function (result) {
+                    if (String(window.verifiedWalletAddress || '').trim().toLowerCase() !== expectedWallet) {
+                        return false;
+                    }
+                    if (result.idle) return true;
+                    if (result.status && axonosSessionStatusIsAuthoritative(result.status)) {
+                        axonosApplySessionStatusToResumeUi(result.status, expectedWallet);
+                    }
+                    var releaseOptions = Object.assign({}, options, {
+                        confirmIdleBeforeRelease: false
+                    });
+                    return teardownSessionForWalletChange(releaseOptions);
+                });
             }
 
             // Headless SSH view: drop the connect-string card before identity clears.
@@ -6981,11 +7217,19 @@ Copyright (C) 2019 The noVNC Authors
             // no skipRelease) for both active and credit-grace sessions. Belt-and-suspenders:
             // explicitly cancel negotiation too, since UI.disconnect() can
             // short-circuit before connect completes.
+            var releasePromise = Promise.resolve(false);
             if (typeof UI !== 'undefined' && typeof UI.disconnect === 'function') {
                 try {
-                    UI.disconnect();
+                    releasePromise = Promise.resolve(UI.disconnect({
+                        releaseSource: options && options.releaseSource
+                            ? String(options.releaseSource) : 'wallet-change'
+                    })).then(function (released) {
+                        return released === true;
+                    }).catch(function () {
+                        return false;
+                    });
                 } catch (err) {
-                    // Disconnect is best-effort; identity is still cleared below.
+                    releasePromise = Promise.resolve(false);
                 }
             }
             if (typeof window.axonosCancelWebRtcNegotiation === 'function') {
@@ -6995,6 +7239,7 @@ Copyright (C) 2019 The noVNC Authors
                     // Best-effort.
                 }
             }
+            return releasePromise;
         }
 
         function axonosFinishWalletSwitchInProgress(wallet) {
@@ -7017,9 +7262,11 @@ Copyright (C) 2019 The noVNC Authors
             axonosTestCreditBusy = false;
             setPayDepositButtonsBusy(false);
             window.axonosWalletProviderUnavailable = true;
+            window.axonosWalletProviderIssueKind = kind || 'unavailable';
             window.axonosWalletAccountMismatch = kind === 'mismatch'
                 ? String(account || '').trim().toLowerCase()
                 : null;
+            axonosSyncWalletUnavailableIndicator();
             if (message && typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
                 UI.showStatus(message, 'warn', 7000);
             }
@@ -7029,6 +7276,9 @@ Copyright (C) 2019 The noVNC Authors
             var wasUnavailable = !!window.axonosWalletProviderUnavailable;
             window.axonosWalletProviderUnavailable = false;
             window.axonosWalletAccountMismatch = null;
+            window.axonosWalletProviderIssueKind = null;
+            window.axonosWalletUnavailableSessionPreserved = false;
+            axonosSyncWalletUnavailableIndicator();
             if (wasUnavailable && typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
                 UI.showStatus('Wallet connection restored.', 'normal', 2500);
             }
@@ -7045,6 +7295,12 @@ Copyright (C) 2019 The noVNC Authors
                 console.log('[AxonOS] Ignoring accountsChanged from non-selected provider');
                 return;
             }
+            // Any authoritative account reconciliation supersedes an in-flight
+            // provider disconnect/connect status check. In particular, a manual
+            // Reconnect of the same account must prevent an older disconnect's
+            // delayed "idle" result from clearing the restored identity.
+            window.axonosWalletProviderEventGeneration =
+                (window.axonosWalletProviderEventGeneration || 0) + 1;
 
             var eventAccounts = Array.isArray(accounts) ? accounts.slice() : [];
             var newAccount = eventAccounts[0] ? String(eventAccounts[0]).trim().toLowerCase() : '';
@@ -7178,7 +7434,9 @@ Copyright (C) 2019 The noVNC Authors
                         clearWalletIdentityAndUi();
                         return;
                     }
+                    window.axonosWalletUnavailableSessionPreserved = true;
                     surfaceProtectedStatus(result);
+                    axonosSyncWalletUnavailableIndicator();
                     if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
                         UI.showStatus(
                             result.unknown
@@ -7207,6 +7465,8 @@ Copyright (C) 2019 The noVNC Authors
                 if (result.idle) {
                     beginVerifiedSwitch();
                 } else {
+                    window.axonosWalletUnavailableSessionPreserved = true;
+                    axonosSyncWalletUnavailableIndicator();
                     confirmProtectedSwitch(result);
                 }
             });
@@ -7306,21 +7566,57 @@ Copyright (C) 2019 The noVNC Authors
         // see axonosEnsureWalletSessionCurrent above). Both reuse the existing teardown,
         // clear, and verification primitives — no billing/auth/preflight logic changes.
 
-        // Disconnect: tear down any live/negotiating desktop, release server-side
-        // ownership (teardownSessionForWalletChange → UI.disconnect, default path), clear
-        // wallet identity, and return to the pre-launch state. We set inhibitReconnect
-        // eagerly too, so even if no session was live nothing can auto-reconnect; a later
-        // user-initiated Launch resets it. We do NOT call provider disconnect APIs.
+        // Disconnect: release server-side ownership before clearing wallet identity.
+        // A timeout or rejected release keeps the authenticated identity available for
+        // a safe retry and surfaces the persistent warning; it is never treated as proof
+        // that billing stopped. We do NOT call provider disconnect APIs.
         window.axonosDisconnectWalletSession = function () {
+            var options = arguments[0];
+            var opts = options && typeof options === 'object' ? options : {};
+            if (window.axonosWalletDisconnectPromise) {
+                return window.axonosWalletDisconnectPromise;
+            }
             if (typeof UI !== 'undefined') {
                 UI.inhibitReconnect = true;
             }
-            teardownSessionForWalletChange({ forceRelease: true });
-            clearWalletIdentityAndUi();
+            var walletDisconnectPromise = teardownSessionForWalletChange({
+                forceRelease: true,
+                confirmIdleBeforeRelease: true,
+                releaseSource: opts.releaseSource || 'wallet-sign-out'
+            }).then(function (released) {
+                if (released !== true) {
+                    // UI.disconnect reports the detailed failure through
+                    // axonosHandleSessionReleaseFailure. Keep credentials so the
+                    // same authenticated wallet can retry the release safely.
+                    axonosSyncWalletUnavailableIndicator();
+                    return false;
+                }
+                clearWalletIdentityAndUi();
+                return true;
+            }).catch(function () {
+                if (window.axonosCurrentSessionReleaseOperation) return false;
+                var failureContext = {
+                    source: opts.releaseSource || 'wallet-sign-out',
+                    wallet: window.verifiedWalletAddress,
+                    failure: 'client_error',
+                    reason: 'The session-end request could not be completed.'
+                };
+                failureContext.operationId = window.axonosBeginSessionReleaseOperation(
+                    failureContext
+                );
+                window.axonosHandleSessionReleaseFailure(failureContext);
+                return false;
+            }).finally(function () {
+                if (window.axonosWalletDisconnectPromise === walletDisconnectPromise) {
+                    window.axonosWalletDisconnectPromise = null;
+                }
+            });
+            window.axonosWalletDisconnectPromise = walletDisconnectPromise;
+            return walletDisconnectPromise;
         };
 
-        // Switch: do the exact same local teardown/clear FIRST — the old session must be
-        // gone before the new wallet is verified — then open the wallet dialog and run the
+        // Switch: confirm the old session release before clearing its identity or opening
+        // authentication for a new wallet. Once confirmed, open the wallet dialog and run the
         // existing connect + challenge/sign verification flow (onConnectWalletClick →
         // requestConnectedWallet → runVerify) for whatever account the provider now exposes.
         // If the user cancels selection/signature, onConnectWalletClick lands on a
@@ -7332,23 +7628,13 @@ Copyright (C) 2019 The noVNC Authors
             // SSH and credit-grace release are all asynchronous; authenticate the new
             // wallet only after UI.disconnect() has started and completed that release.
             var hadProtectedSession = axonosWalletHasProtectedSessionState();
-            window.axonosDisconnectWalletSession();
-            // Forget the prior wallet so the dialog-open auto-reconnect observer (which
-            // re-verifies axonos_last_wallet) can't race a stale-account verification
-            // against the explicit connect flow below. runVerify re-stores it on success.
-            try { localStorage.removeItem('axonos_last_wallet'); } catch (e) { }
-            // One-shot: tell the very next connect to actively re-prompt the wallet's
-            // account selector (wallet_requestPermissions) instead of silently reusing the
-            // already-connected account. Consumed in requestConnectedWallet(). Skipped when
-            // useExposedAccount is set (the new account is already connected/exposed — e.g.
-            // the user just connected it — so we verify it directly without re-prompting).
-            if (!opts.useExposedAccount) {
-                window.axonosForceAccountReselect = true;
-            }
-
-            // Open the wallet/recharge dialog and start the new connect + challenge/sign
-            // verification flow for the new wallet.
             var startConnect = function () {
+                // Forget the prior wallet only after release confirmation so the
+                // dialog observer cannot authenticate a new identity prematurely.
+                try { localStorage.removeItem('axonos_last_wallet'); } catch (e) { }
+                if (!opts.useExposedAccount) {
+                    window.axonosForceAccountReselect = true;
+                }
                 var dlg = document.getElementById('noVNC_credentials_dlg');
                 if (dlg) {
                     dlg.classList.add('noVNC_open');
@@ -7356,26 +7642,30 @@ Copyright (C) 2019 The noVNC Authors
                 onConnectWalletClick(opts.provider || undefined);
             };
 
-            // Truly idle browser → nothing async is tearing down, so start immediately.
-            if (!hadProtectedSession) {
-                startConnect();
-                return;
-            }
-            // Protected session → teardown is async and ends by returning home, whose
-            // updateVisualState() closes the credentials dialog. Opening it now would get
-            // stomped (the half-finished authentication races the release/home transition).
-            // Defer until UI._axonosReturnToHomeAfterDisconnect fires this hook (the normal,
-            // deterministic completion of the teardown). The timer is only a last-resort
-            // fallback for a disconnect path that never reaches return-home — long enough to
-            // sit well past any normal teardown so it can't fire early and get stomped by a
-            // late return-home; the hook nulls the pending first whenever it runs.
-            window.axonosPendingWalletSwitch = startConnect;
-            setTimeout(function () {
-                if (window.axonosPendingWalletSwitch === startConnect) {
-                    window.axonosPendingWalletSwitch = null;
-                    startConnect();
+            return window.axonosDisconnectWalletSession({
+                releaseSource: 'wallet-switch'
+            }).then(function (released) {
+                if (!released) {
+                    axonosFinishWalletSwitchInProgress();
+                    return false;
                 }
-            }, 6000);
+                // Truly idle browser → nothing async is tearing down, so start immediately.
+                if (!hadProtectedSession) {
+                    startConnect();
+                    return true;
+                }
+                // Protected session teardown finishes by returning home, whose visual-state
+                // update would close a dialog opened early. Let ui.js invoke this hook once
+                // the home view is settled; retain a last-resort fallback for non-RFB paths.
+                window.axonosPendingWalletSwitch = startConnect;
+                setTimeout(function () {
+                    if (window.axonosPendingWalletSwitch === startConnect) {
+                        window.axonosPendingWalletSwitch = null;
+                        startConnect();
+                    }
+                }, 6000);
+                return true;
+            });
         };
 
         // Wire the HUD wallet-management controls during normal init. The destructive
@@ -7451,12 +7741,76 @@ Copyright (C) 2019 The noVNC Authors
             return Promise.resolve(window.confirm(title + '\n\n' + message));
         }
 
+        function axonosReauthenticateWalletForSessionRelease(snapshot, provider) {
+            var expectedWallet = String(snapshot && snapshot.wallet || '').trim().toLowerCase();
+            if (!expectedWallet || !provider || typeof provider.request !== 'function') {
+                return Promise.resolve(false);
+            }
+
+            // runVerify normally clears a rejected identity. A release retry is
+            // different: until the server confirms End, keep the prior wallet and
+            // token in memory so another attempt remains possible.
+            var previousWallet = window.verifiedWalletAddress || verifiedWalletAddress || null;
+            var previousToken = window.verifiedWalletAuthToken || null;
+            var previousAllowVnc = window.axonosAllowVncConnect;
+            var identityGeneration = axonosWalletConnectGeneration;
+            var releaseFailureIsCurrent = function () {
+                var current = window.axonosSessionReleaseFailure;
+                return identityGeneration === axonosWalletConnectGeneration && !!current &&
+                    current === snapshot &&
+                    window.axonosSessionReleaseResultIsCurrent(snapshot);
+            };
+            return Promise.resolve(runVerify(expectedWallet, provider, {
+                releaseOnly: true
+            })).then(function () {
+                if (!releaseFailureIsCurrent()) return false;
+                var currentWallet = String(window.verifiedWalletAddress || '').trim().toLowerCase();
+                var currentToken = window.verifiedWalletAuthToken || null;
+                // verify-wallet always issues a fresh token. Requiring it to
+                // change also rejects runVerify's resolved stale/cancel path.
+                if (currentWallet !== expectedWallet || !currentToken ||
+                    currentToken === previousToken) {
+                    throw new Error('Wallet re-authentication was not completed.');
+                }
+                axonosSyncWalletUnavailableIndicator();
+                if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                    UI.showStatus(
+                        'Wallet re-authenticated. Retry End session to confirm that billing stopped.',
+                        'normal',
+                        6000
+                    );
+                }
+                return true;
+            }).catch(function () {
+                if (!releaseFailureIsCurrent()) return false;
+                verifiedWalletAddress = previousWallet;
+                window.verifiedWalletAddress = previousWallet;
+                window.verifiedWalletAuthToken = previousToken;
+                window.axonosAllowVncConnect = previousAllowVnc;
+                axonosSyncWalletUnavailableIndicator();
+                if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                    UI.showStatus(
+                        'Wallet re-authentication was not completed. The session may still be running and billing; reconnect the original wallet and retry.',
+                        'warn',
+                        8000
+                    );
+                }
+                return false;
+            });
+        }
+
+        function axonosReleaseIntentClearsWallet(snapshot) {
+            var source = String(snapshot && (snapshot.intentSource || snapshot.source) || '');
+            return source === 'wallet-sign-out' || source === 'wallet-switch' ||
+                source === 'wallet-change' || source === 'wallet-unavailable-banner';
+        }
+
         if (hudSwitchWalletBtn) {
             hudSwitchWalletBtn.addEventListener('click', function () {
                 axonosCloseWalletMenu();
                 axonosConfirmWalletAction(
                     'Switch wallet?',
-                    'Switching wallet will end the current desktop connection and require the new wallet to sign in.',
+                    'Switching wallet will end the current compute session and its running jobs, stop compute billing, and require the new wallet to sign in.',
                     'Switch Wallet'
                 ).then(function (ok) {
                     if (ok) window.axonosBeginWalletSwitch();
@@ -7468,7 +7822,7 @@ Copyright (C) 2019 The noVNC Authors
                 axonosCloseWalletMenu();
                 axonosConfirmWalletAction(
                     'Sign out wallet?',
-                    'Signing out will end the current desktop connection and clear this wallet session.',
+                    'Signing out will end the current compute session and its running jobs, stop compute billing, then clear this wallet.',
                     'Sign out'
                 ).then(function (ok) {
                     if (ok) window.axonosDisconnectWalletSession();
@@ -7476,12 +7830,180 @@ Copyright (C) 2019 The noVNC Authors
             });
         }
 
-        // accountsChanged fires on the SPECIFIC provider the user connected with —
+        var walletReconnectBtn = document.getElementById('axonos_wallet_reconnect_btn');
+        var walletEndSessionBtn = document.getElementById('axonos_wallet_end_session_btn');
+        if (walletReconnectBtn) {
+            walletReconnectBtn.addEventListener('click', function () {
+                if (walletReconnectBtn.disabled) return;
+                var provider = resolveEthereumProvider(window.__axonosSelectedProvider);
+                if (!provider || typeof provider.request !== 'function') {
+                    axonosMarkWalletProviderOutOfSync(
+                        'unavailable', null,
+                        'The selected wallet provider is unavailable. Open or unlock the wallet, then retry.'
+                    );
+                    return;
+                }
+                walletReconnectBtn.disabled = true;
+                if (walletEndSessionBtn) walletEndSessionBtn.disabled = true;
+                var releaseFailureAtStart = window.axonosSessionReleaseFailure;
+                var reconnectGeneration = (window.axonosWalletProviderEventGeneration || 0) + 1;
+                window.axonosWalletProviderEventGeneration = reconnectGeneration;
+                axonosWalletProviderRequest(
+                    provider,
+                    { method: 'eth_requestAccounts' },
+                    'Wallet reconnect timed out. Open the wallet and retry.',
+                    60000
+                ).then(function (accounts) {
+                    if (reconnectGeneration !== window.axonosWalletProviderEventGeneration) return;
+                    if (releaseFailureAtStart && window.axonosSessionReleaseFailure) {
+                        var expectedWallet = String(releaseFailureAtStart.wallet || '').trim().toLowerCase();
+                        var exposedWallet = Array.isArray(accounts) && accounts[0]
+                            ? String(accounts[0]).trim().toLowerCase() : '';
+                        if (!expectedWallet || exposedWallet !== expectedWallet) {
+                            axonosMarkWalletProviderOutOfSync(
+                                'mismatch', exposedWallet,
+                                'Restore the wallet that owns the running session before retrying End session.'
+                            );
+                            return false;
+                        }
+                        return axonosReauthenticateWalletForSessionRelease(
+                            releaseFailureAtStart, provider
+                        );
+                    }
+                    onWalletAccountsChanged(accounts, provider);
+                    return true;
+                }).catch(function () {
+                    if (reconnectGeneration !== window.axonosWalletProviderEventGeneration) return;
+                    axonosMarkWalletProviderOutOfSync(
+                        'unavailable', null,
+                        'Could not reconnect the signed-in wallet. The running session was left unchanged.'
+                    );
+                }).finally(function () {
+                    walletReconnectBtn.disabled = false;
+                    if (walletEndSessionBtn) walletEndSessionBtn.disabled = false;
+                });
+            });
+        }
+        if (walletEndSessionBtn) {
+            walletEndSessionBtn.addEventListener('click', function () {
+                if (walletEndSessionBtn.disabled) return;
+                walletEndSessionBtn.disabled = true;
+                if (walletReconnectBtn) walletReconnectBtn.disabled = true;
+                Promise.resolve(axonosConfirmWalletAction(
+                    'End running session?',
+                    'The session may still be running and billing. End it explicitly and keep the wallet signed in until the server confirms release.',
+                    'End Session'
+                )).then(function (ok) {
+                    if (!ok) return false;
+                    var failedSnapshot = window.axonosSessionReleaseFailure;
+                    var clearIdentityAfterRelease = !failedSnapshot ||
+                        axonosReleaseIntentClearsWallet(failedSnapshot);
+                    var release;
+                    if (failedSnapshot && typeof window.axonosRetrySessionRelease === 'function') {
+                        var retrySnapshot = failedSnapshot;
+                        if (failedSnapshot.sessionMismatch && failedSnapshot.activeSessionId) {
+                            retrySnapshot = Object.assign({}, failedSnapshot, {
+                                sessionId: failedSnapshot.activeSessionId,
+                                sessionMismatch: false,
+                                activeSessionId: null
+                            });
+                        }
+                        release = window.axonosRetrySessionRelease(retrySnapshot);
+                    } else {
+                        release = window.axonosDisconnectWalletSession({
+                            releaseSource: 'wallet-unavailable-banner'
+                        });
+                    }
+                    return Promise.resolve(release).then(function (released) {
+                        // retryAxonosSessionRelease only performs the release request;
+                        // clear local identity once the server confirms it.
+                        if (released === true && clearIdentityAfterRelease &&
+                            window.verifiedWalletAddress) {
+                            clearWalletIdentityAndUi();
+                        }
+                        return released;
+                    });
+                }).catch(function () {
+                    return false;
+                }).finally(function () {
+                    walletEndSessionBtn.disabled = false;
+                    if (walletReconnectBtn) walletReconnectBtn.disabled = false;
+                });
+            });
+        }
+
+        // EIP-1193 wallet events fire on the SPECIFIC provider the user connected with —
         // which, with EIP-6963 / multiple injected wallets, is frequently NOT the same
         // object as window.ethereum. Binding only to window.ethereum at load misses the
         // event entirely. So bind to every provider we touch (window.ethereum at load
         // as a fallback, and the user-selected provider at connect time), idempotently.
         var _walletEventsBound = (typeof WeakSet === 'function') ? new WeakSet() : null;
+        function onWalletProviderDisconnected(error, sourceProvider) {
+            var activeProvider = window.__axonosSelectedProvider || selectedEthereumProvider;
+            if (activeProvider && sourceProvider && sourceProvider !== activeProvider) return;
+            if (!window.verifiedWalletAddress) return;
+            var disconnectedWallet = String(window.verifiedWalletAddress).trim().toLowerCase();
+            var providerGeneration = (window.axonosWalletProviderEventGeneration || 0) + 1;
+            window.axonosWalletProviderEventGeneration = providerGeneration;
+            var providerEventIsCurrent = function () {
+                var selectedNow = window.__axonosSelectedProvider || selectedEthereumProvider;
+                return providerGeneration === window.axonosWalletProviderEventGeneration &&
+                    String(window.verifiedWalletAddress || '').trim().toLowerCase() === disconnectedWallet &&
+                    (!sourceProvider || !selectedNow || sourceProvider === selectedNow);
+            };
+            axonosMarkWalletProviderOutOfSync(
+                'disconnect', null,
+                'Wallet provider disconnected. Any running session was preserved; reconnect the same wallet before the next protected action.'
+            );
+            // EIP-1193 disconnect is transport state, never authorization to end
+            // compute. Preserve fail-closed state even when local session flags lag.
+            axonosConfirmWalletIdentityIdle(disconnectedWallet).then(function (result) {
+                if (!providerEventIsCurrent()) return;
+                if (result.idle) {
+                    clearWalletIdentityAndUi();
+                    return;
+                }
+                window.axonosWalletUnavailableSessionPreserved = true;
+                if (result.status && axonosSessionStatusIsAuthoritative(result.status)) {
+                    axonosApplySessionStatusToResumeUi(result.status, window.verifiedWalletAddress);
+                }
+                axonosSyncWalletUnavailableIndicator();
+            });
+        }
+
+        function onWalletProviderConnected(connectInfo, sourceProvider) {
+            var activeProvider = window.__axonosSelectedProvider || selectedEthereumProvider;
+            if (activeProvider && sourceProvider && sourceProvider !== activeProvider) return;
+            if (!window.verifiedWalletAddress || !sourceProvider ||
+                typeof sourceProvider.request !== 'function') return;
+            var connectedWallet = String(window.verifiedWalletAddress).trim().toLowerCase();
+            var providerGeneration = (window.axonosWalletProviderEventGeneration || 0) + 1;
+            window.axonosWalletProviderEventGeneration = providerGeneration;
+            var providerEventIsCurrent = function () {
+                var selectedNow = window.__axonosSelectedProvider || selectedEthereumProvider;
+                return providerGeneration === window.axonosWalletProviderEventGeneration &&
+                    String(window.verifiedWalletAddress || '').trim().toLowerCase() === connectedWallet &&
+                    (!selectedNow || sourceProvider === selectedNow);
+            };
+            // connect only means chain transport recovered. Re-query exposure and
+            // reuse accountsChanged reconciliation before unblocking protected work.
+            axonosWalletProviderRequest(
+                sourceProvider,
+                { method: 'eth_accounts' },
+                'Wallet account confirmation timed out. The running session was left unchanged.',
+                15000
+            ).then(function (accounts) {
+                if (!providerEventIsCurrent()) return;
+                onWalletAccountsChanged(accounts, sourceProvider);
+            }).catch(function () {
+                if (!providerEventIsCurrent()) return;
+                axonosMarkWalletProviderOutOfSync(
+                    'unavailable', null,
+                    'Wallet transport returned, but the signed-in account could not be confirmed.'
+                );
+            });
+        }
+
         function bindWalletAccountEvents(provider) {
             if (!provider || typeof provider.on !== 'function') return;
             if (_walletEventsBound) {
@@ -7495,6 +8017,12 @@ Copyright (C) 2019 The noVNC Authors
             try {
                 provider.on('accountsChanged', function (accounts) {
                     onWalletAccountsChanged(accounts, provider);
+                });
+                provider.on('disconnect', function (error) {
+                    onWalletProviderDisconnected(error, provider);
+                });
+                provider.on('connect', function (connectInfo) {
+                    onWalletProviderConnected(connectInfo, provider);
                 });
             } catch (e) {
                 // Provider may not support .on; ignore.
@@ -8535,14 +9063,57 @@ Copyright (C) 2019 The noVNC Authors
                 axonosDashboardEndingSessions.set(sessionKey, Date.now() + 10000);
             }
 
+            var releaseBody = { wallet_address: wallet };
+            if (sessionId !== null && sessionId !== undefined && String(sessionId).trim()) {
+                var expectedSessionId = Number(sessionId);
+                if (!Number.isSafeInteger(expectedSessionId) || expectedSessionId <= 0) {
+                    var invalidIdentityContext = {
+                        source: 'dashboard-end',
+                        intentSource: 'dashboard-end',
+                        wallet: wallet,
+                        sessionId: sessionKey,
+                        hadServerSession: true,
+                        failure: 'session_identity_invalid',
+                        reason: 'The session identity is invalid. Refresh the workspace before ending it.'
+                    };
+                    invalidIdentityContext.operationId = window.axonosBeginSessionReleaseOperation(
+                        invalidIdentityContext
+                    );
+                    window.axonosHandleSessionReleaseFailure(invalidIdentityContext);
+                    return Promise.resolve(false);
+                }
+                releaseBody.expected_session_id = expectedSessionId;
+            }
+            var releaseOperation = {
+                source: 'dashboard-end',
+                intentSource: 'dashboard-end',
+                wallet: wallet,
+                sessionId: sessionKey || null,
+                hadServerSession: true
+            };
+            releaseOperation.operationId = window.axonosBeginSessionReleaseOperation(
+                releaseOperation
+            );
             return axonosFetch({
                 method: 'POST',
                 url: new URL('/api/session/release', window.location.origin).toString(),
-                body: JSON.stringify({ wallet_address: wallet })
+                body: JSON.stringify(releaseBody)
             }).then(function (result) {
                 if (!result || result.released !== true) {
                     if (sessionKey) axonosDashboardEndingSessions.delete(sessionKey);
                     const reason = (result && result.reason) || 'The session could not be ended.';
+                    var failureAccepted = window.axonosHandleSessionReleaseFailure(Object.assign({}, releaseOperation, {
+                        source: 'dashboard-end',
+                        intentSource: 'dashboard-end',
+                        failure: result && result.session_mismatch ? 'session_mismatch' : 'rejected',
+                        sessionMismatch: !!(result && result.session_mismatch),
+                        activeSessionId: result && result.active_session_id,
+                        reason: String(reason)
+                    }));
+                    if (!failureAccepted &&
+                        !window.axonosSessionReleaseResultIsCurrent(releaseOperation)) {
+                        return false;
+                    }
                     console.error('[AxonOS] Failed to release session:', reason);
                     if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
                         UI.showStatus(String(reason), 'error', 5000);
@@ -8554,6 +9125,10 @@ Copyright (C) 2019 The noVNC Authors
                     return false;
                 }
                 console.log('[AxonOS] Session released successfully');
+                var successAccepted = window.axonosHandleSessionReleaseSuccess(Object.assign({}, releaseOperation, {
+                    released: true
+                }));
+                if (!successAccepted) return true;
                 if (axonosNormalizeWalletAddress(axonosCurrentVerifiedWallet()) !==
                     axonosNormalizeWalletAddress(wallet)) {
                     return true;
@@ -8572,6 +9147,14 @@ Copyright (C) 2019 The noVNC Authors
             }).catch(function (err) {
                 if (sessionKey) axonosDashboardEndingSessions.delete(sessionKey);
                 console.error('[AxonOS] Failed to release session:', err);
+                var failureAccepted = window.axonosHandleSessionReleaseFailure(Object.assign({}, releaseOperation, {
+                    failure: 'network',
+                    reason: 'The session-end request could not reach the server.'
+                }));
+                if (!failureAccepted &&
+                    !window.axonosSessionReleaseResultIsCurrent(releaseOperation)) {
+                    return false;
+                }
                 if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
                     UI.showStatus('Could not end the session. It is still available to retry.', 'error', 5000);
                 }
@@ -9668,13 +10251,13 @@ Copyright (C) 2019 The noVNC Authors
         if (topbarWalletBtn) {
             topbarWalletBtn.addEventListener('click', function () {
                 if (typeof UI !== 'undefined' && typeof UI.showConfirm === 'function') {
-                    UI.showConfirm('Disconnect wallet?', 'Disconnecting will clear the active session view.', 'Disconnect').then(function (ok) {
+                    UI.showConfirm('Sign out and end session?', 'Signing out ends the current compute session and running jobs, stops compute billing, then clears the wallet.', 'Sign out').then(function (ok) {
                         if (ok && typeof axonosDisconnectWalletSession === 'function') {
                             axonosDisconnectWalletSession();
                         }
                     });
                 } else {
-                    if (confirm('Disconnect wallet? Disconnecting will clear the active session view.')) {
+                    if (confirm('Sign out and end session? This ends the current compute session and running jobs, stops compute billing, then clears the wallet.')) {
                         if (typeof axonosDisconnectWalletSession === 'function') {
                             axonosDisconnectWalletSession();
                         }

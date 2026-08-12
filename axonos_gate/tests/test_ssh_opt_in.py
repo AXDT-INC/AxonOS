@@ -93,8 +93,39 @@ class TestSessionClaimSshOptIn(unittest.TestCase):
                     "expected_session_id": 91,
                 },
             )
-        self.assertEqual(response.status_code, 400)
-        claim.assert_not_called()
+            self.assertEqual(response.status_code, 400)
+            claim.assert_not_called()
+
+    def test_release_passes_exact_session_precondition(self):
+        with patch.object(gate_server, "_session_mgr_available", True), \
+             patch.object(gate_server, "validate_wallet_address", return_value=True), \
+             patch.object(gate_server, "_require_auth_token", return_value=None), \
+             patch.object(
+                 gate_server, "release_session", return_value={"released": True}
+             ) as release:
+            response = self.client.post(
+                "/api/session/release",
+                json={"wallet_address": WALLET, "expected_session_id": 91},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        release.assert_called_once_with(WALLET, expected_session_id=91)
+
+    def test_release_rejects_invalid_exact_session_precondition(self):
+        for invalid_id in (0, -1, True, "91", 91.0):
+            with self.subTest(expected_session_id=invalid_id), \
+                 patch.object(gate_server, "_session_mgr_available", True), \
+                 patch.object(gate_server, "release_session") as release:
+                response = self.client.post(
+                    "/api/session/release",
+                    json={
+                        "wallet_address": WALLET,
+                        "expected_session_id": invalid_id,
+                    },
+                )
+
+            self.assertEqual(response.status_code, 400)
+            release.assert_not_called()
 
 
 class TestFrontendSshOptInContract(unittest.TestCase):

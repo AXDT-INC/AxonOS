@@ -2199,9 +2199,26 @@ def heartbeat(wallet_address: str, ssh_active: bool = False) -> Dict[str, Any]:
         conn.close()
 
 
-def release_session(wallet_address: str) -> Dict[str, Any]:
-    """Explicitly end the active session for *wallet_address*."""
+def release_session(
+    wallet_address: str,
+    expected_session_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Explicitly end a wallet session, optionally bound to an exact row.
+
+    The exact-session precondition makes browser retries safe when an earlier
+    response was lost: a retry for an old row must never terminate a newer row
+    that the same wallet claimed in another tab.
+    """
     wallet = wallet_address.lower()
+    if expected_session_id is not None and (
+        isinstance(expected_session_id, bool)
+        or not isinstance(expected_session_id, int)
+        or expected_session_id <= 0
+    ):
+        return {
+            "released": False,
+            "reason": "expected_session_id must be a positive integer",
+        }
     if not _init_once():
         return {"released": False, "reason": "Session DB unavailable"}
     conn = _get_connection()
@@ -2213,17 +2230,75 @@ def release_session(wallet_address: str) -> Dict[str, Any]:
             # This session-scoped lock survives the commit below and is released
             # by connection close after `_on_session_ended` completes.
             _acquire_allocation_scheduler_lock(cur)
+            expected_clause = ""
+            update_params: Tuple[Any, ...] = (wallet,)
+            if expected_session_id is not None:
+                expected_clause = " AND id = %s"
+                update_params = (wallet, expected_session_id)
             cur.execute(
                 f"""UPDATE {_SESSION_TABLE}
                     SET status = 'ended'
                     WHERE status IN ('active', 'credit_grace')
-                      AND wallet_address = %s
+                      AND wallet_address = %s{expected_clause}
                     RETURNING id, requested_profile, gpu_ids, container_id""",
-                (wallet,),
+                update_params,
             )
             row = cur.fetchone()
+            active_mismatch = None
+            exact_row_status = None
+            if not row and expected_session_id is not None:
+                cur.execute(
+                    f"""SELECT id FROM {_SESSION_TABLE}
+                        WHERE status IN ('active', 'credit_grace')
+                          AND wallet_address = %s
+                        ORDER BY id DESC LIMIT 1""",
+                    (wallet,),
+                )
+                active_mismatch = cur.fetchone()
+                if not active_mismatch:
+                    cur.execute(
+                        f"SELECT status FROM {_SESSION_TABLE} WHERE id = %s AND wallet_address = %s",
+                        (expected_session_id, wallet),
+                    )
+                    exact_row = cur.fetchone()
+                    exact_row_status = exact_row[0] if exact_row else None
         conn.commit()
         if not row:
+            if active_mismatch:
+                return {
+                    "released": False,
+                    "session_mismatch": True,
+                    "expected_session_id": expected_session_id,
+                    "active_session_id": active_mismatch[0],
+                    "reason": (
+                        "A different session is now active for this wallet; "
+                        "the newer session was not ended"
+                    ),
+                }
+            if expected_session_id is not None:
+                if exact_row_status in ("ended", "expired", "released"):
+                    try:
+                        _cleanup_session_container(expected_session_id)
+                    except Exception as exc:
+                        logger.warning(
+                            "session_manager: retry cleanup not confirmed for session %s: %s",
+                            expected_session_id,
+                            exc,
+                        )
+                        return {
+                            "released": False,
+                            "cleanup_pending": True,
+                            "expected_session_id": expected_session_id,
+                            "reason": (
+                                "Session billing is ended, but runtime cleanup was not confirmed; "
+                                "retry End session"
+                            ),
+                        }
+                return {
+                    "released": True,
+                    "already_absent": True,
+                    "expected_session_id": expected_session_id,
+                }
             return {
                 "released": False,
                 "reason": "No active or credit-grace session for this wallet",

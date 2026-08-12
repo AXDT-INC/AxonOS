@@ -1861,13 +1861,26 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             wallet_address = (data.get('wallet_address') or '').strip()
             if not wallet_address or not validate_wallet_address(wallet_address):
                 return self._send_json(400, {'released': False, 'error': 'Valid wallet_address required'})
+            expected_session_id = data.get('expected_session_id')
+            if expected_session_id is not None and (
+                isinstance(expected_session_id, bool)
+                or not isinstance(expected_session_id, int)
+                or expected_session_id <= 0
+            ):
+                return self._send_json(400, {
+                    'released': False,
+                    'error': 'expected_session_id must be a positive integer',
+                })
             # Auth: wallet token OR per-session files_key (headless/SSH self-release).
             session_key = (self.headers.get('X-AXGT-Session-Key') or data.get('session_key') or '').strip()
             if not (session_key and validate_session_files_key and validate_session_files_key(wallet_address, session_key)):
                 auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
                 if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
                     return self._send_json(401, {'released': False, 'error': 'Valid auth token required'})
-            result = release_session(wallet_address)
+            result = release_session(
+                wallet_address,
+                expected_session_id=expected_session_id,
+            )
             return self._send_json(200, result)
 
         if _session_mgr_available and self.path.startswith('/api/session/restart'):

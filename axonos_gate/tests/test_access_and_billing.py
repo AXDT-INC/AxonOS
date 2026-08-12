@@ -134,6 +134,113 @@ class TestBillingAndSession(unittest.TestCase):
     def tearDown(self):
         self.env.stop()
 
+    def _release_with_rows(self, rows, expected_session_id=None):
+        from axonos_gate import session_manager
+
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.fetchone.side_effect = list(rows)
+        conn.cursor.return_value.__enter__.return_value = cur
+        with patch.object(session_manager, "_init_once", return_value=True), \
+             patch.object(session_manager, "_get_connection", return_value=conn), \
+             patch.object(session_manager, "_acquire_allocation_scheduler_lock"), \
+             patch.object(session_manager, "_on_session_ended") as ended, \
+             patch.object(session_manager, "_cleanup_session_container") as cleanup:
+            result = session_manager.release_session(
+                "0x1234567890123456789012345678901234567890",
+                expected_session_id=expected_session_id,
+            )
+        return result, cur, ended, cleanup
+
+    def test_release_exact_session_ends_only_the_matching_row(self):
+        result, cur, ended, _cleanup = self._release_with_rows(
+            [(91, "medium", "0,1", "axgt-session-91")],
+            expected_session_id=91,
+        )
+
+        self.assertTrue(result["released"])
+        update = next(
+            call for call in cur.execute.call_args_list
+            if "UPDATE" in call.args[0] and "status IN" in call.args[0]
+        )
+        self.assertIn("AND id = %s", update.args[0])
+        self.assertEqual(
+            update.args[1],
+            ("0x1234567890123456789012345678901234567890", 91),
+        )
+        ended.assert_called_once_with(
+            "0x1234567890123456789012345678901234567890", 91
+        )
+
+    def test_release_exact_session_does_not_end_a_newer_row(self):
+        result, _cur, ended, _cleanup = self._release_with_rows(
+            [None, (92,)], expected_session_id=91
+        )
+
+        self.assertFalse(result["released"])
+        self.assertTrue(result["session_mismatch"])
+        self.assertEqual(result["expected_session_id"], 91)
+        self.assertEqual(result["active_session_id"], 92)
+        ended.assert_not_called()
+
+    def test_release_exact_session_is_idempotent_when_target_is_absent(self):
+        result, _cur, ended, cleanup = self._release_with_rows(
+            [None, None, None], expected_session_id=91
+        )
+
+        self.assertTrue(result["released"])
+        self.assertTrue(result["already_absent"])
+        self.assertEqual(result["expected_session_id"], 91)
+        cleanup.assert_not_called()
+        ended.assert_not_called()
+
+    def test_release_exact_ended_session_reconfirms_runtime_cleanup(self):
+        result, _cur, ended, cleanup = self._release_with_rows(
+            [None, None, ("ended",)], expected_session_id=91
+        )
+
+        self.assertTrue(result["released"])
+        self.assertTrue(result["already_absent"])
+        cleanup.assert_called_once_with(91)
+        ended.assert_not_called()
+
+    def test_release_exact_session_keeps_warning_when_cleanup_retry_fails(self):
+        from axonos_gate import session_manager
+
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.fetchone.side_effect = [None, None, ("ended",)]
+        conn.cursor.return_value.__enter__.return_value = cur
+        with patch.object(session_manager, "_init_once", return_value=True), \
+             patch.object(session_manager, "_get_connection", return_value=conn), \
+             patch.object(session_manager, "_acquire_allocation_scheduler_lock"), \
+             patch.object(
+                 session_manager,
+                 "_cleanup_session_container",
+                 side_effect=RuntimeError("not confirmed"),
+             ):
+            result = session_manager.release_session(
+                "0x1234567890123456789012345678901234567890",
+                expected_session_id=91,
+            )
+
+        self.assertFalse(result["released"])
+        self.assertTrue(result["cleanup_pending"])
+
+    def test_legacy_wallet_scoped_release_retains_absent_response(self):
+        result, cur, ended, _cleanup = self._release_with_rows([None])
+
+        self.assertFalse(result["released"])
+        self.assertEqual(
+            result["reason"], "No active or credit-grace session for this wallet"
+        )
+        update = next(
+            call for call in cur.execute.call_args_list
+            if "UPDATE" in call.args[0] and "status IN" in call.args[0]
+        )
+        self.assertNotIn("AND id = %s", update.args[0])
+        ended.assert_not_called()
+
     @patch("axonos_gate.session_manager._get_connection")
     def test_heartbeat_calls_deduct_usage(self, mock_conn):
         from axonos_gate import session_manager

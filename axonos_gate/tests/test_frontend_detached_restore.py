@@ -210,6 +210,8 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
             "window.axonosPendingResumeClaim = null",
             "window.axonosPausedResume = null",
             "window.axonosSshEnabled = false",
+            "window.axonosCurrentSessionReleaseOperation = null",
+            "window.axonosSessionReleaseFailure = null",
         ):
             self.assertIn(state_reset, cleanup)
         self.assertIn("localStorage.removeItem('axonos_last_wallet')", cleanup)
@@ -462,17 +464,24 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         )
         self.assertIn("requested_storage_gb=requested_storage_gb", claim_route)
 
-    def test_explicit_wallet_sign_out_releases_before_identity_cleanup(self) -> None:
+    def test_explicit_wallet_sign_out_clears_identity_only_after_confirmed_release(self) -> None:
         sign_out = self._page_between(
             "window.axonosDisconnectWalletSession = function ()",
             "window.axonosBeginWalletSwitch = function (opts)",
         )
 
-        release = "teardownSessionForWalletChange({ forceRelease: true });"
+        self.assertIn("var walletDisconnectPromise = teardownSessionForWalletChange({", sign_out)
+        self.assertIn("forceRelease: true", sign_out)
+        self.assertIn(".then(function (released)", sign_out)
+        self.assertIn("if (released !== true)", sign_out)
+        self.assertIn("return false", sign_out)
         clear = "clearWalletIdentityAndUi();"
-        self.assertIn(release, sign_out)
-        self.assertIn(clear, sign_out)
-        self.assertLess(sign_out.index(release), sign_out.index(clear))
+        confirmed = sign_out.split("if (released !== true)", 1)[1]
+        self.assertIn(clear, confirmed)
+        self.assertLess(confirmed.index("return false"), confirmed.index(clear))
+        self.assertIn("axonosHandleSessionReleaseFailure", sign_out)
+        self.assertIn("return window.axonosWalletDisconnectPromise", sign_out)
+        self.assertIn("return walletDisconnectPromise", sign_out)
 
     def test_wallet_account_events_are_provider_aware_and_fail_closed(self) -> None:
         account_change = self._page_between(
@@ -616,7 +625,7 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
             "disconnect(options)", 1
         )[0]
         run_verify = self._page_between(
-            "function runVerify(walletAddress, provider)",
+            "function runVerify(walletAddress, provider, options)",
             "var axonosPaymentOperationGeneration = 0",
         )
         wizard = self._page_between(
@@ -662,7 +671,7 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
             "async function requestConnectedWallet(provider)",
         )
         verify = self._page_between(
-            "function runVerify(walletAddress, provider)",
+            "function runVerify(walletAddress, provider, options)",
             "var axonosPaymentOperationGeneration = 0",
         )
         observer = self._page_between(
@@ -683,6 +692,168 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         warning = "Credit exhausted · 2h top-up grace. Jobs are still running"
         self.assertIn(warning, self.ui_source)
         self.assertGreaterEqual(self.ui_source.count("'warn',\n                12000"), 2)
+
+    def test_persistent_wallet_warning_has_recovery_actions(self) -> None:
+        self.assertIn('id="axonos_wallet_unavailable_banner"', self.page_source)
+        self.assertIn('role="status"', self.page_source)
+        self.assertIn('aria-live="polite"', self.page_source)
+        self.assertIn('aria-hidden="true"', self.page_source)
+        self.assertIn("still running and billing", self.page_source)
+        self.assertIn('id="axonos_wallet_reconnect_btn"', self.page_source)
+        self.assertIn('id="axonos_wallet_end_session_btn"', self.page_source)
+
+        sync = self._page_between(
+            "function axonosSyncWalletUnavailableIndicator()",
+            "window.axonosSyncWalletUnavailableIndicator = axonosSyncWalletUnavailableIndicator",
+        )
+        self.assertIn("!!releaseFailure || (providerProblem && protectedState)", sync)
+        self.assertIn("axonosWalletHasProtectedSessionState()", sync)
+        self.assertIn("session may still be running and billing", sync)
+        self.assertIn("Re-authenticate wallet", sync)
+        self.assertIn("aria-hidden", sync)
+
+    def test_provider_disconnect_and_connect_are_guarded_and_never_release(self) -> None:
+        disconnected = self._page_between(
+            "function onWalletProviderDisconnected(error, sourceProvider)",
+            "function onWalletProviderConnected(connectInfo, sourceProvider)",
+        )
+        connected = self._page_between(
+            "function onWalletProviderConnected(connectInfo, sourceProvider)",
+            "function bindWalletAccountEvents(provider)",
+        )
+        binding = self._page_between(
+            "function bindWalletAccountEvents(provider)",
+            "bindWalletAccountEvents(getSafeWindowEthereum());",
+        )
+
+        self.assertIn("sourceProvider !== activeProvider", disconnected)
+        self.assertIn("axonosWalletProviderEventGeneration", disconnected)
+        self.assertIn("providerEventIsCurrent()", disconnected)
+        self.assertIn("axonosMarkWalletProviderOutOfSync(", disconnected)
+        self.assertNotIn("release", disconnected.lower())
+        self.assertNotIn("teardownSessionForWalletChange", disconnected)
+        self.assertIn("{ method: 'eth_accounts' }", connected)
+        self.assertIn("onWalletAccountsChanged(accounts, sourceProvider)", connected)
+        self.assertNotIn("axonosClearWalletProviderOutOfSync", connected)
+        for event in ("accountsChanged", "disconnect", "connect"):
+            self.assertEqual(binding.count(f"provider.on('{event}'"), 1)
+        self.assertIn("_walletEventsBound.has(provider)", binding)
+
+    def test_release_context_is_nonsecret_bounded_retryable_and_exact(self) -> None:
+        context = self._ui_between(
+            "_axonosSessionReleaseContext(options)",
+            "_axonosNotifySessionReleaseResult(context)",
+        )
+        request = self._ui_between(
+            "_axonosReleaseSessionBestEffort(context)",
+            "/** Retry a failed explicit release",
+        )
+        retry = self._ui_between(
+            "retryAxonosSessionRelease(snapshot)",
+            "/** Cancel in-flight WebRTC negotiation",
+        )
+        disconnect = self._ui_between(
+            "disconnect(options)",
+            "/** Final billing heartbeat enters credit grace",
+        )
+
+        self.assertIn("attemptId", context)
+        self.assertIn("sessionId", context)
+        self.assertIn("hadServerSession", context)
+        self.assertNotIn("verifiedWalletAuthToken", context)
+        self.assertIn("AbortController", request)
+        self.assertIn("_axonosSessionReleaseTimeoutMs()", request)
+        self.assertIn("requestBody.expected_session_id", request)
+        self.assertIn("data.released === true", request)
+        self.assertIn("data.session_mismatch === true", request)
+        self.assertIn("_axonosExplicitReleasePromise", retry)
+        self.assertIn("return retryPromise", retry)
+        self.assertIn("_axonosExplicitReleasePromise", disconnect)
+        self.assertIn("return releasePromise", disconnect)
+        self.assertIn("if (released)", disconnect)
+        self.assertIn("window.axonosSessionDetached = true", disconnect)
+        confirmed = self._ui_between(
+            "_axonosApplyConfirmedSessionRelease()",
+            "_axonosSessionOwnsServerSlot()",
+        )
+        self.assertIn("window.axonosPendingResumeClaim = null", confirmed)
+        self.assertIn("window.axonosPausedResume = null", confirmed)
+        self.assertIn("window.axonosApplyResumeConnectUi(false)", confirmed)
+
+    def test_release_results_are_correlated_to_the_latest_wallet_session_operation(self) -> None:
+        operation = self._page_between(
+            "window.axonosBeginSessionReleaseOperation = function (context)",
+            "function axonosReleaseFailureSnapshot(context)",
+        )
+        failure = self._page_between(
+            "window.axonosHandleSessionReleaseFailure = function (context)",
+            "window.axonosClearSessionReleaseFailure = function ()",
+        )
+        success = self._page_between(
+            "window.axonosHandleSessionReleaseSuccess = function ()",
+            "function axonosStatusHasProtectedWalletSession(status, wallet)",
+        )
+        notify = self._ui_between(
+            "_axonosNotifySessionReleaseResult(context)",
+            "_axonosSessionReleaseTimeoutMs()",
+        )
+
+        self.assertIn("axonosSessionReleaseOperationGeneration || 0) + 1", operation)
+        self.assertIn("operationId: operationId", operation)
+        self.assertIn("source.operationId !== current.operationId", operation)
+        self.assertIn("current.wallet !== sourceWallet", operation)
+        self.assertIn("current.sessionId !== sourceSessionId", operation)
+        self.assertLess(
+            failure.index("axonosSessionReleaseResultIsCurrent(context)"),
+            failure.index("window.axonosSessionReleaseFailure ="),
+        )
+        self.assertLess(
+            success.index("axonosSessionReleaseResultIsCurrent(context)"),
+            success.index("window.axonosClearSessionReleaseFailure()"),
+        )
+        self.assertLess(
+            notify.index("axonosSessionReleaseResultIsCurrent(context)"),
+            notify.index("UI._axonosSessionReleaseFailureContext ="),
+        )
+
+    def test_release_reauth_and_dashboard_end_are_recoverable(self) -> None:
+        reauth = self._page_between(
+            "function axonosReauthenticateWalletForSessionRelease(snapshot, provider)",
+            "function axonosReleaseIntentClearsWallet(snapshot)",
+        )
+        actions = self._page_between(
+            "var walletReconnectBtn = document.getElementById('axonos_wallet_reconnect_btn')",
+            "// EIP-1193 wallet events fire",
+        )
+        dashboard_end = self._page_between(
+            "function axonosEndSession(sessionId)",
+            "window.axonosEndSession = axonosEndSession",
+        )
+
+        self.assertIn("runVerify(expectedWallet, provider, {", reauth)
+        self.assertIn("releaseOnly: true", reauth)
+        self.assertIn("currentToken === previousToken", reauth)
+        self.assertIn("releaseFailureIsCurrent()", reauth)
+        self.assertIn("identityGeneration === axonosWalletConnectGeneration", reauth)
+        self.assertIn("walletEndSessionBtn.disabled = true", actions)
+        self.assertIn("walletReconnectBtn.disabled = true", actions)
+        self.assertIn("axonosRetrySessionRelease(retrySnapshot)", actions)
+        self.assertIn("releaseBody.expected_session_id", dashboard_end)
+        self.assertGreaterEqual(
+            dashboard_end.count("axonosHandleSessionReleaseFailure"), 2
+        )
+        self.assertIn("axonosHandleSessionReleaseSuccess", dashboard_end)
+
+        verify = self._page_between(
+            "function runVerify(walletAddress, provider, options)",
+            "var axonosPaymentOperationGeneration = 0",
+        )
+        release_only = verify.split(
+            "if (verifyOptions.releaseOnly === true)", 1
+        )[1].split("if (typeof axonosOnWalletVerified", 1)[0]
+        self.assertIn("return true", release_only)
+        self.assertNotIn("axonosOnWalletVerified", release_only)
+        self.assertNotIn("claimSession", release_only)
 
 
 if __name__ == "__main__":
