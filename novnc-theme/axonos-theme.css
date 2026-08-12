@@ -5708,6 +5708,25 @@ html.noVNC_connected .axonos-landing-bg {
   background: rgba(255, 255, 255, 0.06);
 }
 
+/* Give the catalog CTA its own lighter lavender hierarchy beneath the
+   stronger Connect wallet gradient; keep Read the docs as a neutral ghost. */
+#axonos_hero_browse_btn {
+  border-color: rgba(207, 200, 255, 0.72);
+  color: #171329;
+  background: linear-gradient(180deg, #c2baff 0%, #9b8eff 100%);
+  box-shadow: 0 12px 28px -15px rgba(166, 151, 255, 0.88);
+}
+
+#axonos_hero_browse_btn:hover {
+  background: linear-gradient(180deg, #cec8ff 0%, #aa9fff 100%);
+  transform: translateY(-1px);
+}
+
+#axonos_hero_browse_btn:focus-visible {
+  outline: 2px solid #e1dcff;
+  outline-offset: 3px;
+}
+
 .axonos-hero__note {
   display: none !important;
   margin: 26px 0 0;

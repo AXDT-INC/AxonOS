@@ -21,6 +21,17 @@ class ResponsiveWalletDialogContractTests(unittest.TestCase):
         self.assertIn("widen the window or reduce", self.page)
         self.assertIn("to a laptop or desktop to continue", self.page)
 
+    def test_browse_environments_uses_a_lighter_dedicated_purple_style(self) -> None:
+        browse = self.css.split("#axonos_hero_browse_btn {", 1)[1].split("}", 1)[0]
+        topbar = self.css.split(".axonos-topbar-cta {", 1)[1].split("}", 1)[0]
+
+        self.assertIn("#c2baff", browse)
+        self.assertIn("#9b8eff", browse)
+        self.assertIn("#8b7cff", topbar)
+        self.assertIn("#6a57f2", topbar)
+        self.assertIn("#axonos_hero_browse_btn:hover", self.css)
+        self.assertIn("#axonos_hero_browse_btn:focus-visible", self.css)
+
     def test_wallet_dialog_remains_viewport_fixed_at_tablet_breakpoint(self) -> None:
         responsive = self.css.split("@media (max-width: 992px) {", 1)[1].split(
             "@media (max-width: 768px) {", 1
