@@ -21,6 +21,7 @@ const CHUNK_MAX_BYTES = 256 * 1024 * 1024;   // ¼ of nginx client_max_body_size
 const CHUNK_TARGET_SECONDS = 4;
 const RETRY_BASE_MS = 1000;
 const RETRY_MAX_MS = 60 * 1000;
+const UPLOAD_STALL_MS = 30 * 1000;
 
 let _bound = false;
 let _currentDir = '';
@@ -236,6 +237,24 @@ function _renderTransfersThrottled() {
 function _putChunk(t, params, body) {
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
+        let settled = false;
+        let stallTimer = 0;
+        const finish = (callback, value) => {
+            if (settled) return;
+            settled = true;
+            if (stallTimer) clearTimeout(stallTimer);
+            callback(value);
+        };
+        const armStallTimer = () => {
+            if (stallTimer) clearTimeout(stallTimer);
+            stallTimer = setTimeout(() => {
+                const err = new Error(
+                    `upload made no progress for ${Math.round(UPLOAD_STALL_MS / 1000)} seconds`);
+                err.name = 'UploadStallError';
+                finish(reject, err);
+                xhr.abort();
+            }, UPLOAD_STALL_MS);
+        };
         xhr.open('PUT', _apiUrl('upload', params));
         xhr.responseType = 'json';
         const headers = { ..._authHeaders(), 'Content-Type': 'application/octet-stream' };
@@ -243,6 +262,7 @@ function _putChunk(t, params, body) {
         let lastAt = Date.now();
         let lastLoaded = 0;
         xhr.upload.onprogress = (ev) => {
+            armStallTimer();
             t.sent = ev.loaded;
             const now = Date.now();
             const dt = (now - lastAt) / 1000;
@@ -254,17 +274,34 @@ function _putChunk(t, params, body) {
             }
             _renderTransfersThrottled();
         };
-        xhr.onload = () => resolve({ status: xhr.status, data: xhr.response });
-        xhr.onerror = () => reject(new Error('network error during upload chunk'));
-        xhr.ontimeout = () => reject(new Error('upload chunk timed out'));
+        xhr.onload = () => finish(resolve, { status: xhr.status, data: xhr.response });
+        xhr.onerror = () => finish(reject, new Error('network error during upload chunk'));
         xhr.onabort = () => {
             const err = new Error('upload aborted');
             err.name = 'AbortError';
-            reject(err);
+            finish(reject, err);
         };
         t.abort = { abort: () => xhr.abort() };
+        armStallTimer();
         xhr.send(body);
     });
+}
+
+function _waitForRetry(t, wait) {
+    return new Promise((resolve) => {
+        t._retryResolve = resolve;
+        t._retryTimer = setTimeout(resolve, wait);
+    }).finally(() => {
+        t._retryTimer = null;
+        t._retryResolve = null;
+    });
+}
+
+function _cancelRetryWait(t) {
+    if (t._retryTimer) clearTimeout(t._retryTimer);
+    if (t._retryResolve) t._retryResolve();
+    t._retryTimer = null;
+    t._retryResolve = null;
 }
 
 async function _pumpUploads() {
@@ -278,6 +315,11 @@ async function _pumpUploads() {
         }
     } finally {
         _uploadRunning = false;
+        // A user can resume while the previous pump is still unwinding from
+        // an aborted request or retry wait. Do not strand that queued item.
+        if (_transfers.some((t) => t.state === 'queued')) {
+            queueMicrotask(_pumpUploads);
+        }
     }
 }
 
@@ -356,9 +398,10 @@ async function _runUpload(t) {
             if (err && err.name === 'AbortError') return;
             attempt += 1;
             const wait = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.min(attempt, 6));
-            t.error = `Connection problem — retrying in ${Math.round(wait / 1000)}s (kept ${_fmtBytes(t.offset)})`;
+            const detail = err && err.message ? `: ${err.message}` : '';
+            t.error = `Connection problem${detail} — retrying in ${Math.round(wait / 1000)}s (kept ${_fmtBytes(t.offset)})`;
             _renderTransfers();
-            await new Promise((r) => { t._retryTimer = setTimeout(r, wait); });
+            await _waitForRetry(t, wait);
             t.error = '';
         }
     }
@@ -368,7 +411,7 @@ function _pauseTransfer(t) {
     if (t.state !== 'uploading') return;
     t.state = 'paused';
     if (t.abort) t.abort.abort();
-    if (t._retryTimer) clearTimeout(t._retryTimer);
+    _cancelRetryWait(t);
     _renderTransfers();
 }
 
@@ -384,7 +427,7 @@ function _cancelTransfer(t) {
     const wasActive = t.state === 'uploading';
     t.state = 'cancelled';
     if (t.abort) t.abort.abort();
-    if (t._retryTimer) clearTimeout(t._retryTimer);
+    _cancelRetryWait(t);
     // Drop the server-side partial; ignore failures (it expires harmlessly).
     _apiJson('cancel-upload', { path: t.relPath }, { method: 'POST' }).catch(() => {});
     if (!wasActive) {
