@@ -138,6 +138,11 @@ if _axonos_truthy "${_ssh_on}"; then
     cp -f "$HOSTKEY_DIR"/ssh_host_*_key.pub /etc/ssh/ 2>/dev/null || true
     chmod 600 /etc/ssh/ssh_host_*_key 2>/dev/null || true
     chmod 644 /etc/ssh/ssh_host_*_key.pub 2>/dev/null || true
+    install -d -m 755 -o root -g root /run/axonos
+    ssh-keygen -lf "$HOSTKEY_DIR/ssh_host_ed25519_key.pub" -E sha256 2>/dev/null \
+        | awk '{print $2}' > /run/axonos/ssh-host-ed25519.sha256
+    chown root:root /run/axonos/ssh-host-ed25519.sha256
+    chmod 644 /run/axonos/ssh-host-ed25519.sha256
 
     # Hardened drop-in. The Ubuntu sshd_config reads sshd_config.d/*.conf via an
     # Include at the TOP of the file, so these directives win over later defaults

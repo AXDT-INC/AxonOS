@@ -229,6 +229,18 @@ def collect_container_stats() -> dict:
         disk_free, disk_total, disk_used = disk.free, disk.total, disk.used
     except OSError:
         pass
+    ssh_host_key_fingerprint = None
+    fingerprint_path = os.getenv(
+        "AXGT_SSH_HOST_FINGERPRINT_FILE",
+        "/run/axonos/ssh-host-ed25519.sha256",
+    )
+    try:
+        with open(fingerprint_path, "r", encoding="ascii") as fingerprint_file:
+            candidate = fingerprint_file.read().strip()
+        if candidate.startswith("SHA256:") and len(candidate) <= 128:
+            ssh_host_key_fingerprint = candidate
+    except OSError:
+        pass
     return {
         "ok": True,
         "cpu_pct": round(cpu_pct, 1) if cpu_pct is not None else None,
@@ -238,6 +250,8 @@ def collect_container_stats() -> dict:
         "disk_free_bytes": disk_free,
         "disk_total_bytes": disk_total,
         "disk_used_bytes": disk_used,
+        "ssh_host_key_algorithm": "ED25519" if ssh_host_key_fingerprint else None,
+        "ssh_host_key_fingerprint": ssh_host_key_fingerprint,
     }
 
 

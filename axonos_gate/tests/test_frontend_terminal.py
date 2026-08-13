@@ -131,6 +131,10 @@ class FrontendTerminalContractTests(unittest.TestCase):
         self.assertIn("UI.showAxonosSshCard", fallback)
         self.assertIn("Web terminal unavailable", fallback)
         self.assertIn("axonos_ssh_connect_cmd", self.page)
+        self.assertIn("axonos_ssh_host_fingerprint", self.page)
+        self.assertIn("UI._axonosLoadSshHostFingerprint()", self.ui)
+        self.assertIn("ssh_host_key_fingerprint", self.ui)
+        self.assertIn("do not accept an unverified host key", self.ui)
         self.assertIn("axonos_ssh_copy_btn", self.page)
         self.assertIn("axonos_ssh_web_terminal_btn", self.page)
 

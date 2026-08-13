@@ -1278,9 +1278,38 @@ const UI = {
             terminalBtn.disabled = false;
             terminalBtn.textContent = 'Open web terminal';
         }
+        UI._axonosLoadSshHostFingerprint();
         UI._axonosUpdateSshCardCap(claim);
         UI._axonosToggleSshLaunchControls(true);
         card.classList.remove('axonos-ssh-card--hidden');
+    },
+
+    async _axonosLoadSshHostFingerprint() {
+        const el = document.getElementById('axonos_ssh_host_fingerprint');
+        if (!el) return;
+        el.textContent = 'ED25519 host-key fingerprint: loading…';
+        try {
+            const headers = {};
+            if (window.verifiedWalletAddress) {
+                headers['X-Wallet-Address'] = window.verifiedWalletAddress;
+            }
+            if (window.verifiedWalletAuthToken) {
+                headers['X-AXGT-Auth-Token'] = window.verifiedWalletAuthToken;
+            }
+            const response = await UI._axonosFetchJsonWithTimeout(
+                new URL('/api/files/stats', window.location.origin).toString(),
+                { credentials: 'include', headers },
+                4000
+            );
+            const result = response && response.data;
+            const fingerprint = result && result.ssh_host_key_fingerprint;
+            if (typeof fingerprint !== 'string' || !fingerprint.startsWith('SHA256:')) {
+                throw new Error('fingerprint unavailable');
+            }
+            el.textContent = `ED25519 host-key fingerprint: ${fingerprint}`;
+        } catch (error) {
+            el.textContent = 'ED25519 host-key fingerprint unavailable — do not accept an unverified host key.';
+        }
     },
 
     /** Update the SSH card deadline line from any payload that carries
