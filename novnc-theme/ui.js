@@ -1278,16 +1278,29 @@ const UI = {
             terminalBtn.disabled = false;
             terminalBtn.textContent = 'Open web terminal';
         }
-        UI._axonosLoadSshHostFingerprint();
+        UI._axonosSshFingerprintGeneration =
+            (UI._axonosSshFingerprintGeneration || 0) + 1;
+        if (UI._axonosSshFingerprintRetryTimer) {
+            clearTimeout(UI._axonosSshFingerprintRetryTimer);
+            UI._axonosSshFingerprintRetryTimer = null;
+        }
+        UI._axonosLoadSshHostFingerprint({
+            generation: UI._axonosSshFingerprintGeneration,
+            deadline: Date.now() + 60000
+        });
         UI._axonosUpdateSshCardCap(claim);
         UI._axonosToggleSshLaunchControls(true);
         card.classList.remove('axonos-ssh-card--hidden');
     },
 
-    async _axonosLoadSshHostFingerprint() {
+    async _axonosLoadSshHostFingerprint(options = {}) {
         const el = document.getElementById('axonos_ssh_host_fingerprint');
         if (!el) return;
-        el.textContent = 'ED25519 host-key fingerprint: loading…';
+        const generation = Number(options.generation) ||
+            (UI._axonosSshFingerprintGeneration || 0);
+        const deadline = Number(options.deadline) || (Date.now() + 60000);
+        if (generation !== UI._axonosSshFingerprintGeneration) return;
+        el.textContent = 'ED25519 host-key fingerprint: waiting for verification…';
         try {
             const headers = {};
             if (window.verifiedWalletAddress) {
@@ -1299,8 +1312,9 @@ const UI = {
             const response = await UI._axonosFetchJsonWithTimeout(
                 new URL('/api/files/stats', window.location.origin).toString(),
                 { credentials: 'include', headers },
-                4000
+                2500
             );
+            if (generation !== UI._axonosSshFingerprintGeneration) return;
             const result = response && response.data;
             const fingerprint = result && result.ssh_host_key_fingerprint;
             if (typeof fingerprint !== 'string' || !fingerprint.startsWith('SHA256:')) {
@@ -1308,6 +1322,13 @@ const UI = {
             }
             el.textContent = `ED25519 host-key fingerprint: ${fingerprint}`;
         } catch (error) {
+            if (generation !== UI._axonosSshFingerprintGeneration) return;
+            if (Date.now() < deadline) {
+                UI._axonosSshFingerprintRetryTimer = setTimeout(() => {
+                    UI._axonosLoadSshHostFingerprint({ generation, deadline });
+                }, 1500);
+                return;
+            }
             el.textContent = 'ED25519 host-key fingerprint unavailable — do not accept an unverified host key.';
         }
     },
@@ -1337,6 +1358,12 @@ const UI = {
     },
 
     hideAxonosSshCard() {
+        UI._axonosSshFingerprintGeneration =
+            (UI._axonosSshFingerprintGeneration || 0) + 1;
+        if (UI._axonosSshFingerprintRetryTimer) {
+            clearTimeout(UI._axonosSshFingerprintRetryTimer);
+            UI._axonosSshFingerprintRetryTimer = null;
+        }
         const card = document.getElementById('axonos_ssh_connect_card');
         if (card) card.classList.add('axonos-ssh-card--hidden');
         const connectDialog = document.getElementById('noVNC_connect_dlg');
