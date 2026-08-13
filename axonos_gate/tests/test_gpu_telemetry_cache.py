@@ -271,6 +271,19 @@ class GpuCollectorSupervisorContractTests(unittest.TestCase):
                 self.assertEqual(result.stdout, expected)
 
 
+class NovncSupervisorContractTests(unittest.TestCase):
+    def test_restart_terminates_forked_websockify_workers(self):
+        supervisor = SUPERVISOR_PATH.read_text(encoding="utf-8")
+        match = re.search(
+            r"(?ms)^\[program:novnc\]\n(.*?)(?=^\[program:|\Z)",
+            supervisor,
+        )
+        self.assertIsNotNone(match, "novnc supervisor program is missing")
+        section = match.group(1)
+        self.assertRegex(section, r"(?m)^stopasgroup=true$")
+        self.assertRegex(section, r"(?m)^killasgroup=true$")
+
+
 class GpuCollectorComposeContractTests(unittest.TestCase):
     def test_central_collector_has_explicit_utility_only_gpu_access(self):
         compose = COMPOSE_PATH.read_text(encoding="utf-8")
