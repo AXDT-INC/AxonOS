@@ -15,9 +15,10 @@ class SessionTemplateGuidanceTests(unittest.TestCase):
         source = _TEMPLATE_SCRIPT.read_text(encoding="utf-8")
         gromacs_case = source.split("    gromacs)", 1)[1].split("        ;;", 1)[0]
 
-        self.assertNotIn("export OMP_NUM_THREADS=8", gromacs_case)
+        self.assertIn("export OMP_NUM_THREADS=8", gromacs_case)
+        self.assertIn("GROMACS ready (OMP_NUM_THREADS=8)", gromacs_case)
         self.assertIn(
-            "OMP_NUM_THREADS=8 gmx_mpi mdrun -deffnm md -ntomp 8 -nb gpu -pme cpu "
+            "gmx_mpi mdrun -deffnm md -ntomp 8 -nb gpu -pme cpu "
             "-update cpu -pin on",
             gromacs_case,
         )
