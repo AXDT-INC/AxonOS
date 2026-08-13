@@ -257,45 +257,85 @@ def _auth_pg_get_connection():
         return None
 
 
-_gpu_cache = {"gpus": [], "ts": 0}
-_gpu_cache_lock = Lock()
+_gpu_cache_file = os.getenv(
+    "AXGT_GPU_TELEMETRY_FILE", "/run/axonos/gpu-telemetry.json"
+)
 
-def _poll_gpus():
-    import subprocess as _sp, time as _t
-    while True:
-        try:
-            res = _sp.run(
-                ["nvidia-smi",
-                 "--query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw",
-                 "--format=csv,noheader,nounits"],
-                capture_output=True, text=True, timeout=30
-            )
-            gpus = []
-            for line in res.stdout.strip().split("\n"):
-                parts = [p.strip() for p in line.split(",")]
-                if len(parts) < 7:
-                    continue
-                def _f(v):
-                    try: return float(v)
-                    except: return None
-                gpus.append({
-                    "index": int(parts[0]),
-                    "name": parts[1],
-                    "utilization_pct": _f(parts[2]),
-                    "memory_used_mb": _f(parts[3]),
-                    "memory_total_mb": _f(parts[4]),
-                    "temperature_c": _f(parts[5]),
-                    "power_draw_w": _f(parts[6]),
-                })
-            with _gpu_cache_lock:
-                _gpu_cache["gpus"] = gpus
-                _gpu_cache["ts"] = _t.time()
-        except Exception as exc:
-            logger.warning("GPU poller: %s", exc)
-        _t.sleep(10)
 
-import threading as _threading
-_threading.Thread(target=_poll_gpus, daemon=True).start()
+def _shared_gpu_cache():
+    """Read the dedicated collector's atomic snapshot, failing closed.
+
+    websockify forks a worker process for each request.  A pre-fork thread and
+    lock are unsafe here: workers inherit a frozen cache and can inherit a lock
+    whose owning thread no longer exists.  The supervisor-managed collector is
+    the sole writer; request workers only read its root-owned runtime file.
+    """
+    import math as _math, stat as _stat, time as _t
+
+    descriptor = None
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(_gpu_cache_file, flags)
+        metadata = os.fstat(descriptor)
+        if not _stat.S_ISREG(metadata.st_mode) or metadata.st_size > 1024 * 1024:
+            raise ValueError("invalid GPU telemetry cache file")
+        if metadata.st_uid != 0 or metadata.st_mode & 0o022:
+            raise ValueError("untrusted GPU telemetry cache ownership or mode")
+        with os.fdopen(descriptor, "r", encoding="utf-8") as src:
+            descriptor = None
+            sample = json.load(src)
+
+        if not isinstance(sample, dict):
+            raise ValueError("invalid GPU telemetry document")
+        gpus = sample.get("gpus")
+        sampled_at = float(sample.get("ts") or 0)
+        sampled_monotonic = float(sample.get("monotonic_ts") or 0)
+        if not isinstance(gpus, list) or not gpus:
+            raise ValueError("empty GPU telemetry cache")
+        if not _math.isfinite(sampled_at) or sampled_at <= 0:
+            raise ValueError("invalid GPU telemetry timestamp")
+        if sampled_at > _t.time() + 1:
+            raise ValueError("future GPU telemetry timestamp")
+        if not _math.isfinite(sampled_monotonic) or sampled_monotonic <= 0:
+            raise ValueError("invalid monotonic GPU telemetry timestamp")
+        if sampled_monotonic > _t.monotonic() + 1:
+            raise ValueError("future monotonic GPU telemetry timestamp")
+
+        seen_indices = set()
+        for gpu in gpus:
+            if not isinstance(gpu, dict):
+                raise ValueError("invalid GPU telemetry row")
+            index = gpu.get("index")
+            if isinstance(index, bool) or not isinstance(index, int):
+                raise ValueError("invalid GPU telemetry index")
+            if index < 0 or index in seen_indices:
+                raise ValueError("invalid GPU telemetry index")
+            seen_indices.add(index)
+            utilization = gpu.get("utilization_pct")
+            used_memory = gpu.get("memory_used_mb")
+            total_memory = gpu.get("memory_total_mb")
+            required_values = (utilization, used_memory, total_memory)
+            if any(isinstance(value, bool) or not isinstance(value, (int, float))
+                   or not _math.isfinite(value) for value in required_values):
+                raise ValueError("invalid GPU telemetry metrics")
+            if (utilization < 0 or utilization > 100 or used_memory < 0 or
+                    total_memory <= 0 or used_memory > total_memory):
+                raise ValueError("out-of-range GPU telemetry metrics")
+            for optional_key in ("temperature_c", "power_draw_w"):
+                optional_value = gpu.get(optional_key)
+                if (optional_value is not None and
+                        (isinstance(optional_value, bool) or
+                         not isinstance(optional_value, (int, float)) or
+                         not _math.isfinite(optional_value))):
+                    raise ValueError("invalid optional GPU telemetry metric")
+        return gpus, sampled_at, sampled_monotonic
+    except (OSError, ValueError, TypeError, OverflowError, AttributeError,
+            json.JSONDecodeError) as exc:
+        logger.debug("GPU telemetry cache unavailable: %s", exc)
+        return [], 0.0, 0.0
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def _telemetry_query(query, params=None):
@@ -1385,44 +1425,59 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         if pu.path == '/api/public/telemetry/live':
             import time as _t, urllib.request as _ur
             now = _t.time()
+            viewer_only = bool(parse_qs(pu.query).get("viewer"))
 
-            # Active sessions with heartbeat staleness
-            sess_rows, _ = _telemetry_query("""
-                SELECT id, wallet_address, requested_profile, gpu_ids, container_id,
-                       started_at, last_heartbeat, expires_at,
-                       ROUND(((last_heartbeat - started_at) / 60)::numeric, 2) AS duration_minutes
-                FROM axgt_sessions WHERE status = 'active'
-                ORDER BY started_at DESC
-            """)
             live_sessions = []
-            for r in (sess_rows or []):
-                r["id"] = int(r["id"])
-                r["duration_minutes"] = float(r.get("duration_minutes") or 0)
-                for k in ("started_at", "last_heartbeat", "expires_at"):
-                    r[k] = float(r.get(k) or 0)
-                r["heartbeat_age_seconds"] = round(now - r["last_heartbeat"], 1) if r["last_heartbeat"] else None
-                r["expires_in_seconds"] = round(r["expires_at"] - now, 1) if r["expires_at"] else None
-                live_sessions.append(r)
+            if not viewer_only:
+                # The public dashboard needs active-session detail.  A desktop
+                # sidebar requests viewer=1 every second and needs GPU data
+                # only, so do not put Postgres on that hot path.
+                sess_rows, _ = _telemetry_query("""
+                    SELECT id, wallet_address, requested_profile, gpu_ids, container_id,
+                           started_at, last_heartbeat, expires_at,
+                           ROUND(((last_heartbeat - started_at) / 60)::numeric, 2) AS duration_minutes
+                    FROM axgt_sessions WHERE status = 'active'
+                    ORDER BY started_at DESC
+                """)
+                for r in (sess_rows or []):
+                    r["id"] = int(r["id"])
+                    r["duration_minutes"] = float(r.get("duration_minutes") or 0)
+                    for k in ("started_at", "last_heartbeat", "expires_at"):
+                        r[k] = float(r.get(k) or 0)
+                    r["heartbeat_age_seconds"] = round(now - r["last_heartbeat"], 1) if r["last_heartbeat"] else None
+                    r["expires_in_seconds"] = round(r["expires_at"] - now, 1) if r["expires_at"] else None
+                    live_sessions.append(r)
 
-            # GPU stats from background cache (updated every 10s)
-            with _gpu_cache_lock:
-                gpus = list(_gpu_cache["gpus"])
-                gpu_cache_age = round(now - _gpu_cache["ts"], 1) if _gpu_cache["ts"] else None
+            # Read the dedicated collector's atomic cross-process sample.
+            gpus, gpu_sampled_at, gpu_sampled_monotonic = _shared_gpu_cache()
+            if gpu_sampled_monotonic:
+                monotonic_age = _t.monotonic() - gpu_sampled_monotonic
+                if monotonic_age < -5:
+                    gpus, gpu_sampled_at, gpu_sampled_monotonic = [], 0.0, 0.0
+                    gpu_cache_age = None
+                else:
+                    gpu_cache_age = round(max(0.0, monotonic_age), 3)
+            else:
+                gpu_cache_age = round(now - gpu_sampled_at, 3) if gpu_sampled_at else None
 
-            # Running session containers from launcher
+            # Running session containers are only used by the public telemetry
+            # dashboard. The attached desktop sidebar requests ``viewer=1`` and
+            # must not wait behind this optional network hop (whose own timeout
+            # can exceed the sidebar's request deadline).
             containers = []
-            try:
-                launcher_url = (os.getenv("AXGT_SESSION_LAUNCHER_URL") or "").rstrip("/")
-                launcher_token = os.getenv("AXGT_SESSION_LAUNCHER_TOKEN") or ""
-                if launcher_url and launcher_token:
-                    req = _ur.Request(
-                        launcher_url + "/list-containers",
-                        headers={"Authorization": "Bearer " + launcher_token}
-                    )
-                    with _ur.urlopen(req, timeout=5) as resp:
-                        containers = json.loads(resp.read()).get("containers", [])
-            except Exception as exc:
-                logger.warning("launcher list-containers failed: %s", exc)
+            if not viewer_only:
+                try:
+                    launcher_url = (os.getenv("AXGT_SESSION_LAUNCHER_URL") or "").rstrip("/")
+                    launcher_token = os.getenv("AXGT_SESSION_LAUNCHER_TOKEN") or ""
+                    if launcher_url and launcher_token:
+                        req = _ur.Request(
+                            launcher_url + "/list-containers",
+                            headers={"Authorization": "Bearer " + launcher_token}
+                        )
+                        with _ur.urlopen(req, timeout=5) as resp:
+                            containers = json.loads(resp.read()).get("containers", [])
+                except Exception as exc:
+                    logger.warning("launcher list-containers failed: %s", exc)
 
             return self._send_json(200, {
                 "timestamp": now,
@@ -1430,7 +1485,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 "gpus": gpus,
                 "gpu_cache_age_seconds": gpu_cache_age,
                 "containers": containers,
-            })
+            }, no_cache=True)
 
         if pu.path == '/api/public/telemetry/webrtc':
             rows, err = _telemetry_query("""

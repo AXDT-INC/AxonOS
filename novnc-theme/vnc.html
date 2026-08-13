@@ -8549,9 +8549,20 @@ Copyright (C) 2019 The noVNC Authors
         let axonosSelectedGpuProfile = 'small'; // small, medium, large, max
         let axonosSelectedPaymentToken = 'usdc'; // usdc, eth, axgt
         let axonosTelemetryInterval = null;
+        let axonosGpuTelemetryInterval = null;
         let axonosTelemetryGeneration = 0;
         let axonosGpuTelemetryPending = false;
         let axonosContainerTelemetryPending = false;
+        let axonosGpuTelemetryLastSuccessAt = 0;
+        let axonosGpuTelemetryFailures = 0;
+        let axonosContainerTelemetryLastSuccessAt = 0;
+        let axonosContainerTelemetryFailures = 0;
+        const AXONOS_TELEMETRY_FAILURE_GRACE_MS = 30000;
+        const AXONOS_GPU_TELEMETRY_FAILURE_GRACE_MS = 5000;
+        const AXONOS_TELEMETRY_FAILURE_LIMIT = 3;
+        const AXONOS_GPU_TELEMETRY_INTERVAL_MS = 1000;
+        const AXONOS_CONTAINER_TELEMETRY_INTERVAL_MS = 5000;
+        const AXONOS_GPU_TELEMETRY_MAX_AGE_SECONDS = 5;
         let axonosDashboardRequestGeneration = 0;
         let axonosDashboardRefreshTimer = null;
         const axonosDashboardEndingSessions = new Map();
@@ -10141,7 +10152,7 @@ Copyright (C) 2019 The noVNC Authors
         }
 
         // Live Telemetry Loop when Connected — REAL values only:
-        //   GPU / VRAM  — /api/public/telemetry/live (nvidia-smi cache on the gate),
+        //   GPU / VRAM  — /api/public/telemetry/live (persistent NVML collector),
         //                 filtered to this session's assigned GPUs;
         //   CPU / RAM / storage — /api/files/stats (file agent inside the session
         //                 container reads its own cgroup + disk usage);
@@ -10150,16 +10161,31 @@ Copyright (C) 2019 The noVNC Authors
         // image without the /stats route) instead of showing invented numbers.
         function axonosStartTelemetryLoop() {
             if (axonosTelemetryInterval) clearInterval(axonosTelemetryInterval);
+            if (axonosGpuTelemetryInterval) clearInterval(axonosGpuTelemetryInterval);
             axonosTelemetryGeneration += 1;
             axonosGpuTelemetryPending = false;
             axonosContainerTelemetryPending = false;
+            axonosGpuTelemetryFailures = 0;
+            axonosContainerTelemetryFailures = 0;
+            axonosGpuTelemetryLastSuccessAt = 0;
+            axonosContainerTelemetryLastSuccessAt = 0;
+            axonosSetTelemetryRow('axonos_telemetry_gpu_val', 'axonos_telemetry_gpu_progress', null);
+            axonosSetTelemetryRow('axonos_telemetry_vram_val', 'axonos_telemetry_vram_progress', null);
+            axonosSetTelemetryRow('axonos_telemetry_cpu_val', 'axonos_telemetry_cpu_progress', null);
+            axonosSetTelemetryRow('axonos_telemetry_ram_val', 'axonos_telemetry_ram_progress', null);
+            axonosRenderStorageUsage(null, null);
 
-            // Initial telemetry render
+            // GPU data is lightweight and changes quickly; container stats and
+            // wallet status stay on their slower cadence.
+            axonosTickGpuTelemetry(axonosTelemetryGeneration);
             axonosTickTelemetry(axonosTelemetryGeneration);
 
+            axonosGpuTelemetryInterval = setInterval(() => {
+                axonosTickGpuTelemetry(axonosTelemetryGeneration);
+            }, AXONOS_GPU_TELEMETRY_INTERVAL_MS);
             axonosTelemetryInterval = setInterval(() => {
                 axonosTickTelemetry(axonosTelemetryGeneration);
-            }, 5000);
+            }, AXONOS_CONTAINER_TELEMETRY_INTERVAL_MS);
         }
 
         function axonosStopTelemetryLoop() {
@@ -10170,6 +10196,10 @@ Copyright (C) 2019 The noVNC Authors
                 clearInterval(axonosTelemetryInterval);
                 axonosTelemetryInterval = null;
             }
+            if (axonosGpuTelemetryInterval) {
+                clearInterval(axonosGpuTelemetryInterval);
+                axonosGpuTelemetryInterval = null;
+            }
         }
 
         function axonosSetTelemetryRow(valId, progressId, pct, warnAbove) {
@@ -10179,6 +10209,7 @@ Copyright (C) 2019 The noVNC Authors
             if (pct == null || isNaN(pct)) {
                 valEl.textContent = '—';
                 progressEl.style.width = '0%';
+                progressEl.classList.remove('axonos-sidebar-progress-bar--orange');
                 return;
             }
             const clamped = Math.max(0, Math.min(100, pct));
@@ -10208,59 +10239,140 @@ Copyright (C) 2019 The noVNC Authors
             if (progressEl) progressEl.style.width = Math.min(100, (boundedUsedBytes / totalBytes) * 100) + '%';
         }
 
+        /** Aggregate only the GPUs assigned to this session.
+         *
+         * GPU utilization is the arithmetic mean across assigned devices.
+         * VRAM is aggregate used / aggregate capacity (the same as mean VRAM
+         * percentage for equal-capacity V100s). Any missing assignment data or
+         * partial/mismatched sample fails closed instead of exposing host-wide
+         * telemetry from GPUs belonging to other sessions.
+         */
+        function axonosAggregateAssignedGpuTelemetry(gpuRows, assignedGpuIds, expectedGpuCount) {
+            if (!Array.isArray(gpuRows) || !Array.isArray(assignedGpuIds)) {
+                return { gpuPct: null, vramPct: null, matchedGpuCount: 0 };
+            }
+            const expected = expectedGpuCount;
+            const normalizedIds = assignedGpuIds.map(value => {
+                return typeof value === 'number' && Number.isInteger(value) && value >= 0
+                    ? value : null;
+            });
+            const ids = Array.from(new Set(normalizedIds));
+            if (!Number.isInteger(expected) || expected <= 0 ||
+                normalizedIds.some(index => index == null) ||
+                ids.length !== normalizedIds.length || ids.length !== expected) {
+                return { gpuPct: null, vramPct: null, matchedGpuCount: 0 };
+            }
+            const byIndex = new Map();
+            let rowsAreValid = true;
+            gpuRows.forEach(gpu => {
+                const index = gpu && gpu.index;
+                if (typeof index !== 'number' || !Number.isInteger(index) ||
+                    index < 0 || byIndex.has(index)) {
+                    rowsAreValid = false;
+                    return;
+                }
+                byIndex.set(index, gpu);
+            });
+            if (!rowsAreValid) {
+                return { gpuPct: null, vramPct: null, matchedGpuCount: 0 };
+            }
+            const assigned = ids.map(index => byIndex.get(index));
+            if (assigned.some(gpu => !gpu)) {
+                return { gpuPct: null, vramPct: null, matchedGpuCount: 0 };
+            }
+
+            const utilities = assigned.map(gpu => gpu.utilization_pct);
+            const gpuPct = utilities.every(value =>
+                Number.isFinite(value) && value >= 0 && value <= 100)
+                ? utilities.reduce((sum, value) => sum + value, 0) / assigned.length
+                : null;
+            const memoryIsComplete = assigned.every(gpu =>
+                Number.isFinite(gpu.memory_used_mb) &&
+                Number.isFinite(gpu.memory_total_mb) && gpu.memory_used_mb >= 0 &&
+                gpu.memory_total_mb > 0 && gpu.memory_used_mb <= gpu.memory_total_mb);
+            const vramUsed = memoryIsComplete
+                ? assigned.reduce((sum, gpu) => sum + gpu.memory_used_mb, 0) : 0;
+            const vramTotal = memoryIsComplete
+                ? assigned.reduce((sum, gpu) => sum + gpu.memory_total_mb, 0) : 0;
+            return {
+                gpuPct: gpuPct,
+                vramPct: vramTotal > 0 ? (vramUsed / vramTotal) * 100 : null,
+                matchedGpuCount: assigned.length
+            };
+        }
+
+        function axonosTickGpuTelemetry(generation) {
+            const wallet = window.verifiedWalletAddress || verifiedWalletAddress;
+            if (!wallet || axonosGpuTelemetryPending) return;
+            const tickGeneration = Number.isInteger(generation)
+                ? generation : axonosTelemetryGeneration;
+            const tickIsCurrent = () => tickGeneration === axonosTelemetryGeneration;
+            const sourceUnavailable = () =>
+                axonosGpuTelemetryFailures >= AXONOS_TELEMETRY_FAILURE_LIMIT &&
+                (!axonosGpuTelemetryLastSuccessAt ||
+                    (Date.now() - axonosGpuTelemetryLastSuccessAt) >
+                        AXONOS_GPU_TELEMETRY_FAILURE_GRACE_MS);
+            const renderUnavailable = () => {
+                axonosSetTelemetryRow('axonos_telemetry_gpu_val', 'axonos_telemetry_gpu_progress', null);
+                axonosSetTelemetryRow('axonos_telemetry_vram_val', 'axonos_telemetry_vram_progress', null);
+            };
+
+            axonosGpuTelemetryPending = true;
+            const gpuUrl = new URL('/api/public/telemetry/live', window.location.origin);
+            gpuUrl.searchParams.set('viewer', '1');
+            gpuUrl.searchParams.set('_telemetry_ts', String(Date.now()));
+            axonosFetch({
+                url: gpuUrl.toString(),
+                timeoutMs: 4000,
+                headers: { 'Cache-Control': 'no-cache' }
+            })
+            .then(data => {
+                if (!tickIsCurrent()) return;
+                const cacheAge = Number(data && data.gpu_cache_age_seconds);
+                if (!Number.isFinite(cacheAge) || cacheAge > AXONOS_GPU_TELEMETRY_MAX_AGE_SECONDS) {
+                    renderUnavailable();
+                    throw new Error('GPU telemetry cache is stale');
+                }
+                const owned = axonosEffectiveOwnedSession();
+                const aggregate = axonosAggregateAssignedGpuTelemetry(
+                    (data && data.gpus) || [],
+                    owned && owned.gpuIds,
+                    owned && owned.gpuCount
+                );
+                const expected = Number(owned && owned.gpuCount);
+                if (aggregate.matchedGpuCount !== expected ||
+                    !Number.isFinite(aggregate.gpuPct) || !Number.isFinite(aggregate.vramPct)) {
+                    renderUnavailable();
+                    throw new Error('GPU assignment telemetry is incomplete');
+                }
+                axonosSetTelemetryRow('axonos_telemetry_gpu_val', 'axonos_telemetry_gpu_progress',
+                    aggregate.gpuPct, 80);
+                axonosSetTelemetryRow('axonos_telemetry_vram_val', 'axonos_telemetry_vram_progress',
+                    aggregate.vramPct, 90);
+                axonosGpuTelemetryLastSuccessAt = Date.now();
+                axonosGpuTelemetryFailures = 0;
+            })
+            .catch(() => {
+                if (!tickIsCurrent()) return;
+                axonosGpuTelemetryFailures += 1;
+                if (sourceUnavailable()) {
+                    renderUnavailable();
+                }
+            })
+            .finally(() => {
+                if (tickIsCurrent()) axonosGpuTelemetryPending = false;
+            });
+        }
+
         function axonosTickTelemetry(generation) {
             const wallet = window.verifiedWalletAddress || verifiedWalletAddress;
             if (!wallet) return;
             const tickGeneration = Number.isInteger(generation)
                 ? generation : axonosTelemetryGeneration;
             const tickIsCurrent = () => tickGeneration === axonosTelemetryGeneration;
-
-            // GPU utilization + VRAM for the GPUs assigned to this session.
-            if (!axonosGpuTelemetryPending) {
-                axonosGpuTelemetryPending = true;
-                const gpuUrl = new URL('/api/public/telemetry/live', window.location.origin);
-                gpuUrl.searchParams.set('_telemetry_ts', String(Date.now()));
-                axonosFetch({
-                    url: gpuUrl.toString(),
-                    timeoutMs: 4000,
-                    headers: { 'Cache-Control': 'no-cache' }
-                })
-                .then(data => {
-                    if (!tickIsCurrent()) return;
-                    const cacheAge = Number(data && data.gpu_cache_age_seconds);
-                    if (!Number.isFinite(cacheAge) || cacheAge > 25) {
-                        throw new Error('GPU telemetry cache is stale');
-                    }
-                    const owned = window.axonosOwnedSession || window.axonosDetachedSession;
-                    const ids = (owned && owned.gpuIds && owned.gpuIds.length)
-                        ? owned.gpuIds.map(Number) : null;
-                    let gpus = (data && data.gpus) || [];
-                    if (ids && ids.length) {
-                        const mine = gpus.filter(g => ids.indexOf(Number(g.index)) !== -1);
-                        if (mine.length) gpus = mine;
-                    }
-                    const utils = gpus.map(g => g.utilization_pct).filter(v => typeof v === 'number');
-                    const gpuPct = utils.length ? utils.reduce((a, b) => a + b, 0) / utils.length : null;
-                    let vramUsed = 0, vramTotal = 0;
-                    gpus.forEach(g => {
-                        if (typeof g.memory_used_mb === 'number' && typeof g.memory_total_mb === 'number') {
-                            vramUsed += g.memory_used_mb;
-                            vramTotal += g.memory_total_mb;
-                        }
-                    });
-                    const vramPct = vramTotal > 0 ? (vramUsed / vramTotal) * 100 : null;
-                    axonosSetTelemetryRow('axonos_telemetry_gpu_val', 'axonos_telemetry_gpu_progress', gpuPct, 80);
-                    axonosSetTelemetryRow('axonos_telemetry_vram_val', 'axonos_telemetry_vram_progress', vramPct, 90);
-                })
-                .catch(() => {
-                    if (!tickIsCurrent()) return;
-                    axonosSetTelemetryRow('axonos_telemetry_gpu_val', 'axonos_telemetry_gpu_progress', null);
-                    axonosSetTelemetryRow('axonos_telemetry_vram_val', 'axonos_telemetry_vram_progress', null);
-                })
-                .finally(() => {
-                    if (tickIsCurrent()) axonosGpuTelemetryPending = false;
-                });
-            }
+            const sourceUnavailable = (lastSuccessAt, failures) =>
+                failures >= AXONOS_TELEMETRY_FAILURE_LIMIT &&
+                (!lastSuccessAt || (Date.now() - lastSuccessAt) > AXONOS_TELEMETRY_FAILURE_GRACE_MS);
 
             // Container CPU / RAM + home-volume storage from the in-container agent.
             if (!axonosContainerTelemetryPending) {
@@ -10279,12 +10391,18 @@ Copyright (C) 2019 The noVNC Authors
                         ? (st.mem_used_bytes / st.mem_total_bytes) * 100 : null;
                     axonosSetTelemetryRow('axonos_telemetry_ram_val', 'axonos_telemetry_ram_progress', ramPct, 90);
                     axonosRenderStorageUsage(st.disk_used_bytes, st.disk_total_bytes);
+                    axonosContainerTelemetryLastSuccessAt = Date.now();
+                    axonosContainerTelemetryFailures = 0;
                 })
                 .catch(() => {
                     if (!tickIsCurrent()) return;
-                    axonosSetTelemetryRow('axonos_telemetry_cpu_val', 'axonos_telemetry_cpu_progress', null);
-                    axonosSetTelemetryRow('axonos_telemetry_ram_val', 'axonos_telemetry_ram_progress', null);
-                    axonosRenderStorageUsage(null, null);
+                    axonosContainerTelemetryFailures += 1;
+                    if (sourceUnavailable(axonosContainerTelemetryLastSuccessAt,
+                        axonosContainerTelemetryFailures)) {
+                        axonosSetTelemetryRow('axonos_telemetry_cpu_val', 'axonos_telemetry_cpu_progress', null);
+                        axonosSetTelemetryRow('axonos_telemetry_ram_val', 'axonos_telemetry_ram_progress', null);
+                        axonosRenderStorageUsage(null, null);
+                    }
                 })
                 .finally(() => {
                     if (tickIsCurrent()) axonosContainerTelemetryPending = false;
@@ -10326,8 +10444,20 @@ Copyright (C) 2019 The noVNC Authors
         // Listen for VNC connection events to manage the loop.
         // Use the classList check directly — the local isConnected() helpers live
         // inside the globe/scroll IIFEs and are out of scope here.
+        let axonosTelemetryConnectionState =
+            document.documentElement.classList.contains('noVNC_connected');
+        if (axonosTelemetryConnectionState) {
+            axonosStartTelemetryLoop();
+        }
         new MutationObserver(function () {
-            if (document.documentElement.classList.contains('noVNC_connected')) {
+            const connected =
+                document.documentElement.classList.contains('noVNC_connected');
+            // The root class list also changes for terminal focus, microphone,
+            // touch, and WebRTC state. Restart only on a real VNC connection
+            // edge so unrelated UI activity cannot clear the telemetry rows.
+            if (connected === axonosTelemetryConnectionState) return;
+            axonosTelemetryConnectionState = connected;
+            if (connected) {
                 axonosStartTelemetryLoop();
             } else {
                 axonosStopTelemetryLoop();

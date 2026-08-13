@@ -117,7 +117,13 @@ services:
     container_name: axonos
     shm_size: "32gb"
     env_file: .env
+    # Utility-only GPU visibility for the central NVML telemetry collector.
+    # GPU device access is shareable; the disabled base desktop does not launch
+    # Xorg or reserve devices away from launcher-managed tenant sessions.
+    runtime: nvidia
     environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: utility
       AXGT_CHALLENGE_DB_URL: postgresql://${POSTGRES_USER:-axonos_gate}:${POSTGRES_PASSWORD:-axonos_gate_secret}@postgres:5432/${POSTGRES_DB:-axonos_gate}
       AXGT_USER_CONTAINER_ENABLED: ${AXGT_USER_CONTAINER_ENABLED:-true}
       # Gate-only on base axonos: no Xorg (GPU :0 reserved for axgt-session-* desktops).
@@ -125,6 +131,10 @@ services:
       AXGT_SESSION_LAUNCHER_MODE: ${AXGT_SESSION_LAUNCHER_MODE:-http}
       AXGT_SESSION_LAUNCHER_URL: ${AXGT_SESSION_LAUNCHER_URL:-http://axonos-launcher:8090}
       AXGT_SESSION_LAUNCHER_TOKEN: ${AXGT_SESSION_LAUNCHER_TOKEN:-change-me-launcher-token}
+      # Persistent NVML collector shared by forked gate workers. One-second
+      # samples avoid the 15–22s lag of spawning nvidia-smi on every cycle.
+      AXGT_GPU_TELEMETRY_INTERVAL_SECONDS: ${AXGT_GPU_TELEMETRY_INTERVAL_SECONDS:-1.0}
+      AXGT_GPU_TELEMETRY_FILE: ${AXGT_GPU_TELEMETRY_FILE:-/run/axonos/gpu-telemetry.json}
       AXGT_PERSISTENT_STORAGE_ENABLED: ${AXGT_PERSISTENT_STORAGE_ENABLED:-true}
       AXGT_PERSISTENT_STORAGE_VOLUME_PREFIX: ${AXGT_PERSISTENT_STORAGE_VOLUME_PREFIX:-axgt-user-storage-}
       AXGT_PERSISTENT_STORAGE_MOUNT_PATH: ${AXGT_PERSISTENT_STORAGE_MOUNT_PATH:-/home/aXonian}
@@ -172,10 +182,8 @@ services:
       - "${AXONOS_PUBLISH_GATE:-8889}:8889"
       # UDP range for WebRTC ICE srflx is published per-session by the launcher,
       # not here — base container does not run the WebRTC agent in multi-user mode.
-    # No GPUs on base when AXGT_USER_CONTAINER_ENABLED: axgt-session-* uses --gpus device=N.
-    # Reserving all GPUs here prevents session Xorg from binding :0 (WebRTC capture fails).
-    # GPU pool auto-detect: base axonos runs nvidia-smi if available; otherwise the gate calls
-    # axonos-launcher GET /enumerate-gpus (docker run --gpus all … nvidia-smi) when in http mode.
+    # axgt-session-* still receive exact devices via --gpus device=N. The base
+    # container exposes only the NVIDIA utility capability for fleet telemetry.
     networks:
       - axonos_control
       - axonos_stack

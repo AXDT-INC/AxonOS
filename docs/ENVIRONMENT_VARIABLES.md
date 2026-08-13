@@ -269,6 +269,8 @@ Read primarily by [`axonos_gate/session_manager.py`](../axonos_gate/session_mana
 | `AXGT_GPU_TOTAL_COUNT` | *(auto)* | Alternative to explicit IDs: use GPUs `0 .. N-1`. |
 | `AXGT_GPU_AUTO_DETECT` | `true` | Run `nvidia-smi` locally; if empty, try launcher `GET /enumerate-gpus`. |
 | `AXGT_GPU_DEVICE_CACHE_SECONDS` | `120` | TTL for cached auto-detected GPU list. |
+| `AXGT_GPU_TELEMETRY_INTERVAL_SECONDS` | `1.0` | Central persistent-NVML sampling interval in seconds (clamped to 0.5–60). One sampler covers every GPU and every viewer. |
+| `AXGT_GPU_TELEMETRY_FILE` | `/run/axonos/gpu-telemetry.json` | Root-owned atomic GPU snapshot read by forked gate workers. The Compose base uses NVIDIA `utility` access only; GPU device access remains shareable with tenant sessions. |
 | `AXGT_GPU_ENUMERATE_VIA_LAUNCHER` | `true` | When gate has no GPUs, probe host via HTTP launcher. |
 
 ### Session lifecycle

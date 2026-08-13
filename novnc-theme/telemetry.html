@@ -360,9 +360,17 @@ async function loadAll() {
 async function loadLive() {
   try {
     const d = await get('/api/public/telemetry/live');
+    const cacheAge = Number(d && d.gpu_cache_age_seconds);
+    if (!Number.isFinite(cacheAge) || cacheAge > 25) {
+      throw new Error('GPU telemetry cache is stale');
+    }
     renderGpus(d.gpus || []);
     renderLiveSessions(d.active_sessions || [], d.containers || []);
-  } catch(e) { /* silent — full refresh will catch it */ }
+    setRefresh();
+  } catch(e) {
+    renderGpus([]);
+    setError();
+  }
 }
 
 function setRefresh() {

@@ -15,6 +15,9 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         cls.proxy_source = (repo / "axonos_gate" / "websockify_gate.py").read_text(
             encoding="utf-8"
         )
+        cls.public_telemetry_source = (repo / "novnc-theme" / "telemetry.html").read_text(
+            encoding="utf-8"
+        )
 
     def _page_between(self, start: str, end: str) -> str:
         self.assertIn(start, self.page_source)
@@ -462,13 +465,81 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         )
 
         self.assertIn("axonosTelemetryGeneration += 1", telemetry)
-        self.assertIn("if (!axonosGpuTelemetryPending)", telemetry)
+        self.assertIn("if (!wallet || axonosGpuTelemetryPending) return", telemetry)
         self.assertIn("if (!axonosContainerTelemetryPending)", telemetry)
+        self.assertIn("axonosTickGpuTelemetry(axonosTelemetryGeneration)", telemetry)
+        self.assertIn("AXONOS_GPU_TELEMETRY_INTERVAL_MS", telemetry)
+        self.assertIn("AXONOS_CONTAINER_TELEMETRY_INTERVAL_MS", telemetry)
         self.assertIn("timeoutMs: 4000", telemetry)
         self.assertIn("_telemetry_ts", telemetry)
+        self.assertIn("gpuUrl.searchParams.set('viewer', '1')", telemetry)
         self.assertIn("'Cache-Control': 'no-cache'", telemetry)
-        self.assertIn("cacheAge > 25", telemetry)
+        self.assertIn("cacheAge > AXONOS_GPU_TELEMETRY_MAX_AGE_SECONDS", telemetry)
         self.assertIn("if (!tickIsCurrent()) return", telemetry)
+        self.assertIn("AXONOS_TELEMETRY_FAILURE_GRACE_MS", telemetry)
+        self.assertIn("AXONOS_GPU_TELEMETRY_FAILURE_GRACE_MS", telemetry)
+        self.assertIn("AXONOS_TELEMETRY_FAILURE_LIMIT", telemetry)
+        self.assertIn("axonosGpuTelemetryFailures += 1", telemetry)
+        self.assertIn("axonosContainerTelemetryFailures += 1", telemetry)
+        self.assertIn("sourceUnavailable", telemetry)
+        self.assertIn("axonosGpuTelemetryLastSuccessAt = 0", telemetry)
+        self.assertIn("axonosContainerTelemetryLastSuccessAt = 0", telemetry)
+
+        self.assertIn("cacheAge > 25", self.public_telemetry_source)
+        self.assertIn("GPU telemetry cache is stale", self.public_telemetry_source)
+        self.assertIn(
+            'viewer_only = bool(parse_qs(pu.query).get("viewer"))',
+            self.proxy_source,
+        )
+        self.assertIn("if not viewer_only:", self.proxy_source)
+        self.assertIn("}, no_cache=True)", self.proxy_source)
+        self.assertNotIn("urllib.parse.parse_qs(pu.query)", self.proxy_source)
+        self.assertNotIn("_poll_gpus", self.proxy_source)
+        self.assertNotIn("_gpu_cache_lock", self.proxy_source)
+        self.assertNotIn("Thread(target=", self.proxy_source)
+
+    def test_sidebar_telemetry_aggregates_exact_assigned_gpu_set(self) -> None:
+        aggregation = self._page_between(
+            "function axonosAggregateAssignedGpuTelemetry(",
+            "function axonosTickGpuTelemetry(generation)",
+        )
+        gpu_tick = self._page_between(
+            "function axonosTickGpuTelemetry(generation)",
+            "function axonosTickTelemetry(generation)",
+        )
+
+        # The same helper handles 1x, 2x, 4x, and 8x profiles because the
+        # expected assignment count is enforced before aggregation.
+        self.assertIn("ids.length !== expected", aggregation)
+        self.assertIn("normalizedIds.some(index => index == null)", aggregation)
+        self.assertIn("ids.length !== normalizedIds.length", aggregation)
+        self.assertIn("typeof value === 'number'", aggregation)
+        self.assertIn("typeof index !== 'number'", aggregation)
+        self.assertIn("assigned.some(gpu => !gpu)", aggregation)
+        self.assertIn("/ assigned.length", aggregation)
+        self.assertIn("vramUsed / vramTotal", aggregation)
+        self.assertIn("gpu.memory_used_mb <= gpu.memory_total_mb", aggregation)
+        self.assertNotIn("if (mine.length)", gpu_tick)
+        self.assertIn("const owned = axonosEffectiveOwnedSession()", gpu_tick)
+        self.assertIn("owned && owned.gpuIds", gpu_tick)
+        self.assertIn("owned && owned.gpuCount", gpu_tick)
+        self.assertIn("aggregate.matchedGpuCount !== expected", gpu_tick)
+        self.assertIn("aggregate.gpuPct", gpu_tick)
+        self.assertIn("aggregate.vramPct", gpu_tick)
+
+    def test_sidebar_telemetry_restarts_only_on_connection_state_edges(self) -> None:
+        self.assertIn(
+            "let axonosTelemetryConnectionState =",
+            self.page_source,
+        )
+        self.assertIn(
+            "if (connected === axonosTelemetryConnectionState) return;",
+            self.page_source,
+        )
+        self.assertIn(
+            "axonosTelemetryConnectionState = connected;",
+            self.page_source,
+        )
 
     def test_same_origin_claim_route_forwards_requested_storage(self) -> None:
         claim_route = self.proxy_source.split(
