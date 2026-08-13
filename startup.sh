@@ -132,17 +132,57 @@ if _axonos_truthy "${_ssh_on}"; then
     # root:600 so the unprivileged login user cannot read the host private keys.
     HOSTKEY_DIR=/home/aXonian/.config/axonos/ssh
     install -d -m 700 -o root -g root "$HOSTKEY_DIR"
+    chown root:root "$HOSTKEY_DIR" || exit 1
+    chmod 700 "$HOSTKEY_DIR" || exit 1
+    for key_path in \
+        "$HOSTKEY_DIR/ssh_host_ed25519_key" \
+        "$HOSTKEY_DIR/ssh_host_ed25519_key.pub" \
+        "$HOSTKEY_DIR/ssh_host_rsa_key" \
+        "$HOSTKEY_DIR/ssh_host_rsa_key.pub"; do
+        if [ -L "$key_path" ]; then
+            echo "ERROR: refusing symlinked SSH host-key path: $key_path" >&2
+            exit 1
+        fi
+    done
     [ -f "$HOSTKEY_DIR/ssh_host_ed25519_key" ] || ssh-keygen -q -t ed25519 -N '' -f "$HOSTKEY_DIR/ssh_host_ed25519_key"
     [ -f "$HOSTKEY_DIR/ssh_host_rsa_key" ] || ssh-keygen -q -t rsa -b 4096 -N '' -f "$HOSTKEY_DIR/ssh_host_rsa_key"
-    cp -f "$HOSTKEY_DIR"/ssh_host_*_key /etc/ssh/ 2>/dev/null || true
-    cp -f "$HOSTKEY_DIR"/ssh_host_*_key.pub /etc/ssh/ 2>/dev/null || true
-    chmod 600 /etc/ssh/ssh_host_*_key 2>/dev/null || true
-    chmod 644 /etc/ssh/ssh_host_*_key.pub 2>/dev/null || true
+    chown root:root "$HOSTKEY_DIR"/ssh_host_ed25519_key "$HOSTKEY_DIR"/ssh_host_rsa_key || exit 1
+    chmod 600 "$HOSTKEY_DIR"/ssh_host_ed25519_key "$HOSTKEY_DIR"/ssh_host_rsa_key || exit 1
+    # Public keys are derived from the protected private keys on every launch;
+    # never trust a persisted .pub file that may be stale or mismatched.
+    ssh-keygen -y -f "$HOSTKEY_DIR/ssh_host_ed25519_key" > "$HOSTKEY_DIR/ssh_host_ed25519_key.pub.tmp" || exit 1
+    ssh-keygen -y -f "$HOSTKEY_DIR/ssh_host_rsa_key" > "$HOSTKEY_DIR/ssh_host_rsa_key.pub.tmp" || exit 1
+    mv -f "$HOSTKEY_DIR/ssh_host_ed25519_key.pub.tmp" "$HOSTKEY_DIR/ssh_host_ed25519_key.pub" || exit 1
+    mv -f "$HOSTKEY_DIR/ssh_host_rsa_key.pub.tmp" "$HOSTKEY_DIR/ssh_host_rsa_key.pub" || exit 1
+    chown root:root "$HOSTKEY_DIR"/ssh_host_*_key "$HOSTKEY_DIR"/ssh_host_*_key.pub || exit 1
+    chmod 600 "$HOSTKEY_DIR"/ssh_host_*_key || exit 1
+    chmod 644 "$HOSTKEY_DIR"/ssh_host_*_key.pub || exit 1
+    cp -f "$HOSTKEY_DIR"/ssh_host_*_key /etc/ssh/ || exit 1
+    cp -f "$HOSTKEY_DIR"/ssh_host_*_key.pub /etc/ssh/ || exit 1
+    chown root:root /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub || exit 1
+    chmod 600 /etc/ssh/ssh_host_*_key || exit 1
+    chmod 644 /etc/ssh/ssh_host_*_key.pub || exit 1
     install -d -m 755 -o root -g root /run/axonos
-    ssh-keygen -lf "$HOSTKEY_DIR/ssh_host_ed25519_key.pub" -E sha256 2>/dev/null \
-        | awk '{print $2}' > /run/axonos/ssh-host-ed25519.sha256
-    chown root:root /run/axonos/ssh-host-ed25519.sha256
-    chmod 644 /run/axonos/ssh-host-ed25519.sha256
+    FINGERPRINT_TMP=$(mktemp /run/axonos/ssh-host-ed25519.sha256.XXXXXX) || exit 1
+    if ! FINGERPRINT_LINE=$(ssh-keygen -lf "$HOSTKEY_DIR/ssh_host_ed25519_key.pub" -E sha256 2>/dev/null); then
+        rm -f "$FINGERPRINT_TMP"
+        echo "ERROR: could not derive SSH host-key fingerprint" >&2
+        exit 1
+    fi
+    FINGERPRINT_VALUE=$(printf '%s\n' "$FINGERPRINT_LINE" | awk '{print $2}') || {
+        rm -f "$FINGERPRINT_TMP"
+        echo "ERROR: could not parse SSH host-key fingerprint" >&2
+        exit 1
+    }
+    printf '%s\n' "$FINGERPRINT_VALUE" > "$FINGERPRINT_TMP" || exit 1
+    if ! grep -Eq '^SHA256:[A-Za-z0-9+/]{43}$' "$FINGERPRINT_TMP"; then
+        rm -f "$FINGERPRINT_TMP"
+        echo "ERROR: derived SSH host-key fingerprint has an invalid format" >&2
+        exit 1
+    fi
+    chown root:root "$FINGERPRINT_TMP" || exit 1
+    chmod 644 "$FINGERPRINT_TMP" || exit 1
+    mv -f "$FINGERPRINT_TMP" /run/axonos/ssh-host-ed25519.sha256 || exit 1
 
     # Hardened drop-in. The Ubuntu sshd_config reads sshd_config.d/*.conf via an
     # Include at the TOP of the file, so these directives win over later defaults

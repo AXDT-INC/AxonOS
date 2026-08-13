@@ -237,7 +237,7 @@ def collect_container_stats() -> dict:
     try:
         with open(fingerprint_path, "r", encoding="ascii") as fingerprint_file:
             candidate = fingerprint_file.read().strip()
-        if candidate.startswith("SHA256:") and len(candidate) <= 128:
+        if re.fullmatch(r"SHA256:[A-Za-z0-9+/]{43}", candidate):
             ssh_host_key_fingerprint = candidate
     except OSError:
         pass

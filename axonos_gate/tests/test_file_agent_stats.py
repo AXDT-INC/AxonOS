@@ -55,7 +55,8 @@ class FileAgentStatsTests(unittest.TestCase):
             file_agent.collect_container_stats.__code__.co_consts,
         )
         with tempfile.NamedTemporaryFile(mode="w", encoding="ascii") as fingerprint:
-            fingerprint.write("SHA256:abcdefghijklmnopqrstuvwxyz0123456789\n")
+            valid_fingerprint = "SHA256:" + ("a" * 43)
+            fingerprint.write(valid_fingerprint + "\n")
             fingerprint.flush()
             with patch.dict(
                 file_agent.os.environ,
@@ -69,8 +70,24 @@ class FileAgentStatsTests(unittest.TestCase):
         self.assertEqual(stats["ssh_host_key_algorithm"], "ED25519")
         self.assertEqual(
             stats["ssh_host_key_fingerprint"],
-            "SHA256:abcdefghijklmnopqrstuvwxyz0123456789",
+            valid_fingerprint,
         )
+
+    def test_stats_reject_malformed_host_fingerprint(self) -> None:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="ascii") as fingerprint:
+            fingerprint.write("SHA256:not-long-enough\n")
+            fingerprint.flush()
+            with patch.dict(
+                file_agent.os.environ,
+                {"AXGT_SSH_HOST_FINGERPRINT_FILE": fingerprint.name},
+            ), patch.object(file_agent, "_cgroup_cpu_usage_usec", return_value=None), \
+                 patch.object(file_agent, "_cgroup_memory_bytes", return_value=(None, None)), \
+                 patch.object(file_agent, "_cgroup_cpu_limit_count", return_value=1.0), \
+                 patch.object(file_agent.shutil, "disk_usage", side_effect=OSError("gone")):
+                stats = file_agent.collect_container_stats()
+
+        self.assertIsNone(stats["ssh_host_key_algorithm"])
+        self.assertIsNone(stats["ssh_host_key_fingerprint"])
 
 
 if __name__ == "__main__":
