@@ -6,16 +6,15 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
 class CellModellerImageContractTests(unittest.TestCase):
-    def test_primary_image_uses_one_python_runtime_and_checks_imports(self) -> None:
+    def test_primary_image_preserves_known_working_opencl_install(self) -> None:
         source = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-        self.assertIn("python3-pyopencl", source)
-        self.assertIn("/usr/bin/python3 -m pip install -e .", source)
+        self.assertNotIn("python3-pyopencl", source)
+        self.assertNotIn("pocl-opencl-icd", source)
+        self.assertNotIn('"pyopencl==2024.3"', source)
+        self.assertIn("cd /opt/CellModeller && pip install -e .", source)
+        self.assertNotIn("import CellModeller; import pyopencl", source)
         self.assertIn(
-            'PYTHONPATH=/opt/CellModeller /usr/bin/python3 -c "import CellModeller; import pyopencl"',
-            source,
-        )
-        self.assertIn(
-            "PYTHONPATH=/opt/CellModeller /usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py",
+            "/usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py",
             source,
         )
 
@@ -44,16 +43,13 @@ class CellModellerImageContractTests(unittest.TestCase):
         for relative in ("axonos_launcher/launcher_core.py", "axonos_launcher/main.py"):
             with self.subTest(path=relative):
                 source = (ROOT / relative).read_text(encoding="utf-8")
-                self.assertGreaterEqual(source.count("python3-pyopencl"), 2)
+                self.assertNotIn("python3-pyopencl", source)
+                self.assertNotIn("pocl-opencl-icd", source)
+                self.assertNotIn('"pyopencl==2024.3"', source)
                 self.assertGreaterEqual(
-                    source.count("/usr/bin/python3 -m pip install -e ."), 2
+                    source.count("cd /opt/CellModeller && pip install -e ."), 2
                 )
-                self.assertGreaterEqual(
-                    source.count("import CellModeller; import pyopencl"), 2
-                )
-                self.assertGreaterEqual(
-                    source.count("PYTHONPATH=/opt/CellModeller /usr/bin/python3"), 4
-                )
+                self.assertNotIn("import CellModeller; import pyopencl", source)
 
 
 if __name__ == "__main__":
