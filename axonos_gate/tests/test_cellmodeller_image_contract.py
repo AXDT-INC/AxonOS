@@ -27,6 +27,19 @@ class CellModellerImageContractTests(unittest.TestCase):
         self.assertIn("PYTHONPATH=/opt/CellModeller", cellmodeller)
         self.assertIn("/usr/bin/python3", cellmodeller)
 
+    def test_template_keeps_cellmodeller_output_visible(self) -> None:
+        source = (ROOT / "scripts" / "apply_session_template.sh").read_text(
+            encoding="utf-8"
+        )
+        cellmodeller = source.split("    cellmodeller)", 1)[1].split("        ;;", 1)[0]
+        self.assertIn(
+            'launch_terminal "CellModeller — Simulation Output"', cellmodeller
+        )
+        self.assertIn("CellModeller simulation output will remain visible", cellmodeller)
+        self.assertIn("The terminal will remain open", cellmodeller)
+        self.assertNotIn("CellModellerGUI.py >/dev/null", cellmodeller)
+        self.assertNotIn("CellModellerGUI.py 2>&1", cellmodeller)
+
     def test_generated_image_variants_keep_cellmodeller_contract(self) -> None:
         for relative in ("axonos_launcher/launcher_core.py", "axonos_launcher/main.py"):
             with self.subTest(path=relative):

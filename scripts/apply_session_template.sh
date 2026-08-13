@@ -167,8 +167,9 @@ case "$template" in
         firefox https://remix.ethereum.org >/dev/null 2>&1 &
         ;;
     cellmodeller)
-        log "launching cellmodeller"
-        ( PYTHONPATH=/opt/CellModeller vglrun /usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py >/dev/null 2>&1 || PYTHONPATH=/opt/CellModeller /usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py >/dev/null 2>&1 ) &
+        log "launching cellmodeller in visible terminal"
+        launch_terminal "CellModeller — Simulation Output" \
+            "export PYTHONPATH=/opt/CellModeller; echo 'CellModeller simulation output will remain visible in this terminal.'; echo 'Closing the GUI returns here without closing the terminal.'; echo; if command -v vglrun >/dev/null 2>&1; then vglrun /usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py; else /usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py; fi; rc=\$?; echo; echo \"CellModeller exited with status \$rc. The terminal will remain open.\""
         ;;
     ipfs-desktop)
         log "launching ipfs-desktop"
