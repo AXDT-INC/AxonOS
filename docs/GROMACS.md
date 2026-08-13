@@ -215,22 +215,31 @@ gmx_mpi grompp -f md.mdp -c npt.gro -t npt.cpt -p topol.top -o md.tpr
 
 ## Step 4 — Validate single-GPU usage
 
-Production MD on **one GPU**:
+The current AxonOS GROMACS 2026 development build can fail while creating a
+single-GPU PME cuFFT plan (`cufftPlanMany R2C plan failure (error code 11)`).
+Until GPU PME is validated on the deployed image, the following compatibility
+command uses GPU nonbonded offload with PME and coordinate updates on the CPU:
 
 ```bash
-gmx_mpi mdrun -deffnm md -ntomp 8 -gpu_id 0 -pin on
+OMP_NUM_THREADS=8 gmx_mpi mdrun -deffnm md -ntomp 8 -nb gpu -pme cpu -update cpu -pin on
 ```
 
-Adjust `-ntomp` to your CPU thread count.
+This compatibility command completed a 33,675-atom deployment smoke test. An
+automatic 112-thread run also completed on that water benchmark and was faster,
+so eight threads are not imposed as a global performance default. The reported
+112-thread `libgomp` crash remains workload-specific and was not reproduced by
+this smoke test. Benchmark the thread count for the actual molecular system.
+Treat `-pme gpu` as experimental on this image until its cuFFT planning failure
+is resolved.
 
 ### What to look for in `mdrun` output
 
 ```text
 1 GPU selected for this run.
-Mapping of GPU IDs to the 2 GPU tasks in the 1 rank on this node:
-  PP:0,PME:0
+Mapping of GPU IDs to the 1 GPU task in the 1 rank on this node:
+  PP:0
 Using 1 MPI process
-Using N OpenMP threads per MPI process
+Using 8 OpenMP threads
 ```
 
 ### Monitor with `nvidia-smi`

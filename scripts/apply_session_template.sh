@@ -116,7 +116,7 @@ case "$template" in
     gromacs)
         log "launching gromacs terminal + pymol"
         launch_terminal "GROMACS — Molecular Dynamics" \
-            "source /opt/gromacs/bin/GMXRC 2>/dev/null; echo 'GROMACS ready. Try: gmx -version'; echo; gmx -version 2>/dev/null | head -n 20"
+            "source /opt/gromacs/bin/GMXRC 2>/dev/null; echo 'GROMACS ready.'; echo 'Verified single-GPU compatibility command:'; echo '  OMP_NUM_THREADS=8 gmx_mpi mdrun -deffnm md -ntomp 8 -nb gpu -pme cpu -update cpu -pin on'; echo 'GPU PME is currently experimental on this image; use the CPU PME command above if cuFFT planning fails.'; echo 'Eight threads are a compatibility fallback, not a performance default; benchmark your workload.'; echo; gmx -version 2>/dev/null | head -n 20"
         # PyMOL for visualizing GROMACS structures/trajectories (GPU GL via vglrun).
         ( vglrun pymol >/dev/null 2>&1 || pymol >/dev/null 2>&1 ) &
         ;;
