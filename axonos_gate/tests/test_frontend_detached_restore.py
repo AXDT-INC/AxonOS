@@ -352,17 +352,24 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         self.assertIn('role="status" aria-live="polite"', self.page_source)
         normalized_page = " ".join(self.page_source.split())
         self.assertIn("Volumes can grow but cannot be reduced", normalized_page)
-        self.assertIn("increasing this setting raises the minimum", normalized_page)
+        self.assertIn("permanently raises the minimum capacity", normalized_page)
+        self.assertIn("unused selected capacity is not billed", normalized_page)
 
         self.assertIn("slider.min = String(axonosWizardStorageFloorGb)", floor_ui)
         self.assertIn(
             "minLabel.textContent = axonosWizardStorageFloorGb + ' GB'",
             floor_ui,
         )
-        self.assertIn("This wallet already has a ", floor_ui)
-        self.assertIn("GB persistent volume. It cannot be reduced", floor_ui)
-        self.assertIn("GB is the minimum for future sessions", floor_ui)
-        self.assertIn("Increasing this setting raises that future minimum", floor_ui)
+        self.assertIn("axonosUpdateStorageSelectionCopy", floor_ui)
+        selection_copy = self._page_between(
+            "function axonosUpdateStorageSelectionCopy(storageGb)",
+            "function axonosUpdateStorageFloorUi()",
+        )
+        self.assertIn("storageGb > axonosWizardStorageFloorGb", selection_copy)
+        self.assertIn("permanently raises this wallet\\'s minimum capacity", selection_copy)
+        self.assertIn("This increase cannot be undone", selection_copy)
+        self.assertIn("data actually stored", selection_copy)
+        self.assertIn("unused selected capacity is not billed", selection_copy)
         self.assertIn("Your existing volume is ", warning)
         self.assertIn("GB and cannot be reduced", warning)
         self.assertIn("Review the updated storage setting, then launch again", warning)

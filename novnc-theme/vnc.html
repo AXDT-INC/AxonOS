@@ -1028,8 +1028,9 @@ Copyright (C) 2019 The noVNC Authors
                                 <p id="axonos_wizard_storage_desc" class="axonos-storage-slider-desc"
                                     role="status" aria-live="polite">Your home folder is automatically saved to your
                                     wallet between sessions. Volumes can grow but cannot be reduced; increasing this
-                                    setting raises the minimum for future sessions. Storage is billed at 0.05 credits
-                                    per GB/hour while active or saved.</p>
+                                    setting permanently raises the minimum capacity for future sessions. Billing is
+                                    based on the data actually stored, at 0.05 credits per used GB/hour while active
+                                    or saved; unused selected capacity is not billed.</p>
                                 <input type="range" id="axonos_wizard_storage_slider" class="axonos-storage-slider"
                                     min="10" max="500" step="10" value="100">
                                 <div class="axonos-storage-slider-limits">
@@ -9282,27 +9283,37 @@ Copyright (C) 2019 The noVNC Authors
             if (!slider) return false;
             slider.value = String(storageGb);
             if (sliderVal) sliderVal.textContent = storageGb + ' GB';
+            axonosUpdateStorageSelectionCopy(storageGb);
             return true;
+        }
+
+        function axonosUpdateStorageSelectionCopy(storageGb) {
+            var desc = document.getElementById('axonos_wizard_storage_desc');
+            if (!desc) return;
+            var billingCopy = ' Billing is based on data actually stored, at 0.05 credits per used GB/hour; unused selected capacity is not billed.';
+            if (storageGb > axonosWizardStorageFloorGb) {
+                desc.textContent = 'Warning: launching with ' + storageGb +
+                    ' GB permanently raises this wallet\'s minimum capacity from ' +
+                    axonosWizardStorageFloorGb + ' GB to ' + storageGb +
+                    ' GB. This increase cannot be undone.' + billingCopy;
+                return;
+            }
+            desc.textContent = axonosWizardStorageFloorGb > 10
+                ? 'This wallet already has a ' + axonosWizardStorageFloorGb +
+                    ' GB persistent volume. It cannot be reduced.' + billingCopy
+                : 'Your home folder is saved to your wallet between sessions. ' +
+                    'Volumes can grow but cannot be reduced; increasing this setting ' +
+                    'permanently raises the minimum capacity for future sessions.' + billingCopy;
         }
 
         function axonosUpdateStorageFloorUi() {
             var slider = document.getElementById('axonos_wizard_storage_slider');
-            var desc = document.getElementById('axonos_wizard_storage_desc');
             var minLabel = document.getElementById('axonos_wizard_storage_min');
             if (slider) slider.min = String(axonosWizardStorageFloorGb);
             if (minLabel) minLabel.textContent = axonosWizardStorageFloorGb + ' GB';
-            if (desc) {
-                desc.textContent = axonosWizardStorageFloorGb > 10
-                    ? 'This wallet already has a ' + axonosWizardStorageFloorGb +
-                        ' GB persistent volume. It cannot be reduced; ' +
-                        axonosWizardStorageFloorGb + ' GB is the minimum for future sessions. ' +
-                        'Increasing this setting raises that future minimum. ' +
-                        'Storage is billed at 0.05 credits per GB/hour while active or saved.'
-                    : 'Your home folder is automatically saved to your wallet between sessions. ' +
-                        'Volumes can grow but cannot be reduced; increasing this setting raises ' +
-                        'the minimum for future sessions. Storage is billed at ' +
-                        '0.05 credits per GB/hour while active or saved.';
-            }
+            axonosUpdateStorageSelectionCopy(
+                slider ? axonosNormalizeStorageGb(slider.value) : axonosWizardStorageFloorGb
+            );
         }
 
         function axonosResetStorageFloor(wallet) {
