@@ -569,7 +569,8 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         ssh_connect = ui_connect.split(
             "if (claim && claim.ssh_enabled === true)", 1
         )[1].split("if (claim && claim.resumed === true", 1)[0]
-        self.assertIn("UI.openAxonosSshTerminal(claim)", ssh_connect)
+        self.assertIn("UI.showAxonosSshCard(claim)", ssh_connect)
+        self.assertNotIn("UI.openAxonosSshTerminal(claim)", ssh_connect)
         terminal_open = self._ui_between(
             "async openAxonosSshTerminal(claim, options = {})",
             "showAxonosTemplateDetails(t)",

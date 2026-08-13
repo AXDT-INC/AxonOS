@@ -102,7 +102,7 @@ class FrontendTerminalContractTests(unittest.TestCase):
         self.assertIn("UI.connectionKind = 'rfb'", self.ui)
         self.assertIn("UI.connectionKind = 'webrtc'", self.webrtc)
 
-    def test_authoritative_ssh_claim_opens_terminal_and_failure_keeps_external_ssh(self) -> None:
+    def test_authoritative_ssh_claim_shows_endpoint_before_optional_terminal(self) -> None:
         ui_claim = self._between(
             self.ui,
             "connect(event, password)",
@@ -121,9 +121,13 @@ class FrontendTerminalContractTests(unittest.TestCase):
 
         marker = "if (claim && claim.ssh_enabled === true)"
         self.assertIn(marker, ui_claim)
-        self.assertIn("UI.openAxonosSshTerminal(claim)", ui_claim)
+        self.assertIn("UI.showAxonosSshCard(claim)", ui_claim)
+        self.assertNotIn("UI.openAxonosSshTerminal(claim)", ui_claim)
         self.assertIn("if (granted && claim.ssh_enabled === true)", page_route)
-        self.assertIn("UI.openAxonosSshTerminal(claim)", page_route)
+        self.assertIn("UI.showAxonosSshCard(claim)", page_route)
+        self.assertNotIn("UI.openAxonosSshTerminal(claim)", page_route)
+        self.assertIn("copy the command or open the web terminal", ui_claim)
+        self.assertIn("copy the command or open the web terminal", page_route)
         self.assertIn("UI.showAxonosSshCard", fallback)
         self.assertIn("Web terminal unavailable", fallback)
         self.assertIn("axonos_ssh_connect_cmd", self.page)

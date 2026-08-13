@@ -4194,10 +4194,27 @@ Copyright (C) 2019 The noVNC Authors
                 window.axonosPendingResumeClaim = null;
                 window.axonosPausedResume = null;
                 if (typeof UI !== 'undefined' &&
-                    typeof UI.openAxonosSshTerminal === 'function' &&
-                    window.verifiedWalletAddress &&
-                    window.verifiedWalletAuthToken) {
-                    UI.openAxonosSshTerminal(claim);
+                    typeof UI.showAxonosSshCard === 'function' &&
+                    claim.ssh_port) {
+                    window.axonosSessionDetached = true;
+                    window.axonosDetachedSession = window.axonosOwnedSession || null;
+                    if (typeof window.axonosHideConnectionLoader === 'function') {
+                        window.axonosHideConnectionLoader(true);
+                    }
+                    UI.updateVisualState('disconnected');
+                    UI.openControlbar();
+                    UI.showAxonosSshCard(claim);
+                    if (!UI._axgtStatusPollId && window.verifiedWalletAddress &&
+                        window.verifiedWalletAuthToken &&
+                        typeof UI._axgtStartSessionBillingPoll === 'function') {
+                        UI._axgtStartSessionBillingPoll();
+                    }
+                    UI.updateSessionControlButtons();
+                    UI.showStatus(
+                        'SSH session ready — copy the command or open the web terminal.',
+                        'normal',
+                        5000
+                    );
                     return;
                 }
                 if (typeof UI !== 'undefined' &&

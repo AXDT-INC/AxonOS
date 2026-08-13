@@ -3982,10 +3982,25 @@ const UI = {
                     window.axonosRememberOwnedSession(claim);
                 }
                 if (claim && claim.ssh_enabled === true) {
-                    // Authoritative SSH allocations use the browser terminal transport.
-                    // Its own failure path preserves the allocation and falls back to
-                    // the external SSH card; it must never enter RFB/WebRTC negotiation.
-                    UI.openAxonosSshTerminal(claim);
+                    // Surface the allocated external endpoint first. Opening the web
+                    // terminal is an explicit choice on the ready card; hiding the
+                    // command behind a terminal + Detach flow made direct SSH details
+                    // effectively undiscoverable.
+                    window.axonosSessionDetached = true;
+                    if (window.axonosOwnedSession) {
+                        window.axonosDetachedSession = window.axonosOwnedSession;
+                    }
+                    if (typeof window.axonosHideConnectionLoader === 'function') {
+                        window.axonosHideConnectionLoader(true);
+                    } else if (typeof window.axonosSetLaunchBusy === 'function') {
+                        window.axonosSetLaunchBusy(false);
+                    }
+                    UI.updateVisualState('disconnected');
+                    UI.openControlbar();
+                    UI.showAxonosSshCard(claim);
+                    if (!UI._axgtStatusPollId) UI._axgtStartSessionBillingPoll();
+                    UI.updateSessionControlButtons();
+                    UI.showStatus(_('SSH session ready — copy the command or open the web terminal.'), 'normal', 5000);
                     return;
                 }
                 if (claim && claim.resumed === true && typeof window.axonosRefreshPausedResumeStatus === 'function') {
