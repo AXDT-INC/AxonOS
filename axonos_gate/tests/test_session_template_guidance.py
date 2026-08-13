@@ -24,6 +24,13 @@ class SessionTemplateGuidanceTests(unittest.TestCase):
         self.assertIn("GPU PME is currently experimental", gromacs_case)
         self.assertIn("compatibility fallback, not a performance default", gromacs_case)
 
+    def test_gromacs_template_avoids_unstable_force_field_numbers(self) -> None:
+        source = _TEMPLATE_SCRIPT.read_text(encoding="utf-8")
+        gromacs_case = source.split("    gromacs)", 1)[1].split("        ;;", 1)[0]
+
+        self.assertIn("Select force fields by name, not menu number", gromacs_case)
+        self.assertIn("-ff amber99sb-ildn", gromacs_case)
+
 
 if __name__ == "__main__":
     unittest.main()

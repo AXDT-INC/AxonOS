@@ -128,8 +128,9 @@ source /opt/gromacs/bin/GMXRC
 # Example structure (RCSB)
 curl -fsSL -o 1aki.pdb https://files.rcsb.org/download/1AKI.pdb
 
-# Topology (interactive: pick force field + water model; tutorial uses CHARMM36)
-gmx_mpi pdb2gmx -f 1aki.pdb -o processed.gro -water spce
+# Topology: select the force field by stable name, not its menu number.
+# Menu numbering changes when a build adds force fields. This tutorial uses CHARMM36.
+gmx_mpi pdb2gmx -f 1aki.pdb -o processed.gro -water spce -ff charmm36-jul2022
 
 # Box and solvate
 gmx_mpi editconf -f processed.gro -o newbox.gro -c -d 1.0 -bt cubic
@@ -137,6 +138,17 @@ gmx_mpi solvate -cp newbox.gro -cs spc216.gro -o solv.gro -p topol.top
 ```
 
 After `solvate`, `solv.gro` and `topol.top` are in the working directory.
+
+For an AMBER99SB-ILDN/TIP3P workflow, use the same stable-name approach:
+
+```bash
+gmx_mpi pdb2gmx -f input.pdb -o processed.gro \
+  -water tip3p -ff amber99sb-ildn
+```
+
+Do not copy a numeric force-field menu choice from a tutorial. In this image,
+additional AMBER force fields can shift the menu positions while names remain
+unambiguous. Always inspect the generated `topol.top` before continuing.
 
 ---
 
