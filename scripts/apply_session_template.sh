@@ -168,7 +168,7 @@ case "$template" in
         ;;
     cellmodeller)
         log "launching cellmodeller"
-        ( vglrun /usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py >/dev/null 2>&1 || /usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py >/dev/null 2>&1 ) &
+        ( PYTHONPATH=/opt/CellModeller vglrun /usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py >/dev/null 2>&1 || PYTHONPATH=/opt/CellModeller /usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py >/dev/null 2>&1 ) &
         ;;
     ipfs-desktop)
         log "launching ipfs-desktop"

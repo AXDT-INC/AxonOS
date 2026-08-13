@@ -316,6 +316,7 @@ RUN echo '[Desktop Entry]\\nName=Nault\\nExec=firefox https://nault.cc\\nIcon=ap
                 "dockerfile_section": '''# CellModeller
 # Install Qt5 and X11 dependencies for CellModeller GUI
 RUN apt update && apt install -y \\
+    python3-pyopencl \\
     qtbase5-dev qtchooser qt5-qmake qtbase5-dev-tools \\
     libqt5widgets5 libqt5gui5 libqt5core5a \\
     libqt5opengl5 libqt5opengl5-dev \\
@@ -330,10 +331,11 @@ RUN apt update && apt install -y \\
 # Clone and install CellModeller
 WORKDIR /opt
 RUN git clone https://github.com/cellmodeller/CellModeller.git && \\
-    cd /opt/CellModeller && pip install -e . && \\
+    cd /opt/CellModeller && /usr/bin/python3 -m pip install -e . && \\
+    PYTHONPATH=/opt/CellModeller /usr/bin/python3 -c "import CellModeller; import pyopencl" && \\
     mkdir /opt/data && \\
     chown -R $USER:$USER /opt/data && \\
-    echo '[Desktop Entry]\\nName=CellModeller\\nExec=bash -c "/usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py"\\nIcon=applications-science\\nType=Application\\nTerminal=true\\nCategories=Science;' \\
+    echo '[Desktop Entry]\\nName=CellModeller\\nExec=bash -c "PYTHONPATH=/opt/CellModeller /usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py"\\nIcon=applications-science\\nType=Application\\nTerminal=true\\nCategories=Science;' \\
     > /usr/share/applications/cellmodeller.desktop && \\
     chmod 644 /usr/share/applications/cellmodeller.desktop && \\
     update-desktop-database /usr/share/applications''',
@@ -1482,14 +1484,16 @@ docker start axonos
                         new_content.append('''# CellModeller
 # Install Qt5 and X11 dependencies for CellModeller GUI
 ''' + self.get_qt_dependencies() + '''
+RUN apt update && apt install -y python3-pyopencl && apt clean
 
 # Clone and install CellModeller
 WORKDIR /opt
 RUN git clone https://github.com/cellmodeller/CellModeller.git && \\
-    cd /opt/CellModeller && pip install -e . && \\
+    cd /opt/CellModeller && /usr/bin/python3 -m pip install -e . && \\
+    PYTHONPATH=/opt/CellModeller /usr/bin/python3 -c "import CellModeller; import pyopencl" && \\
     mkdir /opt/data && \\
     chown -R $USER:$USER /opt/data && \\
-    echo '[Desktop Entry]\\nName=CellModeller\\nExec=bash -c "/usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py"\\nIcon=applications-science\\nType=Application\\nTerminal=true\\nCategories=Science;' \\
+    echo '[Desktop Entry]\\nName=CellModeller\\nExec=bash -c "PYTHONPATH=/opt/CellModeller /usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py"\\nIcon=applications-science\\nType=Application\\nTerminal=true\\nCategories=Science;' \\
     > /usr/share/applications/cellmodeller.desktop && \\
     chmod 644 /usr/share/applications/cellmodeller.desktop && \\
     update-desktop-database /usr/share/applications''')
@@ -1919,4 +1923,4 @@ Visit: https://github.com/AxonDAO-AXGT/AxonOS
 
 if __name__ == "__main__":
     import sys
-    sys.exit(main()) 
+    sys.exit(main())

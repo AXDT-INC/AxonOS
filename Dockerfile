@@ -25,6 +25,7 @@ RUN apt update && apt install -y \
     clinfo lshw \
     freeglut3-dev \
     python3-gi \
+    python3-pyopencl \
     gir1.2-gtk-3.0 \
     gir1.2-notify-0.7 \
     x11vnc \
@@ -234,10 +235,11 @@ RUN echo '[Desktop Entry]\nName=Nault\nExec=firefox https://nault.cc\nIcon=appli
 # Clone and install CellModeller
 WORKDIR /opt
 RUN git clone https://github.com/cellmodeller/CellModeller.git && \
-    cd /opt/CellModeller && pip install -e . && \
+    cd /opt/CellModeller && /usr/bin/python3 -m pip install -e . && \
+    PYTHONPATH=/opt/CellModeller /usr/bin/python3 -c "import CellModeller; import pyopencl" && \
     mkdir /opt/data && \
     chown -R $USER:$USER /opt/data && \
-    echo '[Desktop Entry]\nName=CellModeller\nExec=bash -c "/usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py"\nIcon=applications-science\nType=Application\nTerminal=true\nCategories=Science;' \
+    echo '[Desktop Entry]\nName=CellModeller\nExec=bash -c "PYTHONPATH=/opt/CellModeller /usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py"\nIcon=applications-science\nType=Application\nTerminal=true\nCategories=Science;' \
     > /usr/share/applications/cellmodeller.desktop && \
     chmod 644 /usr/share/applications/cellmodeller.desktop && \
     update-desktop-database /usr/share/applications
