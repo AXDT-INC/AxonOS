@@ -3,10 +3,12 @@
  *
  * Talks to the same-origin gate routes /api/files/* which proxy to the file
  * agent inside this wallet's desktop container. Built for large files:
- *  - uploads are chunked (32 MB) and resumable: the server keeps a partial
- *    file, so a dropped connection, page reload, or pause continues from the
- *    last byte that reached the desktop; chunks retry with backoff forever
- *    until cancelled.
+ *  - uploads are chunked and resumable: the server keeps a partial file, so
+ *    a dropped connection, page reload, or pause continues from the last
+ *    byte that reached the desktop; chunks retry with backoff forever until
+ *    cancelled. Chunk size adapts to measured speed (4–256 MB, targeting a
+ *    few seconds per chunk) so fast links amortize per-request latency while
+ *    slow links keep cheap retries. Progress is reported in-flight via XHR.
  *  - downloads are plain authenticated GETs with Range support, so the
  *    browser's native download manager handles them (pause/resume/retry,
  *    no memory buffering in the page).
@@ -14,9 +16,9 @@
  * Loaded lazily by ui.js when the Files deck button is first opened.
  */
 
-const CHUNK_BYTES = (window.AXONOS_FILES_CHUNK_BYTES | 0) > 0
-    ? (window.AXONOS_FILES_CHUNK_BYTES | 0)
-    : 1000 * 1024;
+const CHUNK_MIN_BYTES = 4 * 1024 * 1024;
+const CHUNK_MAX_BYTES = 256 * 1024 * 1024;   // ¼ of nginx client_max_body_size 1000m
+const CHUNK_TARGET_SECONDS = 4;
 const RETRY_BASE_MS = 1000;
 const RETRY_MAX_MS = 60 * 1000;
 
@@ -198,6 +200,7 @@ function enqueueUploads(fileList) {
             relPath: _joinPath(_currentDir, file.name),
             total: file.size,
             offset: 0,
+            sent: 0,
             state: 'queued',
             speed: 0,
             error: '',
@@ -207,6 +210,61 @@ function enqueueUploads(fileList) {
     }
     _renderTransfers();
     _pumpUploads();
+}
+
+function _nextChunkBytes(t) {
+    // A window override pins a fixed chunk size (debug/tuning escape hatch).
+    const fixed = (window.AXONOS_FILES_CHUNK_BYTES | 0);
+    if (fixed > 0) return fixed;
+    if (!(t.speed > 0)) return CHUNK_MIN_BYTES;
+    const target = Math.round(t.speed * CHUNK_TARGET_SECONDS);
+    return Math.max(CHUNK_MIN_BYTES, Math.min(CHUNK_MAX_BYTES, target));
+}
+
+let _renderTimer = 0;
+function _renderTransfersThrottled() {
+    if (_renderTimer) return;
+    _renderTimer = setTimeout(() => {
+        _renderTimer = 0;
+        _renderTransfers();
+    }, 250);
+}
+
+// PUT one chunk via XHR (fetch has no upload progress events). Resolves
+// {status, data}; rejects with AbortError on xhr.abort() to match the old
+// fetch/AbortController semantics used by pause/cancel.
+function _putChunk(t, params, body) {
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', _apiUrl('upload', params));
+        xhr.responseType = 'json';
+        const headers = { ..._authHeaders(), 'Content-Type': 'application/octet-stream' };
+        for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
+        let lastAt = Date.now();
+        let lastLoaded = 0;
+        xhr.upload.onprogress = (ev) => {
+            t.sent = ev.loaded;
+            const now = Date.now();
+            const dt = (now - lastAt) / 1000;
+            if (dt >= 0.25) {
+                const inst = (ev.loaded - lastLoaded) / dt;
+                t.speed = t.speed ? t.speed * 0.7 + inst * 0.3 : inst;
+                lastAt = now;
+                lastLoaded = ev.loaded;
+            }
+            _renderTransfersThrottled();
+        };
+        xhr.onload = () => resolve({ status: xhr.status, data: xhr.response });
+        xhr.onerror = () => reject(new Error('network error during upload chunk'));
+        xhr.ontimeout = () => reject(new Error('upload chunk timed out'));
+        xhr.onabort = () => {
+            const err = new Error('upload aborted');
+            err.name = 'AbortError';
+            reject(err);
+        };
+        t.abort = { abort: () => xhr.abort() };
+        xhr.send(body);
+    });
 }
 
 async function _pumpUploads() {
@@ -250,45 +308,39 @@ async function _runUpload(t) {
 
             while (t.offset < t.total || t.total === 0) {
                 if (t.state === 'cancelled' || t.state === 'paused') return;
-                const end = Math.min(t.offset + CHUNK_BYTES, t.total);
+                const end = Math.min(t.offset + _nextChunkBytes(t), t.total);
                 const params = { path: t.relPath, offset: t.offset, total: t.total };
                 if (t.offset === 0 && t.overwrite) params.overwrite = 1;
-                const controller = new AbortController();
-                t.abort = controller;
                 const sentAt = Date.now();
-                const resp = await fetch(_apiUrl('upload', params), {
-                    method: 'PUT',
-                    credentials: 'same-origin',
-                    headers: { ..._authHeaders(), 'Content-Type': 'application/octet-stream' },
-                    body: t.file.slice(t.offset, end),
-                    signal: controller.signal,
-                });
+                const { status, data } =
+                    await _putChunk(t, params, t.file.slice(t.offset, end));
                 t.abort = null;
-                let data = null;
-                try { data = await resp.json(); } catch (e) { /* non-JSON error body */ }
-                if (resp.status === 409 && data && Number.isFinite(data.offset)) {
+                t.sent = 0;
+                if (status === 409 && data && Number.isFinite(data.offset)) {
                     // Server-side partial diverged (e.g. parallel tab) — realign.
                     t.offset = data.offset;
                     continue;
                 }
-                if (resp.status === 409 && data && data.error === 'exists') {
+                if (status === 409 && data && data.error === 'exists') {
                     t.state = 'error';
                     t.error = 'File exists on desktop';
                     _renderTransfers();
                     return;
                 }
-                if (resp.status === 413 || resp.status === 507) {
+                if (status === 413 || status === 507) {
                     t.state = 'error';
                     t.error = (data && data.error) || 'Desktop rejected the file';
                     _renderTransfers();
                     return;
                 }
-                if (!resp.ok || !data || !data.ok) {
-                    throw new Error((data && data.error) || `upload chunk failed (${resp.status})`);
+                if (status < 200 || status >= 300 || !data || !data.ok) {
+                    throw new Error((data && data.error) || `upload chunk failed (${status})`);
                 }
-                const sentBytes = data.offset - t.offset;
-                const elapsed = Math.max(0.05, (Date.now() - sentAt) / 1000);
-                t.speed = t.speed ? t.speed * 0.6 + (sentBytes / elapsed) * 0.4 : sentBytes / elapsed;
+                if (!(t.speed > 0)) {
+                    // Fallback when the chunk finished before any progress event.
+                    const elapsed = Math.max(0.05, (Date.now() - sentAt) / 1000);
+                    t.speed = (data.offset - t.offset) / elapsed;
+                }
                 t.offset = data.offset;
                 attempt = 0;
                 _renderTransfers();
@@ -299,6 +351,7 @@ async function _runUpload(t) {
             refreshListing();
             return;
         } catch (err) {
+            t.sent = 0;
             if (t.state === 'cancelled' || t.state === 'paused') return;
             if (err && err.name === 'AbortError') return;
             attempt += 1;
@@ -358,15 +411,18 @@ function _renderTransfers() {
         bar.className = 'axonos-transfer__bar';
         const fill = document.createElement('div');
         fill.className = 'axonos-transfer__fill';
-        const pct = t.total > 0 ? (t.offset / t.total) * 100 : 100;
+        // Count bytes in flight within the current chunk so the bar moves
+        // continuously even while a large chunk is uploading.
+        const done = Math.min(t.total, t.offset + (t.sent || 0));
+        const pct = t.total > 0 ? (done / t.total) * 100 : 100;
         fill.style.width = `${pct.toFixed(1)}%`;
         bar.appendChild(fill);
         row.appendChild(bar);
 
         const meta = document.createElement('div');
         meta.className = 'axonos-transfer__meta';
-        const remaining = t.speed > 0 ? (t.total - t.offset) / t.speed : NaN;
-        const bits = [`${_fmtBytes(t.offset)} / ${_fmtBytes(t.total)}`];
+        const remaining = t.speed > 0 ? (t.total - done) / t.speed : NaN;
+        const bits = [`${_fmtBytes(done)} / ${_fmtBytes(t.total)}`];
         if (t.state === 'uploading' && t.speed > 0) {
             bits.push(`${_fmtBytes(t.speed)}/s`, _fmtEta(remaining));
         }
