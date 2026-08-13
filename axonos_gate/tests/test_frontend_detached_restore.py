@@ -432,10 +432,10 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
     def test_storage_telemetry_uses_allocated_blocks_not_total_minus_free(self) -> None:
         renderer = self._page_between(
             "function axonosRenderStorageUsage(usedBytes, totalBytes)",
-            "function axonosTickTelemetry()",
+            "function axonosTickTelemetry(generation)",
         )
         telemetry = self._page_between(
-            "function axonosTickTelemetry()",
+            "function axonosTickTelemetry(generation)",
             "// Listen for VNC connection events to manage the loop.",
         )
 
@@ -447,6 +447,21 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         self.assertIn("Math.min(totalBytes, usedBytes)", renderer)
         self.assertNotIn("totalBytes -", renderer)
         self.assertNotIn("freeBytes", renderer)
+
+    def test_live_telemetry_rejects_stale_and_overlapping_samples(self) -> None:
+        telemetry = self._page_between(
+            "function axonosStartTelemetryLoop()",
+            "// Listen for VNC connection events to manage the loop.",
+        )
+
+        self.assertIn("axonosTelemetryGeneration += 1", telemetry)
+        self.assertIn("if (!axonosGpuTelemetryPending)", telemetry)
+        self.assertIn("if (!axonosContainerTelemetryPending)", telemetry)
+        self.assertIn("timeoutMs: 4000", telemetry)
+        self.assertIn("_telemetry_ts", telemetry)
+        self.assertIn("'Cache-Control': 'no-cache'", telemetry)
+        self.assertIn("cacheAge > 25", telemetry)
+        self.assertIn("if (!tickIsCurrent()) return", telemetry)
 
     def test_same_origin_claim_route_forwards_requested_storage(self) -> None:
         claim_route = self.proxy_source.split(

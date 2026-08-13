@@ -8545,6 +8545,9 @@ Copyright (C) 2019 The noVNC Authors
         let axonosSelectedGpuProfile = 'small'; // small, medium, large, max
         let axonosSelectedPaymentToken = 'usdc'; // usdc, eth, axgt
         let axonosTelemetryInterval = null;
+        let axonosTelemetryGeneration = 0;
+        let axonosGpuTelemetryPending = false;
+        let axonosContainerTelemetryPending = false;
         let axonosDashboardRequestGeneration = 0;
         let axonosDashboardRefreshTimer = null;
         const axonosDashboardEndingSessions = new Map();
@@ -10133,16 +10136,22 @@ Copyright (C) 2019 The noVNC Authors
         // image without the /stats route) instead of showing invented numbers.
         function axonosStartTelemetryLoop() {
             if (axonosTelemetryInterval) clearInterval(axonosTelemetryInterval);
+            axonosTelemetryGeneration += 1;
+            axonosGpuTelemetryPending = false;
+            axonosContainerTelemetryPending = false;
 
             // Initial telemetry render
-            axonosTickTelemetry();
+            axonosTickTelemetry(axonosTelemetryGeneration);
 
             axonosTelemetryInterval = setInterval(() => {
-                axonosTickTelemetry();
+                axonosTickTelemetry(axonosTelemetryGeneration);
             }, 5000);
         }
 
         function axonosStopTelemetryLoop() {
+            axonosTelemetryGeneration += 1;
+            axonosGpuTelemetryPending = false;
+            axonosContainerTelemetryPending = false;
             if (axonosTelemetryInterval) {
                 clearInterval(axonosTelemetryInterval);
                 axonosTelemetryInterval = null;
@@ -10185,14 +10194,29 @@ Copyright (C) 2019 The noVNC Authors
             if (progressEl) progressEl.style.width = Math.min(100, (boundedUsedBytes / totalBytes) * 100) + '%';
         }
 
-        function axonosTickTelemetry() {
+        function axonosTickTelemetry(generation) {
             const wallet = window.verifiedWalletAddress || verifiedWalletAddress;
             if (!wallet) return;
+            const tickGeneration = Number.isInteger(generation)
+                ? generation : axonosTelemetryGeneration;
+            const tickIsCurrent = () => tickGeneration === axonosTelemetryGeneration;
 
             // GPU utilization + VRAM for the GPUs assigned to this session.
-            fetch(new URL('/api/public/telemetry/live', window.location.origin).toString(), { credentials: 'include' })
-                .then(r => r.json())
+            if (!axonosGpuTelemetryPending) {
+                axonosGpuTelemetryPending = true;
+                const gpuUrl = new URL('/api/public/telemetry/live', window.location.origin);
+                gpuUrl.searchParams.set('_telemetry_ts', String(Date.now()));
+                axonosFetch({
+                    url: gpuUrl.toString(),
+                    timeoutMs: 4000,
+                    headers: { 'Cache-Control': 'no-cache' }
+                })
                 .then(data => {
+                    if (!tickIsCurrent()) return;
+                    const cacheAge = Number(data && data.gpu_cache_age_seconds);
+                    if (!Number.isFinite(cacheAge) || cacheAge > 25) {
+                        throw new Error('GPU telemetry cache is stale');
+                    }
                     const owned = window.axonosOwnedSession || window.axonosDetachedSession;
                     const ids = (owned && owned.gpuIds && owned.gpuIds.length)
                         ? owned.gpuIds.map(Number) : null;
@@ -10215,13 +10239,24 @@ Copyright (C) 2019 The noVNC Authors
                     axonosSetTelemetryRow('axonos_telemetry_vram_val', 'axonos_telemetry_vram_progress', vramPct, 90);
                 })
                 .catch(() => {
+                    if (!tickIsCurrent()) return;
                     axonosSetTelemetryRow('axonos_telemetry_gpu_val', 'axonos_telemetry_gpu_progress', null);
                     axonosSetTelemetryRow('axonos_telemetry_vram_val', 'axonos_telemetry_vram_progress', null);
+                })
+                .finally(() => {
+                    if (tickIsCurrent()) axonosGpuTelemetryPending = false;
                 });
+            }
 
             // Container CPU / RAM + home-volume storage from the in-container agent.
-            axonosFetch({ url: new URL('/api/files/stats', window.location.origin).toString() })
+            if (!axonosContainerTelemetryPending) {
+                axonosContainerTelemetryPending = true;
+                axonosFetch({
+                    url: new URL('/api/files/stats', window.location.origin).toString(),
+                    timeoutMs: 4000
+                })
                 .then(st => {
+                    if (!tickIsCurrent()) return;
                     if (!st || st.ok !== true) throw new Error('stats unavailable');
                     axonosSetTelemetryRow('axonos_telemetry_cpu_val', 'axonos_telemetry_cpu_progress',
                         typeof st.cpu_pct === 'number' ? st.cpu_pct : null, 90);
@@ -10232,10 +10267,15 @@ Copyright (C) 2019 The noVNC Authors
                     axonosRenderStorageUsage(st.disk_used_bytes, st.disk_total_bytes);
                 })
                 .catch(() => {
+                    if (!tickIsCurrent()) return;
                     axonosSetTelemetryRow('axonos_telemetry_cpu_val', 'axonos_telemetry_cpu_progress', null);
                     axonosSetTelemetryRow('axonos_telemetry_ram_val', 'axonos_telemetry_ram_progress', null);
                     axonosRenderStorageUsage(null, null);
+                })
+                .finally(() => {
+                    if (tickIsCurrent()) axonosContainerTelemetryPending = false;
                 });
+            }
 
             // Sync credits balance and remaining time.
             // axonosFetchWalletAccessStatus resolves { ok, data } — the minutes live at
