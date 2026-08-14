@@ -9255,6 +9255,7 @@ Copyright (C) 2019 The noVNC Authors
         var axonosWizardStorageGeneration = 0;
         var axonosWizardStorageFloorGb = 10;
         var axonosWizardStorageFloorWallet = '';
+        var axonosWizardStorageFloorResolved = false;
 
         function axonosNormalizeStorageGb(value) {
             var storageGb = parseInt(value, 10);
@@ -9305,6 +9306,10 @@ Copyright (C) 2019 The noVNC Authors
             var desc = document.getElementById('axonos_wizard_storage_desc');
             if (!desc) return;
             var billingCopy = ' Billing is based on data actually stored, at 0.05 credits per used GB/hour; unused selected capacity is not billed.';
+            if (!axonosWizardStorageFloorResolved) {
+                desc.textContent = 'Checking this wallet\'s existing persistent-volume capacity before launch.' + billingCopy;
+                return;
+            }
             if (storageGb > axonosWizardStorageFloorGb) {
                 desc.textContent = 'Warning: launching with ' + storageGb +
                     ' GB permanently raises this wallet\'s minimum capacity from ' +
@@ -9333,6 +9338,7 @@ Copyright (C) 2019 The noVNC Authors
         function axonosResetStorageFloor(wallet) {
             axonosWizardStorageFloorWallet = axonosStorageWalletKey(wallet);
             axonosWizardStorageFloorGb = 10;
+            axonosWizardStorageFloorResolved = false;
             axonosUpdateStorageFloorUi();
         }
 
@@ -9344,6 +9350,11 @@ Copyright (C) 2019 The noVNC Authors
                 return { applied: false, adjusted: false };
             }
             data = data || {};
+            // Read the selection before changing the range minimum. Browsers may
+            // normalize range.value as soon as min changes, which used to leave
+            // the adjacent value label and summary rail showing the old value.
+            var slider = document.getElementById('axonos_wizard_storage_slider');
+            var selectedGb = slider ? axonosNormalizeStorageGb(slider.value) : null;
             var provisionedGb = axonosNormalizeStorageGb(
                 data.minimum_storage_gb != null
                     ? data.minimum_storage_gb
@@ -9356,13 +9367,18 @@ Copyright (C) 2019 The noVNC Authors
                     provisionedGb
                 );
             }
+            axonosWizardStorageFloorResolved = true;
             axonosUpdateStorageFloorUi();
 
-            var slider = document.getElementById('axonos_wizard_storage_slider');
-            var selectedGb = slider ? axonosNormalizeStorageGb(slider.value) : null;
             var adjusted = selectedGb === null || selectedGb < axonosWizardStorageFloorGb;
+            var effectiveSelectionGb = Math.max(
+                selectedGb === null ? axonosWizardStorageFloorGb : selectedGb,
+                axonosWizardStorageFloorGb
+            );
+            // Always reapply after resolving the authoritative floor so the
+            // slider, value label, warning copy, and summary move together.
+            axonosApplyStorageSelection(effectiveSelectionGb);
             if (adjusted) {
-                axonosApplyStorageSelection(axonosWizardStorageFloorGb);
                 axonosWriteStoragePreference(wallet, axonosWizardStorageFloorGb);
             }
 

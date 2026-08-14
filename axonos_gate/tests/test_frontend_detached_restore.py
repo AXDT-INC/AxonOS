@@ -317,9 +317,14 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
             "axonosWizardStorageFloorGb = Math.max(",
             apply_context,
         )
+        self.assertLess(
+            apply_context.index("var selectedGb = slider"),
+            apply_context.index("axonosUpdateStorageFloorUi()"),
+        )
+        self.assertIn("axonosWizardStorageFloorResolved = true", apply_context)
         self.assertIn("selectedGb < axonosWizardStorageFloorGb", apply_context)
         self.assertIn(
-            "axonosApplyStorageSelection(axonosWizardStorageFloorGb)",
+            "axonosApplyStorageSelection(effectiveSelectionGb)",
             apply_context,
         )
         self.assertIn(
@@ -369,6 +374,8 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
             "function axonosUpdateStorageFloorUi()",
         )
         self.assertIn("storageGb > axonosWizardStorageFloorGb", selection_copy)
+        self.assertIn("!axonosWizardStorageFloorResolved", selection_copy)
+        self.assertIn("Checking this wallet\\'s existing persistent-volume capacity", selection_copy)
         self.assertIn("permanently raises this wallet\\'s minimum capacity", selection_copy)
         self.assertIn("This increase cannot be undone", selection_copy)
         self.assertIn("data actually stored", selection_copy)
