@@ -212,3 +212,33 @@ Remaining follow-ups:
       plane (now default).
 - [ ] Optional: gate relay ceiling is ~16MB/s (forked Python proxy) — fine for
       now; revisit if multi-user concurrent uploads saturate it.
+
+## Auth-token expiry dead-ends after session end (2026-08-14) — FIXED, pending deploy
+
+Report: after credit-exhausted top-up grace kicked in, "Use test credit" and
+End session both failed with "Valid auth token required" (401 loops in
+console). Not whitelist-specific: the 5-min wallet auth token only rotates via
+wallet-status in its last 60s, and the only continuous wallet-status poller
+(sidebar telemetry loop) stops with the VNC viewer — so the token died ~5 min
+after the viewer disconnected and every authenticated route 401'd.
+
+Fixes (all in novnc-theme/vnc.html, contract tests in
+test_frontend_detached_restore.py::test_expired_auth_token_recovers_without_dead_ends):
+1. 401 auto-recovery: shared axonosRecoverWalletAuthToken (runVerify
+   releaseOnly — token only, no claim/resume; preserves prior identity if the
+   signature is declined). Used by test-credit (one replay), deposit-verify
+   poll (restarts poll; replay-protection makes re-checking the tx hash safe),
+   and the release banner (auto-retries the confirmed End after re-auth;
+   sessionMismatch still needs the explicit button).
+   axonosReauthenticateWalletForSessionRelease now delegates to the helper.
+2. Keep-alive: 60s wallet-status poll while signed in, skipped when hidden,
+   when the 5s telemetry loop runs, or after the token is known-dead (single
+   401 marks it; per-action recovery mints the replacement). wallet-status
+   consume_usage is a no-op (billing is heartbeat-based) — polling is
+   billing-safe.
+3. axonosFetchWalletAccessStatus now adopts rotated auth_token into
+   window.verifiedWalletAuthToken (was cookie-only; the JS copy is the only
+   credential on the cross-origin file plane).
+
+- [ ] Deploy: vnc.html is inline-script only (no ui.js change, no version bump
+      needed); restart/redeploy the gate static serve on clu1.

@@ -934,14 +934,29 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
             "window.axonosEndSession = axonosEndSession",
         )
 
-        self.assertIn("runVerify(expectedWallet, provider, {", reauth)
-        self.assertIn("releaseOnly: true", reauth)
-        self.assertIn("currentToken === previousToken", reauth)
+        recover = self._page_between(
+            "function axonosRecoverWalletAuthToken(expectedWallet, provider)",
+            "function axonosRequestTestCredit(rail, messageEl, options)",
+        )
+
+        # Release re-auth delegates to the shared token-recovery helper, which
+        # runs the no-side-effect releaseOnly verify and keeps the prior
+        # identity in memory when the signature is declined.
+        self.assertIn("axonosRecoverWalletAuthToken(expectedWallet, provider)", reauth)
         self.assertIn("releaseFailureIsCurrent()", reauth)
         self.assertIn("identityGeneration === axonosWalletConnectGeneration", reauth)
+        self.assertIn("runVerify(wallet, eth, { releaseOnly: true })", recover)
+        self.assertIn("currentToken === previousToken", recover)
+        self.assertIn("window.verifiedWalletAddress = previousWallet", recover)
+        self.assertIn("window.verifiedWalletAuthToken = previousToken", recover)
         self.assertIn("walletEndSessionBtn.disabled = true", actions)
         self.assertIn("walletReconnectBtn.disabled = true", actions)
         self.assertIn("axonosRetrySessionRelease(retrySnapshot)", actions)
+        # After a successful banner re-auth the already-confirmed End request is
+        # finished automatically instead of demanding a second manual retry;
+        # a newer-session mismatch still requires an explicit user decision.
+        self.assertIn("window.axonosRetrySessionRelease(failedSnapshot)", actions)
+        self.assertIn("failedSnapshot.sessionMismatch", actions)
         self.assertIn("releaseBody.expected_session_id", dashboard_end)
         self.assertGreaterEqual(
             dashboard_end.count("axonosHandleSessionReleaseFailure"), 2
@@ -958,6 +973,52 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         self.assertIn("return true", release_only)
         self.assertNotIn("axonosOnWalletVerified", release_only)
         self.assertNotIn("claimSession", release_only)
+
+    def test_expired_auth_token_recovers_without_dead_ends(self) -> None:
+        """An expired 5-minute auth token must never strand a signed-in user.
+
+        Contract: authenticated payment actions recover from a 401 with one
+        wallet signature and a single replay, and a slow wallet-status
+        keep-alive rotates the token while signed in on the dashboard (the
+        connected-only telemetry loop stops with the viewer, which used to let
+        the token die during credit-exhausted top-up grace)."""
+        test_credit = self._page_between(
+            "function axonosRequestTestCredit(rail, messageEl, options)",
+            "window.axonosRequestTestCredit = axonosRequestTestCredit",
+        )
+        self.assertIn("res.status === 401", test_credit)
+        self.assertIn("axonosRecoverWalletAuthToken(wallet)", test_credit)
+        self.assertIn("_authRetried: true", test_credit)
+
+        deposit_poll = self._page_between(
+            "function axonosPollVerifyDeposit(txHash, verifyEndpoint, paymentOperation)",
+            "function axonosErc20TransferData(toAddress, humanAmount, decimals)",
+        )
+        self.assertIn("res.status === 401", deposit_poll)
+        self.assertIn("axonosRecoverWalletAuthToken(wallet)", deposit_poll)
+        self.assertIn("authRetried = true", deposit_poll)
+        self.assertIn("axonosPollVerifyDeposit(txHash, verifyEndpoint)", deposit_poll)
+
+        wallet_status = self._page_between(
+            "function axonosFetchWalletAccessStatus(wallet)",
+            "function axonosSyncWalletAccessForResume(wallet)",
+        )
+        self.assertIn(
+            "window.verifiedWalletAuthToken = data.auth_token", wallet_status
+        )
+
+        keepalive = self._page_between(
+            "const AXONOS_AUTH_KEEPALIVE_INTERVAL_MS",
+            "window.axonosBootOverlayNextStep",
+        )
+        self.assertIn("function axonosAuthKeepAliveTick()", keepalive)
+        self.assertIn("if (axonosTelemetryInterval) return", keepalive)
+        self.assertIn("document.visibilityState === 'hidden'", keepalive)
+        self.assertIn("axonosAuthKeepAliveDeadToken = token", keepalive)
+        self.assertIn(
+            "setInterval(axonosAuthKeepAliveTick, AXONOS_AUTH_KEEPALIVE_INTERVAL_MS)",
+            keepalive,
+        )
 
     def test_release_status_reconciliation_is_authoritative_and_new_session_safe(self) -> None:
         reconcile = self._page_between(

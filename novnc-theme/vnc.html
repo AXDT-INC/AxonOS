@@ -3218,6 +3218,13 @@ Copyright (C) 2019 The noVNC Authors
                             return { ok: false, data: {}, stale: true };
                         }
                         axonosSetTestCreditEligibility(data);
+                        // Adopt a rotated token. The HttpOnly cookie follows on
+                        // its own; the JS copy must too — it is the only
+                        // credential on the cross-origin file plane, which
+                        // sends X-AXGT-Auth-Token instead of the cookie.
+                        if (r.ok && typeof data.auth_token === 'string' && data.auth_token) {
+                            window.verifiedWalletAuthToken = data.auth_token;
+                        }
                         return { ok: r.ok, data: data };
                     });
                 }),
@@ -6090,6 +6097,7 @@ Copyright (C) 2019 The noVNC Authors
             var msgEl = document.getElementById('axonos_verify_deposit_msg');
             var attempts = 0;
             var maxAttempts = 180;
+            var authRetried = false;
             if (!axonosPaymentOperationIsCurrent(operation)) return;
             // Full-screen "Payment sent" overlay for the on-chain wait; without it this
             // stretch looked like a dead blank page. Hidden again on every terminal
@@ -6132,6 +6140,27 @@ Copyright (C) 2019 The noVNC Authors
                     if (d.auth_token) {
                         window.verifiedWalletAuthToken = d.auth_token;
                         operation.token = d.auth_token;
+                    }
+                    if ((res.status === 401 || /auth token/i.test(String(d.error || ''))) &&
+                        !authRetried) {
+                        // The token can expire during the on-chain wait and the
+                        // user has already paid — never dead-end here. Recover
+                        // with one signature, then restart the poll under a
+                        // fresh operation (the re-auth's runVerify supersedes
+                        // this one). Server replay protection makes re-checking
+                        // the same tx hash safe.
+                        authRetried = true;
+                        if (msgEl) msgEl.textContent = 'Session token expired — confirm the signature request in the wallet to continue…';
+                        axonosRecoverWalletAuthToken(wallet).then(function (recovered) {
+                            if (!recovered || !axonosPaymentIdentityIsCurrent(wallet)) {
+                                setPayDepositButtonsBusy(false);
+                                bailToDialog();
+                                if (msgEl) msgEl.textContent = 'Wallet re-authentication was not completed. Sign in, then use Credit deposit with your tx hash — no funds are lost.';
+                                return;
+                            }
+                            axonosPollVerifyDeposit(txHash, verifyEndpoint);
+                        });
+                        return;
                     }
                     if (d.verified) {
                         setPayDepositButtonsBusy(false);
@@ -6510,6 +6539,47 @@ Copyright (C) 2019 The noVNC Authors
             return 'ui-' + Date.now().toString(36) + '-' + randomPart;
         }
 
+        /**
+         * One re-sign to replace an expired auth token mid-action, on the
+         * runVerify releaseOnly contract: fresh proof of ownership only — no
+         * claim, workspace entry, or auto-resume. Keeps the prior identity in
+         * memory when the signature is declined so the action stays retryable.
+         * Resolves true only when the SAME wallet ended up with a NEW token
+         * (verify-wallet always issues a fresh one, so an unchanged token
+         * means runVerify resolved through a stale/cancel path).
+         */
+        function axonosRecoverWalletAuthToken(expectedWallet, provider) {
+            var wallet = String(expectedWallet || window.verifiedWalletAddress || '')
+                .trim().toLowerCase();
+            var eth = resolveEthereumProvider(provider || window.__axonosSelectedProvider);
+            if (!wallet || !eth || typeof eth.request !== 'function') {
+                return Promise.resolve(false);
+            }
+            var previousWallet = window.verifiedWalletAddress || verifiedWalletAddress || null;
+            var previousToken = window.verifiedWalletAuthToken || null;
+            var previousAllowVnc = window.axonosAllowVncConnect;
+            var identityGeneration = axonosWalletConnectGeneration;
+            return Promise.resolve(runVerify(wallet, eth, { releaseOnly: true }))
+                .then(function () {
+                    if (identityGeneration !== axonosWalletConnectGeneration) return false;
+                    var currentWallet = String(window.verifiedWalletAddress || '').trim().toLowerCase();
+                    var currentToken = window.verifiedWalletAuthToken || null;
+                    if (currentWallet !== wallet || !currentToken ||
+                        currentToken === previousToken) {
+                        throw new Error('Wallet re-authentication was not completed.');
+                    }
+                    return true;
+                })
+                .catch(function () {
+                    if (identityGeneration !== axonosWalletConnectGeneration) return false;
+                    verifiedWalletAddress = previousWallet;
+                    window.verifiedWalletAddress = previousWallet;
+                    window.verifiedWalletAuthToken = previousToken;
+                    window.axonosAllowVncConnect = previousAllowVnc;
+                    return false;
+                });
+        }
+
         function axonosRequestTestCredit(rail, messageEl, options) {
             var requestOptions = options && typeof options === 'object' ? options : {};
             var wallet = (verifiedWalletAddress || window.verifiedWalletAddress || '').trim();
@@ -6580,6 +6650,26 @@ Copyright (C) 2019 The noVNC Authors
                 if (d.auth_token) {
                     window.verifiedWalletAuthToken = d.auth_token;
                     operation.token = d.auth_token;
+                }
+                if ((res.status === 401 || /auth token/i.test(String(d.error || ''))) &&
+                    requestOptions._authRetried !== true) {
+                    // Expired session token (e.g. idle in top-up grace): recover
+                    // with one signature and replay as a NEW operation — the
+                    // re-auth's runVerify supersedes this one by design.
+                    axonosTestCreditBusy = false;
+                    setPayDepositButtonsBusy(false);
+                    if (typeof window.axonosHideConnectionLoader === 'function') {
+                        window.axonosHideConnectionLoader(true);
+                    }
+                    if (msgEl) msgEl.textContent = 'Session token expired — confirm the signature request in the wallet to continue…';
+                    return axonosRecoverWalletAuthToken(wallet).then(function (recovered) {
+                        if (!recovered) {
+                            if (msgEl) msgEl.textContent = 'Wallet re-authentication was not completed. Sign in again, then retry.';
+                            return d;
+                        }
+                        return axonosRequestTestCredit(rail, messageEl,
+                            Object.assign({}, requestOptions, { _authRetried: true }));
+                    });
                 }
                 if (d.error_code === 'not_test_credit_eligible' || d.test_credits_disabled) {
                     axonosSetTestCreditEligibility(false);
@@ -7809,13 +7899,6 @@ Copyright (C) 2019 The noVNC Authors
             if (!expectedWallet || !provider || typeof provider.request !== 'function') {
                 return Promise.resolve(false);
             }
-
-            // runVerify normally clears a rejected identity. A release retry is
-            // different: until the server confirms End, keep the prior wallet and
-            // token in memory so another attempt remains possible.
-            var previousWallet = window.verifiedWalletAddress || verifiedWalletAddress || null;
-            var previousToken = window.verifiedWalletAuthToken || null;
-            var previousAllowVnc = window.axonosAllowVncConnect;
             var identityGeneration = axonosWalletConnectGeneration;
             var releaseFailureIsCurrent = function () {
                 var current = window.axonosSessionReleaseFailure;
@@ -7823,42 +7906,22 @@ Copyright (C) 2019 The noVNC Authors
                     current === snapshot &&
                     window.axonosSessionReleaseResultIsCurrent(snapshot);
             };
-            return Promise.resolve(runVerify(expectedWallet, provider, {
-                releaseOnly: true
-            })).then(function () {
+            // axonosRecoverWalletAuthToken keeps the prior wallet and token in
+            // memory when re-auth fails: until the server confirms End, another
+            // attempt must remain possible.
+            return axonosRecoverWalletAuthToken(expectedWallet, provider).then(function (recovered) {
                 if (!releaseFailureIsCurrent()) return false;
-                var currentWallet = String(window.verifiedWalletAddress || '').trim().toLowerCase();
-                var currentToken = window.verifiedWalletAuthToken || null;
-                // verify-wallet always issues a fresh token. Requiring it to
-                // change also rejects runVerify's resolved stale/cancel path.
-                if (currentWallet !== expectedWallet || !currentToken ||
-                    currentToken === previousToken) {
-                    throw new Error('Wallet re-authentication was not completed.');
-                }
                 axonosSyncWalletUnavailableIndicator();
                 if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
                     UI.showStatus(
-                        'Wallet re-authenticated. Retry End session to confirm that billing stopped.',
-                        'normal',
-                        6000
+                        recovered === true
+                            ? 'Wallet re-authenticated.'
+                            : 'Wallet re-authentication was not completed. The session may still be running and billing; reconnect the original wallet and retry.',
+                        recovered === true ? 'normal' : 'warn',
+                        recovered === true ? 6000 : 8000
                     );
                 }
-                return true;
-            }).catch(function () {
-                if (!releaseFailureIsCurrent()) return false;
-                verifiedWalletAddress = previousWallet;
-                window.verifiedWalletAddress = previousWallet;
-                window.verifiedWalletAuthToken = previousToken;
-                window.axonosAllowVncConnect = previousAllowVnc;
-                axonosSyncWalletUnavailableIndicator();
-                if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
-                    UI.showStatus(
-                        'Wallet re-authentication was not completed. The session may still be running and billing; reconnect the original wallet and retry.',
-                        'warn',
-                        8000
-                    );
-                }
-                return false;
+                return recovered === true;
             });
         }
 
@@ -7931,7 +7994,28 @@ Copyright (C) 2019 The noVNC Authors
                         }
                         return axonosReauthenticateWalletForSessionRelease(
                             releaseFailureAtStart, provider
-                        );
+                        ).then(function (reauthed) {
+                            if (reauthed !== true) return reauthed;
+                            // The user already confirmed End once; finish it now
+                            // instead of asking for a second manual retry click.
+                            var failedSnapshot = window.axonosSessionReleaseFailure;
+                            // A newer-session mismatch still needs an explicit
+                            // user decision — leave it to the banner's End button.
+                            if (!failedSnapshot || failedSnapshot.sessionMismatch ||
+                                typeof window.axonosRetrySessionRelease !== 'function') {
+                                return reauthed;
+                            }
+                            var clearIdentityAfterRelease =
+                                axonosReleaseIntentClearsWallet(failedSnapshot);
+                            return Promise.resolve(window.axonosRetrySessionRelease(failedSnapshot))
+                                .then(function (released) {
+                                    if (released === true && clearIdentityAfterRelease &&
+                                        window.verifiedWalletAddress) {
+                                        clearWalletIdentityAndUi();
+                                    }
+                                    return released;
+                                });
+                        });
                     }
                     onWalletAccountsChanged(accounts, provider);
                     return true;
@@ -10479,6 +10563,46 @@ Copyright (C) 2019 The noVNC Authors
                 axonosStopTelemetryLoop();
             }
         }).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+
+        // Auth-token keep-alive while signed in but NOT viewer-connected. The
+        // token rotates only via wallet-status inside the last minute of its
+        // 5-minute TTL, and the telemetry loop above — the only continuous
+        // wallet-status poller — stops with the viewer. Without this, sitting
+        // on the dashboard (e.g. credit-exhausted top-up grace) killed the
+        // token in ~5 minutes and every action 401'd. Hidden tabs are skipped
+        // (throttled timers can't rotate reliably); the visibilitychange hook
+        // catches up as soon as the tab returns.
+        const AXONOS_AUTH_KEEPALIVE_INTERVAL_MS = 60 * 1000;
+        let axonosAuthKeepAliveDeadToken = null;
+        let axonosAuthKeepAlivePending = false;
+
+        function axonosAuthKeepAliveTick() {
+            if (document.visibilityState === 'hidden') return;
+            if (axonosAuthKeepAlivePending) return;
+            if (axonosTelemetryInterval) return;
+            var wallet = String(window.verifiedWalletAddress || '').trim();
+            var token = window.verifiedWalletAuthToken || null;
+            if (!wallet || !token) return;
+            if (axonosAuthKeepAliveDeadToken && token === axonosAuthKeepAliveDeadToken) return;
+            axonosAuthKeepAlivePending = true;
+            axonosFetchWalletAccessStatus(wallet).then(function (res) {
+                axonosAuthKeepAlivePending = false;
+                if (!res || res.stale || res.unavailable) return;
+                var data = res.data || {};
+                if (!res.ok && /auth token/i.test(String(data.error || ''))) {
+                    // Already expired (e.g. tab was hidden past the TTL). Stop
+                    // polling with this dead token instead of 401-looping; the
+                    // per-action re-auth recovery issues the replacement.
+                    axonosAuthKeepAliveDeadToken = token;
+                }
+            }).catch(function () {
+                axonosAuthKeepAlivePending = false;
+            });
+        }
+        setInterval(axonosAuthKeepAliveTick, AXONOS_AUTH_KEEPALIVE_INTERVAL_MS);
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'visible') axonosAuthKeepAliveTick();
+        });
 
         // Update the boot checklist overlay phase animations during loading
         window.axonosBootOverlayNextStep = function (stepNum) {
