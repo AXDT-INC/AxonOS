@@ -2144,6 +2144,15 @@ def api_webrtc_agent_refresh():
     return response, 200
 
 
+@app.route('/api/public/files-config', methods=['GET'])
+def api_public_files_config():
+    """Optional direct file plane base (bulk transfers to clu1's public IP,
+    bypassing the OKE proxy chain). Empty base = frontend stays same-origin."""
+    return jsonify({
+        "files_base": (os.getenv('AXGT_FILES_PUBLIC_BASE') or '').strip().rstrip('/'),
+    }), 200
+
+
 @app.route('/api/files/<route_suffix>', methods=['GET', 'POST', 'PUT', 'OPTIONS'])
 def api_files(route_suffix):
     """Streaming proxy for browser <-> desktop file transfer (see file_transfer.py)."""

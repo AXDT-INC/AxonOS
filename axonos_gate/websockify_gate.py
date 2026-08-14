@@ -1349,6 +1349,14 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             result = session_status(wallet_address)
             return self._send_json(200, result)
 
+        # ---- Public deployment config (no auth required) ----
+        if pu.path == '/api/public/files-config':
+            # Optional direct file plane (bulk transfers to clu1's public IP,
+            # bypassing the OKE proxy chain). Empty base = use same-origin.
+            return self._send_json(200, {
+                "files_base": (os.getenv('AXGT_FILES_PUBLIC_BASE') or '').strip().rstrip('/'),
+            })
+
         # ---- Public telemetry (no auth required) ----
         if pu.path == '/api/public/telemetry/summary':
             data, err = _telemetry_summary()
@@ -1607,6 +1615,23 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         self.send_response(status_code)
         for name, value in resp_headers:
             self.send_header(name, value)
+        # CORS on the success relay: error paths go through _send_json which
+        # already emits these, but this hand-rolled relay must add them too or
+        # the browser rejects successful cross-origin responses from the
+        # direct file plane (files-tls on the public IP).
+        cors = cors_origin_for_request(
+            self.headers.get("Origin"),
+            self.headers.get("Host"),
+            _allow_any,
+            _allowlist,
+        )
+        if cors:
+            self.send_header('Access-Control-Allow-Origin', cors)
+            self.send_header('Vary', 'Origin')
+            self.send_header('Access-Control-Allow-Credentials', 'true')
+            self.send_header(
+                'Access-Control-Expose-Headers',
+                'Content-Length, Content-Range, Accept-Ranges, ETag')
         self.end_headers()
         try:
             for chunk in body_iter:

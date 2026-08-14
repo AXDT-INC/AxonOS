@@ -1,0 +1,79 @@
+# AxonOS direct file-plane on clu1's public TCP 443, shared with TURN-over-TCP.
+#
+# Public 443 carries two protocols, split by first bytes with ssl_preread:
+#   - TLS ClientHello  -> local HTTPS vhost (bulk /api/files/* straight to the
+#     gate, bypassing the OKE proxy chain whose upload direction is slow for
+#     remote users)
+#   - anything else    -> coturn:3478 (plain TURN-over-TCP fallback advertised
+#     as turn:...:443?transport=tcp in WEBRTC_TURN_URLS)
+#
+# Rendered by the official nginx image's envsubst entrypoint (only variables
+# set in the container environment are substituted; nginx runtime vars like
+# $host survive). Variables: FILES_TLS_SERVER_NAME.
+
+worker_processes auto;
+
+events {
+    worker_connections 4096;
+}
+
+stream {
+    # Resolve service names per-connection via Docker's embedded DNS so this
+    # container starts (and keeps routing) regardless of coturn/gate restarts.
+    resolver 127.0.0.11 valid=30s;
+
+    map $ssl_preread_protocol $axonos_443_upstream {
+        default   coturn:3478;
+        "~TLSv"   127.0.0.1:8443;
+    }
+
+    server {
+        listen 443;
+        ssl_preread on;
+        proxy_pass $axonos_443_upstream;
+        # TURN sessions are long-lived media transports.
+        proxy_timeout 3600s;
+    }
+}
+
+http {
+    server {
+        # Deliberately HTTP/1.1 (no http2): nginx caps each HTTP/2 stream's
+        # request-body flow-control window at 64KB, which limits uploads to
+        # ~window/RTT (~280KB/s at 230ms RTT — exactly the far-user slowness
+        # this vhost exists to fix). HTTP/1.1 bodies ride the TCP window
+        # (megabytes, auto-scaled) instead.
+        listen 127.0.0.1:8443 ssl;
+        server_name ${FILES_TLS_SERVER_NAME};
+
+        ssl_certificate     /etc/letsencrypt/live/${FILES_TLS_SERVER_NAME}/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/${FILES_TLS_SERVER_NAME}/privkey.pem;
+
+        client_max_body_size 1000m;
+
+        location /api/files/ {
+            # CORS (including OPTIONS preflight) is handled by the gate itself
+            # (websockify_gate cors_origin_for_request) — adding headers here
+            # too produces duplicate Access-Control-Allow-Origin values, which
+            # browsers reject outright.
+            resolver 127.0.0.11 valid=30s;
+            set $axonos_gate http://axonos:6080;
+            proxy_pass $axonos_gate;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+
+            # Stream both directions; never spool multi-MB chunks to disk.
+            proxy_request_buffering off;
+            proxy_buffering off;
+            proxy_read_timeout 3600s;
+            proxy_send_timeout 3600s;
+        }
+
+        location / {
+            return 404;
+        }
+    }
+}

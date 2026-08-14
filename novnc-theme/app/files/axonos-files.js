@@ -12,6 +12,13 @@
  *  - downloads are plain authenticated GETs with Range support, so the
  *    browser's native download manager handles them (pause/resume/retry,
  *    no memory buffering in the page).
+ *  - transfers prefer the direct file plane when the deployment advertises
+ *    one (/api/public/files-config -> files_base, e.g. https://axonconsole.io
+ *    on clu1's public IP): bulk bytes skip the OKE proxy chain, whose upload
+ *    direction is slow for remote users. Auth rides the existing
+ *    X-Wallet-Address/X-AXGT-Auth-Token headers (CORS handled by the
+ *    files-tls nginx); any network/CORS failure demotes back to same-origin
+ *    for the rest of the page lifetime.
  *
  * Loaded lazily by ui.js when the Files deck button is first opened.
  */
@@ -33,25 +40,78 @@ function _wallet() {
     return (window.verifiedWalletAddress || '').trim();
 }
 
+function _authToken() {
+    // vnc.html publishes the wallet auth token as verifiedWalletAuthToken;
+    // keep the legacy name as fallback. The HttpOnly cookie also authenticates
+    // same-origin calls, but only this token can cross to the direct file
+    // plane (cookies never travel to a different site).
+    return window.verifiedWalletAuthToken || window.verifiedAuthToken || '';
+}
+
 function _authHeaders() {
     const headers = {};
     const wallet = _wallet();
     if (wallet) {
         headers['X-Wallet-Address'] = wallet;
     }
-    if (window.verifiedAuthToken) {
-        headers['X-AXGT-Auth-Token'] = window.verifiedAuthToken;
+    const token = _authToken();
+    if (token) {
+        headers['X-AXGT-Auth-Token'] = token;
     }
     return headers;
+}
+
+// null = not resolved yet, '' = same-origin, else an absolute https base.
+let _filesBase = null;
+
+async function _ensureFilesBase() {
+    if (_filesBase !== null) return;
+    let base = '';
+    // Without the token the direct plane cannot authenticate (the auth cookie
+    // is bound to this page's origin) — stay same-origin.
+    if (_authToken()) {
+        try {
+            const resp = await fetch('./api/public/files-config', { credentials: 'same-origin' });
+            if (resp.ok) {
+                const data = await resp.json();
+                if (data && typeof data.files_base === 'string') {
+                    base = data.files_base.trim().replace(/\/+$/, '');
+                }
+            }
+        } catch (e) { /* stay same-origin */ }
+    }
+    _filesBase = base;
+}
+
+// Direct plane unreachable (strict egress, cert issue, CORS): fall back to
+// same-origin for the rest of the page lifetime. Returns true if demoted.
+function _demoteFilesBase() {
+    if (_filesBase) {
+        _filesBase = '';
+        return true;
+    }
+    return false;
 }
 
 function _apiUrl(route, params) {
     const qs = new URLSearchParams(params || {});
     qs.set('wallet', _wallet());
-    return `./api/files/${route}?${qs.toString()}`;
+    const prefix = _filesBase ? `${_filesBase}/api/files/` : './api/files/';
+    return `${prefix}${route}?${qs.toString()}`;
 }
 
 async function _apiJson(route, params, options) {
+    try {
+        return await _apiJsonOnce(route, params, options);
+    } catch (err) {
+        if (_demoteFilesBase()) {
+            return _apiJsonOnce(route, params, options);
+        }
+        throw err;
+    }
+}
+
+async function _apiJsonOnce(route, params, options) {
     const resp = await fetch(_apiUrl(route, params), {
         credentials: 'same-origin',
         headers: _authHeaders(),
@@ -109,6 +169,7 @@ async function refreshListing() {
     _setStatus('Loading…');
     let res;
     try {
+        await _ensureFilesBase();
         res = await _apiJson('list', { path: _currentDir });
     } catch (e) {
         _setStatus('Could not reach the desktop file agent.', true);
@@ -174,10 +235,11 @@ function _renderEntry(entry) {
 
 function downloadFile(relPath) {
     const params = { path: relPath };
-    // Cookie auth is primary; mirror the websockify URL fallback for
-    // deployments where the HttpOnly cookie is unavailable.
-    if (window.verifiedAuthToken) {
-        params.auth_token = window.verifiedAuthToken;
+    // Cookie auth covers same-origin; the token is required whenever the
+    // download goes through the direct file plane (cross-site, no cookie).
+    const token = _authToken();
+    if (token) {
+        params.auth_token = token;
     }
     const a = document.createElement('a');
     a.href = _apiUrl('download', params);
@@ -275,7 +337,12 @@ function _putChunk(t, params, body) {
             _renderTransfersThrottled();
         };
         xhr.onload = () => finish(resolve, { status: xhr.status, data: xhr.response });
-        xhr.onerror = () => finish(reject, new Error('network error during upload chunk'));
+        xhr.onerror = () => {
+            // If the direct file plane is unreachable from this network, the
+            // retry loop's next attempt goes through the same-origin proxy.
+            _demoteFilesBase();
+            finish(reject, new Error('network error during upload chunk'));
+        };
         xhr.onabort = () => {
             const err = new Error('upload aborted');
             err.name = 'AbortError';
@@ -327,6 +394,7 @@ async function _runUpload(t) {
     t.state = 'uploading';
     t.error = '';
     _renderTransfers();
+    await _ensureFilesBase();
     let attempt = 0;
 
     for (;;) {

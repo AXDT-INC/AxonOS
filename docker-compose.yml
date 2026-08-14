@@ -74,14 +74,39 @@ services:
     ports:
       - "3478:3478/udp"
       - "3478:3478/tcp"
-      # TURN-over-TCP on 443 for clients behind firewalls that only allow well-known
-      # ports. Maps host 443 -> coturn's plain-TURN TCP listener (3478); advertised
-      # via WEBRTC_TURN_URLS (turn:...:443?transport=tcp). Host 443 is free on clu1
-      # (web HTTPS terminates on OKE), and inbound TCP 443 was opened at the edge.
-      - "443:3478/tcp"
-      - "40500-41000:40500-41000/udp"
+      # Host 443 now belongs to the files-tls demux below, which forwards
+      # non-TLS bytes (plain TURN-over-TCP, advertised as
+      # turn:...:443?transport=tcp in WEBRTC_TURN_URLS) here to :3478.
+      # UDP 41000 is reserved for NetBird WireGuard (host network) — see
+      # gpu-bare-metal-machine compose NB_WIREGUARD_PORT; coturn stops at 40999.
+      - "40500-40999:40500-40999/udp"
     volumes:
       - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+    networks:
+      - axonos_stack
+
+  # Direct file plane: shares public TCP 443 between HTTPS (bulk /api/files/*
+  # straight to the gate — bypasses the OKE proxy chain, whose upload direction
+  # is slow for remote users) and coturn's plain TURN-over-TCP fallback.
+  # Needs a Let's Encrypt cert in the axonos_letsencrypt volume first — see
+  # docs in docker/files-tls/nginx.conf.template; the command below idles
+  # until the cert appears so the stack can come up before issuance.
+  files-tls:
+    image: nginx:1.27-alpine
+    container_name: axonos_files_tls
+    restart: unless-stopped
+    ports:
+      - "443:443/tcp"
+    environment:
+      FILES_TLS_SERVER_NAME: ${FILES_TLS_SERVER_NAME:-axonconsole.io}
+      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx
+    volumes:
+      - ./docker/files-tls/nginx.conf.template:/etc/nginx/templates/nginx.conf.template:ro
+      - ./docker/files-tls/40-wait-for-cert.sh:/docker-entrypoint.d/40-wait-for-cert.sh:ro
+      - axonos_letsencrypt:/etc/letsencrypt:ro
+    # No command override: the image entrypoint only renders the config
+    # template (and runs 40-wait-for-cert.sh) when the command is the stock
+    # `nginx -g "daemon off;"`.
     networks:
       - axonos_stack
 
@@ -204,3 +229,7 @@ networks:
 
 volumes:
   axonos_postgres_data: {}
+  axonos_letsencrypt:
+    # Fixed name so one-shot certbot runs can mount it without the compose
+    # project prefix: docker run -v axonos_letsencrypt:/etc/letsencrypt ...
+    name: axonos_letsencrypt

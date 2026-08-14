@@ -174,3 +174,41 @@
   - [x] **Migration backfill**: rows predating the `ssh_enabled` column got the FALSE default — an SSH session active across a future upgrade would lose connect-string recovery and cap renewal. `_ensure_tables` now backfills `ssh_enabled = TRUE WHERE hard_expires_at IS NOT NULL` (hard cap was only ever set for SSH claims) when the column is first added.
   - [x] **Credit-grace SSH reconnect was broken for both rails**: restoring access returned no SSH fields (an agent re-claiming after top-up lost its endpoint) and the browser path blind-called `tryConnectAfterClaim()` → desktop connect against a headless container. Reconnect now renews the cap (extend-only), returns `ssh_*` + `hard_cap_remaining_seconds`, and routes SSH sessions to the connect-card restore.
   - [x] Verified: backfill (capped row → TRUE, desktop row → FALSE), SSH resume returns port/host + 15min→4h cap renewal, desktop resume shape unchanged; 221 tests pass; JS syntax clean.
+
+## Direct file plane on clu1:443 (2026-08-14) — DEPLOYED & WORKING
+
+Root cause chain for "slow uploads" (112MB @ ~200KB/s from Kolkata, 400Mbps line):
+1. ~~1MB sequential upload chunks~~ → adaptive 4–256MB + XHR progress (813a5cc)
+2. ~~OKE↔clu1 NetBird link relayed over TCP~~ → P2P via WG port 41000 (see memory)
+3. ~~"OCI ingress upload throttling"~~ — WRONG THEORY. Actual root cause:
+   **nginx HTTP/2 request-body flow control** caps each h2 stream's upload
+   window at 64KB → throughput ≈ 64KB/RTT ≈ 280KB/s at 230ms RTT. Explains
+   every observation: OKE uploads 1.6Mbps but downloads 26Mbps (response
+   direction has no such window), scp 6.3MB/s (no h2), single-stream
+   speedtest 90Mbps (not nginx-h2). Fix on the direct plane: files vhost is
+   deliberately HTTP/1.1 (TCP window governs). Local full-chain PUT
+   (443→demux→gate→agent): 16.8MB/s.
+4. files-tls demux shares public TCP 443 (ssl_preread: TLS→gate /api/files/*,
+   plain TURN bytes→coturn), frontend auto-discovers via /api/public/files-config,
+   falls back to same-origin. axonconsole.io A-record already → 206.41.207.99.
+
+Deployed 2026-08-14 (cert issued manual DNS-01, expires Nov 12). Bugs found
+during rollout, all fixed: entrypoint skipped template render under command
+override (wait moved to /docker-entrypoint.d), duplicate CORS header (gate
+already does CORS — nginx side removed), JS read wrong token global
+(verifiedWalletAuthToken), gate success-relay lacked CORS headers (only its
+error paths had them).
+
+Remaining follow-ups:
+- [ ] Cert renewal ~mid-October (manual DNS-01 TXT dance; LE emails warn at
+      ~day 70). GoDaddy API is tier-blocked (token authenticates but domain
+      list empty / ACCESS_DENIED — small-account restriction). For automation:
+      move axonconsole.io NS to Cloudflare free (certbot-dns-cloudflare,
+      non-expiring token) or Expedient ticket for TCP 80 (HTTP-01, no creds).
+      Revoke the useless GoDaddy PAT + delete ~/godaddy-token.txt.
+- [ ] Tell devops the real OKE finding: h2 upload flow-control window, not LB
+      shape — same-origin fallback uploads stay ~1.6Mbps for far users until
+      the ingress disables h2 for /api/files/ or bulk traffic uses the direct
+      plane (now default).
+- [ ] Optional: gate relay ceiling is ~16MB/s (forked Python proxy) — fine for
+      now; revisit if multi-user concurrent uploads saturate it.
