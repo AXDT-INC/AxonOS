@@ -819,7 +819,14 @@ def get_wallet_access_status(wallet_address: str, consume_usage: bool = False) -
         try:
             from . import session_manager as _sm
         except ImportError:
-            from axonos_gate import session_manager as _sm
+            try:
+                from axonos_gate import session_manager as _sm
+            except ImportError:
+                # websockify_gate.py is executed directly with /axonos_gate on
+                # sys.path, so its modules have no package parent. Keep this
+                # deployed flat-module mode capable of returning the same
+                # billing/storage context as package imports and unit tests.
+                import session_manager as _sm
         billing_ctx = _sm.billing_context_for_wallet(wallet_address)
         response.update(billing_ctx)
         if (

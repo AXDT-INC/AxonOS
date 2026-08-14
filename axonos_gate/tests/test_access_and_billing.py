@@ -56,6 +56,16 @@ class TestAccessControl(unittest.TestCase):
         self.assertEqual(storage_query.args[1], (wallet, wallet))
         conn.close.assert_called_once()
 
+    def test_verifier_supports_deployed_flat_module_billing_import(self):
+        verifier_path = os.path.join(_repo_root, "axonos_gate", "axgt_verifier.py")
+        with open(verifier_path, "r", encoding="utf-8") as handle:
+            source = handle.read()
+        billing_block = source.split("billing_ctx = _sm.billing_context_for_wallet", 1)[0]
+        billing_block = billing_block.rsplit("try:", 3)[-1]
+        self.assertIn("from . import session_manager as _sm", source)
+        self.assertIn("from axonos_gate import session_manager as _sm", source)
+        self.assertIn("import session_manager as _sm", billing_block)
+
     def test_get_wallet_access_status_no_deposit(self):
         from axonos_gate import axgt_verifier
         with patch("axonos_gate.deposit_ledger.init_once", return_value=True), \
