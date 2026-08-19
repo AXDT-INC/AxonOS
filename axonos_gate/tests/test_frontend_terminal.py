@@ -195,8 +195,8 @@ class FrontendTerminalContractTests(unittest.TestCase):
 
     def test_frontend_module_cache_tokens_stay_in_lockstep(self) -> None:
         self.assertIn("axonos-theme.css?v=20.2&t=20260812b", self.page)
-        self.assertIn("app/ui.js?v=20260729e", self.page)
-        self.assertIn("./webrtc/axonos-webrtc.js?v=20260729e", self.ui)
+        self.assertIn("app/ui.js?v=20260819b", self.page)
+        self.assertIn("./webrtc/axonos-webrtc.js?v=20260819b", self.ui)
         self.assertIn("./terminal/axonos-terminal.js?v=20260729d", self.ui)
 
     def test_terminal_fallback_does_not_start_a_dashboard_status_refresh(self) -> None:
@@ -304,3 +304,57 @@ class FrontendTerminalContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FrontendModeSwapContractTests(unittest.TestCase):
+    """Sidebar mode-swap button: desktop <-> SSH console via release + re-claim."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        repo = Path(__file__).resolve().parents[2]
+        theme = repo / "novnc-theme"
+        cls.page = (theme / "vnc.html").read_text(encoding="utf-8")
+        cls.ui = (theme / "ui.js").read_text(encoding="utf-8")
+
+    def test_sidebar_swap_button_sits_above_detach(self) -> None:
+        controls = self.page.split('class="axonos-sidebar-controls"', 1)[1]
+        controls = controls.split("axonos_sidebar_toggle", 1)[0]
+        swap_pos = controls.index("axonos_sidebar_swap_btn")
+        detach_pos = controls.index("axonos_sidebar_detach_btn")
+        end_pos = controls.index("axonos_sidebar_end_btn")
+        self.assertLess(swap_pos, detach_pos)
+        self.assertLess(detach_pos, end_pos)
+        self.assertIn("axonos_sidebar_swap_title", controls)
+        self.assertIn("axonos_sidebar_swap_desc", controls)
+        self.assertIn("UI.swapSessionMode()", self.page)
+
+    def test_swap_labels_follow_viewer_mode(self) -> None:
+        updater = self.ui.split("updateAxonosSwapButton()", 1)[1].split(
+            "async swapSessionMode()", 1
+        )[0]
+        self.assertIn("UI.connectionKind === 'terminal'", updater)
+        self.assertIn("Swap to Desktop", updater)
+        self.assertIn("Swap to Console", updater)
+        # Refreshed alongside the other session control buttons.
+        control_updater = self.ui.split("updateSessionControlButtons() {", 1)[1].split(
+            "updateAxonosSwapButton()", 1
+        )[0]
+        self.assertIn("noVNC_hidden", control_updater)
+
+    def test_swap_sets_intent_then_requires_confirmed_release_before_reclaim(self) -> None:
+        swap = self.ui.split("async swapSessionMode()", 1)[1].split(
+            "async restartDesktopSession()", 1
+        )[0]
+        # Intent must be written before the release so both claim builders
+        # (ui.js and vnc.html's) read the new mode.
+        intent_pos = swap.index("window.axonosSshEnabled = toSsh")
+        release_pos = swap.index("await UI.disconnect(")
+        self.assertGreater(release_pos, intent_pos)
+        # An unconfirmed release must abort the swap (no second session on top
+        # of a possibly-still-owned one) and restore the previous intent.
+        self.assertIn("if (!released)", swap)
+        self.assertIn("window.axonosSshEnabled = previousIntent", swap)
+        # The relaunch goes through the single claim/connect choke point.
+        self.assertIn("UI.connect()", swap)
+        # Desktop -> console requires a usable public key up front.
+        self.assertIn("axonosSshKeyLooksValid", swap)

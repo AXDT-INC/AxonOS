@@ -9,7 +9,32 @@
    GPU-Native Scientific Computing  ·  Headless GPU Shell
   ──────────────────────────────────────────────────────────────
 
-   • nvidia-smi     show the GPU(s) allocated to this session
-   • ~ (home)       persists for your wallet across sessions
-   • headless       shell only — no desktop/GUI on this session
+  Session State & Storage:
+   • ~ (home)       wallet-persistent storage volume (/home/aXonian)
+   • headless       shell-only session (desktop GUI accessible via WebRTC)
+
+  GPU & HPC System Commands:
+   • nvidia-smi     monitor allocated GPU(s), VRAM & CUDA utilization
+   • nvcc           NVIDIA CUDA C/C++ compiler driver
+   • mpirun         OpenMPI parallel execution launcher for multi-GPU tasks
+
+  AI / Machine Learning & Scientific Computing CLI:
+   • python3        PyTorch 2.3+ CUDA runtime & AI model execution
+   • jupyter-lab    launch interactive JupyterLab notebook server
+   • tensorboard    start ML model training visualization & metrics server
+   • Rscript        execute R statistical data processing scripts
+   • octave-cli     GNU Octave numerical shell & MATLAB-compatible engine
+   • gnuplot        command-line data plotting & graphing utility
+
+  Molecular Dynamics, Quantum & Bio CLI:
+   • gmx            GROMACS GPU-accelerated molecular dynamics (gmx_mpi)
+   • pw.x           Quantum ESPRESSO DFT electronic-structure solver
+   • pymol          PyMOL 3D molecular structure renderer & CLI tool
+   • ugenecl        UGENE bioinformatics CLI for sequence workflows
+
+  Pipelines, Spatial & Storage CLI:
+   • nextflow       run containerized scientific workflow pipelines
+   • grass          GRASS GIS headless spatial data processing engine
+   • ipfs           IPFS peer node daemon & decentralized dataset CLI
+   • syncthing      headless P2P encrypted file synchronization daemon
 

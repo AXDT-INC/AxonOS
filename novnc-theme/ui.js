@@ -2751,6 +2751,60 @@ const UI = {
         UI.disconnect({ skipRelease: true, detach: true });
     },
 
+    /** Swap the live session between desktop and SSH-console mode. The mode is
+     *  baked into the container's runtime config (ports, desktop/WebRTC env), so
+     *  a swap is a confirmed release of the current session followed by a fresh
+     *  claim with the opposite requested_ssh — the wallet-keyed home volume and
+     *  prepaid credits carry over on their own. The re-claim only runs after the
+     *  server confirms the release; claiming earlier would be treated as an
+     *  owner re-claim of the old session and silently keep the old mode. */
+    async swapSessionMode() {
+        if (!UI._axonosViewerAttached()) {
+            return;
+        }
+        const toSsh = UI.connectionKind !== 'terminal';
+        if (toSsh && !UI.axonosSshKeyLooksValid(UI.axonosSshPubkey())) {
+            UI.showStatus(_('Add a valid SSH public key (e.g. the contents of ~/.ssh/id_ed25519.pub) in the launch options before swapping to a console session.'), 'warn', 8000);
+            return;
+        }
+        const confirmed = await UI.showConfirm(
+            toSsh ? _("Swap to Console?") : _("Swap to Desktop?"),
+            toSsh
+                ? _("This ends the current desktop session (unsaved work in open applications is lost) and launches a headless SSH console session in its place. Files in your home folder and your remaining credits carry over.")
+                : _("This ends the current console session (running shell processes stop) and launches a full desktop session in its place. Files in your home folder and your remaining credits carry over."),
+            {
+                confirmText: toSsh ? _("Swap to Console") : _("Swap to Desktop"),
+                confirmType: 'danger'
+            }
+        );
+        if (!confirmed) {
+            return;
+        }
+        // Set the shared launch intent BEFORE releasing: both claim builders
+        // (ui.js and the page's own) read the live toggle, and a stale value
+        // would relaunch the old mode.
+        const previousIntent = !!window.axonosSshEnabled;
+        window.axonosSshEnabled = toSsh;
+        UI.persistAxonosSshState();
+        UI.updateAxonosSshUi();
+        window.axonosSessionDetached = false;
+        const released = await UI.disconnect({ releaseSource: 'swap-mode' });
+        if (!released) {
+            // Release unconfirmed: the old session may still be owned and
+            // running (disconnect already surfaced recovery UI). Do not launch
+            // a second session on top of it; restore the previous intent.
+            window.axonosSshEnabled = previousIntent;
+            UI.persistAxonosSshState();
+            UI.updateAxonosSshUi();
+            UI.showStatus(_('The current session could not be confirmed as released, so the swap was cancelled.'), 'error', 8000);
+            return;
+        }
+        UI.showStatus(toSsh ? _('Launching console session…') : _('Launching desktop session…'), 'normal');
+        // Let the post-release return-to-home transition settle before
+        // relaunching through the single UI.connect choke point.
+        setTimeout(() => UI.connect(), 1000);
+    },
+
     async restartDesktopSession() {
         if (!UI.connected && !window.axonosSessionDetached) return;
         const wallet = window.verifiedWalletAddress;
@@ -2829,6 +2883,30 @@ const UI = {
         const showDetach = viewerAttached && !window.axonosSessionDetached && !viewOnly;
         endBtn.classList.toggle('noVNC_hidden', !showEnd);
         detachBtn.classList.toggle('noVNC_hidden', !showDetach);
+        UI.updateAxonosSwapButton();
+    },
+
+    /** Relabel the sidebar swap button for the attached viewer's mode: a web
+     *  terminal (console session) offers "Swap to Desktop"; the desktop viewer
+     *  offers "Swap to Console". Hidden while no live viewer is attached (the
+     *  swap needs a current session to release and replace). */
+    updateAxonosSwapButton() {
+        const swapBtn = document.getElementById('axonos_sidebar_swap_btn');
+        if (!swapBtn) {
+            return;
+        }
+        const titleEl = document.getElementById('axonos_sidebar_swap_title');
+        const descEl = document.getElementById('axonos_sidebar_swap_desc');
+        const onConsole = UI.connectionKind === 'terminal';
+        swapBtn.classList.toggle('noVNC_hidden', !UI._axonosViewerAttached());
+        if (titleEl) {
+            titleEl.textContent = onConsole ? _('Swap to Desktop') : _('Swap to Console');
+        }
+        if (descEl) {
+            descEl.textContent = onConsole
+                ? _('End this console and relaunch as a desktop session')
+                : _('End this desktop and relaunch as an SSH console');
+        }
     },
 
     /** @deprecated alias */
@@ -4136,7 +4214,7 @@ const UI = {
                         try {
                             // A stable module URL keeps negotiation generation/cancellation
                             // state shared across retries and rapid user reconnects.
-                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260729e');
+                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260819b');
                             if (!connectAttemptIsCurrent()) {
                                 return;
                             }

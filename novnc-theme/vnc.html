@@ -109,7 +109,7 @@ Copyright (C) 2019 The noVNC Authors
     </script>
     <script src="app/error-handler.js"></script>
     <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
-    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260819a"></script>
+    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260819b"></script>
 </head>
 
 <body>
@@ -1749,6 +1749,22 @@ Copyright (C) 2019 The noVNC Authors
 
         <!-- Section 4: Control Actions -->
         <div class="axonos-sidebar-controls">
+            <button type="button" id="axonos_sidebar_swap_btn" class="axonos-sidebar-ctrl-btn">
+                <span class="axonos-sidebar-ctrl-btn__icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="17 1 21 5 17 9" />
+                        <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+                        <polyline points="7 23 3 19 7 15" />
+                        <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+                    </svg>
+                </span>
+                <span class="axonos-sidebar-ctrl-btn__details">
+                    <span class="axonos-sidebar-ctrl-btn__title" id="axonos_sidebar_swap_title">Swap to Console</span>
+                    <span class="axonos-sidebar-ctrl-btn__desc" id="axonos_sidebar_swap_desc">End this desktop and
+                        relaunch as an SSH console</span>
+                </span>
+            </button>
             <button type="button" id="axonos_sidebar_detach_btn" class="axonos-sidebar-ctrl-btn">
                 <span class="axonos-sidebar-ctrl-btn__icon">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -10308,6 +10324,12 @@ Copyright (C) 2019 The noVNC Authors
         if (sidebarEndBtn && typeof UI !== 'undefined' && typeof UI.endSession === 'function') {
             sidebarEndBtn.addEventListener('click', () => {
                 UI.endSession();
+            });
+        }
+        const sidebarSwapBtn = document.getElementById('axonos_sidebar_swap_btn');
+        if (sidebarSwapBtn && typeof UI !== 'undefined' && typeof UI.swapSessionMode === 'function') {
+            sidebarSwapBtn.addEventListener('click', () => {
+                UI.swapSessionMode();
             });
         }
         const sidebarTopupBtn = document.getElementById('axonos_sidebar_topup_btn');

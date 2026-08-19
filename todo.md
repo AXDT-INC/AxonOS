@@ -305,4 +305,27 @@ Fixes:
   and `bash -lc` launchers / supervisord `su -` services stay unchanged).
 - Verified the guard in all four scenarios (web-terminal-style interactive
   login PTY prints; SSH-env, non-interactive `-lc`, and no-tty all silent).
-- [ ] Deploy: rebuild the axonos image (profile.d snippet is baked in).
+- Updated `scripts/axonos-motd` to separate Session State & Storage descriptors (~ home, headless) from verified executable CLI commands on PATH (nvidia-smi, nvcc, mpirun, python3, jupyter-lab, gmx, pw.x, nextflow, ipfs, etc.).
+- [ ] Deploy: rebuild the axonos image (profile.d snippet and updated /etc/motd are baked in).
+
+## Sidebar mode-swap button (2026-08-19)
+
+- New sidebar button below End session: "Swap to Console" on desktop sessions,
+  "Swap to Desktop" on web-terminal (SSH console) sessions; label follows
+  UI.connectionKind via updateAxonosSwapButton() (refreshed with the other
+  session control buttons).
+- UI.swapSessionMode() (ui.js): mode is baked into the container runtime digest,
+  so a swap = confirmed release + fresh claim with the opposite requested_ssh
+  (home volume + credits are wallet-keyed and carry over). Intent
+  (window.axonosSshEnabled + toggle) is set BEFORE the release so both racing
+  claim builders read the new mode; an unconfirmed release aborts the swap and
+  restores the previous intent; relaunch goes through UI.connect. Desktop→
+  console requires a valid saved SSH pubkey up front.
+- No backend changes (reuses /api/session/release + /api/session/claim on both
+  gates). ui.js cache token bumped to 20260819b; webrtc module token aligned
+  (both lockstep tests were already stale at HEAD and are updated).
+- Tests: FrontendModeSwapContractTests in test_frontend_terminal.py; full suite
+  green (561 + 205 subtests).
+- Hot-deployed vnc.html + ui.js into the running gate container
+  (/usr/share/novnc) for immediate testing.
+- [ ] Deploy: image rebuild still pending (motd snippet, vnc.html, ui.js).
