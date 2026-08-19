@@ -339,7 +339,11 @@ Fixes:
       MOTD's "python3 = PyTorch CUDA runtime" line. PyMOL never needed the PATH entry;
       it is reached through the existing `/usr/local/bin/pymol` symlink.
 - [ ] Requires an image rebuild to take effect for newly provisioned homes.
-- [ ] NOTE: the line also persists in already-provisioned wallet home volumes, which
-      are mounted over the image's `/home/aXonian` — a rebuild can never reach those.
-      Consider a startup-time sweep of the mounted home rc files so existing volumes
-      self-heal instead of depending on when they were provisioned.
+- [x] Startup-time sweep added to `startup.sh`: the wallet home volume mounts over the
+      image's `/home/aXonian`, so a rebuild can never reach already-provisioned homes.
+      The sweep runs as root after the mount and before any user shell, so such homes
+      (including any restored from a backup) self-heal at launch. Anchored to the exact
+      line the image wrote, so a user's own conda setup is untouched; idempotent.
+- [ ] All 23 live volumes are currently clean; 19 `-backup` volumes still carry the
+      line, but the startup sweep now covers them if restored. Remove the sweep once no
+      such volume remains.

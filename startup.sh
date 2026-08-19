@@ -96,6 +96,21 @@ elif [ -z "${AXGT_SESSION_ID:-}" ]; then
     fi
 fi
 
+# The wallet-persistent home volume mounts OVER the image's /home/aXonian, so its
+# dotfiles mask whatever the image ships and no rebuild can reach them. Volumes
+# provisioned before the interpreter-prefix fix still carry a PATH line that shadows
+# the system python3 (torch/CUDA) with the 3D viewer's bundled interpreter; the same
+# applies to any such volume restored from a backup. Strip it here, after the mount
+# and before any user shell starts, so those homes self-heal at launch.
+# Anchored to the exact line the image used to write, so a conda prefix a user added
+# themselves is left alone. Idempotent. Removable once no such volume remains.
+for rc in /home/aXonian/.bashrc /home/aXonian/.profile; do
+    if [ -f "$rc" ] && grep -q '^export PATH="/opt/conda/bin:\$PATH"$' "$rc" 2>/dev/null; then
+        sed -i '\#^export PATH="/opt/conda/bin:\$PATH"$#d' "$rc" \
+            && echo "startup: removed stale interpreter-prefix PATH line from $rc"
+    fi
+done
+
 # Persist the selected environment template so the desktop session can align its
 # hero app with the user's choice. XFCE is started by supervisord with a fixed
 # environment= subset and does NOT inherit Docker ENV (see supervisord.conf), so
