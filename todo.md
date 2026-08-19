@@ -293,3 +293,16 @@ Fixes:
 - [ ] Optional follow-up: consider clamping explicit shrink requests up
       server-side (guard becomes informative note) — launcher-safe per review,
       but changes an intentional tested contract; decide separately.
+
+## Web terminal: show AxonOS banner (2026-08-19)
+
+- Root cause: the browser terminal execs `bash --login` on a raw PTY
+  (terminal_agent.py), bypassing sshd/PAM, so pam_motd never prints /etc/motd;
+  real SSH logins got the banner via the PAM session stack.
+- Fix: new scripts/axonos-motd-profile.sh installed by the Dockerfile as
+  /etc/profile.d/99-axonos-motd.sh — prints /etc/motd only for interactive
+  login shells with a tty and no $SSH_CONNECTION (so SSH doesn't double-print
+  and `bash -lc` launchers / supervisord `su -` services stay unchanged).
+- Verified the guard in all four scenarios (web-terminal-style interactive
+  login PTY prints; SSH-env, non-interactive `-lc`, and no-tty all silent).
+- [ ] Deploy: rebuild the axonos image (profile.d snippet is baked in).

@@ -487,6 +487,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssh-server 
 # dynamic boilerplate + the legal notice and ship a static AxonOS banner.
 COPY scripts/axonos-motd /etc/motd
 RUN rm -f /etc/update-motd.d/* /etc/legal
+# The browser terminal execs "bash --login" on a raw PTY (terminal_agent.py) —
+# no sshd/PAM, so pam_motd never runs there. This profile.d snippet prints the
+# banner for interactive non-SSH login shells only.
+COPY scripts/axonos-motd-profile.sh /etc/profile.d/99-axonos-motd.sh
 
 # Switch to aXonian user
 USER $USER
