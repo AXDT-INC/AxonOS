@@ -232,4 +232,10 @@ volumes:
   axonos_letsencrypt:
     # Fixed name so one-shot certbot runs can mount it without the compose
     # project prefix: docker run -v axonos_letsencrypt:/etc/letsencrypt ...
+    # External because certbot provisions it, not compose. Without this, a
+    # missing volume would be silently recreated EMPTY and the TLS listener
+    # would start with no certificate; external makes compose fail loudly
+    # instead. Create it before first bring-up on a new host:
+    #   docker volume create axonos_letsencrypt
+    external: true
     name: axonos_letsencrypt
