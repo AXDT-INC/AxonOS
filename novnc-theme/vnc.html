@@ -8877,7 +8877,8 @@ Copyright (C) 2019 The noVNC Authors
                 if (connectBtn) connectBtn.style.display = 'none';
                 if (userWrap) userWrap.style.display = 'flex';
                 if (addrEl) addrEl.textContent = wallet.slice(0, 6) + '…' + wallet.slice(-4);
-                if (creditsEl) creditsEl.textContent = (credits != null) ? Math.round(credits) : '0';
+                // "—" for an unknown balance: rendering 0 fabricates a zero.
+                if (creditsEl) creditsEl.textContent = (credits != null) ? Math.round(credits) : '—';
             } else {
                 if (connectBtn) connectBtn.style.display = 'block';
                 if (userWrap) userWrap.style.display = 'none';
@@ -10609,8 +10610,17 @@ Copyright (C) 2019 The noVNC Authors
             // credits / ≈0m" while the HUD correctly showed the real balance).
             axonosFetchWalletAccessStatus(wallet).then(res => {
                 if (!res || res.stale || !axonosPaymentIdentityIsCurrent(wallet)) return;
+                // A gate outage resolves { unavailable: true, data: {} }. Falling
+                // through coerced the missing balance to 0 and showed "0 credits /
+                // ≈0m" with a low-credit warning for the whole outage — a fabricated
+                // zero, the exact "credits disappeared" failure mode. Keep the
+                // last-known value instead: billing checkpoints only advance on
+                // heartbeats, which cannot land while the gate is down, so the
+                // pre-outage balance remains accurate until connectivity returns.
+                if (res.unavailable || res.ok !== true) return;
                 const data = (res && res.data) || {};
-                const credits = typeof data.remaining_minutes === 'number' ? data.remaining_minutes : 0;
+                if (typeof data.remaining_minutes !== 'number') return;
+                const credits = data.remaining_minutes;
                 const creditsValEl = document.getElementById('axonos_sidebar_credits');
                 const creditsProgress = document.getElementById('axonos_sidebar_credits_progress');
                 const timeLeftEl = document.getElementById('axonos_sidebar_time_left');

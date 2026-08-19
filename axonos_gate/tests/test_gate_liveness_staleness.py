@@ -273,5 +273,23 @@ class TestExpireStaleSessionAccounting(unittest.TestCase):
         self.assertIn("hard_expires_at", sql)
 
 
+class TestOutageCreditsRendering(unittest.TestCase):
+    """A gate outage must never render as a zero balance.
+
+    The sidebar polls wallet-status; while the gate is down the fetch resolves
+    { unavailable: true, data: {} } and the missing balance was coerced to 0 —
+    showing "0 credits / ≈0m" with a low-credit warning for the whole outage.
+    """
+
+    def test_sidebar_bails_on_unavailable_instead_of_coercing_zero(self):
+        import pathlib
+        page = (pathlib.Path(_repo_root) / "novnc-theme" / "vnc.html").read_text()
+        i = page.index("getElementById('axonos_sidebar_credits')")
+        region = page[max(0, i - 2000):i]
+        self.assertIn("if (res.unavailable || res.ok !== true) return;", region)
+        self.assertIn("if (typeof data.remaining_minutes !== 'number') return;", region)
+        self.assertNotIn("data.remaining_minutes : 0", region)
+
+
 if __name__ == "__main__":
     unittest.main()

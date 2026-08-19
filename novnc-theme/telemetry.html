@@ -386,7 +386,10 @@ function setError() {
 // ── GPU grid ──
 function renderGpus(gpus) {
   const el = document.getElementById('gpu-grid');
-  if (!gpus.length) { el.innerHTML = ''; return; }
+  // Empty means the live feed is unreachable or its cache is stale (never
+  // render stale GPU numbers as live). Say so instead of leaving silent
+  // blank space that reads as a broken page.
+  if (!gpus.length) { el.innerHTML = '<span class="no-live">GPU telemetry unavailable — waiting for the live feed.</span>'; return; }
   el.innerHTML = gpus.map(g => {
     const util = g.utilization_pct ?? 0;
     const memPct = g.memory_total_mb ? Math.round((g.memory_used_mb / g.memory_total_mb) * 100) : 0;
