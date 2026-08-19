@@ -242,3 +242,54 @@ test_frontend_detached_restore.py::test_expired_auth_token_recovers_without_dead
 
 - [ ] Deploy: vnc.html is inline-script only (no ui.js change, no version bump
       needed); restart/redeploy the gate static serve on clu1.
+
+## "Deposit not credited" after in-wizard AXGT payment (2026-08-19) — FIXED, pending deploy
+
+Report (wallet 0x34d9…4eca, 2026-08-18 ~16:13 UTC): paid 400 AXGT in the new-
+session wizard, then "cannot reduce storage from 200 to 100 GB", bounced to
+the main screen, deposit looked lost. Ledger truth: the deposit WAS credited
+(+50.445 min, correct at the live oracle price +25% bonus) and the 16:17 retry
+launched session 333, which consumed all of it — nothing to refund.
+
+Root cause chain (all confirmed in code):
+1. The wizard's storage-floor fetch silently degraded (wallet-status without
+   capacity fields / floor keyed to '' when wizard opened pre-connect), yet
+   axonosApplyWizardStorageContext stamped the floor "resolved" at 10 GB.
+2. The post-payment auto-claim fabricated an explicit requested_storage_gb=100
+   from the slider default; the gate's growth-only guard rejected it (HTTP 200,
+   granted:false, error_code storage_below_provisioned) with NO server log.
+3. The structured recovery in handleSessionClaimDenied refused to apply (floor
+   keyed to the wrong wallet) → generic "Cannot connect" overlay; the
+   "Credited 50.4 min." dialog had been closed ~1s earlier by the auto-claim.
+
+Fixes:
+- session_manager.billing_context_for_wallet always emits minimum_storage_gb
+  (10 when no volume) on successful queries → clients can tell "no volume"
+  from "degraded context"; both storage claim rejections now log WARNING.
+- vnc.html: floorResolved only set when a capacity field actually arrived;
+  wizard-open/step-3 handlers discard unavailable/non-2xx wallet-status;
+  axonosRequestedStorageGbForClaim returns null (claim OMITS storage — server
+  preserves the volume via the existing max() clamp) when the floor is not
+  resolved-and-keyed, unless the user edited the slider this wizard;
+  handleSessionClaimDenied re-keys the floor before applying the rejection's
+  storage context so recovery always lands in wizard step 2; warning copy now
+  says the setting was corrected and the credit balance is unaffected.
+- ui.js claim builder mirrors the omit-on-null contract and passes the
+  claim-time wallet into the denial handler (a denial that outlives a wallet
+  switch must never re-key the new wallet's floor/preferences — found by
+  adversarial review); recovery runs only while the claim wallet is current.
+- When the floor is unknown the claim falls back to the wallet's saved
+  preference before omitting (so a degraded status doesn't shrink the volume
+  a fresh wallet's UI promised); step 3 re-keys a ''-keyed floor (wizard
+  opened pre-connect no longer leaves Launch a silent no-op) and shows the
+  balance rail as "—" on degraded status.
+- Tests: test_access_and_billing.py (explicit 10 GB floor, WARNING on reject),
+  test_frontend_detached_restore.py (resolved-only-with-capacity, omit-on-null
+  in both claim builders, recovery re-key + identity guard, preference
+  fallback, split copy). Full suite green (558 + 205 subtests).
+
+- [ ] Deploy: rebuild the axonos image (vnc.html + ui.js + session_manager.py
+      are baked in) and restart the gate container.
+- [ ] Optional follow-up: consider clamping explicit shrink requests up
+      server-side (guard becomes informative note) — launcher-safe per review,
+      but changes an intentional tested contract; decide separately.

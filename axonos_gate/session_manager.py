@@ -200,6 +200,13 @@ def billing_context_for_wallet(wallet_address: str) -> Dict[str, Any]:
                     int(row_storage[1]) + gib - 1
                 ) // gib
                 ctx["minimum_storage_gb"] = ctx["provisioned_storage_gb"]
+            else:
+                # A volume-less wallet must still get an explicit floor (the
+                # global 10 GB minimum). Clients treat a MISSING minimum as a
+                # degraded context and must not build an explicit storage
+                # request from local defaults — that is how a 200 GB wallet
+                # once received a 100 GB request and a growth-only rejection.
+                ctx["minimum_storage_gb"] = 10
         if owned:
             gpu_ids = owned.get("gpu_ids") or []
             profile = owned.get("requested_profile")
@@ -1588,6 +1595,12 @@ def try_claim_session(
                     and provisioned_storage_gb > 500
                 ):
                     conn.commit()
+                    logger.warning(
+                        "Claim rejected for %s: provisioned storage %s GB "
+                        "exceeds the 500 GB launch limit",
+                        _mask(wallet),
+                        provisioned_storage_gb,
+                    )
                     return {
                         "granted": False,
                         "allocation_status": "rejected",
@@ -1606,6 +1619,13 @@ def try_claim_session(
                     and storage_gb_val < provisioned_storage_gb
                 ):
                     conn.commit()
+                    logger.warning(
+                        "Claim rejected for %s: explicit storage request "
+                        "%s GB is below the provisioned %s GB volume",
+                        _mask(wallet),
+                        storage_gb_val,
+                        provisioned_storage_gb,
+                    )
                     return {
                         "granted": False,
                         "allocation_status": "rejected",

@@ -56,6 +56,28 @@ class TestAccessControl(unittest.TestCase):
         self.assertEqual(storage_query.args[1], (wallet, wallet))
         conn.close.assert_called_once()
 
+    def test_volume_less_wallet_gets_explicit_minimum_storage_floor(self):
+        # Clients distinguish "no volume yet" (minimum_storage_gb = 10) from a
+        # degraded billing context (field absent). Without the explicit floor
+        # a degraded response is indistinguishable and the wizard once
+        # fabricated a 100 GB request against a 200 GB volume.
+        from axonos_gate import session_manager
+
+        conn = MagicMock()
+        cur = MagicMock()
+        conn.cursor.return_value.__enter__.return_value = cur
+        cur.fetchone.return_value = (None, None)
+        wallet = "0x1234567890123456789012345678901234567890"
+
+        with patch.object(session_manager, "_gpu_billing_enabled", return_value=False), \
+             patch.object(session_manager, "_init_once", return_value=True), \
+             patch.object(session_manager, "_get_connection", return_value=conn):
+            context = session_manager.billing_context_for_wallet(wallet)
+
+        self.assertEqual(context["minimum_storage_gb"], 10)
+        self.assertNotIn("provisioned_storage_gb", context)
+        self.assertNotIn("requested_storage_gb", context)
+
     def test_verifier_supports_deployed_flat_module_billing_import(self):
         verifier_path = os.path.join(_repo_root, "axonos_gate", "axgt_verifier.py")
         with open(verifier_path, "r", encoding="utf-8") as handle:
@@ -764,12 +786,18 @@ class TestBillingAndSession(unittest.TestCase):
         ) as choose, patch.object(
             session_manager, "_spawn_session_container"
         ) as spawn:
-            result = session_manager.try_claim_session(
-                wallet,
-                "small",
-                requested_storage_gb=100,
-            )
+            with self.assertLogs(session_manager.logger, level="WARNING") as logs:
+                result = session_manager.try_claim_session(
+                    wallet,
+                    "small",
+                    requested_storage_gb=100,
+                )
 
+        # The rejection must leave a durable trace: the incident window of
+        # 2026-08-18 was invisible because this branch logged nothing.
+        self.assertTrue(
+            any("below the provisioned" in line for line in logs.output)
+        )
         self.assertFalse(result["granted"])
         self.assertEqual(result["allocation_status"], "rejected")
         self.assertEqual(result["error_code"], "storage_below_provisioned")

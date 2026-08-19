@@ -109,7 +109,7 @@ Copyright (C) 2019 The noVNC Authors
     </script>
     <script src="app/error-handler.js"></script>
     <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
-    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260729e"></script>
+    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260819a"></script>
 </head>
 
 <body>
@@ -2927,8 +2927,13 @@ Copyright (C) 2019 The noVNC Authors
                     payload.requested_template = window.axonosSelectedTemplateId;
                 }
                 if (typeof window.axonosRequestedStorageGbForClaim === 'function') {
-                    payload.requested_storage_gb =
-                        window.axonosRequestedStorageGbForClaim(wallet);
+                    var claimStorageGb = window.axonosRequestedStorageGbForClaim(wallet);
+                    // null = capacity unknown: omit the field so the server
+                    // keeps the provisioned volume instead of rejecting a
+                    // fabricated shrink.
+                    if (claimStorageGb !== null) {
+                        payload.requested_storage_gb = claimStorageGb;
+                    }
                 }
             }
             // SSH intent must ride this claim too: it races (and may win) the ui.js
@@ -4141,22 +4146,38 @@ Copyright (C) 2019 The noVNC Authors
             });
         }
 
-        function handleSessionClaimDenied(claim, fallbackReason) {
+        function handleSessionClaimDenied(claim, fallbackReason, claimWallet) {
             if (typeof window.axonosHideConnectionLoader === 'function') {
                 window.axonosHideConnectionLoader(true);
             }
             if (claim && claim.error_code === 'storage_below_provisioned') {
-                var storageWallet = window.verifiedWalletAddress || verifiedWalletAddress;
-                var storageContext = axonosApplyWizardStorageContext(
-                    storageWallet,
-                    claim,
-                    axonosWizardStorageGeneration
-                );
-                if (storageContext.applied) {
-                    axonosUpdateActiveScreen('wizard');
-                    axonosGoToWizardStep(2);
-                    axonosShowStorageGrowthOnlyWarning();
-                    return;
+                var storageWallet = claimWallet ||
+                    window.verifiedWalletAddress || verifiedWalletAddress;
+                // A denial that outlived a wallet switch must not re-key
+                // another wallet's floor state or preferences: recover only
+                // while the claim's wallet is still the signed-in identity.
+                if (storageWallet && axonosPaymentIdentityIsCurrent(storageWallet)) {
+                    // This denial usually means the wizard's floor state was
+                    // never keyed to this wallet — the exact state that let
+                    // the too-small request out. Re-key it so the
+                    // authoritative floor carried by this response can apply;
+                    // otherwise the recovery below dead-ends into the
+                    // generic overlay.
+                    if (axonosStorageWalletKey(storageWallet) !== axonosWizardStorageFloorWallet) {
+                        axonosResetStorageFloor(storageWallet);
+                        axonosRestoreStoragePreference(storageWallet);
+                    }
+                    var storageContext = axonosApplyWizardStorageContext(
+                        storageWallet,
+                        claim,
+                        axonosWizardStorageGeneration
+                    );
+                    if (storageContext.applied) {
+                        axonosUpdateActiveScreen('wizard');
+                        axonosGoToWizardStep(2);
+                        axonosShowStorageGrowthOnlyWarning({ afterClaimDenial: true });
+                        return;
+                    }
                 }
             }
             if (axonosClaimReasonNeedsWalletOrResume(claim)) {
@@ -4179,8 +4200,8 @@ Copyright (C) 2019 The noVNC Authors
         }
 
         /** Called from ui.js when Launch runs connect while session is not claimed. */
-        window.axonosOnSessionClaimDenied = function (claim) {
-            handleSessionClaimDenied(claim, 'Session claim denied.');
+        window.axonosOnSessionClaimDenied = function (claim, claimWallet) {
+            handleSessionClaimDenied(claim, 'Session claim denied.', claimWallet);
         };
 
         function tryConnectAfterClaim(claim) {
@@ -9450,8 +9471,13 @@ Copyright (C) 2019 The noVNC Authors
                     axonosWizardStorageFloorGb,
                     provisionedGb
                 );
+                // Only a response that actually carried a capacity field
+                // resolves the floor. Gates always send minimum_storage_gb
+                // (10 when no volume exists), so data without it means a
+                // degraded billing context — treating that as "resolved at
+                // 10 GB" is how a 200 GB wallet once sent a 100 GB claim.
+                axonosWizardStorageFloorResolved = true;
             }
-            axonosWizardStorageFloorResolved = true;
             axonosUpdateStorageFloorUi();
 
             var adjusted = selectedGb === null || selectedGb < axonosWizardStorageFloorGb;
@@ -9484,24 +9510,53 @@ Copyright (C) 2019 The noVNC Authors
             };
         }
 
-        function axonosShowStorageGrowthOnlyWarning() {
+        function axonosShowStorageGrowthOnlyWarning(options) {
+            var afterClaimDenial = !!(options && options.afterClaimDenial);
             if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
                 UI.showStatus(
                     'Your existing volume is ' + axonosWizardStorageFloorGb +
-                    ' GB and cannot be reduced. Review the updated storage setting, then launch again.',
+                    ' GB and cannot be reduced. The storage setting has been ' +
+                    'raised to match it.' +
+                    (afterClaimDenial
+                        // Only the post-rejection path mentions payment: this
+                        // toast is the last thing a user sees after a denied
+                        // launch, and it must never read as a lost deposit.
+                        ? ' Your deposit and credit balance are unaffected — ' +
+                          'launch again when ready.'
+                        : ''),
                     'warn',
-                    7000
+                    afterClaimDenial ? 10000 : 7000
                 );
             }
         }
 
         function axonosRequestedStorageGbForClaim(wallet) {
             var walletKey = axonosStorageWalletKey(wallet);
-            var floorGb = walletKey && walletKey === axonosWizardStorageFloorWallet
-                ? axonosWizardStorageFloorGb : 10;
+            var floorKnown = !!walletKey &&
+                walletKey === axonosWizardStorageFloorWallet &&
+                axonosWizardStorageFloorResolved;
             var slider = document.getElementById('axonos_wizard_storage_slider');
             var selectedGb = slider ? axonosNormalizeStorageGb(slider.value) : null;
-            var storageGb = Math.max(selectedGb === null ? 100 : selectedGb, floorGb);
+            if (!floorKnown) {
+                // Without this wallet's authoritative floor, an "explicit"
+                // request would be fabricated from the slider default and can
+                // trip the server's growth-only guard (a 200 GB wallet must
+                // never receive a 100 GB request). Send the user's own edit
+                // if they made one this wizard, else the wallet's saved
+                // preference (it tracks the last resolved launch size, so it
+                // is not a shrink in practice — and a stale-low value is
+                // healed by the rejection recovery). Otherwise return null so
+                // the claim omits storage and the server preserves the volume.
+                if (axonosWizardStorageUserEdited && selectedGb !== null) {
+                    axonosWriteStoragePreference(wallet, selectedGb);
+                    return selectedGb;
+                }
+                return axonosReadStoragePreference(wallet);
+            }
+            var storageGb = Math.max(
+                selectedGb === null ? 100 : selectedGb,
+                axonosWizardStorageFloorGb
+            );
             axonosApplyStorageSelection(storageGb);
             axonosWriteStoragePreference(wallet, storageGb);
             axonosUpdateWizardSummaryRail();
@@ -9524,7 +9579,8 @@ Copyright (C) 2019 The noVNC Authors
             axonosRestoreStoragePreference(wizardWallet);
             if (wizardWallet) {
                 axonosFetchWalletAccessStatus(wizardWallet).then(function (res) {
-                    if (!res || res.stale || !axonosPaymentIdentityIsCurrent(wizardWallet)) return;
+                    if (!res || res.stale || res.unavailable || res.ok === false ||
+                        !axonosPaymentIdentityIsCurrent(wizardWallet)) return;
                     const data = (res && res.data) || {};
                     const storageContext = axonosApplyWizardStorageContext(
                         wizardWallet,
@@ -9799,6 +9855,13 @@ Copyright (C) 2019 The noVNC Authors
 
                 if (wallet) {
                     const storageGeneration = axonosWizardStorageGeneration;
+                    // The wizard can be opened before the wallet connects,
+                    // leaving the floor keyed to ''. Re-key it here so the
+                    // status fetch below can apply the authoritative floor
+                    // (otherwise Launch silently no-ops at its preflight).
+                    if (axonosStorageWalletKey(wallet) !== axonosWizardStorageFloorWallet) {
+                        axonosResetStorageFloor(wallet);
+                    }
                     const savedStorageGb = axonosReadStoragePreference(wallet);
                     if (!axonosWizardStorageUserEdited && savedStorageGb !== null) {
                         axonosApplyStorageSelection(savedStorageGb);
@@ -9808,7 +9871,16 @@ Copyright (C) 2019 The noVNC Authors
                     if (railBalanceRow) railBalanceRow.style.display = 'flex';
 
                     axonosFetchWalletAccessStatus(wallet).then(res => {
-                        if (!res || res.stale || !axonosPaymentIdentityIsCurrent(wallet)) return;
+                        if (!res || res.stale || res.unavailable || res.ok === false ||
+                            !axonosPaymentIdentityIsCurrent(wallet)) {
+                            // Degraded status must not apply as data, but the
+                            // rail should say "unknown", not show a stale value.
+                            if (res && !res.stale && (res.unavailable || res.ok === false) &&
+                                railBalanceVal) {
+                                railBalanceVal.textContent = '—';
+                            }
+                            return;
+                        }
                         const data = (res && res.data) || {};
                         const storageContext = axonosApplyWizardStorageContext(
                             wallet,

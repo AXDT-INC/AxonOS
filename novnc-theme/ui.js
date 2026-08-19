@@ -3181,8 +3181,12 @@ const UI = {
                 payload.requested_template = window.axonosSelectedTemplateId;
             }
             if (typeof window.axonosRequestedStorageGbForClaim === 'function') {
-                payload.requested_storage_gb =
-                    window.axonosRequestedStorageGbForClaim(wallet);
+                const requestedStorageGb = window.axonosRequestedStorageGbForClaim(wallet);
+                // null = capacity unknown: omit the field so the server keeps
+                // the provisioned volume instead of rejecting a fabricated shrink.
+                if (requestedStorageGb !== null) {
+                    payload.requested_storage_gb = requestedStorageGb;
+                }
             }
         }
         // SSH intent is sent on every claim (including reload re-claims) so the
@@ -4019,7 +4023,10 @@ const UI = {
                     const hasReason = !!(claim && claim.reason);
                     UI.showStatus(reason, hasReason ? 'error' : 'warn');
                     if (typeof window.axonosOnSessionClaimDenied === 'function') {
-                        window.axonosOnSessionClaimDenied(claim || {});
+                        // Pass the wallet this claim was made for so a denial
+                        // that outlives a wallet switch cannot re-key the new
+                        // wallet's storage-floor state.
+                        window.axonosOnSessionClaimDenied(claim || {}, walletAtConnectStart);
                     }
                     return;
                 }

@@ -248,7 +248,7 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         )
         apply_context = self._page_between(
             "function axonosApplyWizardStorageContext(wallet, data, generation)",
-            "function axonosShowStorageGrowthOnlyWarning()",
+            "function axonosShowStorageGrowthOnlyWarning(options)",
         )
         wizard_start = self._page_between(
             "function axonosStartWizard()",
@@ -290,7 +290,7 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         )
         apply_context = self._page_between(
             "function axonosApplyWizardStorageContext(wallet, data, generation)",
-            "function axonosShowStorageGrowthOnlyWarning()",
+            "function axonosShowStorageGrowthOnlyWarning(options)",
         )
         wizard_start = self._page_between(
             "function axonosStartWizard()",
@@ -321,7 +321,19 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
             apply_context.index("var selectedGb = slider"),
             apply_context.index("axonosUpdateStorageFloorUi()"),
         )
+        # The resolved flag may only be stamped by a response that actually
+        # carried a capacity field; degraded/empty billing context must leave
+        # the floor unresolved so claims omit storage instead of fabricating
+        # an explicit (and rejectable) shrink to the 100 GB default.
         self.assertIn("axonosWizardStorageFloorResolved = true", apply_context)
+        self.assertLess(
+            apply_context.index("provisionedGb !== null"),
+            apply_context.index("axonosWizardStorageFloorResolved = true"),
+        )
+        self.assertLess(
+            apply_context.index("axonosWizardStorageFloorResolved = true"),
+            apply_context.index("axonosUpdateStorageFloorUi()"),
+        )
         self.assertIn("selectedGb < axonosWizardStorageFloorGb", apply_context)
         self.assertIn(
             "axonosApplyStorageSelection(effectiveSelectionGb)",
@@ -350,7 +362,7 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
             "function axonosResetStorageFloor(wallet)",
         )
         warning = self._page_between(
-            "function axonosShowStorageGrowthOnlyWarning()",
+            "function axonosShowStorageGrowthOnlyWarning(options)",
             "function axonosRequestedStorageGbForClaim(wallet)",
         )
 
@@ -382,7 +394,13 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         self.assertIn("unused selected capacity is not billed", selection_copy)
         self.assertIn("Your existing volume is ", warning)
         self.assertIn("GB and cannot be reduced", warning)
-        self.assertIn("Review the updated storage setting, then launch again", warning)
+        self.assertIn("raised to match it", warning)
+        # Payment reassurance rides only the post-rejection variant — the
+        # toast also fires from slider/wizard adjustments where no payment
+        # happened and must not mention deposits there.
+        self.assertIn("afterClaimDenial", warning)
+        self.assertIn("Your deposit and credit balance are unaffected", warning)
+        self.assertIn("launch again when ready", warning)
         self.assertIn("'warn'", warning)
 
     def test_both_claim_paths_use_floor_checked_storage_selection(self) -> None:
@@ -399,6 +417,42 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
             self.assertIn("payload.requested_storage_gb", claim)
             self.assertIn(expected, claim)
             self.assertNotIn("axonos_wizard_storage_slider", claim)
+        # A null from the helper means "capacity unknown" — both claim
+        # builders must OMIT the field (server preserves the provisioned
+        # volume) rather than send a fabricated explicit value.
+        self.assertIn("if (claimStorageGb !== null)", page_claim)
+        self.assertIn("if (requestedStorageGb !== null)", ui_claim)
+
+    def test_unresolved_floor_never_fabricates_explicit_storage(self) -> None:
+        helper = self._page_between(
+            "function axonosRequestedStorageGbForClaim(wallet)",
+            "window.axonosRequestedStorageGbForClaim = axonosRequestedStorageGbForClaim;",
+        )
+
+        self.assertIn("axonosWizardStorageFloorResolved", helper)
+        self.assertIn("walletKey === axonosWizardStorageFloorWallet", helper)
+        unresolved_branch = helper.split("if (!floorKnown)", 1)[1].split(
+            "var storageGb = Math.max(", 1
+        )[0]
+        # While the floor is unknown, only a slider value the user actively
+        # set this wizard — or the wallet's own saved preference — may be
+        # sent; with neither, the helper returns null (claim omits storage).
+        self.assertIn("axonosWizardStorageUserEdited && selectedGb !== null", unresolved_branch)
+        self.assertIn("return axonosReadStoragePreference(wallet);", unresolved_branch)
+
+        # Wizard-open and step-3 handlers must discard failed or non-2xx
+        # wallet-status responses instead of applying empty data.
+        wizard_start = self._page_between(
+            "function axonosStartWizard()",
+            "window.axonosStartWizard = axonosStartWizard;",
+        )
+        step_three = self._page_between(
+            "// Wallet view state checks in Step 3",
+            "window.axonosGoToWizardStep = axonosGoToWizardStep;",
+        )
+        for flow in (wizard_start, step_three):
+            self.assertIn("res.unavailable", flow)
+            self.assertIn("res.ok === false", flow)
 
     def test_launch_preflight_aborts_when_authoritative_floor_adjusts(self) -> None:
         launch = self._page_between(
@@ -430,20 +484,37 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
 
     def test_structured_storage_rejection_returns_to_hardware_step(self) -> None:
         denied = self._page_between(
-            "function handleSessionClaimDenied(claim, fallbackReason)",
+            "function handleSessionClaimDenied(claim, fallbackReason, claimWallet)",
             "/** Called from ui.js when Launch runs connect while session is not claimed. */",
         )
         storage_rejection = denied.split(
             "if (claim && claim.error_code === 'storage_below_provisioned')", 1
         )[1].split("if (axonosClaimReasonNeedsWalletOrResume(claim))", 1)[0]
 
+        # The denial usually arrives in the exact state that produced it: a
+        # floor keyed to '' or another wallet. Recovery must re-key before
+        # applying, or the apply guard rejects and the user dead-ends into
+        # the generic overlay with the deposit seemingly lost. But a denial
+        # that outlived a wallet switch must never re-key the NEW wallet's
+        # state — recovery runs only while the claim wallet is current.
+        self.assertIn("axonosPaymentIdentityIsCurrent(storageWallet)", storage_rejection)
+        self.assertLess(
+            storage_rejection.index("axonosPaymentIdentityIsCurrent(storageWallet)"),
+            storage_rejection.index("axonosResetStorageFloor(storageWallet);"),
+        )
+        self.assertIn("axonosResetStorageFloor(storageWallet);", storage_rejection)
+        self.assertIn("axonosRestoreStoragePreference(storageWallet);", storage_rejection)
+        self.assertLess(
+            storage_rejection.index("axonosResetStorageFloor(storageWallet);"),
+            storage_rejection.index("axonosApplyWizardStorageContext("),
+        )
         self.assertIn("axonosApplyWizardStorageContext(", storage_rejection)
         self.assertIn("claim,", storage_rejection)
         self.assertIn("axonosWizardStorageGeneration", storage_rejection)
         self.assertIn("if (storageContext.applied)", storage_rejection)
         self.assertIn("axonosUpdateActiveScreen('wizard');", storage_rejection)
         self.assertIn("axonosGoToWizardStep(2);", storage_rejection)
-        self.assertIn("axonosShowStorageGrowthOnlyWarning();", storage_rejection)
+        self.assertIn("axonosShowStorageGrowthOnlyWarning({ afterClaimDenial: true });", storage_rejection)
         self.assertIn("return;", storage_rejection)
 
     def test_storage_telemetry_uses_allocated_blocks_not_total_minus_free(self) -> None:
