@@ -146,6 +146,9 @@ try:
         get_active_session,
         get_active_desktop_session_for_wallet,
         heartbeat as session_heartbeat,
+        gate_liveness_interval_seconds,
+        prime_gate_liveness,
+        stamp_gate_liveness,
         is_session_owner,
         release_session,
         restart_desktop_session,
@@ -160,6 +163,9 @@ except ImportError:
             get_active_session,
             get_active_desktop_session_for_wallet,
             heartbeat as session_heartbeat,
+            gate_liveness_interval_seconds,
+            prime_gate_liveness,
+            stamp_gate_liveness,
             is_session_owner,
             release_session,
             restart_desktop_session,
@@ -1927,6 +1933,17 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             # Auth: wallet token (browser) OR per-session files_key (runtime daemon).
             # ssh_active: daemon-reported live sshd connection -> renews the SSH hard cap.
             ssh_active = bool(data.get('ssh_active'))
+            # Record that THIS process is serving before session_heartbeat runs
+            # the stale sweep. The in-container daemons post here, so this is
+            # the process that decides liveness; without a presence stamp a
+            # redeploy gap looks like sessions going silent and every live
+            # session is reaped ~120s after this listener returns. Stamped
+            # inline (no background thread: this process is contractually
+            # thread-free) and throttled internally to the liveness interval.
+            try:
+                _maybe_stamp_gate_liveness()
+            except Exception:  # noqa: BLE001 - presence is best-effort
+                pass
             session_key = (self.headers.get('X-AXGT-Session-Key') or data.get('session_key') or '').strip()
             if session_key and validate_session_files_key and validate_session_files_key(wallet_address, session_key):
                 return self._send_json(200, session_heartbeat(wallet_address, ssh_active=ssh_active))
@@ -2481,6 +2498,24 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         logger.info("WebSocket upgrade approved: %s", mask_wallet_address(wallet_address))
         return super().handle_upgrade()
 
+_last_liveness_stamp_at = 0.0
+
+
+def _maybe_stamp_gate_liveness() -> None:
+    """Stamp control-plane presence, at most once per liveness interval.
+
+    Called from the heartbeat handler rather than a background thread: this
+    process is contractually thread-free (see the proxy-source contract test),
+    and a heartbeat arriving IS the proof that this listener is serving.
+    """
+    global _last_liveness_stamp_at
+    now = time.time()
+    if (now - _last_liveness_stamp_at) < gate_liveness_interval_seconds():
+        return
+    _last_liveness_stamp_at = now
+    stamp_gate_liveness()
+
+
 def main():
     """Run websockify server with wallet gating + same-origin /api/auth/verify-wallet."""
     # Get configuration
@@ -2490,13 +2525,23 @@ def main():
     target_port = int(os.getenv('VNC_PORT', '5901'))
     web_dir = os.getenv('NOVNC_WEB_DIR', '/usr/share/novnc')
     
+    # Measure the previous gate's downtime BEFORE serving any heartbeat. This
+    # process runs the stale sweep (the in-container daemons post here), so
+    # without this it reaps on raw wall-clock and ends every live session ~120s
+    # after a redeploy.
+    if _session_mgr_available:
+        try:
+            prime_gate_liveness()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not measure prior gate downtime: %s", exc)
+
     logger.info(f"Starting Websockify on {listen_host}:{listen_port}")
     logger.info(f"Target: {target_host}:{target_port}")
     logger.info(
         "AXGT gate enabled: /api/auth/{challenge,verify-wallet,wallet-status} "
         "served on same origin; WebSocket upgrades require wallet + auth token"
     )
-    
+
     # Create and run the proxy (listen_host so tunnel/cloudflared can reach localhost:6080)
     proxy_kw = dict(
         RequestHandlerClass=AxonOSProxyRequestHandler,

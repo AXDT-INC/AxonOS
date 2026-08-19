@@ -4229,7 +4229,7 @@ const UI = {
                         try {
                             // A stable module URL keeps negotiation generation/cancellation
                             // state shared across retries and rapid user reconnects.
-                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260819b');
+                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260819e');
                             if (!connectAttemptIsCurrent()) {
                                 return;
                             }
@@ -4383,10 +4383,17 @@ const UI = {
             }
         };
 
+        // A transport recovery (gate redeploy / network blip) is not a new
+        // grant of authority: the wallet was already verified for THIS session
+        // and the session is still running. Re-verify silently so an outage
+        // never interrupts the user with a wallet popup; a changed or locked
+        // account still fails the check and routes to the normal flow.
+        const recoveringExistingViewer = UI._axonosReconnectAttempt > 0
+            && !UI.inhibitReconnect;
         if (preclaimedResumeAtConnectStart && pendingResumeClaim.walletPreflightDone === true) {
             proceedAfterPreflight();
         } else if (typeof window.axonosEnsureWalletSessionCurrent === 'function') {
-            window.axonosEnsureWalletSessionCurrent({ requestPermission: true })
+            window.axonosEnsureWalletSessionCurrent({ requestPermission: !recoveringExistingViewer })
                 .then((ok) => {
                     if (!connectAttemptIsCurrent()) {
                         return;
@@ -4684,6 +4691,46 @@ const UI = {
             .finally(finishDisconnect);
     },
 
+    // Bounded exponential backoff for viewer recovery. A gate redeploy takes
+    // ~40s before it accepts connections again, so a flat short retry would
+    // hammer a listener that is still starting up. Reset on every successful
+    // connect (see _axonosResetReconnectBackoff).
+    _AXONOS_RECONNECT_BASE_MS: 2000,
+    _AXONOS_RECONNECT_MAX_MS: 20000,
+    _AXONOS_RECONNECT_MAX_ATTEMPTS: 12,
+    _axonosReconnectAttempt: 0,
+
+    _axonosResetReconnectBackoff() {
+        UI._axonosReconnectAttempt = 0;
+    },
+
+    // Shared by the WebRTC recovery path so both transports back off together.
+    _axonosRecoveryDelayMs() {
+        UI._axonosReconnectAttempt += 1;
+        return Math.min(
+            UI._AXONOS_RECONNECT_MAX_MS,
+            UI._AXONOS_RECONNECT_BASE_MS * Math.pow(2, UI._axonosReconnectAttempt - 1)
+        );
+    },
+
+    _axonosScheduleRfbReconnect() {
+        if (UI.inhibitReconnect) { return; }
+        if (UI.reconnectCallback !== null && UI.reconnectCallback !== undefined) { return; }
+        UI._axonosReconnectAttempt += 1;
+        if (UI._axonosReconnectAttempt > UI._AXONOS_RECONNECT_MAX_ATTEMPTS) {
+            UI._axonosResetReconnectBackoff();
+            UI.updateVisualState('disconnected');
+            UI.showStatus(_("Could not reconnect to your session"), 'error');
+            UI._axonosReturnToHomeAfterDisconnect({ preserveStatus: true, resetWebRtc: false });
+            return;
+        }
+        const delay = Math.min(
+            UI._AXONOS_RECONNECT_MAX_MS,
+            UI._AXONOS_RECONNECT_BASE_MS * Math.pow(2, UI._axonosReconnectAttempt - 1)
+        );
+        UI.reconnectCallback = setTimeout(UI.reconnect, delay);
+    },
+
     reconnect() {
         UI.reconnectCallback = null;
 
@@ -4716,6 +4763,9 @@ const UI = {
         UI.connectionKind = 'rfb';
         window.axonosSessionDetached = false;
         UI.inhibitReconnect = false;
+        // A viewer that reached CONNECTED starts the next recovery from the
+        // shortest delay rather than inheriting the previous outage's backoff.
+        UI._axonosResetReconnectBackoff();
         if (typeof window.axonosHideConnectionLoader === 'function') {
             window.axonosHideConnectionLoader(true);
         }
@@ -4783,6 +4833,17 @@ const UI = {
         const overlay = document.getElementById('axonos_usage_overlay');
         if (!overlay || !overlay.classList.contains('axonos-usage-overlay--locked')) {
             UI._axgtUpdateUsageOverlay('hidden');
+        }
+
+        // An unclean drop of an established viewer is exactly the control-plane
+        // restart case (gate redeploy): the session container and its heartbeat
+        // daemon are still alive, so retry instead of dumping to the landing
+        // screen. Intentional teardowns set inhibitReconnect and fall through.
+        if (!e.detail.clean && wasConnected && !UI.inhibitReconnect) {
+            UI.updateVisualState('reconnecting');
+            UI.showStatus(_("Connection lost — reconnecting…"), 'warn');
+            UI._axonosScheduleRfbReconnect();
+            return;
         }
 
         if (!e.detail.clean) {

@@ -981,6 +981,12 @@ export async function connectAxonOSWebRTC(opts) {
             return;
         }
         _setBanner(`${reason} — reconnecting…`, 'reconnecting');
+        // A control-plane redeploy leaves the gate unreachable for ~40s. Start
+        // after a short delay but let UI.connect's own retry/backoff absorb a
+        // listener that is still coming up, rather than retrying instantly.
+        const recoveryDelayMs = (typeof UI._axonosRecoveryDelayMs === 'function')
+            ? UI._axonosRecoveryDelayMs()
+            : 1000;
         recoveryTimer = setTimeout(async () => {
             recoveryTimer = null;
             if (!UI.connected || UI.inhibitReconnect || recoveryStarted) {
@@ -1019,7 +1025,7 @@ export async function connectAxonOSWebRTC(opts) {
                 console.warn('AxonOS WebRTC recovery connect failed', err);
                 returnToWorkspaceAfterRecoveryFailure();
             }
-        }, 1000);
+        }, recoveryDelayMs);
     }
 
     dcInput.addEventListener('open', () => {
@@ -1639,6 +1645,12 @@ export async function connectAxonOSWebRTC(opts) {
     // nothing on this path. Removed in _cleanup.
     document.documentElement.classList.add('axonos-webrtc-active');
     UI.inhibitReconnect = false;
+    // Recovery succeeded (or a fresh connect landed): the next outage starts
+    // from the shortest delay, and a later user-initiated connect is no longer
+    // mistaken for a recovery (which would skip the wallet prompt).
+    if (typeof UI._axonosResetReconnectBackoff === 'function') {
+        UI._axonosResetReconnectBackoff();
+    }
     if (typeof window.axonosHideConnectionLoader === 'function') {
         window.axonosHideConnectionLoader(true);
     }

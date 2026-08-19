@@ -18,6 +18,19 @@ logger = logging.getLogger(__name__)
 
 _SESSION_TABLE = "axgt_sessions"
 _STORAGE_VOLUME_TABLE = "axgt_storage_volumes"
+_GATE_LIVENESS_TABLE = "axgt_gate_liveness"
+_GATE_ABSENCE_TABLE = "axgt_gate_absence"
+# Wall-clock at import. Bounds credited downtime: a gate that has itself only
+# been up N seconds cannot have observed more than N seconds of heartbeats, and
+# must not credit sessions for time before it started.
+_GATE_PROCESS_START = time.time()
+# Last successful stamp by THIS process. The DB row answers "was some gate up
+# before I started"; this answers "have I been up continuously since". Reading
+# it costs no query, so the cleanup hot path stays a single round-trip.
+_gate_last_stamp: Optional[float] = None
+# Downtime inherited from the previous gate, measured once during startup.
+# None = not yet measured (treat as no credit rather than guessing).
+_gate_startup_absence: Optional[float] = None
 
 # Namespace key for the per-wallet claim advisory lock (pg_advisory_xact_lock's
 # two-int form). Serializes concurrent claims for one wallet so the UI's racing
@@ -565,6 +578,17 @@ def _ensure_tables(conn) -> None:
         # requests are not authoritative: resize may complete before a later
         # container/finalization step fails, and old image files may be larger
         # than their filesystem.
+        # Control-plane presence. A missing heartbeat only means a session is
+        # unhealthy if THIS gate was actually up to receive it; during a
+        # redeploy the gate is absent and every session looks stale at once.
+        # Staleness is therefore measured in observed time (see
+        # _gate_absent_seconds), never raw wall-clock.
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {_GATE_LIVENESS_TABLE} (
+                id          INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+                last_seen   DOUBLE PRECISION NOT NULL
+            )
+        """)
         cur.execute(f"""
             CREATE TABLE IF NOT EXISTS {_STORAGE_VOLUME_TABLE} (
                 wallet_address TEXT PRIMARY KEY,
@@ -718,7 +742,129 @@ def session_grace_seconds() -> int:
     return 60
 
 
-def _expire_stale_session(cur, now: float) -> Tuple[List[tuple], List[tuple]]:
+def _gate_liveness_interval_seconds() -> int:
+    """How often the gate stamps its presence row."""
+    raw = (os.getenv("AXGT_GATE_LIVENESS_INTERVAL_SECONDS") or "").strip()
+    try:
+        val = int(raw)
+        if val > 0:
+            return val
+    except (ValueError, TypeError):
+        pass
+    return 15
+
+
+def record_gate_liveness(cur, now: Optional[float] = None) -> None:
+    """Stamp control-plane presence so staleness can exclude gate downtime."""
+    ts = time.time() if now is None else now
+    cur.execute(
+        f"""INSERT INTO {_GATE_LIVENESS_TABLE} (id, last_seen) VALUES (1, %s)
+            ON CONFLICT (id) DO UPDATE SET last_seen = GREATEST(
+                {_GATE_LIVENESS_TABLE}.last_seen, EXCLUDED.last_seen)""",
+        (ts,),
+    )
+    global _gate_last_stamp
+    _gate_last_stamp = ts
+
+
+def _resolve_gate_absent(now: float) -> float:
+    """Downtime to exclude from heartbeat staleness, without extra queries.
+
+    Two cases:
+      * the process has been up longer than one heartbeat window -> every live
+        daemon has had time to resume posting, so no credit can apply and a
+        genuinely dead session must be reaped;
+      * younger -> credit the startup-measured predecessor gap in full.
+
+    Deliberately NOT consulted: _gate_last_stamp. The heartbeat handler stamps
+    presence immediately before running this sweep, so "stamped recently" is
+    always true at resolve time — it proves presence NOW, not presence during
+    the gap, and using it as a shortcut silently zeroed the credit.
+    """
+    if (now - _GATE_PROCESS_START) > _heartbeat_timeout_seconds():
+        global _gate_startup_absence
+        if _gate_startup_absence is None:
+            _gate_startup_absence = 0.0
+        return 0.0
+    # Predecessor downtime, measured once per process. Self-priming on first
+    # use: this module is imported by BOTH API servers (gate_server on :8889
+    # and websockify_gate on :6080), each a separate process with its own
+    # globals. The in-container heartbeat daemon posts to :6080, so that
+    # process runs the sweep — it must credit downtime even though it never
+    # calls prime_gate_liveness() explicitly. Relying on an explicit call in
+    # one server silently left the other reaping on raw wall-clock.
+    if _gate_startup_absence is None:
+        # Not primed yet: credit nothing rather than opening a connection from
+        # inside the sweep. Every server that runs the sweep MUST call
+        # prime_gate_liveness() at startup -- see websockify_gate (the process
+        # the in-container heartbeat daemons actually post to).
+        return 0.0
+    # Unclamped: the gap was MEASURED from the predecessor's own stamp, and
+    # clamping by this process's uptime (seconds, at prime time) is what
+    # silently reduced a 145s outage credit to ~0 and reaped session 370.
+    # Exposure is bounded by the uptime>timeout branch above instead.
+    return _gate_startup_absence
+
+
+def _bound_absence(absent: float, now: float) -> float:
+    """Clamp credited downtime to this process's own uptime.
+
+    Without this, a gate with no presence row would credit unbounded downtime
+    and never reap a genuinely dead session. Uptime is the honest ceiling: the
+    gate can only vouch for heartbeats it was alive to receive.
+    """
+    uptime = max(0.0, now - _GATE_PROCESS_START)
+    return min(absent, uptime)
+
+
+def _read_gate_absent_seconds(now: float) -> float:
+    """Resolve gate-absent time on a dedicated connection.
+
+    Deliberately not sharing the sweep's cursor: presence is control-plane
+    state, not session-row state, and interleaving the two reads on one cursor
+    makes the sweep's own result handling order-dependent.
+    """
+    conn = _get_connection()
+    if not conn:
+        return float("inf")
+    try:
+        with conn.cursor() as cur:
+            return _gate_absent_seconds(cur, now)
+    except Exception:  # noqa: BLE001 - never let presence bookkeeping end sessions
+        return float("inf")
+    finally:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _gate_absent_seconds(cur, now: float) -> float:
+    """Seconds the gate was NOT present to receive heartbeats, up to `now`.
+
+    A redeploy leaves a gap between the last stamp and the gate coming back.
+    Sessions must not be charged that gap: their in-container daemons were
+    healthy and retrying the whole time, with nowhere to send.
+
+    Fails toward keeping sessions alive: a missing/unreadable row is treated
+    as "gate was absent", never as "gate was present".
+    """
+    try:
+        cur.execute(f"SELECT last_seen FROM {_GATE_LIVENESS_TABLE} WHERE id = 1")
+        row = cur.fetchone()
+    except Exception:  # noqa: BLE001 - never let presence bookkeeping end sessions
+        return _bound_absence(float("inf"), now)
+    if not row or row[0] is None:
+        # No record at all (first boot / wiped table): nothing observed yet.
+        return _bound_absence(float("inf"), now)
+    gap = now - float(row[0])
+    # One interval of slack absorbs normal stamping jitter.
+    return _bound_absence(max(0.0, gap - _gate_liveness_interval_seconds()), now)
+
+
+def _expire_stale_session(
+    cur, now: float, gate_absent_seconds: Optional[float] = None
+) -> Tuple[List[tuple], List[tuple]]:
     """End stale active runtimes; detach is not represented by this state.
 
     Desktop and SSH containers own their runtime heartbeats. A stale heartbeat
@@ -727,18 +873,43 @@ def _expire_stale_session(cur, now: float) -> Tuple[List[tuple], List[tuple]]:
 
     Returns (all_ended_sessions, legacy_credit_grace_transitions).
     """
-    hb_cutoff = now - _heartbeat_timeout_seconds()
-    grace = session_grace_seconds()
-    cur.execute(
-        f"""UPDATE {_SESSION_TABLE}
-            SET status = 'ended'
-            WHERE status = 'active'
-              AND (last_heartbeat < %s
-                   OR expires_at <= %s
-                   OR (hard_expires_at IS NOT NULL AND hard_expires_at + %s <= %s))
-            RETURNING wallet_address, id""",
-        (hb_cutoff, now, grace, now),
+    # Only count heartbeat silence the gate was actually present to observe.
+    # Wall-clock staleness would end every live session on a control-plane
+    # redeploy, even though their in-container daemons never stopped sending.
+    absent = (
+        _gate_absent_seconds(cur, now)
+        if gate_absent_seconds is None
+        else gate_absent_seconds
     )
+    if absent == float("inf"):
+        hb_cutoff = None
+    else:
+        hb_cutoff = now - _heartbeat_timeout_seconds() - absent
+    grace = session_grace_seconds()
+    # Expiry branches are wall-clock deadlines and stay untouched: a session
+    # that genuinely runs out mid-redeploy must still end. Only the liveness
+    # branch is suppressed while the gate could not observe heartbeats.
+    if hb_cutoff is None:
+        cur.execute(
+            f"""UPDATE {_SESSION_TABLE}
+                SET status = 'ended'
+                WHERE status = 'active'
+                  AND (expires_at <= %s
+                       OR (hard_expires_at IS NOT NULL AND hard_expires_at + %s <= %s))
+                RETURNING wallet_address, id""",
+            (now, grace, now),
+        )
+    else:
+        cur.execute(
+            f"""UPDATE {_SESSION_TABLE}
+                SET status = 'ended'
+                WHERE status = 'active'
+                  AND (last_heartbeat < %s
+                       OR expires_at <= %s
+                       OR (hard_expires_at IS NOT NULL AND hard_expires_at + %s <= %s))
+                RETURNING wallet_address, id""",
+            (hb_cutoff, now, grace, now),
+        )
     rows = cur.fetchall() or []
     ended = [(row[0], row[1]) for row in rows]
     return ended, []
@@ -1077,9 +1248,20 @@ def _run_stale_session_maintenance_locked(conn, cur) -> None:
     claim cannot treat that row's GPU as free before its container is stopped.
     The caller must hold ``_ALLOCATION_ADVISORY_LOCK_KEY``.
     """
+    # Resolve control-plane presence once, before touching session rows: the
+    # sweep re-runs until quiescent and must not re-query (or interleave) the
+    # liveness read against the same cursor mid-teardown.
+    # Skip the presence lookup entirely once this process has been up longer
+    # than the heartbeat timeout: past that point no credit could apply, so the
+    # extra round-trip would be pure overhead on every cleanup cycle.
+    gate_absent = None  # resolved lazily on the first iteration's timestamp
     while True:
         maintenance_now = time.time()
-        ended, stale_grace = _expire_stale_session(cur, maintenance_now)
+        if gate_absent is None:
+            gate_absent = _resolve_gate_absent(maintenance_now)
+        ended, stale_grace = _expire_stale_session(
+            cur, maintenance_now, gate_absent_seconds=gate_absent
+        )
         grace_ended = _expire_credit_grace_sessions(cur, maintenance_now)
         if not (ended or stale_grace or grace_ended):
             return
@@ -2927,6 +3109,163 @@ def _reconcile_containers(cur, now: float) -> Tuple[List[int], List[Tuple[str, i
             to_expire.append((wallet, s_id))
 
     return to_stop_ids, to_expire
+
+
+def _publish_or_inherit_startup_absence(measured: float) -> float:
+    """Share one startup measurement across both API server processes.
+
+    The winner of the atomic claim records the gap; the loser reads it back.
+    Without this the loser credits 0, and if that loser is the process running
+    the sweep, live sessions are reaped despite the gap being known.
+    """
+    conn = _get_connection()
+    if conn is None:
+        return measured
+    try:
+        now = time.time()
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""CREATE TABLE IF NOT EXISTS {_GATE_ABSENCE_TABLE} (
+                        id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+                        absence_seconds DOUBLE PRECISION NOT NULL,
+                        measured_at DOUBLE PRECISION NOT NULL
+                    )"""
+            )
+            if measured > 0:
+                cur.execute(
+                    f"""INSERT INTO {_GATE_ABSENCE_TABLE}
+                            (id, absence_seconds, measured_at)
+                        VALUES (1, %s, %s)
+                        ON CONFLICT (id) DO UPDATE
+                            SET absence_seconds = EXCLUDED.absence_seconds,
+                                measured_at = EXCLUDED.measured_at""",
+                    (measured, now),
+                )
+                conn.commit()
+                return measured
+            # Measured nothing: inherit a peer's very recent measurement.
+            cur.execute(
+                f"SELECT absence_seconds, measured_at FROM {_GATE_ABSENCE_TABLE} WHERE id = 1"
+            )
+            row = cur.fetchone()
+        conn.commit()
+        if row and row[0] is not None and row[1] is not None:
+            age = now - float(row[1])
+            # Only trust a measurement from this same startup window.
+            if 0 <= age <= _heartbeat_timeout_seconds():
+                return float(row[0])
+        return measured
+    except Exception as exc:  # noqa: BLE001 - never block startup
+        logger.warning("Could not share gate downtime measurement: %s", exc)
+        try:
+            conn.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        return measured
+    finally:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def prime_gate_liveness() -> float:
+    """Measure the predecessor gate's downtime, once, at startup.
+
+    Called before the cleanup loop begins so the sweep can exclude a redeploy
+    gap without ever issuing its own presence query. Returns the seconds of
+    inherited downtime (0.0 when none is credited).
+    """
+    global _gate_startup_absence
+    if not _init_once():
+        _gate_startup_absence = 0.0
+        return 0.0
+    # Read the predecessor's last_seen and claim the row in ONE statement.
+    # Both API servers start together and both stamp; a plain read-then-stamp
+    # loses the race -- whichever stamps first erases the gap before the other
+    # can measure it, so every process credits 0 (this reaped session 370).
+    # RETURNING the pre-update value makes the first writer the sole measurer;
+    # any later starter reads a fresh row and correctly credits nothing.
+    absence = float("inf")
+    conn = _get_connection()
+    if conn is not None:
+        try:
+            now = time.time()
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""INSERT INTO {_GATE_LIVENESS_TABLE} (id, last_seen)
+                        VALUES (1, %s)
+                        ON CONFLICT (id) DO UPDATE SET last_seen = EXCLUDED.last_seen
+                        RETURNING (
+                            SELECT last_seen FROM {_GATE_LIVENESS_TABLE} WHERE id = 1
+                        )""",
+                    (now,),
+                )
+                row = cur.fetchone()
+            conn.commit()
+            if row and row[0] is not None:
+                gap = now - float(row[0])
+                # Unclamped: priming runs seconds after process start, so an
+                # uptime clamp here floors every real measurement to ~0.
+                absence = max(0.0, gap - _gate_liveness_interval_seconds())
+            else:
+                absence = 0.0
+        except Exception as exc:  # noqa: BLE001 - never block startup on this
+            logger.warning("Could not measure prior gate downtime: %s", exc)
+            try:
+                conn.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+        finally:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+    if absence == float("inf"):
+        absence = 0.0
+    # Publish the measurement so the OTHER API server inherits it. Only one
+    # process wins the atomic claim, but both run sweeps -- and the one that
+    # matters (websockify, where the heartbeat daemons post) may be the loser.
+    absence = _publish_or_inherit_startup_absence(absence)
+    _gate_startup_absence = absence
+    if absence > 0:
+        logger.info(
+            "Gate liveness: crediting %.0fs of control-plane downtime; "
+            "sessions will not be reaped for heartbeats sent while it was down",
+            absence,
+        )
+    return absence
+
+
+def gate_liveness_interval_seconds() -> int:
+    """Public accessor for the gate liveness stamping interval."""
+    return _gate_liveness_interval_seconds()
+
+
+def stamp_gate_liveness() -> bool:
+    """Record that this gate is present and able to receive heartbeats."""
+    if not _init_once():
+        return False
+    conn = _get_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            record_gate_liveness(cur)
+        conn.commit()
+        return True
+    except Exception as exc:  # noqa: BLE001 - presence is best-effort
+        logger.warning("Could not record gate liveness: %s", exc)
+        try:
+            conn.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def perform_session_cleanup() -> None:

@@ -361,3 +361,44 @@ Fixes:
       wheels are cu121 on the 12.2 runtime base).
 - [ ] Revisit the pin deliberately when a newer stack is wanted, re-running the
       GPU smoke test before moving it.
+
+## Session survival across control-plane redeploys (2026-08-19)
+
+Recreating the gate container ended every live session ~120s later: the stale
+sweep compared `last_heartbeat` to wall-clock, but in-container heartbeat
+daemons post *through* the gate, so a redeploy made healthy sessions look dead.
+Observed on session 362 — container and daemon were fine, gate was absent.
+
+Done:
+- `axgt_gate_liveness` table; gate stamps presence every 15s
+  (`AXGT_GATE_LIVENESS_INTERVAL_SECONDS`).
+- Staleness now measured in gate-observed time: the predecessor gap is
+  measured once at startup (`prime_gate_liveness`) via an atomic
+  claim-and-read (upsert + RETURNING pre-update snapshot), published to
+  `axgt_gate_absence` so BOTH API server processes inherit it, and credited
+  in full to the heartbeat cutoff. Credit lifetime is bounded by the
+  uptime>timeout branch (~120s of process life), after which genuinely dead
+  sessions are reaped normally. Expiry branches (`expires_at`,
+  `hard_expires_at`) deliberately unchanged — a session that genuinely runs
+  out mid-redeploy still ends.
+- Three defects found only by live testing (killed sessions 369, 370): the
+  primer was wired into gate_server only while websockify_gate runs the sweep
+  (heartbeat daemons post to :6080); read-then-stamp raced the peer's
+  stamping thread and erased the gap; an uptime clamp at prime time floored
+  every measured credit to ~0 (and a "stamped recently" shortcut zeroed it
+  again at sweep time). Verified end-to-end 2026-08-19: session 371 survived
+  a 150s gate outage, 180s credited, heartbeats resumed cleanly.
+- Viewer recovery: unclean RFB drops now reconnect instead of dropping to the
+  landing screen (the old `else if` made 1006 unreachable); exponential backoff
+  2s→20s capped at 12 attempts, shared by the WebRTC path; wallet preflight
+  runs without `requestPermission` on recovery so an outage no longer triggers
+  a wallet popup.
+
+Follow-ups (not done):
+- `test_frontend_terminal.py::test_frontend_module_cache_tokens_stay_in_lockstep`
+  asserts a hardcoded CSS token (`20.2&t=20260812b`) that no longer exists —
+  pre-existing failure, unrelated to this work.
+- Gate is still a single point of failure for the viewer: ~40s from container
+  start to serving, and the ingress has one upstream with no failover. Sessions
+  now survive it, but the user still sees a reconnect. A second gate instance
+  would be needed to make redeploys invisible.

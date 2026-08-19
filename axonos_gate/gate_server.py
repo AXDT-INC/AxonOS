@@ -2667,9 +2667,38 @@ def main():
     # internal agent-only process shares the DB but must not duplicate billing.
     import threading
     try:
-        from axonos_gate.session_manager import perform_session_cleanup
+        from axonos_gate.session_manager import (
+            perform_session_cleanup,
+            stamp_gate_liveness,
+            gate_liveness_interval_seconds,
+            prime_gate_liveness,
+        )
     except ImportError:
-        from session_manager import perform_session_cleanup
+        from session_manager import (
+            perform_session_cleanup,
+            stamp_gate_liveness,
+            gate_liveness_interval_seconds,
+            prime_gate_liveness,
+        )
+
+    def liveness_loop():
+        # Stamp presence BEFORE any cleanup runs. The stale sweep measures
+        # heartbeat silence in gate-observed time, so a redeploy gap must be
+        # recorded as gate-absent rather than charged to live sessions.
+        interval = gate_liveness_interval_seconds()
+        # Measure the predecessor's downtime first, while the previous row is
+        # still intact: stamping overwrites it.
+        try:
+            prime_gate_liveness()
+        except Exception as e:
+            logger.warning("Could not measure prior gate downtime: %s", e)
+        logger.info("Started gate liveness loop (every %ss)", interval)
+        while True:
+            try:
+                stamp_gate_liveness()
+            except Exception as e:
+                logger.warning("Could not stamp gate liveness: %s", e)
+            time.sleep(interval)
 
     def cleanup_loop():
         # Wait on startup
@@ -2683,6 +2712,8 @@ def main():
             time.sleep(30)
 
     if not _env_truthy("GATE_AGENT_ONLY"):
+        liveness_thread = threading.Thread(target=liveness_loop, daemon=True)
+        liveness_thread.start()
         cleanup_thread = threading.Thread(target=cleanup_loop, daemon=True)
         cleanup_thread.start()
 
