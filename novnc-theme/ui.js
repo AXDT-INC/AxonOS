@@ -52,7 +52,7 @@ const AXONOS_TEMPLATES = [
         desc: 'Interactive PyTorch workspace for deep learning. Includes JupyterLab, torchvision, torchaudio, and common ML development tools pre-configured for GPU acceleration.',
         image: 'axonos:public-beta',
         verifyCmd: "python3 -c 'import torch; print(f\"PyTorch {torch.__version__} GPU active:\", torch.cuda.is_available())'",
-        packages: ['PyTorch 2.3+', 'CUDA 12.1', 'JupyterLab', 'TensorBoard', 'NumPy', 'Pandas'],
+        packages: ['PyTorch 2.5+', 'CUDA 12.1', 'JupyterLab', 'TensorBoard', 'NumPy', 'Pandas'],
         icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#4ec3d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.44 2.5 2.5 0 0 1 0-3.12 3 3 0 0 1 0-4.88 2.5 2.5 0 0 1 0-3.12A2.5 2.5 0 0 1 9.5 2Z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.44 2.5 2.5 0 0 0 0-3.12 3 3 0 0 0 0-4.88 2.5 2.5 0 0 0 0-3.12A2.5 2.5 0 0 0 14.5 2Z"/></svg>'
     },
     {

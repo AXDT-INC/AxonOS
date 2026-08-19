@@ -703,8 +703,11 @@ RUN if [ -f /tmp/NVIDIA_Capture_SDK_7_1_9.tgz ]; then \
 
 # PyTorch AI Lab: CUDA-enabled PyTorch stack. cu121 wheels run on the CUDA 12.2
 # runtime base. JupyterLab is already installed above; add TensorBoard + Pandas.
+# Versions are pinned: the index URL alone only fixes the CUDA channel, so an
+# unrelated rebuild would silently pull a newer stack. These three move together
+# and are smoke-tested on GPU (matmul, cuDNN conv + backward, AMP).
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu121 \
-        torch torchvision torchaudio && \
+        torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 && \
     pip install --no-cache-dir tensorboard pandas
 
 # Quantum ESPRESSO: DFT electronic-structure suite (provides pw.x), plus the

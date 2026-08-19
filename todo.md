@@ -347,3 +347,17 @@ Fixes:
 - [ ] All 23 live volumes are currently clean; 19 `-backup` volumes still carry the
       line, but the startup sweep now covers them if restored. Remove the sweep once no
       such volume remains.
+
+## PyTorch stack version drift
+
+- [x] Pinned torch/torchvision/torchaudio in the Dockerfile. The index URL alone
+      only fixes the CUDA channel, so an unrelated rebuild silently moved the
+      stack 2.3.1 -> 2.5.1 (torchvision 0.18 -> 0.20.1) with no code change and
+      no signal in the build log. Pinned to the versions now running.
+- [x] Smoke-tested 2.5.1 on GPU before pinning: device matmul, cuDNN 9.1 conv +
+      backward + optimizer step, and fp16 autocast all pass.
+- [x] Updated the advertised version in the MOTD and the landing-page template
+      card from "PyTorch 2.3+" to "2.5+". The CUDA 12.1 claim is correct (the
+      wheels are cu121 on the 12.2 runtime base).
+- [ ] Revisit the pin deliberately when a newer stack is wanted, re-running the
+      GPU smoke test before moving it.

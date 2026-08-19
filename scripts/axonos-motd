@@ -19,7 +19,7 @@
    • mpirun         OpenMPI parallel execution launcher for multi-GPU tasks
 
   AI / Machine Learning & Scientific Computing CLI:
-   • python3        PyTorch 2.3+ CUDA runtime & AI model execution
+   • python3        PyTorch 2.5+ CUDA runtime & AI model execution
    • jupyter-lab    launch interactive JupyterLab notebook server
    • tensorboard    start ML model training visualization & metrics server
    • Rscript        execute R statistical data processing scripts
