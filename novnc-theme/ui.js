@@ -252,6 +252,9 @@ const UI = {
     desktopName: "",
 
     statusTimeout: null,
+    // Minimum on-screen dwell for error banners, in ms. Long enough to read a
+    // full sentence, short enough that a transient failure clears itself.
+    STATUS_ERROR_TIMEOUT: 8000,
     hideKeyboardTimeout: null,
     idleControlbarTimeout: null,
     closeControlbarTimeout: null,
@@ -2206,16 +2209,25 @@ const UI = {
             statusType = 'normal';
         }
 
-        // Don't overwrite more severe visible statuses and never
-        // errors. Only shows the first error.
-        if (statusElem.classList.contains("noVNC_open")) {
-            if (statusElem.classList.contains("noVNC_status_error")) {
-                return;
-            }
-            if (statusElem.classList.contains("noVNC_status_warn") &&
-                statusType === 'normal') {
-                return;
-            }
+        // Always mirror to the console so the full sequence of states is
+        // recoverable from devtools even when the banner has timed out or
+        // been superseded on screen.
+        if (statusType === 'error') {
+            console.error('[AxonOS]', text);
+        } else if (statusType === 'warn' || statusType === 'warning') {
+            console.warn('[AxonOS]', text);
+        } else {
+            console.info('[AxonOS]', text);
+        }
+
+        // Don't let a routine message stomp a visible warning. Unlike upstream
+        // noVNC we deliberately do NOT latch on the first error: a newer error
+        // or warning may replace an older one, so recovery and follow-up states
+        // can still reach the user instead of being swallowed by a stale banner.
+        if (statusElem.classList.contains("noVNC_open") &&
+            statusElem.classList.contains("noVNC_status_warn") &&
+            statusType === 'normal') {
+            return;
         }
 
         clearTimeout(UI.statusTimeout);
@@ -2249,10 +2261,13 @@ const UI = {
             time = 1500;
         }
 
-        // Error messages do not timeout
-        if (statusType !== 'error') {
-            UI.statusTimeout = window.setTimeout(UI.hideStatus, time);
+        // Errors get a longer dwell than routine toasts, but they do time out.
+        // A permanently pinned red banner reads as a hung UI and has no
+        // discoverable dismiss; the console mirror above keeps the detail.
+        if (statusType === 'error') {
+            time = Math.max(time, UI.STATUS_ERROR_TIMEOUT);
         }
+        UI.statusTimeout = window.setTimeout(UI.hideStatus, time);
     },
 
     hideStatus() {
@@ -4240,9 +4255,9 @@ const UI = {
                         const terminalWebRtcFailure = webRtcFailure && webRtcFailure.terminal === true;
                         if (!usedWebRtc && !window.axonosWebRtcConnectAborted &&
                             webRtcModule && !terminalWebRtcFailure) {
-                            // One automatic retry on the same module instance. Clear a
-                            // provisional ICE error so a later success is not masked by
-                            // showStatus()'s intentional "first error wins" behavior.
+                            // One automatic retry on the same module instance. Clear the
+                            // provisional ICE error so the retry starts from a clean banner
+                            // rather than leaving a stale failure on screen during the wait.
                             Log.Warn('AxonOS: WebRTC negotiation failed; retrying once in 3s…');
                             UI.hideStatus();
                             if (typeof window.axonosSetConnectionLoaderPhase === 'function') {
@@ -4296,11 +4311,12 @@ const UI = {
                                     'Retry from the workspace. If the session remains listed, end it before relaunching.'
                                 );
                             }
-                            // showStatus errors never time out. Mark the workspace return as
-                            // status-preserving so its generic disconnect cleanup cannot hide
-                            // the actionable server reason the user needs to recover.
+                            // Terminal failure carrying an actionable server reason: give it
+                            // a long explicit dwell instead of the default error timeout, and
+                            // mark the workspace return status-preserving so its generic
+                            // disconnect cleanup cannot hide the reason the user needs.
                             UI.hideStatus();
-                            UI.showStatus(failureMessage, 'error');
+                            UI.showStatus(failureMessage, 'error', 30000);
                             UI._axonosReturnToHomeAfterDisconnect({ preserveStatus: true });
                             return;
                         }

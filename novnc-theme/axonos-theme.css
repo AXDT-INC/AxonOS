@@ -8263,3 +8263,24 @@ button.axonos-topbar__brand {
 .axonos-connection-loader.axonos-loader--workspace .axonos-loader-quote {
   display: none !important;
 }
+
+/* Status banner: make the (already-bound) click-to-dismiss discoverable.
+   ui.js binds click -> UI.hideStatus on #noVNC_status, but upstream noVNC
+   gives it no affordance, so an error banner reads as an unclosable popup. */
+#noVNC_status.noVNC_status_error,
+#noVNC_status.noVNC_status_warn {
+  cursor: pointer;
+}
+
+#noVNC_status.noVNC_status_error::after,
+#noVNC_status.noVNC_status_warn::after {
+  content: "\00d7";
+  margin-left: 0.75em;
+  font-weight: 700;
+  opacity: 0.7;
+}
+
+#noVNC_status.noVNC_status_error:hover::after,
+#noVNC_status.noVNC_status_warn:hover::after {
+  opacity: 1;
+}
