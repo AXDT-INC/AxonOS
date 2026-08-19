@@ -318,7 +318,7 @@ export class AxonosTerminalClient {
                 this.lastError = error;
                 if (typeof this.options.onError === 'function') this.options.onError(error);
                 if (this.socket && this.socket.readyState < WebSocket.CLOSING) {
-                    this.socket.close(1013, 'terminal input congested');
+                    this.socket.close(4013, 'terminal input congested');
                 }
                 return;
             }
@@ -355,7 +355,7 @@ export class AxonosTerminalClient {
             this.lastError = error;
             if (typeof this.options.onError === 'function') this.options.onError(error);
             if (this.socket && this.socket.readyState < WebSocket.CLOSING) {
-                this.socket.close(1011, 'terminal server error');
+                this.socket.close(4011, 'terminal server error');
             }
             return;
         }
@@ -421,7 +421,7 @@ export class AxonosTerminalClient {
 
     _protocolClose() {
         if (this.socket && this.socket.readyState < WebSocket.CLOSING) {
-            this.socket.close(1002, 'terminal protocol error');
+            this.socket.close(4002, 'terminal protocol error');
         }
     }
 
