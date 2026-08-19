@@ -329,3 +329,17 @@ Fixes:
 - Hot-deployed vnc.html + ui.js into the running gate container
   (/usr/share/novnc) for immediate testing.
 - [ ] Deploy: image rebuild still pending (motd snippet, vnc.html, ui.js).
+
+## Session shell Python interpreter (conda shadowing)
+
+- [x] Fixed: the Miniconda prefix installed for PyMOL was prepended to PATH via
+      `/etc/profile.d/conda.sh` and `~/.bashrc`, so `python`/`python3` in the session
+      terminal resolved to the conda interpreter (3.14, no torch) instead of
+      `/usr/bin/python3` (3.10, torch 2.3.1+cu121, CUDA available) — contradicting the
+      MOTD's "python3 = PyTorch CUDA runtime" line. PyMOL never needed the PATH entry;
+      it is reached through the existing `/usr/local/bin/pymol` symlink.
+- [ ] Requires an image rebuild to take effect for newly provisioned homes.
+- [ ] NOTE: the line also persists in already-provisioned wallet home volumes, which
+      are mounted over the image's `/home/aXonian` — a rebuild can never reach those.
+      Consider a startup-time sweep of the mounted home rc files so existing volumes
+      self-heal instead of depending on when they were provisioned.

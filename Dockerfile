@@ -389,8 +389,6 @@ RUN apt update && apt install -y wget && \
     rm /tmp/miniconda.sh && \
     /opt/conda/bin/conda install --override-channels -c conda-forge -y pymol-open-source && \
     ln -sf /opt/conda/bin/pymol /usr/local/bin/pymol && \
-    echo 'export PATH="/opt/conda/bin:$PATH"' > /etc/profile.d/conda.sh && \
-    echo 'export PATH="/opt/conda/bin:$PATH"' >> /home/$USER/.bashrc && \
     echo '[Desktop Entry]\nName=PyMOL (open-source)\nComment=Molecular visualization (includes PyMOL(TM) source code)\nExec=pymol\nIcon=applications-science\nType=Application\nCategories=Science;Chemistry;\nStartupNotify=true' \
     > /usr/share/applications/pymol.desktop && \
     chmod 644 /usr/share/applications/pymol.desktop && \
@@ -467,6 +465,17 @@ RUN chmod +x /usr/local/bin/start-xorg-nvidia.sh /usr/local/bin/resolve-nvidia-d
 
 # PyMOL desktop: use vglrun so OpenGL runs on GPU (X :0) when container is run with --gpus all
 RUN sed -i 's#^Exec=pymol$#Exec=bash -c "vglrun pymol 2>/dev/null || pymol"#' /usr/share/applications/pymol.desktop
+
+# Keep the conda prefix OFF the interactive PATH: shell python/python3 must be
+# /usr/bin/python3 (torch + CUDA + the image's pip packages). PyMOL is the only
+# conda consumer and is reached via the /usr/local/bin/pymol symlink, not PATH.
+# Sweeps any conda PATH lines left by earlier layers.
+RUN rm -f /etc/profile.d/conda.sh && \
+    for f in /home/aXonian/.bashrc /home/aXonian/.profile /root/.bashrc; do \
+        [ -f "$f" ] && sed -i '\#/opt/conda/bin#d' "$f"; \
+    done; \
+    ! grep -rq '/opt/conda/bin' /etc/profile.d /home/aXonian/.bashrc \
+        /home/aXonian/.profile /root/.bashrc 2>/dev/null
 
 # Install Terminator (in universe; enable repo + update in same layer)
 RUN apt-get update && apt-get install -y terminator && rm -rf /var/lib/apt/lists/*
