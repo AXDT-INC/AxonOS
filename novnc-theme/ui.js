@@ -648,6 +648,16 @@ const UI = {
             viewAllBtn.addEventListener('click', UI.openAxonosCatalogModal);
         }
 
+        // Same catalog entry point from the workspace's Quick Launch header.
+        const dashViewAllBtn = document.getElementById('axonos_dashboard_view_all_btn');
+        const dashViewAllCount = document.getElementById('axonos_dashboard_view_all_count');
+        if (dashViewAllCount && typeof AXONOS_TEMPLATES !== 'undefined') {
+            dashViewAllCount.textContent = AXONOS_TEMPLATES.length;
+        }
+        if (dashViewAllBtn) {
+            dashViewAllBtn.addEventListener('click', UI.openAxonosCatalogModal);
+        }
+
         const catalogModal = document.getElementById('axonos_catalog_modal');
         const catalogClose = document.getElementById('axonos_catalog_modal_close');
         const catalogOverlay = document.getElementById('axonos_catalog_modal_overlay');
@@ -4229,7 +4239,7 @@ const UI = {
                         try {
                             // A stable module URL keeps negotiation generation/cancellation
                             // state shared across retries and rapid user reconnects.
-                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260821b');
+                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260821c');
                             if (!connectAttemptIsCurrent()) {
                                 return;
                             }

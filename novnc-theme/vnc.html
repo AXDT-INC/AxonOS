@@ -109,7 +109,7 @@ Copyright (C) 2019 The noVNC Authors
     </script>
     <script src="app/error-handler.js"></script>
     <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
-    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260821b"></script>
+    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260821c"></script>
 </head>
 
 <body>
@@ -877,7 +877,19 @@ Copyright (C) 2019 The noVNC Authors
                 </div>
 
                 <!-- QUICK LAUNCH section (matching axonos-web) -->
-                <div class="axonos-dashboard-section-label" style="margin-top: 40px; margin-bottom: 16px;">QUICK LAUNCH
+                <div
+                    style="display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-top: 40px; margin-bottom: 16px;">
+                    <div class="axonos-dashboard-section-label" style="margin: 0;">QUICK LAUNCH</div>
+                    <button type="button" id="axonos_dashboard_view_all_btn"
+                        style="background: none; border: none; color: #A9A2FF; font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                        <!-- translate="no": noVNC's l10n translateDOM trims text nodes,
+                             which would collapse "View all 17" into "View all17". -->
+                        <span translate="no">View all <span id="axonos_dashboard_view_all_count">8</span></span>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                            <path d="M5 12h14M13 6l6 6-6 6" stroke="#A9A2FF" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round" />
+                        </svg>
+                    </button>
                 </div>
                 <div id="axonos_dashboard_quick_launch" class="axonos-featured-grid">
                     <!-- Populated programmatically in ui.js -->
