@@ -8931,7 +8931,21 @@ Copyright (C) 2019 The noVNC Authors
                 if (userWrap) userWrap.style.display = 'flex';
                 if (addrEl) addrEl.textContent = wallet.slice(0, 6) + '…' + wallet.slice(-4);
                 // "—" for an unknown balance: rendering 0 fabricates a zero.
-                if (creditsEl) creditsEl.textContent = (credits != null) ? Math.round(credits) : '—';
+                // But never downgrade an already-known number to "—" — a null
+                // here usually means a transient wallet-status failure (timeout
+                // or 401 during token rotation), and the last-known balance
+                // stays accurate until a refresh succeeds.
+                // A wallet switch invalidates the previous wallet's number.
+                if (creditsEl) {
+                    var walletNorm = String(wallet).toLowerCase();
+                    if (creditsEl.dataset.wallet !== walletNorm) {
+                        creditsEl.dataset.wallet = walletNorm;
+                        creditsEl.textContent = '—';
+                    }
+                    if (credits != null) {
+                        creditsEl.textContent = String(Math.round(credits));
+                    }
+                }
             } else {
                 if (connectBtn) connectBtn.style.display = 'block';
                 if (userWrap) userWrap.style.display = 'none';
@@ -9262,8 +9276,15 @@ Copyright (C) 2019 The noVNC Authors
                 // Query credit balance
                 return axonosFetchWalletAccessStatus(wallet).then(function (res) {
                     if (!axonosDashboardRequestIsCurrent(requestGeneration, wallet)) return status;
-                    const data = (res && res.data) || {};
-                    const creditsStr = (data.remaining_minutes != null) ? Math.round(data.remaining_minutes) : '—';
+                    // Transient failures (timeout, gate blip, 401 during token
+                    // rotation) resolve { ok:false } with no remaining_minutes.
+                    // Keep the last-known number instead of downgrading it to
+                    // "—" — same contract as the sidebar telemetry loop. "—" is
+                    // only the initial never-had-a-value placeholder.
+                    if (!res || res.unavailable || res.ok !== true) return status;
+                    const data = res.data || {};
+                    if (typeof data.remaining_minutes !== 'number') return status;
+                    const creditsStr = String(Math.round(data.remaining_minutes));
                     if (creditsValEl) creditsValEl.textContent = creditsStr;
 
                     // Update global headers and topbar widget as well
