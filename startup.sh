@@ -96,6 +96,28 @@ elif [ -z "${AXGT_SESSION_ID:-}" ]; then
     fi
 fi
 
+# Self-heal home volumes whose filesystem root is not owned by the session user.
+# A loop-ext4 volume formatted without root_owner comes up root:root, and Docker
+# skips its image-skeleton copy-up because the fresh fs already holds lost+found;
+# the session user then cannot write $HOME, so xfce4-session and jupyterlab
+# crash-loop and the desktop streams a black screen. Ownership of the home root
+# is fixed non-recursively (user files inside are already correct on healthy
+# volumes), .config is fixed recursively only when it was created root-owned by
+# an earlier launch, and missing shell dotfiles are restored from /etc/skel.
+if [ -d /home/aXonian ] && [ "$(stat -c %u /home/aXonian)" != "1000" ]; then
+    echo "startup: home volume root owned by $(stat -c %u:%g /home/aXonian); repairing ownership"
+    chown 1000:1000 /home/aXonian
+    if [ -d /home/aXonian/.config ] && [ "$(stat -c %u /home/aXonian/.config)" = "0" ]; then
+        chown -R 1000:1000 /home/aXonian/.config
+    fi
+fi
+for skel_file in /etc/skel/.bashrc /etc/skel/.profile /etc/skel/.bash_logout; do
+    dest="/home/aXonian/$(basename "$skel_file")"
+    if [ -f "$skel_file" ] && [ ! -e "$dest" ]; then
+        install -m 644 -o aXonian -g aXonian "$skel_file" "$dest"
+    fi
+done
+
 # The wallet-persistent home volume mounts OVER the image's /home/aXonian, so its
 # dotfiles mask whatever the image ships and no rebuild can reach them. Volumes
 # provisioned before the interpreter-prefix fix still carry a PATH line that shadows

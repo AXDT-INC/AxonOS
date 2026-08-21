@@ -402,3 +402,20 @@ Follow-ups (not done):
   start to serving, and the ingress has one upstream with no failover. Sessions
   now survive it, but the user still sees a reconnect. A second gate instance
   would be needed to make redeploys invisible.
+
+## Post-migration wallet volumes: root-owned home (2026-08-21)
+
+- Fixed: fresh loop-ext4 volumes were mkfs'd root:root and Docker skipped its
+  skeleton copy-up (lost+found makes the volume look non-empty), so wallets
+  onboarded after the loop-ext4 migration got an unwritable $HOME — xfce4 and
+  jupyterlab crash-looped and the desktop streamed black. mkfs now passes
+  -E root_owner=1000:1000; startup.sh self-heals already-broken volumes.
+- Repaired by hand: the two affected volumes (0x34d9…4eca, 0x1e87…7df).
+- The startup.sh self-heal ships in the image: it takes effect only after an
+  image rebuild + redeploy. Until then, new wallets are covered by the mkfs
+  fix (gate-side, live on restart) but a volume broken in the interim would
+  need the manual chown.
+- Copy-up no longer populates home skeleton on new volumes (only .bashrc/
+  .profile/.bash_logout restored from /etc/skel); check whether anything else
+  in the image home (Desktop dirs, .vnc, .config defaults) is actually needed
+  first-run or is created on demand by the session.

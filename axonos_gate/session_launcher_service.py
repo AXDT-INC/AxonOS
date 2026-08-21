@@ -401,7 +401,13 @@ def _ensure_persistent_storage_volume(
         logger.info("Creating new %d GB loop volume image at %s", requested_storage_gb, img_path)
         try:
             subprocess.check_call([truncate_bin, "-s", f"{requested_storage_gb}G", img_path])
-            subprocess.check_call([mkfs_bin, "-F", img_path])
+            # root_owner makes the filesystem root writable by the session user.
+            # A default mkfs leaves it root:root and, because the fresh fs already
+            # contains lost+found, Docker skips its image-skeleton copy-up — the
+            # session user then cannot write $HOME and the desktop session cannot
+            # start. Wallets onboarded before the loop-ext4 migration were
+            # populated in the plain-volume era and never hit this.
+            subprocess.check_call([mkfs_bin, "-F", "-E", "root_owner=1000:1000", img_path])
         except Exception as exc:
             return False, f"Failed to initialize image file {img_path}: {exc}"
     else:
