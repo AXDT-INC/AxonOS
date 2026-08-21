@@ -2779,16 +2779,16 @@ const UI = {
         }
         const toSsh = UI.connectionKind !== 'terminal';
         if (toSsh && !UI.axonosSshKeyLooksValid(UI.axonosSshPubkey())) {
-            UI.showStatus(_('Add a valid SSH public key (e.g. the contents of ~/.ssh/id_ed25519.pub) in the launch options before swapping to a console session.'), 'warn', 8000);
+            UI.showStatus(_('Add a valid SSH public key (e.g. the contents of ~/.ssh/id_ed25519.pub) in the launch options before relaunching as a console session.'), 'warn', 8000);
             return;
         }
         const confirmed = await UI.showConfirm(
-            toSsh ? _("Swap to Console?") : _("Swap to Desktop?"),
+            toSsh ? _("Relaunch as Console?") : _("Relaunch as Desktop?"),
             toSsh
                 ? _("This ends the current desktop session (unsaved work in open applications is lost) and launches a headless SSH console session in its place. Files in your home folder and your remaining credits carry over.")
                 : _("This ends the current console session (running shell processes stop) and launches a full desktop session in its place. Files in your home folder and your remaining credits carry over."),
             {
-                confirmText: toSsh ? _("Swap to Console") : _("Swap to Desktop"),
+                confirmText: toSsh ? _("Relaunch as Console") : _("Relaunch as Desktop"),
                 confirmType: 'danger'
             }
         );
@@ -2811,7 +2811,7 @@ const UI = {
             window.axonosSshEnabled = previousIntent;
             UI.persistAxonosSshState();
             UI.updateAxonosSshUi();
-            UI.showStatus(_('The current session could not be confirmed as released, so the swap was cancelled.'), 'error', 8000);
+            UI.showStatus(_('The current session could not be confirmed as released, so the relaunch was cancelled.'), 'error', 8000);
             return;
         }
         UI.showStatus(toSsh ? _('Launching console session…') : _('Launching desktop session…'), 'normal');
@@ -2901,10 +2901,10 @@ const UI = {
         UI.updateAxonosSwapButton();
     },
 
-    /** Relabel the sidebar swap button for the attached viewer's mode: a web
-     *  terminal (console session) offers "Swap to Desktop"; the desktop viewer
-     *  offers "Swap to Console". Hidden while no live viewer is attached (the
-     *  swap needs a current session to release and replace). */
+    /** Relabel the sidebar mode button for the attached viewer's mode: a web
+     *  terminal (console session) offers "Relaunch as Desktop"; the desktop
+     *  viewer offers "Relaunch as Console". Hidden while no live viewer is
+     *  attached (the relaunch needs a current session to release and replace). */
     updateAxonosSwapButton() {
         const swapBtn = document.getElementById('axonos_sidebar_swap_btn');
         if (!swapBtn) {
@@ -2915,7 +2915,7 @@ const UI = {
         const onConsole = UI.connectionKind === 'terminal';
         swapBtn.classList.toggle('noVNC_hidden', !UI._axonosViewerAttached());
         if (titleEl) {
-            titleEl.textContent = onConsole ? _('Swap to Desktop') : _('Swap to Console');
+            titleEl.textContent = onConsole ? _('Relaunch as Desktop') : _('Relaunch as Console');
         }
         if (descEl) {
             descEl.textContent = onConsole

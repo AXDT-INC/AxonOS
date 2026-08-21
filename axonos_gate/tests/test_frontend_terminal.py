@@ -194,9 +194,9 @@ class FrontendTerminalContractTests(unittest.TestCase):
         self.assertIn("showDetach = viewerAttached", controls)
 
     def test_frontend_module_cache_tokens_stay_in_lockstep(self) -> None:
-        self.assertIn("axonos-theme.css?v=20.2&t=20260812b", self.page)
-        self.assertIn("app/ui.js?v=20260819b", self.page)
-        self.assertIn("./webrtc/axonos-webrtc.js?v=20260819b", self.ui)
+        self.assertIn("axonos-theme.css?v=20.3&t=20260819a", self.page)
+        self.assertIn("app/ui.js?v=20260821a", self.page)
+        self.assertIn("./webrtc/axonos-webrtc.js?v=20260819e", self.ui)
         self.assertIn("./terminal/axonos-terminal.js?v=20260729d", self.ui)
 
     def test_terminal_fallback_does_not_start_a_dashboard_status_refresh(self) -> None:
@@ -333,8 +333,8 @@ class FrontendModeSwapContractTests(unittest.TestCase):
             "async swapSessionMode()", 1
         )[0]
         self.assertIn("UI.connectionKind === 'terminal'", updater)
-        self.assertIn("Swap to Desktop", updater)
-        self.assertIn("Swap to Console", updater)
+        self.assertIn("Relaunch as Desktop", updater)
+        self.assertIn("Relaunch as Console", updater)
         # Refreshed alongside the other session control buttons.
         control_updater = self.ui.split("updateSessionControlButtons() {", 1)[1].split(
             "updateAxonosSwapButton()", 1
