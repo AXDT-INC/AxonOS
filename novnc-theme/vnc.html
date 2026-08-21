@@ -2150,6 +2150,35 @@ Copyright (C) 2019 The noVNC Authors
             var tilt = -0.42, cosT = Math.cos(tilt), sinT = Math.sin(tilt);
             function mix(a, b, t) { return Math.round(a + (b - a) * t); }
 
+            // Decorative animation: cap at 30fps and batch draw calls, or the
+            // loop pins a core on high-refresh laptops (reported: MacBook fans
+            // at max on the landing page). rAF fires at native refresh — 120Hz
+            // on recent Macs — and the original per-dot fill also made the
+            // rotation speed refresh-dependent.
+            var FRAME_MS = 1000 / 30;
+            var ANGLE_PER_MS = 0.0028 / 16.67; // original speed at 60Hz
+            var lastTs = 0;
+
+            // Quantize dot colors into a small palette so the 820 dots render
+            // as ~100 batched paths instead of 820 fillStyle+fill round-trips.
+            var T_STEPS = 12, D_STEPS = 8;
+            var palette = null;
+            function buildPalette() {
+                if (palette) return palette;
+                palette = [];
+                for (var ti = 0; ti < T_STEPS; ti++) {
+                    var t = (ti + 0.5) / T_STEPS;
+                    for (var di = 0; di < D_STEPS; di++) {
+                        var depth = (di + 0.5) / D_STEPS;
+                        palette.push('rgba(' + mix(123, 79, t) + ',' + mix(108, 224, t) + ',' +
+                            mix(255, 192, t) + ',' + (0.12 + depth * depth * 0.78).toFixed(3) + ')');
+                    }
+                }
+                return palette;
+            }
+
+            var ctx = null, glow = null, glowR = 0;
+
             function drawFrame() {
                 var dpr = Math.min(window.devicePixelRatio || 1, 2);
                 var rect = canvas.getBoundingClientRect();
@@ -2157,45 +2186,69 @@ Copyright (C) 2019 The noVNC Authors
                 if (canvas.width !== Math.round(w * dpr)) {
                     canvas.width = Math.round(w * dpr);
                     canvas.height = Math.round(h * dpr);
+                    glow = null;
                 }
-                var ctx = canvas.getContext('2d');
+                if (!ctx) ctx = canvas.getContext('2d');
                 ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
                 ctx.clearRect(0, 0, w, h);
                 var cx = w / 2, cy = h / 2, R = Math.min(w, h) * 0.40;
-                var g = ctx.createRadialGradient(cx, cy, R * 0.2, cx, cy, R * 1.35);
-                g.addColorStop(0, 'rgba(123, 108, 255, 0.16)');
-                g.addColorStop(0.55, 'rgba(79, 224, 192, 0.06)');
-                g.addColorStop(1, 'rgba(123, 108, 255, 0)');
-                ctx.fillStyle = g;
+                if (!glow || glowR !== R) {
+                    glow = ctx.createRadialGradient(cx, cy, R * 0.2, cx, cy, R * 1.35);
+                    glow.addColorStop(0, 'rgba(123, 108, 255, 0.16)');
+                    glow.addColorStop(0.55, 'rgba(79, 224, 192, 0.06)');
+                    glow.addColorStop(1, 'rgba(123, 108, 255, 0)');
+                    glowR = R;
+                }
+                ctx.fillStyle = glow;
                 ctx.beginPath();
                 ctx.arc(cx, cy, R * 1.35, 0, Math.PI * 2);
                 ctx.fill();
                 var ca = Math.cos(angle), sa = Math.sin(angle);
                 var p = buildPoints();
+                var colors = buildPalette();
+                // bucket index -> flat [sx, sy, radius, ...] triples
+                var buckets = {};
                 for (var i = 0; i < p.length; i++) {
                     var x = p[i][0] * ca - p[i][2] * sa;
                     var z = p[i][0] * sa + p[i][2] * ca;
                     var y = p[i][1];
                     var y2 = y * cosT - z * sinT;
                     var z2 = y * sinT + z * cosT;
-                    var sx = cx + x * R;
-                    var sy = cy - y2 * R;
                     var depth = (z2 + 1) / 2;
                     var t = (x + 1) / 2;
+                    var ti = Math.min(T_STEPS - 1, (t * T_STEPS) | 0);
+                    var di = Math.min(D_STEPS - 1, (depth * D_STEPS) | 0);
+                    var key = ti * D_STEPS + di;
+                    (buckets[key] || (buckets[key] = [])).push(
+                        cx + x * R, cy - y2 * R, 0.7 + depth * 1.7);
+                }
+                for (var k in buckets) {
+                    var pts2 = buckets[k];
+                    ctx.fillStyle = colors[k];
                     ctx.beginPath();
-                    ctx.fillStyle = 'rgba(' + mix(123, 79, t) + ',' + mix(108, 224, t) + ',' +
-                        mix(255, 192, t) + ',' + (0.12 + depth * depth * 0.78) + ')';
-                    ctx.arc(sx, sy, 0.7 + depth * 1.7, 0, Math.PI * 2);
+                    for (var j = 0; j < pts2.length; j += 3) {
+                        ctx.moveTo(pts2[j] + pts2[j + 2], pts2[j + 1]);
+                        ctx.arc(pts2[j], pts2[j + 1], pts2[j + 2], 0, Math.PI * 2);
+                    }
                     ctx.fill();
                 }
             }
 
-            function loop() {
+            function loop(ts) {
                 raf = null;
                 if (!canvas || isConnected() || !inView || document.hidden) return;
+                if (reducedMotion) { drawFrame(); return; } // single static frame
+                var dt = lastTs ? ts - lastTs : FRAME_MS;
+                if (dt < FRAME_MS - 1) {
+                    raf = requestAnimationFrame(loop);
+                    return;
+                }
+                lastTs = ts;
+                // Time-based rotation: same visual speed on 60Hz and 120Hz
+                // displays, independent of the frame cap. Clamp dt so a long
+                // background pause doesn't cause a visible jump.
+                angle += ANGLE_PER_MS * Math.min(dt, 100);
                 drawFrame();
-                if (reducedMotion) return; // single static frame
-                angle += 0.0028;
                 raf = requestAnimationFrame(loop);
             }
 
