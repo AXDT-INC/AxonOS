@@ -1018,6 +1018,8 @@ Copyright (C) 2019 The noVNC Authors
                                     </div>
                                 </button>
                             </div>
+                            <p id="axonos_wizard_gpu_pinned_hint" class="axonos-gpu-cards-pinned-hint" aria-live="polite"
+                                hidden></p>
                             <p class="axonos-gpu-cards-note">Each profile dedicates whole Tesla V100 GPUs to your
                                 session. vCPU and system RAM are drawn from a shared host pool and are not reserved per
                                 profile.</p>
@@ -3568,19 +3570,70 @@ Copyright (C) 2019 The noVNC Authors
             });
         };
 
-        function getRequestedProfile() {
+        /**
+         * The profile a claim is forced to reuse while a prior session is still
+         * paused/owned, or null when the user's picker choice will be honored.
+         * Must mirror the override precedence in getRequestedProfile exactly.
+         */
+        function axonosPinnedClaimProfile() {
             if (window.axonosPausedResume && window.axonosPausedResume.profile) {
-                return window.axonosPausedResume.profile;
+                return axonosNormalizeProfileName(window.axonosPausedResume.profile);
             }
             var owned = axonosEffectiveOwnedSession();
             if (owned && owned.profile) {
-                return owned.profile;
+                return axonosNormalizeProfileName(owned.profile);
+            }
+            return null;
+        }
+
+        function getRequestedProfile() {
+            var pinned = axonosPinnedClaimProfile();
+            if (pinned) {
+                return pinned;
             }
             var el = document.getElementById('axonos_profile_select');
             var val = el ? String(el.value || '').toLowerCase() : 'small';
             if (val !== 'small' && val !== 'medium' && val !== 'large' && val !== 'max') return 'small';
             return val;
         }
+
+        /**
+         * The wizard's GPU cards must never look choosable when a claim would
+         * ignore them: while a paused/owned session pins the profile, select
+         * that card, disable the rest, and say why. (The connect screen's
+         * plain <select> already does this; the cards previously stayed
+         * clickable and silently lost the user's 8-GPU choice to a stale
+         * 1-GPU session.)
+         */
+        function axonosApplyWizardGpuPinState() {
+            var cards = document.querySelectorAll('.axonos-gpu-card');
+            var hintEl = document.getElementById('axonos_wizard_gpu_pinned_hint');
+            if (!cards.length) return;
+            var pinned = axonosPinnedClaimProfile();
+            if (!pinned) {
+                cards.forEach(function (card) { card.disabled = false; });
+                if (hintEl) hintEl.hidden = true;
+                return;
+            }
+            axonosSelectedGpuProfile = pinned;
+            cards.forEach(function (card) {
+                var isPinned = (card.getAttribute('data-gpu') || '') === pinned;
+                card.classList.toggle('selected', isPinned);
+                card.disabled = !isPinned;
+            });
+            var selectEl = document.getElementById('axonos_profile_select');
+            if (selectEl) selectEl.value = pinned;
+            if (hintEl) {
+                var gpus = axonosGpuCountForProfile(pinned);
+                hintEl.textContent = 'Your previous session is still reserved on ' +
+                    axonosProfileLabel(pinned) + ' (' + gpus + ' GPU' + (gpus === 1 ? '' : 's') +
+                    '). Launching reconnects to that allocation — end the session to pick a different profile.';
+                hintEl.hidden = false;
+            }
+            axonosUpdateWizardSummaryRail();
+            axonosUpdatePayCalculator();
+        }
+        window.axonosApplyWizardGpuPinState = axonosApplyWizardGpuPinState;
 
         function axonosProfileLabel(profile) {
             var labels = { small: 'Single', medium: 'Dual', large: 'Quad', max: 'Octa' };
@@ -9667,6 +9720,7 @@ Copyright (C) 2019 The noVNC Authors
                 const gpuCards = document.querySelectorAll('.axonos-gpu-card');
                 gpuCards.forEach(card => {
                     card.addEventListener('click', () => {
+                        if (card.disabled) return;
                         gpuCards.forEach(c => c.classList.remove('selected'));
                         card.classList.add('selected');
                         axonosSelectedGpuProfile = card.getAttribute('data-gpu') || 'small';
@@ -9682,6 +9736,7 @@ Copyright (C) 2019 The noVNC Authors
                         axonosUpdatePayCalculator();
                     });
                 });
+                axonosApplyWizardGpuPinState();
 
                 // Wire storage slider listener
                 const slider = document.getElementById('axonos_wizard_storage_slider');
@@ -9842,6 +9897,13 @@ Copyright (C) 2019 The noVNC Authors
                     paneEl.classList.toggle('active', idx + 1 === stepNum);
                 }
             });
+
+            // A paused/owned session pins the claim profile; re-apply on every
+            // entry to the hardware step so the cards never advertise a choice
+            // the claim would ignore.
+            if (stepNum === 2) {
+                axonosApplyWizardGpuPinState();
+            }
 
             // Update Back Button Label
             const backLabel = document.getElementById('axonos_wizard_back_label');
