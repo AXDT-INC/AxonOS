@@ -4229,7 +4229,7 @@ const UI = {
                         try {
                             // A stable module URL keeps negotiation generation/cancellation
                             // state shared across retries and rapid user reconnects.
-                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260819e');
+                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260821b');
                             if (!connectAttemptIsCurrent()) {
                                 return;
                             }

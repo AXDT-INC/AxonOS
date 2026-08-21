@@ -109,7 +109,7 @@ Copyright (C) 2019 The noVNC Authors
     </script>
     <script src="app/error-handler.js"></script>
     <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
-    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260821a"></script>
+    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260821b"></script>
 </head>
 
 <body>
@@ -511,6 +511,29 @@ Copyright (C) 2019 The noVNC Authors
                         credits remain unspent for subsequent sessions.</p>
                 </div>
             </section>
+
+            <!-- Optimistic connected paint: runs synchronously during parse so a
+                 remembered wallet never flashes the new-visitor state while the
+                 cookie-based reload restore is in flight. The restore either
+                 confirms this (axonosOnWalletVerified) or reverts it
+                 (axonosSyncTopbar(null, null)) when the cookie has expired. -->
+            <script>
+                (function () {
+                    var w = null;
+                    try { w = localStorage.getItem('axonos_last_wallet'); } catch (e) { }
+                    if (!w || !/^0x[a-fA-F0-9]{40}$/.test(w)) return;
+                    var btn = document.getElementById('axonos_topbar_connect_btn');
+                    var wrap = document.getElementById('axonos_topbar_user_wrap');
+                    var addr = document.getElementById('axonos_topbar_wallet_addr');
+                    var credits = document.getElementById('axonos_topbar_credits_val');
+                    var hero = document.getElementById('axonos_hero_browse_btn');
+                    if (btn) btn.style.display = 'none';
+                    if (wrap) wrap.style.display = 'flex';
+                    if (addr) addr.textContent = w.slice(0, 6) + '…' + w.slice(-4);
+                    if (credits) credits.textContent = '—';
+                    if (hero) hero.textContent = 'Open workspace';
+                })();
+            </script>
 
             <!-- Network banner: filled by applyAxonosNetworkEnvironmentUi() from /api/config axgt_chain_id (server AXGT_CHAIN_ID). -->
             <p id="axonos_landing_network" class="axonos-network-banner axonos-network-banner--hidden"
@@ -2282,26 +2305,31 @@ Copyright (C) 2019 The noVNC Authors
                 }).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
                 start();
 
-                // Hero CTAs: browse the environment catalog without wallet authentication.
+                // Hero CTA: signed-out visitors browse the environment catalog
+                // without wallet authentication; once a wallet is verified the
+                // same button reads "Open workspace" (relabeled by
+                // axonosSyncHeroCta) and enters the dashboard, mirroring the
+                // brand-button behavior below.
                 var browseBtn = document.getElementById('axonos_hero_browse_btn');
                 if (browseBtn) {
                     browseBtn.addEventListener('click', function () {
-                        if (typeof window.axonosOpenCatalogModal === 'function') {
+                        if (window.verifiedWalletAddress &&
+                            typeof window.axonosReturnToWorkspace === 'function') {
+                            window.axonosReturnToWorkspace();
+                        } else if (typeof window.axonosOpenCatalogModal === 'function') {
                             window.axonosOpenCatalogModal();
                         }
                     });
                 }
 
-                // Brand = in-app home: dashboard when a wallet is connected, else the
-                // landing screen. Pure screen switch — never navigates, so running
-                // sessions and heartbeats are untouched.
+                // Brand = home: always the landing screen (in its connected
+                // state when a wallet is verified — the hero "Open workspace"
+                // CTA leads back to the dashboard). Pure screen switch — never
+                // navigates, so running sessions and heartbeats are untouched.
                 var brandBtn = document.getElementById('axonos_topbar_brand');
                 if (brandBtn) {
                     brandBtn.addEventListener('click', function () {
-                        var wallet = window.verifiedWalletAddress;
-                        if (wallet && typeof window.axonosReturnToWorkspace === 'function') {
-                            window.axonosReturnToWorkspace();
-                        } else if (typeof axonosUpdateActiveScreen === 'function') {
+                        if (typeof axonosUpdateActiveScreen === 'function') {
                             axonosUpdateActiveScreen('landing');
                         }
                         var dlg = document.getElementById('noVNC_connect_dlg');
@@ -9003,8 +9031,19 @@ Copyright (C) 2019 The noVNC Authors
                 if (connectBtn) connectBtn.style.display = 'block';
                 if (userWrap) userWrap.style.display = 'none';
             }
+            axonosSyncHeroCta(wallet);
         }
         window.axonosSyncTopbar = axonosSyncTopbar;
+
+        // Relabel the hero CTA with wallet state: catalog browser when signed
+        // out, workspace entry once verified. The click handler branches on
+        // window.verifiedWalletAddress; this only keeps the label honest.
+        function axonosSyncHeroCta(wallet) {
+            var heroBtn = document.getElementById('axonos_hero_browse_btn');
+            if (!heroBtn) return;
+            heroBtn.textContent = wallet ? 'Open workspace' : 'Browse environments';
+        }
+        window.axonosSyncHeroCta = axonosSyncHeroCta;
 
         // Handler when wallet is verified
         function axonosOnWalletVerified(walletAddress, data) {
@@ -9015,12 +9054,30 @@ Copyright (C) 2019 The noVNC Authors
             // Sync topbar
             axonosSyncTopbar(walletAddress, data ? data.remaining_minutes : null);
 
+            // Verification never yanks the user off the landing page: connect
+            // clicks and the silent reload restore both leave it showing in the
+            // connected state (topbar swap + hero "Open workspace" CTA), and
+            // the workspace is entered through that CTA or the dashboard
+            // Home/brand routes. A verify that fires while the dashboard or
+            // wizard is already active (wallet switch, top-up) keeps its
+            // screen. The dlg has no state class before the first screen
+            // switch; treat that as landing.
+            var connectDlgEl = document.getElementById('noVNC_connect_dlg');
+            var stayOnLanding = !!connectDlgEl &&
+                !connectDlgEl.classList.contains('axonos-state-dashboard') &&
+                !connectDlgEl.classList.contains('axonos-state-wizard');
+
             // Enter the workspace synchronously. Session/credit reads can take tens
             // of seconds when the gate or its database is busy; they must not hold a
             // full-screen transition modal in front of an otherwise usable dashboard.
             // axonosLoadDashboard keeps its own wallet + generation guards, so this
             // refresh is safe to let finish in the background after a wallet switch.
-            var dashboardRefresh = axonosReturnToWorkspace();
+            // Staying on landing still runs the guarded dashboard/status refresh
+            // in the background so credits, session cards, and the credit-grace
+            // check are ready the moment the user opens the workspace.
+            var dashboardRefresh = stayOnLanding
+                ? axonosLoadDashboard()
+                : axonosReturnToWorkspace();
             var expectedDashboardGeneration = axonosDashboardRequestGeneration;
             if (typeof window.axonosHideConnectionLoader === 'function') {
                 window.axonosHideConnectionLoader(true);
@@ -9062,8 +9119,10 @@ Copyright (C) 2019 The noVNC Authors
                 }
                 // If the user opened the launch wizard while the background read was
                 // pending, do not unexpectedly pull them out of that newer workflow.
+                // Landing is fine: a user who just topped up to rescue a paused
+                // session wants back in even before opening the workspace.
                 var connectDialog = document.getElementById('noVNC_connect_dlg');
-                if (connectDialog && !connectDialog.classList.contains('axonos-state-dashboard')) {
+                if (connectDialog && connectDialog.classList.contains('axonos-state-wizard')) {
                     return;
                 }
                 console.log('[AxonOS] Credit-grace session detected, restoring desktop access');
@@ -10889,12 +10948,67 @@ Copyright (C) 2019 The noVNC Authors
             });
         }
 
-        // If the user reloads the page with an already connected wallet, land them on dashboard
+        // Silent reload restore: the gate auth cookie is HttpOnly and survives
+        // a page reload even though the JS token copy does not. If the cookie
+        // still authenticates the last wallet (token TTL + keep-alive
+        // rotation), re-enter the connected landing state without a new
+        // signature. An expired cookie responds 401 and the page simply stays
+        // signed out — Connect wallet is then one signature away.
+        (function () {
+            var lastWallet = null;
+            try { lastWallet = localStorage.getItem('axonos_last_wallet'); } catch (e) { }
+            if (!lastWallet || !/^0x[a-fA-F0-9]{40}$/.test(lastWallet)) return;
+            // The head-of-page optimistic paint already shows this wallet's
+            // connected topbar; while the probe is pending nothing may reset
+            // it (see the 300ms fallback below), and a dead cookie must
+            // actively revert it.
+            window.axonosWalletRestorePending = true;
+            var revertOptimisticPaint = function () {
+                window.axonosWalletRestorePending = false;
+                // A connect the user started in the meantime wins.
+                if (window.verifiedWalletAddress) return;
+                if (typeof axonosSyncTopbar === 'function') {
+                    axonosSyncTopbar(null, null);
+                }
+            };
+            var url = new URL('/api/auth/wallet-status', window.location.origin);
+            url.searchParams.set('wallet_address', lastWallet);
+            fetch(url.toString(), {
+                method: 'GET',
+                credentials: 'include',
+                headers: { 'X-Wallet-Address': lastWallet }
+            }).then(function (r) {
+                // Any 200 means the cookie authenticated this wallet;
+                // verified:false on a 200 only reflects access/credit state.
+                return r.ok ? r.json() : null;
+            }).then(function (data) {
+                if (!data || window.verifiedWalletAddress) {
+                    revertOptimisticPaint();
+                    return;
+                }
+                window.axonosWalletRestorePending = false;
+                verifiedWalletAddress = lastWallet;
+                window.verifiedWalletAddress = lastWallet;
+                window.verifiedWalletAuthToken = data.auth_token || null;
+                window.axonosAllowVncConnect = data.verified === true;
+                axonosSetTestCreditEligibility(data);
+                if (typeof axonosOnWalletVerified === 'function') {
+                    axonosOnWalletVerified(lastWallet, data);
+                }
+            }).catch(revertOptimisticPaint);
+        })();
+
+        // If the user reloads the page with an already connected wallet, show
+        // the landing page in its connected state (topbar swap + hero "Open
+        // workspace" CTA) — entering the workspace is always an explicit click.
         setTimeout(() => {
             const wallet = window.verifiedWalletAddress || verifiedWalletAddress;
             if (wallet && !document.documentElement.classList.contains('noVNC_connected')) {
-                axonosReturnToWorkspace();
-            } else {
+                axonosSyncTopbar(wallet, null);
+            } else if (!window.axonosWalletRestorePending) {
+                // Never reset the optimistic connected paint while the
+                // cookie-restore probe is still in flight — it reverts or
+                // confirms the topbar itself when it settles.
                 axonosSyncTopbar(null, null);
             }
         }, 300);

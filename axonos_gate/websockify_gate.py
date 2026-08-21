@@ -1317,6 +1317,10 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 status['auth_token_expires_in_seconds'] = ttl
                 return self._send_json(200, status, set_cookie=_build_auth_cookie(new_token, ttl))
 
+            # Echo the presented token so a reloaded page can restore its JS
+            # copy from the surviving HttpOnly cookie without a new signature.
+            # No new exposure: verify-wallet already returns this token in JSON.
+            status['auth_token'] = auth_token
             status['auth_token_expires_in_seconds'] = remaining
             return self._send_json(200, status)
 
