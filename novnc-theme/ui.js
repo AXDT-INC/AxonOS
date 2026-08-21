@@ -1857,6 +1857,14 @@ const UI = {
                 modal.classList.remove('active');
                 modal.setAttribute('aria-hidden', 'true');
             }
+            // The details modal may sit on top of the browse-catalog modal
+            // (View all → View details → Select). Close that too, so the
+            // selection drops into the wizard instead of back into the catalog.
+            const catalogModal = document.getElementById('axonos_catalog_modal');
+            if (catalogModal) {
+                catalogModal.classList.remove('active');
+                catalogModal.setAttribute('aria-hidden', 'true');
+            }
             const wallet = window.verifiedWalletAddress;
             if (wallet) {
                 if (typeof axonosStartWizard === 'function') {
@@ -4239,7 +4247,7 @@ const UI = {
                         try {
                             // A stable module URL keeps negotiation generation/cancellation
                             // state shared across retries and rapid user reconnects.
-                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260821c');
+                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260821d');
                             if (!connectAttemptIsCurrent()) {
                                 return;
                             }
