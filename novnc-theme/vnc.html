@@ -428,11 +428,9 @@ Copyright (C) 2019 The noVNC Authors
         <div id="noVNC_connect_dlg" translate="no">
             <!-- Mobile notice: shown only on small viewports -->
             <div class="axonos-mobile-notice" aria-live="polite">
-                <p class="axonos-mobile-notice__title">More screen space recommended</p>
-                <p class="axonos-mobile-notice__text">AxonOS is designed for desktop use. You're using a compact
-                    view, which can happen on a phone or tablet, in a narrow window, or at higher browser zoom. On a
-                    computer, widen the window or reduce zoom if the layout feels crowded. On a mobile device, switch
-                    to a laptop or desktop to continue.</p>
+                <p class="axonos-mobile-notice__title">Built for desktops</p>
+                <p class="axonos-mobile-notice__text">You're in a compact view — browse the environments here, then
+                    open AxonOS on a desktop (or widen the window / reduce zoom) to launch one.</p>
             </div>
 
             <!-- Ambient background: radial glow + faded grid (decorative) -->
@@ -742,11 +740,10 @@ Copyright (C) 2019 The noVNC Authors
             <!-- Trust strip (matching axonos-web exactly) -->
             <div class="axonos-view-landing"
                 style="max-width: 1280px; margin: 40px auto 0; padding: 0; width: 100%; box-sizing: border-box;">
-                <div
-                    style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; border-radius: 18px; border: 1px solid rgba(255, 255, 255, 0.07); background: rgba(255, 255, 255, 0.018); overflow: hidden; width: 100%;">
+                <!-- Class-based (not inline) grid so the responsive rules can stack it on mobile. -->
+                <div class="axonos-trust" style="margin-top: 0; width: 100%;">
                     <!-- Non-custodial -->
-                    <div
-                        style="padding: 24px 26px; border-right: 1px solid rgba(255, 255, 255, 0.06); display: flex; gap: 14px; align-items: flex-start; min-width: 0;">
+                    <div class="axonos-trust-item" style="min-width: 0;">
                         <div
                             style="flex: 0 0 auto; width: 38px; height: 38px; border-radius: 11px; display: flex; align-items: center; justify-content: center; background: rgba(79, 224, 192, 0.1); border: 1px solid rgba(79, 224, 192, 0.22); color: #4FE0C0;">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
@@ -766,8 +763,7 @@ Copyright (C) 2019 The noVNC Authors
                         </div>
                     </div>
                     <!-- Real GPUs -->
-                    <div
-                        style="padding: 24px 26px; border-right: 1px solid rgba(255, 255, 255, 0.06); display: flex; gap: 14px; align-items: flex-start; min-width: 0;">
+                    <div class="axonos-trust-item" style="min-width: 0;">
                         <div
                             style="flex: 0 0 auto; width: 38px; height: 38px; border-radius: 11px; display: flex; align-items: center; justify-content: center; background: rgba(79, 224, 192, 0.1); border: 1px solid rgba(79, 224, 192, 0.22); color: #4FE0C0;">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
@@ -785,7 +781,7 @@ Copyright (C) 2019 The noVNC Authors
                         </div>
                     </div>
                     <!-- Your files persist -->
-                    <div style="padding: 24px 26px; display: flex; gap: 14px; align-items: flex-start; min-width: 0;">
+                    <div class="axonos-trust-item" style="min-width: 0;">
                         <div
                             style="flex: 0 0 auto; width: 38px; height: 38px; border-radius: 11px; display: flex; align-items: center; justify-content: center; background: rgba(79, 224, 192, 0.1); border: 1px solid rgba(79, 224, 192, 0.22); color: #4FE0C0;">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none">

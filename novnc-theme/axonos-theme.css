@@ -8383,3 +8383,79 @@ button.axonos-topbar__brand {
 #noVNC_status.noVNC_status_warn:hover::after {
   opacity: 1;
 }
+
+/* ---- Compact/mobile landing polish ---- */
+/* Shown in the template-details modal instead of "Select Environment" on
+   compact screens, where browsing is view-only (no wallet/launch flow). */
+.axonos-m-browse-note {
+  margin: 0;
+  padding: 10px 14px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  text-align: center;
+  color: #a9a2ff;
+  background: rgba(123, 108, 255, 0.07);
+  border: 1px solid rgba(123, 108, 255, 0.25);
+  border-radius: 10px;
+  font-family: var(--font-body);
+}
+
+@media (max-width: 992px) {
+  /* Slimmer, less shouty compact-view notice (overrides the earlier block). */
+  .axonos-mobile-notice {
+    margin: 0 auto 1.1rem;
+    padding: 0.7rem 1rem;
+    border-radius: 12px;
+    background: rgba(123, 108, 255, 0.06);
+    border-color: rgba(123, 108, 255, 0.28);
+  }
+
+  .axonos-mobile-notice__title {
+    font-size: 0.85rem;
+    margin-bottom: 0.25em;
+  }
+
+  .axonos-mobile-notice__text {
+    font-size: 0.78rem;
+    line-height: 1.5;
+    opacity: 0.8;
+  }
+}
+
+@media (max-width: 680px) {
+  /* Centered hero reads like a landing page on narrow screens. */
+  .axonos-hero__copy {
+    text-align: center;
+  }
+
+  .axonos-hero__badge {
+    display: inline-flex;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .axonos-hero__sub,
+  .axonos-hero__note {
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .axonos-hero__ctas {
+    justify-content: center;
+  }
+
+  .axonos-hero__ctas .axonos-cta {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+
+  /* Featured cards size to their content instead of a fixed desktop height
+     (inline min-height on the generated buttons needs !important). */
+  #axonos_landing_featured_grid > button {
+    min-height: 0 !important;
+  }
+
+  .axonos-trust-item {
+    padding: 18px 20px;
+  }
+}

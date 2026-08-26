@@ -1839,9 +1839,23 @@ const UI = {
         verifySec.appendChild(cmdBox);
         modalBody.appendChild(verifySec);
 
-        // Action section to select environment from details modal
+        // Action section to select environment from details modal.
+        // Compact view is browse-only: selecting would lead into the wallet
+        // connect/launch flow, which is desktop-only — show a hint instead.
         const actionSec = document.createElement('div');
         actionSec.className = 'axonos-m-section';
+        const compactView = !!(window.matchMedia && window.matchMedia('(max-width: 992px)').matches);
+        if (compactView) {
+            actionSec.style.cssText = 'margin-top:20px;';
+            const browseNote = document.createElement('p');
+            browseNote.className = 'axonos-m-browse-note';
+            browseNote.textContent = 'Browse freely — to launch this environment, open AxonOS on a desktop.';
+            actionSec.appendChild(browseNote);
+            modalBody.appendChild(actionSec);
+            modal.classList.add('active');
+            modal.setAttribute('aria-hidden', 'false');
+            return;
+        }
         actionSec.style.cssText = 'margin-top:24px;display:flex;justify-content:flex-end;';
 
         const selectBtn = document.createElement('button');
