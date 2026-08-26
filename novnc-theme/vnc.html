@@ -4807,10 +4807,12 @@ Copyright (C) 2019 The noVNC Authors
                     var meMin = (cfg && cfg.min_eth_deposit_minutes != null)
                         ? Number(cfg.min_eth_deposit_minutes)
                         : ((cfg && cfg.dynamic_pricing_enabled) ? null : (Number(minEth) * cpe));
-                    axonosConfig.hide_beta_badge = !!(cfg && cfg.hide_beta_badge);
-                    if (axonosConfig.hide_beta_badge) {
+                    // Hidden by default (CSS); shown only when the server explicitly
+                    // sets AXONOS_HIDE_BETA_BADGE=false.
+                    axonosConfig.hide_beta_badge = !(cfg && cfg.hide_beta_badge === false);
+                    if (!axonosConfig.hide_beta_badge) {
                         document.querySelectorAll('.axonos-beta-chip').forEach(function (chip) {
-                            chip.style.display = 'none';
+                            chip.style.display = 'inline-block';
                         });
                     }
                     axonosConfig.axgt_contract_address = addr;

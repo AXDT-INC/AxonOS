@@ -5598,6 +5598,9 @@ html.noVNC_connected .axonos-landing-bg {
 }
 
 .axonos-beta-chip {
+  /* Hidden by default; JS reveals it only when /api/config reports
+     hide_beta_badge=false (AXONOS_HIDE_BETA_BADGE=false). */
+  display: none;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.14em;

@@ -1106,10 +1106,10 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 "persistent_storage_min_balance_limit_minutes": min_balance_limit,
                 "session_claim_timeout_seconds": session_claim_timeout_seconds(),
                 "hide_beta_badge": (
-                    (os.getenv("AXONOS_HIDE_BETA_BADGE") or "")
+                    (os.getenv("AXONOS_HIDE_BETA_BADGE") or "true")
                     .strip()
                     .lower()
-                    in ("1", "true", "yes", "on")
+                    not in ("0", "false", "no", "off")
                 ),
             }
             if webrtc_config is not None:
