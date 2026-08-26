@@ -1706,6 +1706,84 @@ input[type="password"]#noVNC_password_input {
   transform: translate(-50%, -50%);
   margin: 0;
   max-width: min(600px, 90vw);
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* ⓘ info toggle + collapsible detail pop (wallet dialog de-bloat) */
+.axonos-info-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 6px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: none;
+  color: rgba(255, 255, 255, 0.65);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-style: italic;
+  line-height: 1;
+  cursor: pointer;
+  vertical-align: middle;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.axonos-info-btn:hover {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.7);
+}
+
+.axonos-info-btn[aria-expanded="true"] {
+  color: #4fe0c0;
+  border-color: rgba(79, 224, 192, 0.6);
+}
+
+.axonos-info-pop {
+  display: none;
+  margin: 8px auto;
+  padding: 10px 12px;
+  max-width: 30rem;
+  text-align: left;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.8);
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+
+.axonos-info-pop.axonos-info-pop--open {
+  display: block;
+}
+
+.axonos-info-pop .axonos-wallet-card__contract {
+  margin-bottom: 10px;
+}
+
+.axonos-info-pop .axonos-wallet-card__contract:last-child {
+  margin-bottom: 0;
+}
+
+/* Inside a discount panel the pop should span the panel width. */
+.axonos-discount-panel .axonos-info-pop {
+  margin: 6px 0 0;
+  max-width: none;
+}
+
+.axonos-wallet-addresses-line {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  margin: 0 0 10px;
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.65);
 }
 
 #noVNC_credentials_dlg:has(#axonos_wallet_state_insufficient:not(.axonos-wallet-state--hidden)) {

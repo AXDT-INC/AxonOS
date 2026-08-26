@@ -1364,11 +1364,23 @@ Copyright (C) 2019 The noVNC Authors
             <form id="axonos_wallet_form">
                 <div class="axonos-wallet-card__title">
                     <h2>Connect your wallet to continue</h2>
-                    <p class="axonos-wallet-card__hints" id="axonos-dlg-credit-hints">Loading rates…</p>
+                    <p class="axonos-wallet-card__hints"><span id="axonos-dlg-credit-hints">Loading rates…</span>
+                        <button type="button" class="axonos-info-btn" data-info-target="axonos_dlg_hints_pop"
+                            title="How billing works" aria-label="How billing works"
+                            aria-expanded="false">i</button></p>
+                    <div id="axonos_dlg_hints_pop" class="axonos-info-pop">
+                        <span id="axonos-dlg-session-hints"></span>
+                    </div>
                     <!-- Same network line as landing; reminds users before sending AXGT/ETH. -->
                     <p id="axonos_wallet_network_line"
                         class="axonos-wallet-network-line axonos-wallet-network-line--hidden" aria-live="polite"></p>
                 </div>
+                <p class="axonos-wallet-addresses-line">Deposit addresses
+                    <button type="button" class="axonos-info-btn" data-info-target="axonos_wallet_addresses_pop"
+                        title="Show deposit addresses" aria-label="Show deposit addresses"
+                        aria-expanded="false">i</button>
+                </p>
+                <div id="axonos_wallet_addresses_pop" class="axonos-info-pop">
                 <div class="axonos-wallet-card__contract axonos-wallet-card__contract--revenue">
                     <span id="axonos_revenue_deposit_label" class="axonos-wallet-card__contract-label">Deposit AXGT or
                         ETH here</span>
@@ -1385,6 +1397,7 @@ Copyright (C) 2019 The noVNC Authors
                         title="Copy token contract">Copy</button>
                     <a id="axonos_contract_etherscan" href="#" target="_blank" rel="noopener noreferrer"
                         class="axonos-contract-etherscan">Token</a>
+                </div>
                 </div>
                 <div class="axonos-wallet-card__status">
                     <div id="axonos_wallet_state_disconnected" class="axonos-wallet-state">
@@ -1413,10 +1426,22 @@ Copyright (C) 2019 The noVNC Authors
                     <div id="axonos_wallet_state_insufficient" class="axonos-wallet-state axonos-wallet-state--hidden">
                         <div class="axonos-wallet-state__icon axonos-wallet-state__icon--warning" aria-hidden="true">
                         </div>
-                        <p class="axonos-wallet-state__title" id="axonos_insufficient_credit_title">Pay with ETH, save
-                            with AXGT</p>
-                        <p class="axonos-wallet-state__help" id="axonos_insufficient_credit_rates"
-                            style="margin-top:0.35rem;font-size:0.88em;opacity:0.92;">—</p>
+                        <p class="axonos-wallet-state__title"><span id="axonos_insufficient_credit_title">Pay with ETH,
+                                save with AXGT</span>
+                            <button type="button" class="axonos-info-btn" data-info-target="axonos_pay_info_pop"
+                                title="Payment details" aria-label="Payment details" aria-expanded="false">i</button>
+                        </p>
+                        <div id="axonos_pay_info_pop" class="axonos-info-pop">
+                            <p class="axonos-wallet-state__help" id="axonos_insufficient_credit_rates"
+                                style="margin-top:0;font-size:0.88em;opacity:0.92;">—</p>
+                            <p class="axonos-wallet-state__help" style="margin:0.45rem 0 0;font-size:0.88em;opacity:0.9;">
+                                Estimates are wall-clock desktop time for your currently selected GPU profile. AXGT
+                                holders get more time per ETH/USDC and a lower minimum. Larger amounts add
+                                proportionally more minutes.</p>
+                            <p class="axonos-wallet-state__help" style="margin:0.45rem 0 0;font-size:0.88em;opacity:0.9;">
+                                You can also send from another wallet or DEX to the deposit address, then paste the
+                                transaction hash below and press <strong>Credit deposit</strong>.</p>
+                        </div>
                         <p id="axonos_wallet_insufficient_balance" class="axonos-wallet-state__balance">Wallet AXGT
                             balance: —</p>
 
@@ -1441,32 +1466,39 @@ Copyright (C) 2019 The noVNC Authors
                             style="margin:0.6rem auto 0.4rem;width:100%;max-width:30rem;border:1px solid rgba(255, 255, 255, 0.087);border-radius:12px;padding:0.7rem 0.9rem;background:rgba(13, 14, 24, 0.55);text-align:left;font-size:0.9rem;line-height:1.45;">
                             <div
                                 style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:0.4rem;">
-                                <strong>AXGT discount tier</strong>
+                                <strong>AXGT discount tier
+                                    <button type="button" class="axonos-info-btn"
+                                        data-info-target="axonos_discount_details_pop" title="Discount details"
+                                        aria-label="Discount details" aria-expanded="false">i</button>
+                                </strong>
                                 <span id="axonos_discount_status" style="font-size:0.78rem;opacity:0.7;">Loading
                                     on-chain balance…</span>
                             </div>
                             <ul style="list-style:none;padding:0;margin:0.45rem 0 0.2rem;">
                                 <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
-                                        style="opacity:0.78;">Minimum (list)</span><strong
-                                        id="axonos_discount_base_eth">—</strong></li>
-                                <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
-                                        style="opacity:0.78;">Wallet AXGT balance</span><strong
-                                        id="axonos_discount_balance">—</strong></li>
-                                <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
-                                        style="opacity:0.78;">Eligible tier</span><strong
-                                        id="axonos_discount_tier">—</strong></li>
-                                <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
                                         style="opacity:0.78;">Holder discount</span><strong id="axonos_discount_percent"
                                         style="color:#4fe0c0;">—</strong></li>
-                                <li
-                                    style="display:flex;justify-content:space-between;gap:0.5rem;border-top:1px dashed rgba(255, 255, 255, 0.112);margin-top:0.35rem;padding-top:0.35rem;">
+                                <li style="display:flex;justify-content:space-between;gap:0.5rem;">
                                     <span>Minimum ETH (your tier)</span><strong id="axonos_discount_min_eth"
                                         style="color:#f2c14e;">—</strong>
                                 </li>
-                                <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
-                                        style="opacity:0.78;">Minimum desktop time</span><strong
-                                        id="axonos_discount_min_minutes">—</strong></li>
                             </ul>
+                            <div id="axonos_discount_details_pop" class="axonos-info-pop">
+                                <ul style="list-style:none;padding:0;margin:0;">
+                                    <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
+                                            style="opacity:0.78;">Minimum (list)</span><strong
+                                            id="axonos_discount_base_eth">—</strong></li>
+                                    <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
+                                            style="opacity:0.78;">Wallet AXGT balance</span><strong
+                                            id="axonos_discount_balance">—</strong></li>
+                                    <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
+                                            style="opacity:0.78;">Eligible tier</span><strong
+                                            id="axonos_discount_tier">—</strong></li>
+                                    <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
+                                            style="opacity:0.78;">Minimum desktop time</span><strong
+                                            id="axonos_discount_min_minutes">—</strong></li>
+                                </ul>
+                            </div>
                             <ul id="axonos_discount_preview" class="axonos-discount-preview"
                                 style="list-style:none;padding:0;margin:0.35rem 0 0;display:none;">
                                 <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
@@ -1490,32 +1522,39 @@ Copyright (C) 2019 The noVNC Authors
                             style="display:none;margin:0.6rem auto 0.4rem;width:100%;max-width:30rem;border:1px solid rgba(255, 255, 255, 0.087);border-radius:12px;padding:0.7rem 0.9rem;background:rgba(13, 14, 24, 0.55);text-align:left;font-size:0.9rem;line-height:1.45;">
                             <div
                                 style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:0.4rem;">
-                                <strong>AXGT discount tier · USDC (Base)</strong>
+                                <strong>AXGT discount tier · USDC (Base)
+                                    <button type="button" class="axonos-info-btn"
+                                        data-info-target="axonos_usdc_discount_details_pop" title="Discount details"
+                                        aria-label="Discount details" aria-expanded="false">i</button>
+                                </strong>
                                 <span id="axonos_usdc_discount_status" style="font-size:0.78rem;opacity:0.7;">Loading
                                     on-chain balance…</span>
                             </div>
                             <ul style="list-style:none;padding:0;margin:0.45rem 0 0.2rem;">
                                 <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
-                                        style="opacity:0.78;">Minimum (list)</span><strong
-                                        id="axonos_usdc_discount_base">—</strong></li>
-                                <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
-                                        style="opacity:0.78;">Wallet AXGT balance</span><strong
-                                        id="axonos_usdc_discount_balance">—</strong></li>
-                                <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
-                                        style="opacity:0.78;">Eligible tier</span><strong
-                                        id="axonos_usdc_discount_tier">—</strong></li>
-                                <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
                                         style="opacity:0.78;">Holder discount</span><strong
                                         id="axonos_usdc_discount_percent" style="color:#4fe0c0;">—</strong></li>
-                                <li
-                                    style="display:flex;justify-content:space-between;gap:0.5rem;border-top:1px dashed rgba(255, 255, 255, 0.112);margin-top:0.35rem;padding-top:0.35rem;">
+                                <li style="display:flex;justify-content:space-between;gap:0.5rem;">
                                     <span>Minimum USDC (your tier)</span><strong id="axonos_usdc_discount_min"
                                         style="color:#f2c14e;">—</strong>
                                 </li>
-                                <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
-                                        style="opacity:0.78;">Minimum desktop time</span><strong
-                                        id="axonos_usdc_discount_min_minutes">—</strong></li>
                             </ul>
+                            <div id="axonos_usdc_discount_details_pop" class="axonos-info-pop">
+                                <ul style="list-style:none;padding:0;margin:0;">
+                                    <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
+                                            style="opacity:0.78;">Minimum (list)</span><strong
+                                            id="axonos_usdc_discount_base">—</strong></li>
+                                    <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
+                                            style="opacity:0.78;">Wallet AXGT balance</span><strong
+                                            id="axonos_usdc_discount_balance">—</strong></li>
+                                    <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
+                                            style="opacity:0.78;">Eligible tier</span><strong
+                                            id="axonos_usdc_discount_tier">—</strong></li>
+                                    <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
+                                            style="opacity:0.78;">Minimum desktop time</span><strong
+                                            id="axonos_usdc_discount_min_minutes">—</strong></li>
+                                </ul>
+                            </div>
                             <ul id="axonos_usdc_discount_preview" class="axonos-discount-preview"
                                 style="list-style:none;padding:0;margin:0.35rem 0 0;display:none;">
                                 <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
@@ -1540,29 +1579,39 @@ Copyright (C) 2019 The noVNC Authors
                             style="display:none;margin:0.6rem auto 0.4rem;width:100%;max-width:30rem;border:1px solid rgba(255, 255, 255, 0.087);border-radius:12px;padding:0.7rem 0.9rem;background:rgba(13, 14, 24, 0.55);text-align:left;font-size:0.9rem;line-height:1.45;">
                             <div
                                 style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:0.4rem;">
-                                <strong>Paying in AXGT · best rate</strong>
+                                <strong>Paying in AXGT · best rate
+                                    <button type="button" class="axonos-info-btn"
+                                        data-info-target="axonos_axgt_discount_details_pop" title="Pricing details"
+                                        aria-label="Pricing details" aria-expanded="false">i</button>
+                                </strong>
                                 <span id="axonos_axgt_discount_status" style="font-size:0.78rem;opacity:0.7;">Live USD
                                     pricing</span>
                             </div>
                             <ul style="list-style:none;padding:0;margin:0.45rem 0 0.2rem;">
                                 <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
-                                        style="opacity:0.78;">Minimum</span><strong
-                                        id="axonos_axgt_discount_base">—</strong></li>
-                                <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
-                                        style="opacity:0.78;">Wallet AXGT balance</span><strong
-                                        id="axonos_axgt_discount_balance">—</strong></li>
-                                <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
-                                        style="opacity:0.78;">Pricing</span><strong
-                                        id="axonos_axgt_discount_tier">—</strong></li>
-                                <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
                                         style="opacity:0.78;">AXGT bonus</span><strong id="axonos_axgt_discount_percent"
                                         style="color:#4fe0c0;">—</strong></li>
-                                <li
-                                    style="display:flex;justify-content:space-between;gap:0.5rem;border-top:1px dashed rgba(255, 255, 255, 0.112);margin-top:0.35rem;padding-top:0.35rem;">
+                                <li style="display:flex;justify-content:space-between;gap:0.5rem;">
                                     <span>Minimum AXGT</span><strong id="axonos_axgt_discount_min"
                                         style="color:#f2c14e;">—</strong>
                                 </li>
                             </ul>
+                            <div id="axonos_axgt_discount_details_pop" class="axonos-info-pop">
+                                <ul style="list-style:none;padding:0;margin:0;">
+                                    <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
+                                            style="opacity:0.78;">Minimum</span><strong
+                                            id="axonos_axgt_discount_base">—</strong></li>
+                                    <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
+                                            style="opacity:0.78;">Wallet AXGT balance</span><strong
+                                            id="axonos_axgt_discount_balance">—</strong></li>
+                                    <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
+                                            style="opacity:0.78;">Pricing</span><strong
+                                            id="axonos_axgt_discount_tier">—</strong></li>
+                                </ul>
+                                <p style="font-size:0.74rem;opacity:0.6;margin:0.4rem 0 0;">Paying in AXGT is charged
+                                    at live USD value and includes a bonus — the best per-dollar rate. (Holding AXGT
+                                    also discounts ETH/USDC payments.)</p>
+                            </div>
                             <ul id="axonos_axgt_discount_preview" class="axonos-discount-preview"
                                 style="list-style:none;padding:0;margin:0.35rem 0 0;display:none;">
                                 <li style="display:flex;justify-content:space-between;gap:0.5rem;"><span
@@ -1572,16 +1621,8 @@ Copyright (C) 2019 The noVNC Authors
                                         style="opacity:0.78;">Estimated desktop time</span><strong
                                         id="axonos_axgt_discount_preview_minutes" style="color:#4fe0c0;">—</strong></li>
                             </ul>
-                            <p style="font-size:0.74rem;opacity:0.6;margin:0.4rem 0 0;">Paying in AXGT is charged at
-                                live USD value and includes a bonus — the best per-dollar rate. (Holding AXGT also
-                                discounts ETH/USDC payments.)</p>
                         </div>
 
-                        <p class="axonos-wallet-state__help"
-                            style="margin:0.55rem 0 0.35rem;font-size:0.9em;opacity:0.9;">Enter the ETH you will pay.
-                            Estimates are wall-clock desktop time for your currently selected GPU profile. AXGT holders
-                            get more time per ETH and a lower minimum. Larger amounts add proportionally more minutes.
-                            You can also send from another wallet/DEX and paste the tx hash.</p>
                         <div class="axonos-pay-deposit-rows"
                             style="margin:0.5rem 0;width:100%;max-width:28rem;margin-left:auto;margin-right:auto;">
                             <div class="axonos-pay-deposit-row" id="axonos_pay_axgt_row" style="display:none;">
@@ -1626,8 +1667,6 @@ Copyright (C) 2019 The noVNC Authors
                                 class="axonos-test-credit-btn">Use test credit</button>
                         </div>
                         <p id="axonos_pay_eth_hint" class="axonos-pay-eth-hint" role="status" aria-live="polite"></p>
-                        <p class="axonos-wallet-state__help" style="margin:0.35rem 0;font-size:0.82em;opacity:0.75;">
-                            Manual: paste tx hash after sending from another wallet or DEX.</p>
                         <p
                             style="margin:0.5rem 0;display:flex;gap:0.5rem;align-items:center;justify-content:center;flex-wrap:nowrap;">
                             <input type="text" id="axonos_tx_hash_input" placeholder="0x… transaction hash"
@@ -4739,6 +4778,17 @@ Copyright (C) 2019 The noVNC Authors
             });
         }
 
+        // Delegated toggle for the ⓘ info buttons (wallet dialog and elsewhere).
+        document.addEventListener('click', function (ev) {
+            var btn = ev.target && ev.target.closest ? ev.target.closest('.axonos-info-btn') : null;
+            if (!btn) return;
+            ev.preventDefault();
+            var pop = document.getElementById(btn.getAttribute('data-info-target') || '');
+            if (!pop) return;
+            var open = pop.classList.toggle('axonos-info-pop--open');
+            btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        });
+
         (function loadAxonOSConfig() {
             var cfgUrl = new URL('/api/config', window.location.origin).toString();
             fetch(cfgUrl, { method: 'GET' })
@@ -4761,6 +4811,12 @@ Copyright (C) 2019 The noVNC Authors
                     var meMin = (cfg && cfg.min_eth_deposit_minutes != null)
                         ? Number(cfg.min_eth_deposit_minutes)
                         : ((cfg && cfg.dynamic_pricing_enabled) ? null : (Number(minEth) * cpe));
+                    axonosConfig.hide_beta_badge = !!(cfg && cfg.hide_beta_badge);
+                    if (axonosConfig.hide_beta_badge) {
+                        document.querySelectorAll('.axonos-beta-chip').forEach(function (chip) {
+                            chip.style.display = 'none';
+                        });
+                    }
                     axonosConfig.axgt_contract_address = addr;
                     axonosConfig.axgt_revenue_wallet = rev;
                     axonosConfig.axgt_chain_id = (cfg && cfg.axgt_chain_id) ? String(cfg.axgt_chain_id) : null;
@@ -4903,8 +4959,12 @@ Copyright (C) 2019 The noVNC Authors
                         var billingHint = axonosGpuWeightedBillingEnabled()
                             ? (' While connected or explicitly detached, usage burns <strong>' + axonosGpuCountForProfile(getRequestedProfile()) + '×</strong> prepaid minutes per real minute for your selected GPU profile (idle included).')
                             : ' While connected or explicitly detached, minutes count for your session (idle included).';
-                        dlgHints.innerHTML = rateHint + legacyHint + '. ' + discountHint +
-                            '<span class="axonos-wallet-card__hints-session">' + billingHint + ' <strong>Detach</strong> leaves the view while desktop jobs and compute billing continue, even if this tab closes. Closing an attached tab requests session end; use <strong>End session</strong> when finished. At credit exhaustion, viewer access and compute billing stop for the 2-hour top-up grace while the same running container, jobs, and GPUs are retained; it is automatically ended after the grace.</span>';
+                        dlgHints.innerHTML = rateHint + legacyHint + '.';
+                        var sessionHints = document.getElementById('axonos-dlg-session-hints');
+                        if (sessionHints) {
+                            sessionHints.innerHTML = discountHint +
+                                '<span class="axonos-wallet-card__hints-session">' + billingHint + ' <strong>Detach</strong> leaves the view while desktop jobs and compute billing continue, even if this tab closes. Closing an attached tab requests session end; use <strong>End session</strong> when finished. At credit exhaustion, viewer access and compute billing stop for the 2-hour top-up grace while the same running container, jobs, and GPUs are retained; it is automatically ended after the grace.</span>';
+                        }
                     }
                     var insRates = document.getElementById('axonos_insufficient_credit_rates');
                     if (insRates) {
@@ -4980,8 +5040,11 @@ Copyright (C) 2019 The noVNC Authors
                     if (revenueShortEl) revenueShortEl.textContent = '(error)';
                     var dh = document.getElementById('axonos-dlg-credit-hints');
                     if (dh) {
-                        dh.innerHTML = 'Connect wallet to see live rates from the server — payments are valued at the live token price when they are credited.' +
-                            '<span class="axonos-wallet-card__hints-session">While connected or explicitly detached, compute minutes count (idle included). After Detach they continue even if this tab closes; closing an attached tab requests session end. Use <strong>End session</strong> when finished. At credit exhaustion, viewer access and compute billing stop for the 2-hour top-up grace while the same running container, jobs, and GPUs are retained.</span>';
+                        dh.innerHTML = 'Connect wallet to see live rates from the server — payments are valued at the live token price when they are credited.';
+                        var dhSession = document.getElementById('axonos-dlg-session-hints');
+                        if (dhSession) {
+                            dhSession.innerHTML = '<span class="axonos-wallet-card__hints-session">While connected or explicitly detached, compute minutes count (idle included). After Detach they continue even if this tab closes; closing an attached tab requests session end. Use <strong>End session</strong> when finished. At credit exhaustion, viewer access and compute billing stop for the 2-hour top-up grace while the same running container, jobs, and GPUs are retained.</span>';
+                        }
                     }
                     syncAxonosPrerequisiteTickerMirror();
                 });

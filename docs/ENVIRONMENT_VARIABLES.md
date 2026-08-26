@@ -256,6 +256,7 @@ Read primarily by [`axonos_gate/session_manager.py`](../axonos_gate/session_mana
 |----------|---------|-------------|
 | `AXGT_MULTI_SESSION_ENABLED` | `true` when user containers are enabled | Multi-session scheduler (exclusive GPU allocation). Forced off when `AXGT_USER_CONTAINER_ENABLED=false` so multiple wallets can never share one desktop. |
 | `AXGT_GPU_PROFILES_ENABLED` | `true` | GPU profile selection (`small`/`medium`/`large`/`max`). |
+| `AXONOS_HIDE_BETA_BADGE` | `false` | Hide the "BETA" chip beside the AxonOS brand in the UI (served to the client via `/api/config`). |
 | `AXGT_GPU_WEIGHTED_BILLING` | `true`* | Bill `wall_clock_minutes × GPU count` on heartbeat when profiles enabled. Set `false` for 1× billing. (*Enabled when profiles enabled and var not explicitly off.) |
 | `AXGT_USER_CONTAINER_ENABLED` | `false` in code; `true` in compose | One container per claimed session vs shared desktop. |
 | `AXGT_SESSION_PRESERVE_ON_CREDIT_EXHAUST` | `true` | On zero credit, stop viewer access and compute billing but retain the same running container, jobs, and GPU assignment for the configured top-up grace. When `false`, end the session immediately. |

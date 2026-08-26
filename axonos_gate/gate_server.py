@@ -1079,6 +1079,7 @@ def api_config():
         'persistent_storage_gb_hour_cost_minutes': storage_cost,
         'persistent_storage_min_balance_limit_minutes': min_balance_limit,
         'session_claim_timeout_seconds': session_claim_timeout_seconds(),
+        'hide_beta_badge': _env_truthy("AXONOS_HIDE_BETA_BADGE"),
         **(
             webrtc_config.public_config()
             if webrtc_config is not None
