@@ -163,6 +163,29 @@ class TestDepositLedger(unittest.TestCase):
         self.assertEqual(ledger_calls[0].args[1][1], "test_credit")
         conn.commit.assert_called_once()
 
+    def test_whitelisted_additive_grant_adds_full_amount_above_prior_balance(self):
+        import deposit_ledger as dl
+
+        wallet = "0x1234567890123456789012345678901234567890"
+        conn, cur = self._test_credit_connection([(59.0,), None])
+        with patch.object(dl, "init_once", return_value=True), patch.object(
+            dl, "_get_connection", return_value=conn
+        ), patch.object(dl.time, "time", return_value=1000.0):
+            result = dl.credit_test_grant(
+                wallet, 60.0, 60.0, "request-0001", "eth", additive=True
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["credited_minutes"], 60.0)
+        self.assertEqual(result["remaining_minutes"], 119.0)
+        updates = [
+            call for call in cur.execute.call_args_list
+            if "UPDATE axgt_deposits" in str(call.args[0])
+        ]
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(updates[0].args[1][0], 60.0)
+        self.assertEqual(updates[0].args[1][1], 119.0)
+
     def test_test_credit_replay_is_idempotent(self):
         import deposit_ledger as dl
 

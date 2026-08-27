@@ -38,6 +38,7 @@ try:
     from .docker_gpu_cli import (
         SESSION_MEDIA_ENV_NAMES,
         docker_run_gpus_device_value,
+        normalize_session_template,
         session_runtime_config_digest,
         session_container_ompi_mca_env_flags,
         subprocess_env_for_nested_docker,
@@ -49,6 +50,7 @@ except ImportError:
         from axonos_gate.docker_gpu_cli import (
             SESSION_MEDIA_ENV_NAMES,
             docker_run_gpus_device_value,
+            normalize_session_template,
             session_runtime_config_digest,
             session_container_ompi_mca_env_flags,
             subprocess_env_for_nested_docker,
@@ -59,12 +61,31 @@ except ImportError:
         from docker_gpu_cli import (
             SESSION_MEDIA_ENV_NAMES,
             docker_run_gpus_device_value,
+            normalize_session_template,
             session_runtime_config_digest,
             session_container_ompi_mca_env_flags,
             subprocess_env_for_nested_docker,
             strip_conflicting_gpu_run_flags,
             strip_unsafe_session_run_flags,
         )
+
+
+try:
+    from .guest_mode import is_guest_identity as _is_guest_identity
+except ImportError:
+    try:
+        from axonos_gate.guest_mode import is_guest_identity as _is_guest_identity
+    except ImportError:
+        try:
+            from guest_mode import is_guest_identity as _is_guest_identity
+        except ImportError:
+            # This service runs on the Docker host and may be deployed without the
+            # gate package alongside it. Without the helper, treat nothing as a
+            # guest: the gate's explicit payload flag still governs, so a demo is
+            # never handed a persistent volume by this fallback -- it only loses
+            # the redundant second opinion.
+            def _is_guest_identity(_address):
+                return False
 
 
 logging.basicConfig(
@@ -75,6 +96,20 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 _STORAGE_VOLUME_TABLE = "axgt_storage_volumes"
+
+
+def _ephemeral_storage_for_payload(payload: Dict) -> bool:
+    """Whether this launch runs without a persistent volume.
+
+    Honours the gate's explicit flag and independently forces it for a guest
+    identity, whose wallet field has already been matched against the live
+    allocation row -- so a demo cannot end up provisioning an ext4 image that
+    would outlive it even if the flag were lost in transit. Used for the runtime
+    digest as well as the mount, so both always describe the same topology.
+    """
+    if bool(payload.get("ephemeral_storage")):
+        return True
+    return _is_guest_identity(str(payload.get("wallet_address") or ""))
 
 _FORBIDDEN_SESSION_ENV_NAMES = {
     "AXGT_ADMIN_SECRET",
@@ -1005,6 +1040,7 @@ def _managed_running_container_id(session_id: int) -> Optional[str]:
 
 def _runtime_contract_for_payload(payload: Dict[str, object]) -> Tuple[str, str]:
     network = _session_network_name(int(payload.get("session_id")))
+    requested_template = normalize_session_template(payload.get("requested_template"))
     digest = session_runtime_config_digest(
         session_id=int(payload.get("session_id")),
         wallet=str(payload.get("wallet_address") or ""),
@@ -1014,8 +1050,9 @@ def _runtime_contract_for_payload(payload: Dict[str, object]) -> Tuple[str, str]
         ssh_enabled=bool(payload.get("ssh_enabled")),
         network_name=network,
         image_name=_image_name(),
-        requested_template=str(payload.get("requested_template") or ""),
+        requested_template=requested_template or "",
         ssh_pubkey=str(payload.get("ssh_pubkey") or ""),
+        ephemeral_storage=_ephemeral_storage_for_payload(payload),
     )
     return digest, network
 
@@ -1330,6 +1367,16 @@ def _reconcile_session_networks_loop() -> None:
 
 
 def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], Optional[str]]:
+    # This helper is called directly in tests and operational tooling as well as
+    # from /launch, so it enforces the template contract independently.  Work on
+    # a copy so callers do not observe normalization as a side effect.
+    payload = dict(payload)
+    try:
+        payload["requested_template"] = (
+            normalize_session_template(payload.get("requested_template")) or ""
+        )
+    except (TypeError, ValueError) as exc:
+        return None, str(exc)
     image = _image_name()
     if not image:
         return None, "AXGT_HOST_SESSION_CONTAINER_IMAGE is required"
@@ -1375,7 +1422,7 @@ def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], 
         "NET_RAW",
     ]
     cmd.extend(_publish_args_for_session(session_id, ssh_enabled))
-    if _persistent_storage_enabled():
+    if _persistent_storage_enabled() and not _ephemeral_storage_for_payload(payload):
         safe_wallet = "".join(c for c in wallet if c.isalnum() or c in ("-", "_")).lower()
         volume_name = f"{_persistent_storage_volume_prefix()}{safe_wallet}"
         mount_path = _persistent_storage_mount_path()
@@ -1426,7 +1473,7 @@ def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], 
             f"AXGT_HEARTBEAT_INTERVAL_SECONDS={heartbeat_interval}",
         ])
 
-    requested_template = str(payload.get("requested_template") or "").strip()
+    requested_template = str(payload.get("requested_template") or "")
     if requested_template:
         cmd.extend(["-e", f"AXONOS_SELECTED_TEMPLATE={requested_template}"])
 
@@ -1588,6 +1635,16 @@ def launch():
     missing = [k for k in required if k not in payload]
     if missing:
         return jsonify({"ok": False, "error": f"missing required fields: {', '.join(missing)}"}), 400
+
+    # Validate before contract inspection.  An invalid value must never change
+    # the expected digest and cause a healthy managed container to be removed as
+    # a supposed runtime mismatch.
+    try:
+        requested_template = normalize_session_template(payload.get("requested_template"))
+    except (TypeError, ValueError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    payload = dict(payload)
+    payload["requested_template"] = requested_template or ""
 
     try:
         session_id = int(payload.get("session_id"))

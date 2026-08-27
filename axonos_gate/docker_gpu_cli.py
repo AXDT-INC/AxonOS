@@ -18,7 +18,54 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from typing import Dict, List, Sequence
+from typing import Dict, List, Optional, Sequence
+
+
+# Canonical backend IDs for the environment cards exposed by noVNC and handled
+# by scripts/apply_session_template.sh.  Keep this in the launcher helper that
+# is copied into the standalone host-launcher image, so both sides of the HTTP
+# boundary enforce the same contract without requiring another deployed file.
+SUPPORTED_SESSION_TEMPLATE_IDS = (
+    "pytorch",
+    "gromacs",
+    "ugene",
+    "quantum-espresso",
+    "rstudio",
+    "beakerx",
+    "spyder",
+    "octave",
+    "fiji",
+    "nextflow",
+    "qgis-grass",
+    "syncthing",
+    "ethercalc",
+    "ngl-viewer",
+    "remix-ide",
+    "cellmodeller",
+    "ipfs-desktop",
+)
+_SUPPORTED_SESSION_TEMPLATE_IDS = frozenset(SUPPORTED_SESSION_TEMPLATE_IDS)
+
+
+def normalize_session_template(value: object) -> Optional[str]:
+    """Return a canonical environment ID, or ``None`` for the plain desktop.
+
+    Template IDs cross an API and ultimately become a container environment
+    value consumed by a case-sensitive shell ``case`` statement.  Normalizing
+    and validating at the shared boundary prevents arbitrary/dead values and
+    makes values such as ``" PyTorch "`` behave like the browser's
+    ``"pytorch"`` selection.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError("requested_template must be a string")
+    normalized = value.strip().lower()
+    if not normalized:
+        return None
+    if normalized not in _SUPPORTED_SESSION_TEMPLATE_IDS:
+        raise ValueError(f"unsupported requested_template: {normalized}")
+    return normalized
 
 
 def docker_run_gpus_device_value(gpu_ids: List[int]) -> str:
@@ -108,11 +155,20 @@ def session_runtime_config_digest(
     image_name: str,
     requested_template: str = "",
     ssh_pubkey: str = "",
+    ephemeral_storage: bool = False,
 ) -> str:
     """Fingerprint the immutable identity/topology expected for safe reuse.
 
     Only the digest is placed in a Docker label. The per-session file key is
     hashed before it enters the canonical payload and is never exposed there.
+
+    Whether the session mounts its persistent volume is part of that topology --
+    a volume-less demo container is not interchangeable with a mounted one -- so
+    ``ephemeral_storage`` participates. It is added to the payload only when set,
+    which keeps every ordinary persistent launch hashing byte-identically to
+    releases before this field existed: a digest mismatch means ``docker rm -f``,
+    so a blanket change would tear down live sessions on the first claim after a
+    deploy.
     """
     key_fingerprint = hashlib.sha256(
         str(files_key or "").encode("utf-8")
@@ -133,6 +189,8 @@ def session_runtime_config_digest(
         "network_name": str(network_name or "").strip(),
         "image_name": str(image_name or "").strip(),
     }
+    if ephemeral_storage:
+        payload["ephemeral_storage"] = True
     canonical = json.dumps(
         payload,
         sort_keys=True,

@@ -419,3 +419,143 @@ Follow-ups (not done):
   .profile/.bash_logout restored from /etc/skel); check whether anything else
   in the image home (Desktop dirs, .vnc, .config defaults) is actually needed
   first-run or is created on demand by the session.
+
+## Wallet-free demo sessions (guest mode) (2026-08-27)
+
+Wallet connect was both identity and payment, so a sales prospect could not see a
+desktop without first installing a wallet, funding it, and signing. Demo sessions
+now launch from an invite link with no wallet at all, and the wallet becomes an
+upsell afterwards. Whole feature behind `AXONOS_GUEST_MODE_ENABLED`, off by
+default; catalog browsing is unchanged.
+
+- Identity is a synthetic EVM-shaped address with a reserved `0x6775657374…`
+  ("guest") prefix, not a `guest:<uuid>` string. `validate_wallet_address()` is a
+  hard `^0x[a-fA-F0-9]{40}$` and runs before the auth-token check at ~53 call
+  sites across both gate servers, the auth-token table is NOT NULL, and sessions
+  are keyed by wallet — so reusing the address shape kept the token, session,
+  heartbeat and expiry machinery entirely unchanged. The alternative (nullable
+  wallet column) would have meant relaxing the one validator that also guards
+  every wallet-gated endpoint. The prefix makes guest-ness decidable offline,
+  with no DB round trip, which matters because the deny-list checks run in hot
+  paths and inside the proxy gate, which has no Flask context.
+- The namespace is closed at the door: both SIWE routes refuse guest-shaped
+  addresses, so no signature can ever mint a token for one.
+- Minting is authorized by the operator's invite-minter list, which defaults to
+  the existing test-credit wallet list — not by `AXGT_ADMIN_SECRET`. The people
+  who hand a prospect a demo should not hold a credential that also unlocks the
+  ledger and telemetry APIs, and because the minter is signed in every link is
+  attributable to a wallet. Deliberately does NOT call `is_wallet_whitelisted()`,
+  which returns False when `AXONOS_TEST_CREDITS_ENABLED` is off and would have
+  silently coupled demo mode to an unrelated feature. The admin route and
+  `scripts/guest_invite.py` remain for hosts with no signed-in wallet.
+- **Quotas live on the sponsor, not the identity.** Each redemption mints a NEW
+  identity with its own fresh ledger row, so the test-credit balance cap — which
+  bounds a single identity — cannot bound a member who mints many links. Without
+  a sponsor quota one wallet could light up the whole fleet. Enforced as a daily
+  mint cap and, more importantly, a concurrent-live-demo cap checked at both
+  redemption and the final locked claim. The latter closes delayed/replayed
+  identity loopholes; different invite links from one sponsor serialize on the
+  same quota lock.
+- Guest credit reuses `credit_test_grant` with parameterised provenance rather
+  than a forked function (the fork was ~170 lines duplicating its advisory-lock
+  and replay logic). Demo minutes are written as `guest_credit` on a `guest` rail,
+  so free compute handed to a prospect stays distinguishable from a team member's
+  own test credit. Demo minutes are NOT drawn from the sponsor's balance: that
+  would kill a prospect's session when the rep spent their own credit.
+- Invite-only, never self-serve. `axgt_guest_invites` stores **only**
+  `sha256(token)` — the token is a bearer credential in a URL, shown once at mint
+  time. Redemption is one transaction under an advisory lock per invite:
+  revoked/expired/exhausted are refused, and an invite that already has a live
+  demo (or a just-issued identity whose claim is still in flight) is refused, so
+  one invite means one concurrent session and a double-click cannot open two.
+- Redemption setup is retry-safe. A non-secret per-tab `attempt_id` identifies
+  the one use already consumed by that browser, so a transient ledger/auth error
+  retries the same synthetic identity instead of burning a single-use sales link.
+  Large/high-GPU grants are split into independently idempotent chunks below the
+  ledger's per-grant ceiling.
+- Demo minutes are real ledger credit (`guest_credit` provenance), sized *above*
+  the wall-clock cap on purpose. If credit ran out first the session would enter
+  the credit-grace path and hold a GPU for the grace TTL; making the hard cap the
+  binding limit means a demo ends by teardown. `_preserve_for_wallet()` also
+  disables credit-grace for guest identities outright.
+- The time cap is written to BOTH expiry columns. `hard_expires_at` reuses the
+  existing non-sliding column (the expiry sweep was already generic rather than
+  SSH-specific, and every renewal path is SSH-gated, so the cap cannot be
+  extended by re-claiming or reloading). But that branch fires at
+  `hard_expires_at + session_grace_seconds()`, so a grace period longer than the
+  demo would have let a 30-minute demo run for the full grace — the subtraction
+  floors at zero. `expires_at` is compared with no grace allowance, so it pins
+  the exact deadline whatever the grace is set to; the heartbeat's idle-TTL slide
+  is clamped to it so a demo cannot walk its deadline forward.
+- Demos get no persistent volume: an `ephemeral_storage` flag threads claim →
+  launcher and skips the mount, so no ext4 image or capacity row accumulates per
+  invite. The launcher service derives it from the identity as well as the flag,
+  so a dropped flag cannot create a volume. It participates in the runtime
+  config digest (storage topology is part of what makes a container reusable) but
+  is added to the payload only when set — a digest change means `docker rm -f`,
+  so a blanket change would have torn down live sessions on the first claim after
+  deploy.
+- Frontend: `?invite=` is captured synchronously and stripped from the URL before
+  remembered-wallet paint or asynchronous restore can start
+  (the single-use invitation secret must not sit in history, a Referer, or any
+  browser store). Identity, deadline, allowlists, and the separate short-lived
+  guest auth bearer are kept in sessionStorage — per-tab and never localStorage.
+  Reload revalidates that identity-bound bearer while retaining the HttpOnly
+  cookie as a same-identity compatibility fallback. This avoids the origin-wide
+  cookie collision where a wallet or second demo tab could strand the first demo;
+  guest RFB reconnects likewise force the tab bearer in default cookie mode. The
+  proxy access-log scrubber redacts both `invite` and query-mode `auth_token`
+  capabilities while retaining ordinary query diagnostics. The
+  countdown banner is fed by `guest_remaining_seconds` from claim/status/
+  heartbeat rather than a purely local timer. Both gate implementations avoid
+  writing or clearing the shared cookie on guest redemption/status (an older
+  guest cookie remains accepted once for migration), and guest token rotation
+  preserves the absolute demo-plus-API-grace lifetime. Tab-close release keeps
+  its fetch header and gives the sendBeacon fallback the guest bearer only in
+  the JSON body; both release handlers accept that field only for a guest-shaped,
+  identity-bound token, so paid-wallet auth is unchanged and no URL/log secret is
+  introduced. A warning fires ~5 min out
+  (`AXONOS_GUEST_WARN_MINUTES`, clamped below short demos) while the prospect is
+  still in the desktop, then the expiry upsell offers wallet connect.
+- Demo entry takes precedence over any wallet remembered by the same browser.
+  Old-wallet status, paused-session and provider reconnect probes are skipped
+  while guest entry is pending/active, and stale async results cannot overwrite
+  the demo. After the prospect chooses an allowed environment and hardware tier,
+  Step 2 launches directly without showing the payment step. Disallowed choices
+  are hidden/disabled client-side and still rejected authoritatively by claim.
+- The single highest-risk line: `axonosEnsureWalletSessionCurrent` needed a guest
+  short-circuit. It asks the wallet provider for `eth_accounts` and fails closed
+  when there is none — without the short-circuit no demo claim can ever succeed.
+  That short-circuit then created a regression, caught in review: connecting a
+  wallet DURING a demo left the guest flag set, so the preflight short-circuited
+  for a PAID session (bypassing the wallet-drift check that is its sole gate),
+  and the demo clock later cleared that wallet's credentials mid-session. Fixed
+  in both directions — a wallet sign-in ends the demo before taking the globals,
+  and clearing a demo only tears down the shared globals when the demo is still
+  the live identity.
+- The SIWE namespace guard fails closed. The reserved prefix is 10 hex nibbles =
+  40 bits, which is within reach of vanity mining (hours on a GPU rig), so the
+  refusal at `/api/auth/challenge` and `/api/auth/verify-wallet` is load-bearing
+  rather than defence-in-depth. Both gates mirror the prefix locally so an
+  unimportable `guest_mode` cannot silently reopen the namespace.
+- Surfaces: `POST /api/auth/guest-invite` (signed-in team member, the everyday
+  path), `/api/admin/guest-invite{,/revoke}` and `/api/admin/guest-invites`
+  behind the admin secret, plus `scripts/guest_invite.py --sponsor` for hosts
+  with no signed-in wallet.
+- Template IDs are canonicalized against one backend catalog before any claim DB
+  or launcher side effect, on paid-wallet and guest paths alike. The catalog is
+  regression-checked against both the frontend cards and runtime apply script.
+- Revocation is serialized with redemption, expires issued-but-unclaimed guest
+  identities, and shortens live session deadlines in one transaction. After the
+  commit it invokes the ordinary exact-session release path so Docker teardown
+  happens before the GPU is exposed; failed external cleanup remains durably
+  closed for the periodic reconciler.
+- Expired per-demo identity and credit rows are reaped in bounded, skip-locked
+  batches after session-expiry hooks. Retention defaults to 30 days via
+  `AXONOS_GUEST_DATA_RETENTION_DAYS`; `0` keeps rows indefinitely. Invite and
+  generic session history remain for audit.
+
+Follow-ups (not done):
+- Demo expiry ends the container, so the upsell offers a *fresh* session. Letting
+  a prospect keep the same desktop by connecting a wallet would need an
+  ownership-transfer mechanism, since sessions are keyed by wallet.

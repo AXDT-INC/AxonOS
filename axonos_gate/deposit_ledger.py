@@ -26,6 +26,7 @@ _VERIFIED_TABLE = "axgt_verified_deposits"
 _ALLOWED_EVENT_TYPES = frozenset({
     "deposit_credit",
     "test_credit",
+    "guest_credit",
     "usage_deduction",
     "refund",
     "admin_adjustment",
@@ -383,7 +384,8 @@ def credit_deposit(
 
 _TEST_CREDIT_REQUEST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
 _TEST_CREDIT_WALLET_RE = re.compile(r"^0x[a-f0-9]{40}$")
-_TEST_CREDIT_RAILS = frozenset({"axgt", "eth", "usdc"})
+# "guest" funds a wallet-free demo session; the others are real payment rails.
+_TEST_CREDIT_RAILS = frozenset({"axgt", "eth", "usdc", "guest"})
 _MAX_TEST_CREDIT_GRANT_MINUTES = 1440.0
 _MAX_TEST_CREDIT_BALANCE_MINUTES = 10080.0
 
@@ -394,8 +396,25 @@ def credit_test_grant(
     max_balance_minutes: float,
     request_id: str,
     payment_rail: str,
+    *,
+    credit_source: str = "test_credit",
+    event_type: str = "test_credit",
+    created_by: str = "test_credit_api",
+    reference_prefix: str = "test-credit",
+    notes_label: str = "Test credit",
+    additive: bool = False,
 ) -> Dict[str, Any]:
-    """Atomically grant bounded test credit with replay and provenance tracking.
+    """Atomically grant bounded credit with replay and provenance tracking.
+
+    Provenance is parameterised so the wallet-free demo rail can reuse this exact
+    locking and replay logic while staying distinguishable in the ledger: demo
+    minutes are written as ``guest_credit`` rather than ``test_credit``, so free
+    compute handed to a prospect is never confused with a team member's own test
+    credit. The defaults preserve the original test-credit behaviour byte for byte.
+
+    ``additive=True`` grants the full configured amount on every new request;
+    this is reserved for explicitly whitelisted operator wallets. Guest funding
+    keeps the bounded default so a demo can never extend its wall-clock budget.
 
     The wallet balance row is locked before the cap is checked and remains locked
     through the credit update. Concurrent requests for one wallet therefore cannot
@@ -451,7 +470,7 @@ def credit_test_grant(
             "error": "Ledger unavailable",
         }
 
-    reference = f"test-credit:{request_norm}"
+    reference = f"{reference_prefix}:{request_norm}"
     try:
         now = time.time()
         with conn.cursor() as cur:
@@ -495,7 +514,7 @@ def credit_test_grant(
                 previous_rail = str(previous[3] or "").lower()
                 if (
                     previous_wallet != wallet
-                    or previous_source != "test_credit"
+                    or previous_source != credit_source
                     or previous_rail != rail
                 ):
                     conn.commit()
@@ -519,7 +538,7 @@ def credit_test_grant(
                     "remaining_minutes": remaining_now,
                 }
 
-            available = max(0.0, cap - remaining_now)
+            available = grant if additive else max(0.0, cap - remaining_now)
             if available <= 0:
                 # Record even a no-op request so retries are idempotent. A wallet
                 # already holding credit at the configured cap is still allowed
@@ -535,7 +554,7 @@ def credit_test_grant(
                         wallet,
                         wallet,
                         _revenue_wallet().lower(),
-                        "test_credit",
+                        credit_source,
                         rail,
                         now,
                     ),
@@ -543,13 +562,13 @@ def credit_test_grant(
                 _ledger_write(
                     cur,
                     wallet,
-                    "test_credit",
+                    event_type,
                     0.0,
                     Decimal("0"),
                     remaining_now,
                     reference_tx_hash=reference,
-                    notes=f"Test credit no-op at cap rail={rail} request_id={request_norm}",
-                    created_by="test_credit_api",
+                    notes=f"{notes_label} no-op at cap rail={rail} request_id={request_norm}",
+                    created_by=created_by,
                 )
                 conn.commit()
                 return {
@@ -577,7 +596,7 @@ def credit_test_grant(
                     wallet,
                     _revenue_wallet().lower(),
                     credited,
-                    "test_credit",
+                    credit_source,
                     rail,
                     now,
                 ),
@@ -593,13 +612,13 @@ def credit_test_grant(
             _ledger_write(
                 cur,
                 wallet,
-                "test_credit",
+                event_type,
                 credited,
                 Decimal("0"),
                 remaining_after,
                 reference_tx_hash=reference,
-                notes=f"Test credit rail={rail} request_id={request_norm}",
-                created_by="test_credit_api",
+                notes=f"{notes_label} rail={rail} request_id={request_norm}",
+                created_by=created_by,
             )
         conn.commit()
         return {
@@ -613,7 +632,7 @@ def credit_test_grant(
     except Exception as exc:
         conn.rollback()
         logger.warning("credit_test_grant failed: %s", exc)
-        return {"ok": False, "error_code": "credit_failed", "error": "Test credit failed"}
+        return {"ok": False, "error_code": "credit_failed", "error": f"{notes_label} failed"}
     finally:
         conn.close()
 

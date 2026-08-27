@@ -774,9 +774,37 @@ class WebsockifyTerminalRouteTests(unittest.TestCase):
                 self.assertIn(expected_path, redacted)
                 self.assertNotIn(ticket, redacted)
 
-    def test_terminal_log_redaction_is_narrow_and_handler_wide(self):
-        ordinary = "/websockify?auth_token=not-this-routes-policy"
-        self.assertEqual(redact_terminal_websocket_query(ordinary), ordinary)
+    def test_query_capabilities_are_redacted_on_every_route(self):
+        secret = "guest_SUPER-SECRET-bearer"
+        cases = (
+            (
+                f"/websockify?wallet=0xabc&auth_token={secret}&quality=8",
+                "/websockify?wallet=0xabc&auth_token=[redacted]&quality=8",
+            ),
+            (
+                f'GET /?auth_token={secret}&wallet=0xabc HTTP/1.1',
+                'GET /?auth_token=[redacted]&wallet=0xabc HTTP/1.1',
+            ),
+            (
+                f"/?AUTH_TOKEN={secret}",
+                "/?AUTH_TOKEN=[redacted]",
+            ),
+            (
+                f"/?auth%5Ftoken={secret}",
+                "/?auth%5Ftoken=[redacted]",
+            ),
+            (
+                f"/?invite={secret}&utm_source=sales",
+                "/?invite=[redacted]&utm_source=sales",
+            ),
+        )
+        for value, expected in cases:
+            with self.subTest(value=value):
+                redacted = redact_terminal_websocket_query(value)
+                self.assertEqual(redacted, expected)
+                self.assertNotIn(secret, redacted)
+
+    def test_log_redaction_is_capability_scoped_and_handler_wide(self):
         self.assertEqual(
             redact_terminal_websocket_query("/api/terminal/ticket?mode=issue"),
             "/api/terminal/ticket?mode=issue",

@@ -14,6 +14,23 @@ import time
 from threading import Lock
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+try:
+    from .docker_gpu_cli import (
+        SUPPORTED_SESSION_TEMPLATE_IDS,
+        normalize_session_template,
+    )
+except ImportError:
+    try:
+        from axonos_gate.docker_gpu_cli import (
+            SUPPORTED_SESSION_TEMPLATE_IDS,
+            normalize_session_template,
+        )
+    except ImportError:
+        from docker_gpu_cli import (
+            SUPPORTED_SESSION_TEMPLATE_IDS,
+            normalize_session_template,
+        )
+
 logger = logging.getLogger(__name__)
 
 _SESSION_TABLE = "axgt_sessions"
@@ -449,6 +466,225 @@ def _ssh_hard_cap_seconds(remaining_minutes: Optional[float]) -> Optional[float]
     return min(candidates) * 60.0
 
 
+def _guest_claim_context(
+    wallet: str,
+    profile_name: str,
+    requested_template: Optional[str],
+    requested_ssh: bool,
+    *,
+    guest_record: Optional[Dict[str, Any]] = None,
+    record_is_authoritative: bool = False,
+) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """Resolve demo-session constraints for *wallet*.
+
+    Returns ``(context, rejection)``. ``context`` is None for an ordinary wallet,
+    leaving every paid path untouched. The initial call runs before any DB lock
+    so a disallowed request costs nothing; the claim path calls it again with an
+    authoritative same-cursor record after taking the invite lock.
+
+    Fails closed: a guest-shaped identity is refused outright when guest mode is
+    off, so a token minted before the operator disabled the feature cannot go on
+    launching compute.
+    """
+    guest_mode = _import_guest_mode()
+    if not guest_mode.is_guest_identity(wallet):
+        return None, None
+    if not guest_mode.guest_mode_enabled():
+        logger.warning("Claim rejected for %s: guest mode is disabled", _mask(wallet))
+        return None, {
+            "granted": False,
+            "error_code": "guest_mode_disabled",
+            "reason": "Demo sessions are not available.",
+        }
+
+    record = (
+        guest_record
+        if record_is_authoritative
+        else guest_mode.guest_session_for(wallet)
+    )
+    if not record:
+        logger.warning(
+            "Claim rejected for %s: no demo session record", _mask(wallet)
+        )
+        return None, {
+            "granted": False,
+            "error_code": "guest_session_unknown",
+            "reason": "This demo session is no longer valid. Start a new demo.",
+        }
+
+    if record.get("invite_revoked"):
+        logger.warning("Claim rejected for %s: demo invite revoked", _mask(wallet))
+        return None, {
+            "granted": False,
+            "error_code": "guest_session_expired",
+            "guest_expired": True,
+            "reason": "This demo session has ended. Connect a wallet to continue.",
+        }
+
+    now = time.time()
+    cap_seconds = max(0.0, float(record["expires_at"]) - now)
+    if cap_seconds <= 0:
+        logger.warning("Claim rejected for %s: demo time already used", _mask(wallet))
+        return None, {
+            "granted": False,
+            "error_code": "guest_session_expired",
+            "guest_expired": True,
+            "reason": "This demo session has ended. Connect a wallet to continue.",
+        }
+
+    # SSH needs a key exchange and a renewable cap by design; a demo has neither.
+    if requested_ssh:
+        return None, {
+            "granted": False,
+            "error_code": "guest_ssh_not_permitted",
+            "reason": "SSH access is not available in a demo session.",
+        }
+
+    allowed_profiles = record["allowed_profiles"]
+    if allowed_profiles and profile_name not in allowed_profiles:
+        logger.warning(
+            "Claim rejected for %s: profile %s outside demo allowlist %s",
+            _mask(wallet), profile_name, ",".join(allowed_profiles),
+        )
+        return None, {
+            "granted": False,
+            "error_code": "guest_profile_not_permitted",
+            "allowed_profiles": allowed_profiles,
+            "reason": (
+                f"The {_profile_display_label(profile_name)} tier is not available in a "
+                "demo session."
+            ),
+        }
+
+    # Enforced here rather than trusting the client: requested_template is passed
+    # to the container runtime, so a demo must not be able to name an environment
+    # its invite does not cover.
+    allowed_templates = record["allowed_templates"]
+    template_norm = (requested_template or "").strip().lower()
+    if allowed_templates and template_norm and template_norm not in allowed_templates:
+        logger.warning(
+            "Claim rejected for %s: template %s outside demo allowlist",
+            _mask(wallet), template_norm,
+        )
+        return None, {
+            "granted": False,
+            "error_code": "guest_template_not_permitted",
+            "allowed_templates": allowed_templates,
+            "reason": "That environment is not available in this demo.",
+        }
+
+    return {
+        "cap_seconds": cap_seconds,
+        "expires_at": float(record["expires_at"]),
+        "token_hash": record["token_hash"],
+        "sponsor": record.get("sponsor"),
+        "session_minutes": record["session_minutes"],
+        "warn_seconds": guest_mode.warn_seconds_for(record["session_minutes"]),
+    }, None
+
+
+def _guest_hard_expires_at(cap_seconds: float, now: float) -> float:
+    """Absolute hard-cap deadline to store for a demo session.
+
+    ``_expire_stale_session`` ends a capped session at
+    ``hard_expires_at + session_grace_seconds()``, so the stored value is pulled
+    back by the grace period for teardown to land on the deadline the prospect
+    was shown. The subtraction floors at zero, which means a grace period longer
+    than the demo itself could not be expressed here -- ``_guest_expires_at``
+    below is what actually pins the deadline in that case.
+    """
+    return now + max(0.0, cap_seconds - session_grace_seconds())
+
+
+def _guest_expires_at(cap_seconds: float, now: float) -> float:
+    """Exact demo deadline for the sliding-TTL column.
+
+    ``expires_at`` is compared as ``expires_at <= now`` with NO grace added, so
+    it enforces the cap precisely regardless of how ``AXGT_SESSION_GRACE_SECONDS``
+    is configured. This is the authoritative demo deadline; the hard cap is the
+    belt-and-braces copy. Without it, a grace period longer than the demo (say
+    a 1-hour grace against a 30-minute demo) would silently let the demo run for
+    the grace period instead of its cap.
+    """
+    return now + max(0.0, cap_seconds)
+
+
+def _guest_clamped_expires_at(
+    wallet: str,
+    proposed: float,
+    now: float,
+    current_expires_at: Optional[float] = None,
+) -> float:
+    """Clamp a sliding ``expires_at`` to a demo's fixed deadline.
+
+    Heartbeats slide ``expires_at`` forward by AXGT_SESSION_MAX_MINUTES; for a
+    demo that would push the deadline past its cap on every beat.
+    """
+    try:
+        guest_mode = _import_guest_mode()
+        if not guest_mode.is_guest_identity(wallet):
+            return proposed
+        record = guest_mode.guest_session_for(wallet)
+        if not record:
+            # Never turn a fixed demo deadline into the ordinary sliding idle
+            # timeout merely because the guest lookup is temporarily missing.
+            return min(
+                proposed,
+                float(current_expires_at)
+                if current_expires_at is not None
+                else now,
+            )
+        return min(proposed, float(record["expires_at"]))
+    except Exception as exc:
+        logger.debug("guest expires_at clamp failed: %s", exc)
+        return min(
+            proposed,
+            float(current_expires_at)
+            if current_expires_at is not None
+            else now,
+        )
+
+
+def _guest_claim_fields(guest_ctx: Dict[str, Any], now: float) -> Dict[str, Any]:
+    """Demo countdown metadata for a claim response, from the resolved context."""
+    remaining = max(0, int(float(guest_ctx["expires_at"]) - now))
+    return {
+        "guest_session": True,
+        "guest_remaining_seconds": remaining,
+        "guest_warn_seconds": int(guest_ctx.get("warn_seconds") or 0),
+        "guest_session_minutes": int(guest_ctx.get("session_minutes") or 0),
+    }
+
+
+def _guest_fields_for_wallet(
+    wallet: Optional[str], now: Optional[float] = None
+) -> Dict[str, Any]:
+    """Demo countdown metadata for any identity; empty dict for a real wallet.
+
+    Included on status and heartbeat responses as well as claim, so a reload
+    recovers the countdown from the server rather than trusting a client timer.
+    """
+    try:
+        guest_mode = _import_guest_mode()
+        if not guest_mode.is_guest_identity(wallet):
+            return {}
+        record = guest_mode.guest_session_for(wallet)
+        if not record:
+            return {}
+        reference = time.time() if now is None else now
+        return _guest_claim_fields(
+            {
+                "expires_at": record["expires_at"],
+                "session_minutes": record["session_minutes"],
+                "warn_seconds": guest_mode.warn_seconds_for(record["session_minutes"]),
+            },
+            reference,
+        )
+    except Exception as exc:
+        logger.debug("guest field lookup failed: %s", exc)
+        return {}
+
+
 def _heartbeat_timeout_seconds() -> int:
     raw = (os.getenv("AXGT_HEARTBEAT_TIMEOUT_SECONDS") or "").strip()
     try:
@@ -475,6 +711,22 @@ def _session_cooldown_seconds() -> int:
 def _preserve_session_on_credit_exhaust() -> bool:
     """Keep the same runtime alive during the credit top-up grace period."""
     return _truthy("AXGT_SESSION_PRESERVE_ON_CREDIT_EXHAUST", True)
+
+
+def _preserve_for_wallet(wallet: Optional[str]) -> bool:
+    """Per-identity credit-grace policy.
+
+    A demo session is never preserved for a top-up: there is no wallet to top up
+    with, so holding the container would park a GPU for the whole grace TTL
+    (2 hours by default) on a prospect who has already gone. Demos end at their
+    hard cap and free the GPU immediately.
+    """
+    if not _preserve_session_on_credit_exhaust():
+        return False
+    try:
+        return not _import_guest_mode().is_guest_identity(wallet)
+    except Exception:
+        return True
 
 
 def _session_credit_grace_max_seconds() -> int:
@@ -540,6 +792,18 @@ def _import_session_launcher():
         except ImportError:
             import session_launcher
     return session_launcher
+
+
+def _import_guest_mode():
+    """Works when loaded as package, as axonos_gate.*, or flat on sys.path."""
+    try:
+        from . import guest_mode
+    except ImportError:
+        try:
+            from axonos_gate import guest_mode
+        except ImportError:
+            import guest_mode
+    return guest_mode
 
 
 def _import_webrtc_capability():
@@ -1417,6 +1681,7 @@ def _spawn_session_container(
     ssh_pubkey: Optional[str] = None,
     webrtc_agent_token: Optional[str] = None,
     requested_storage_gb: Optional[int] = None,
+    ephemeral_storage: bool = False,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     launcher = _import_session_launcher()
     return launcher.launch_session(
@@ -1430,6 +1695,7 @@ def _spawn_session_container(
         ssh_pubkey=ssh_pubkey,
         webrtc_agent_token=webrtc_agent_token,
         requested_storage_gb=requested_storage_gb,
+        ephemeral_storage=ephemeral_storage,
     )
 
 
@@ -1542,6 +1808,18 @@ def try_claim_session(
     closes the race where grace expires after a status read but before claim.
     """
     wallet = wallet_address.lower()
+    try:
+        # Canonicalize once and pass this exact value through the guest
+        # allowlist, runtime digest, launcher payload, and container env.
+        requested_template = normalize_session_template(requested_template)
+    except (TypeError, ValueError):
+        return {
+            "granted": False,
+            "allocation_status": "rejected",
+            "error_code": "template_not_supported",
+            "allowed_templates": list(SUPPORTED_SESSION_TEMPLATE_IDS),
+            "reason": "That environment is not supported.",
+        }
     if resume_only and (
         isinstance(expected_session_id, bool)
         or not isinstance(expected_session_id, int)
@@ -1556,6 +1834,22 @@ def try_claim_session(
             "session_mismatch": False,
         }
     profile_name, requested_gpus = _resolve_profile(requested_profile)
+
+    # Demo sessions: bounded time, restricted tiers/environments, no SSH, and no
+    # persistent volume. An ordinary wallet gets a None context and is unaffected.
+    guest_ctx, guest_rejection = _guest_claim_context(
+        wallet, profile_name, requested_template, requested_ssh
+    )
+    if guest_rejection is not None:
+        return guest_rejection
+    is_guest = guest_ctx is not None
+
+    # A demo never provisions a per-wallet ext4 volume: one image per invite would
+    # accumulate on disk forever. The container uses the image's own home instead.
+    ephemeral_storage = is_guest
+    if is_guest:
+        requested_storage_gb = None
+
     requested_storage_explicit = requested_storage_gb is not None
     try:
         storage_gb_val = (
@@ -1591,6 +1885,64 @@ def try_claim_session(
                 "SELECT pg_advisory_xact_lock(hashtext(%s), %s)",
                 (wallet, _CLAIM_ADVISORY_LOCK_NAMESPACE),
             )
+
+            if is_guest:
+                # Close the preflight/revoke race. Revocation takes the same
+                # per-invite lock before shortening the guest deadline, while a
+                # claim that reaches this point first holds it through its
+                # allocation commit. Re-check after the wait so stale preflight
+                # state can never launch a revoked demo.
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                    (guest_ctx["token_hash"],),
+                )
+                guest_module = _import_guest_mode()
+                locked_guest_record = guest_module.guest_session_for_cursor(cur, wallet)
+                refreshed_guest_ctx, refreshed_guest_rejection = _guest_claim_context(
+                    wallet,
+                    profile_name,
+                    requested_template,
+                    requested_ssh,
+                    guest_record=locked_guest_record,
+                    record_is_authoritative=True,
+                )
+                if refreshed_guest_rejection is not None:
+                    conn.commit()
+                    return refreshed_guest_rejection
+                if refreshed_guest_ctx is None:
+                    conn.commit()
+                    return {
+                        "granted": False,
+                        "error_code": "guest_session_unknown",
+                        "reason": "This demo session is no longer valid. Start a new demo.",
+                    }
+                guest_ctx = refreshed_guest_ctx
+                claim_rejection = guest_module.claim_capacity_rejection(
+                    cur,
+                    wallet,
+                    guest_ctx["token_hash"],
+                    guest_ctx.get("sponsor"),
+                )
+                if claim_rejection is not None:
+                    conn.commit()
+                    return claim_rejection
+
+                # The sponsor lock above can wait behind another redemption or
+                # claim. Recompute from the absolute deadline after that wait;
+                # carrying a pre-lock relative duration forward would extend the
+                # demo by however long lock acquisition took.
+                refreshed_at = time.time()
+                if float(guest_ctx["expires_at"]) <= refreshed_at:
+                    conn.commit()
+                    return {
+                        "granted": False,
+                        "error_code": "guest_session_expired",
+                        "guest_expired": True,
+                        "reason": "This demo session has ended. Connect a wallet to continue.",
+                    }
+                guest_ctx["cap_seconds"] = (
+                    float(guest_ctx["expires_at"]) - refreshed_at
+                )
 
             # Refresh after scheduler/per-wallet waits and external stale-runtime
             # cleanup. Neither lock wait nor cleanup time belongs to a resumed
@@ -1673,7 +2025,7 @@ def try_claim_session(
             if (
                 not is_owner
                 and credit_grace
-                and _preserve_session_on_credit_exhaust()
+                and _preserve_for_wallet(wallet)
             ):
                 stored_profile = (
                     credit_grace.get("requested_profile") or "small"
@@ -1758,6 +2110,8 @@ def try_claim_session(
                 # and a reload that lost the toggle must still recover the SSH card.
                 if owned.get("ssh_enabled"):
                     owned_resp.update(_ssh_connection_fields(owned["id"]))
+                if is_guest:
+                    owned_resp.update(_guest_claim_fields(guest_ctx, now))
                 return owned_resp
 
             if (not _multi_session_enabled()) and blocking and blocking["wallet_address"] != wallet:
@@ -1862,6 +2216,34 @@ def try_claim_session(
                     cap_secs = _ssh_hard_cap_seconds(_remaining_minutes_for(wallet))
                     if cap_secs is not None:
                         hard_expires_at = now + cap_secs
+                elif is_guest:
+                    # The demo deadline, written to BOTH expiry columns. The
+                    # sliding TTL is compared without a grace allowance, so it
+                    # pins the exact deadline whatever AXGT_SESSION_GRACE_SECONDS
+                    # is set to; the hard cap is the non-sliding backstop. Every
+                    # hard-cap renewal path is SSH-gated, which is why a demo cap
+                    # cannot be extended by re-claiming or reloading.
+                    # Re-read the clock immediately before INSERT and derive
+                    # both columns from the immutable absolute guest deadline.
+                    # No lock/query/allocator delay may buy extra demo time.
+                    now = time.time()
+                    guest_deadline = float(guest_ctx["expires_at"])
+                    if guest_deadline <= now:
+                        conn.commit()
+                        return {
+                            "granted": False,
+                            "error_code": "guest_session_expired",
+                            "guest_expired": True,
+                            "reason": "This demo session has ended. Connect a wallet to continue.",
+                        }
+                    remaining_guest_seconds = guest_deadline - now
+                    hard_expires_at = _guest_hard_expires_at(
+                        remaining_guest_seconds, now
+                    )
+                    max_secs = min(
+                        max_secs,
+                        remaining_guest_seconds,
+                    )
                 cur.execute(
                     f"""INSERT INTO {_SESSION_TABLE}
                         (wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
@@ -1943,6 +2325,7 @@ def try_claim_session(
                         ssh_pubkey=ssh_pubkey,
                         webrtc_agent_token=webrtc_agent_token,
                         requested_storage_gb=storage_gb_val,
+                        ephemeral_storage=ephemeral_storage,
                     )
                 except Exception as exc:
                     spawn_error = str(exc)
@@ -2062,6 +2445,8 @@ def try_claim_session(
                 }
                 if hard_expires_at is not None:
                     granted["hard_cap_remaining_seconds"] = int(max(0, hard_expires_at - now))
+                if is_guest:
+                    granted.update(_guest_claim_fields(guest_ctx, now))
                 if requested_ssh:
                     granted.update(_ssh_connection_fields(session_id))
                 return granted
@@ -2129,7 +2514,7 @@ def heartbeat(wallet_address: str, ssh_active: bool = False) -> Dict[str, Any]:
         cur = conn.cursor()
         try:
             _run_stale_session_maintenance(conn, cur)
-            preserve_on_credit_exhaust = _preserve_session_on_credit_exhaust()
+            preserve_on_credit_exhaust = _preserve_for_wallet(wallet)
             if not preserve_on_credit_exhaust:
                 # This deployment can free a GPU from the billing transaction.
                 # Take the scheduler lock before the row lock to preserve the
@@ -2149,7 +2534,7 @@ def heartbeat(wallet_address: str, ssh_active: bool = False) -> Dict[str, Any]:
             if not row:
                 credit_grace = _credit_grace_session_for_wallet(cur, wallet, now)
                 conn.commit()
-                if credit_grace and _preserve_session_on_credit_exhaust():
+                if credit_grace and _preserve_for_wallet(wallet):
                     grace_started_at = (
                         credit_grace.get("credit_grace_started_at")
                         or credit_grace["last_heartbeat"]
@@ -2345,12 +2730,20 @@ def heartbeat(wallet_address: str, ssh_active: bool = False) -> Dict[str, Any]:
             last_billed_at_value = now if billed_this_heartbeat else bill_from
             # Slide expires_at so AXGT_SESSION_MAX_MINUTES is idle timeout, not a fixed wall-clock cap.
             new_expires_at = now + _session_max_seconds()
+            # A demo's deadline is fixed; the ordinary idle-TTL slide must not
+            # carry it forward on every heartbeat.
+            new_expires_at = _guest_clamped_expires_at(
+                wallet,
+                new_expires_at,
+                now,
+                current_expires_at=expires_at,
+            )
             # Presence-based SSH hard-cap renewal: a live sshd connection reported
             # by the in-container daemon slides the cap forward (extend-only,
             # min(affordable, ceiling) from now). Sessions without a cap stay
             # uncapped; absence of the flag (old daemons, browser heartbeats)
             # changes nothing.
-            if ssh_active and hard_expires_at is not None:
+            if ssh_enabled and ssh_active and hard_expires_at is not None:
                 cap_secs = _ssh_hard_cap_seconds(_remaining_minutes_for(wallet))
                 if cap_secs is not None and now + cap_secs > hard_expires_at:
                     hard_expires_at = now + cap_secs
@@ -2380,6 +2773,7 @@ def heartbeat(wallet_address: str, ssh_active: bool = False) -> Dict[str, Any]:
             }
             if hard_expires_at is not None:
                 result["hard_cap_remaining_seconds"] = int(max(0, hard_expires_at - now))
+            result.update(_guest_fields_for_wallet(wallet, now))
             if wall_minutes > 0 and _gpu_billing_enabled():
                 result["wall_minutes_billed"] = round(wall_minutes, 4)
                 result["minutes_billed"] = round(minutes_delta, 4)
@@ -2629,8 +3023,11 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
                     result["owner_ssh_enabled"] = bool(owned.get("ssh_enabled"))
                     if owned.get("ssh_enabled"):
                         result.update(_ssh_connection_fields(owned["id"]))
+                # Demo countdown, so a reload recovers the deadline from the server
+                # instead of trusting a client-side timer.
+                result.update(_guest_fields_for_wallet(wallet, now))
                 grace_owned = _credit_grace_session_for_wallet(cur, wallet, now)
-                if grace_owned and _preserve_session_on_credit_exhaust():
+                if grace_owned and _preserve_for_wallet(wallet):
                     grace_profile = grace_owned.get("requested_profile") or "small"
                     grace_gpus = grace_owned.get("gpu_ids", [])
                     billing_count = _billing_gpu_count(grace_gpus, grace_profile)
@@ -3309,6 +3706,20 @@ def perform_session_cleanup() -> None:
                     _cleanup_session_container(s_id)
                 except Exception as exc:
                     logger.warning("Post-commit container stop failed for session %s: %s", s_id, exc)
+
+            # Prune expired per-demo identity/credit rows only after every
+            # teardown hook has written its final ledger event, and while the
+            # scheduler lock still excludes claims/releases. This prevents a
+            # late session_expiry write from recreating an orphan ledger row.
+            try:
+                guest_reap = _import_guest_mode().reap_expired_guest_data()
+                if not guest_reap.get("ok"):
+                    logger.warning(
+                        "Guest data reaper skipped after error: %s",
+                        guest_reap.get("error_code") or guest_reap.get("error"),
+                    )
+            except Exception as exc:
+                logger.warning("Guest data reaper failed: %s", exc)
 
             _release_allocation_scheduler_lock(conn, cur)
             allocation_lock_held = False

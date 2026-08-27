@@ -7228,6 +7228,40 @@ html.noVNC_connected .axonos-landing-bg {
   line-height: 1.1;
 }
 
+.axonos-dashboard-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.axonos-dashboard-guest-btn {
+  border: 1px solid rgba(79, 224, 192, 0.35) !important;
+  border-radius: 13px !important;
+  padding: 11px 17px !important;
+  font-family: var(--font-body);
+  font-size: 0.86rem !important;
+  font-weight: 600 !important;
+  color: #92f3dc !important;
+  -webkit-text-fill-color: #92f3dc !important;
+  background: rgba(79, 224, 192, 0.08) !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, transform 0.2s !important;
+}
+
+.axonos-dashboard-guest-btn[hidden] {
+  display: none !important;
+}
+
+.axonos-dashboard-guest-btn:hover {
+  background: rgba(79, 224, 192, 0.14) !important;
+  border-color: rgba(79, 224, 192, 0.58) !important;
+  transform: translateY(-1px);
+}
+
 .axonos-dashboard-new-btn {
   border: none !important;
   border-radius: 13px !important;
@@ -7253,6 +7287,121 @@ html.noVNC_connected .axonos-landing-bg {
 
 .axonos-dashboard-new-btn svg {
   color: inherit;
+}
+
+.axonos-guest-invite-content {
+  max-width: 560px;
+}
+
+.axonos-guest-invite-kicker {
+  color: #70e8cd;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.axonos-guest-invite-content h2 {
+  color: #f4f5fb;
+  font-size: 1.65rem;
+  margin: 9px 36px 8px 0;
+}
+
+.axonos-guest-invite-intro,
+.axonos-guest-invite-summary {
+  color: #969cb3;
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.axonos-guest-invite-intro {
+  margin: 0 0 22px;
+}
+
+.axonos-guest-invite-label {
+  display: block;
+  color: #d8dbea;
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin: 14px 0 7px;
+}
+
+.axonos-guest-invite-label span {
+  color: #7e849a;
+  font-weight: 400;
+}
+
+.axonos-guest-invite-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 10px;
+  background: rgba(3, 5, 12, 0.64);
+  color: #eef0f7;
+  padding: 11px 12px;
+  font: 500 0.84rem var(--font-body);
+  outline: none;
+}
+
+.axonos-guest-invite-input:focus {
+  border-color: rgba(123, 108, 255, 0.72);
+  box-shadow: 0 0 0 3px rgba(123, 108, 255, 0.12);
+}
+
+.axonos-guest-invite-message {
+  min-height: 20px;
+  margin-top: 15px;
+  color: #aeb3c7;
+  font-size: 0.8rem;
+}
+
+.axonos-guest-invite-message--error { color: #ff8d86; }
+.axonos-guest-invite-message--success { color: #70e8cd; }
+
+.axonos-guest-invite-result {
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+  margin-top: 5px;
+  padding-top: 4px;
+}
+
+.axonos-guest-invite-copy-row {
+  display: flex;
+  gap: 8px;
+}
+
+.axonos-guest-invite-copy-row .axonos-guest-invite-input {
+  min-width: 0;
+}
+
+.axonos-guest-invite-summary { margin-top: 8px; }
+
+.axonos-guest-secret-note {
+  margin: 9px 0 0;
+  color: #858ba1;
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.axonos-guest-invite-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+@media (max-width: 600px) {
+  .axonos-dashboard-header__actions,
+  .axonos-dashboard-header__actions > button {
+    width: 100%;
+  }
+
+  .axonos-dashboard-header__actions > button {
+    justify-content: center;
+  }
+
+  .axonos-guest-invite-copy-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
 
 .axonos-dashboard-stats-grid {
@@ -8291,10 +8440,33 @@ button.axonos-topbar__brand {
   filter: brightness(1.08);
 }
 
+.axonos-topbar-demo-cta {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(123, 108, 255, 0.42);
+  border-radius: 99px;
+  padding: 9px 17px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 600;
+  color: #c9c1ff;
+  background: rgba(123, 108, 255, 0.08);
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease;
+}
+
+.axonos-topbar-demo-cta:hover {
+  border-color: rgba(123, 108, 255, 0.7);
+  background: rgba(123, 108, 255, 0.14);
+}
+
 /* AxonOS is designed for desktop use. Hide the wallet CTA in the compact mobile
    view even when the topbar state code applies display: block inline. */
 @media (max-width: 600px) {
   .axonos-topbar-cta {
+    display: none !important;
+  }
+  .axonos-topbar-demo-cta {
     display: none !important;
   }
 }
@@ -8461,4 +8633,132 @@ button.axonos-topbar__brand {
   .axonos-trust-item {
     padding: 18px 20px;
   }
+}
+
+/* ---------------------------------------------------------------------------
+   Wallet-free demo (guest) sessions
+
+   The countdown banner sits top-centre, clear of the billing HUD (bottom-right)
+   and the toolbar. It is the only always-on reminder that a demo is time-boxed,
+   so it stays legible over an arbitrary desktop wallpaper and turns amber for
+   the final stretch, when the connect-wallet CTA appears alongside it.
+   --------------------------------------------------------------------------- */
+.axonos-guest-banner {
+  position: fixed;
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 57;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(123, 108, 255, 0.42);
+  background: rgba(13, 14, 24, 0.92);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.42);
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--ink-dim);
+  user-select: none;
+  max-width: calc(100vw - 24px);
+}
+
+.axonos-guest-banner--hidden {
+  display: none !important;
+}
+
+.axonos-guest-banner__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--violet-fg);
+  flex: 0 0 auto;
+}
+
+.axonos-guest-banner__label {
+  color: var(--ink-mute);
+  white-space: nowrap;
+}
+
+.axonos-guest-banner__time {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  /* Fixed width so a ticking clock cannot reflow the banner every second. */
+  min-width: 5ch;
+  text-align: right;
+}
+
+.axonos-guest-banner__unit {
+  color: var(--ink-mute);
+  white-space: nowrap;
+}
+
+.axonos-guest-banner__cta {
+  margin-left: 4px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(123, 108, 255, 0.5);
+  background: rgba(123, 108, 255, 0.18);
+  color: var(--violet-fg);
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.axonos-guest-banner__cta:hover {
+  background: rgba(123, 108, 255, 0.3);
+  color: var(--ink);
+}
+
+.axonos-guest-banner__cta--hidden {
+  display: none !important;
+}
+
+.axonos-guest-banner--warning {
+  border-color: rgba(242, 193, 78, 0.55);
+}
+
+.axonos-guest-banner--warning .axonos-guest-banner__dot {
+  background: var(--warm);
+}
+
+.axonos-guest-banner--warning .axonos-guest-banner__label,
+.axonos-guest-banner--warning .axonos-guest-banner__time {
+  color: var(--warm);
+}
+
+@media (max-width: 560px) {
+  .axonos-guest-banner {
+    font-size: 11px;
+    padding: 6px 10px;
+    gap: 6px;
+  }
+
+  /* The word "remaining" is the first thing to go: the label and clock alone
+     still read as a countdown on a narrow screen. */
+  .axonos-guest-banner__unit {
+    display: none;
+  }
+}
+
+/* A demo identity cannot deposit, take test credit, pay via x402, or use SSH --
+   all refused server-side. Hiding these avoids offering a prospect a control
+   that is guaranteed to fail. */
+body.axonos-guest-mode .axonos-session-hud__btn--danger,
+body.axonos-guest-mode #axonos_session_hud_switch_wallet,
+body.axonos-guest-mode #axonos_session_hud_manage,
+body.axonos-guest-mode #axonos_test_credit_btn,
+body.axonos-guest-mode #axonos_sidebar_topup_btn,
+body.axonos-guest-mode #axonos_sidebar_swap_btn,
+body.axonos-guest-mode #axonos_wizard_storage_section,
+body.axonos-guest-mode #axonos_wizard_rail_storage_section,
+body.axonos-guest-mode .axonos-wizard-token-tabs,
+body.axonos-guest-mode #axonos_ssh_toggle_wrap,
+body.axonos-guest-mode #axonos_wizard_ssh_toggle_card,
+body.axonos-guest-mode #axonos_wizard_ssh_key_wrap {
+  display: none !important;
 }

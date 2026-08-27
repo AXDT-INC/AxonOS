@@ -469,6 +469,16 @@ def _display_wait_timeout_seconds() -> float:
         return 120.0
 
 
+def _desktop_presentation_ready() -> bool:
+    """Return true only after a tenant's branded XFCE pass has completed."""
+    if not (os.getenv("AXGT_SESSION_ID") or "").strip():
+        return True
+    marker = (
+        os.getenv("WEBRTC_DESKTOP_READY_FILE") or "/tmp/axonos-desktop-ready"
+    ).strip()
+    return bool(marker) and os.path.isfile(marker)
+
+
 def _wait_for_display_ready() -> bool:
     """Block until X11 on WEBRTC_CAPTURE_DISPLAY accepts connections (session containers need this)."""
     env = _display_env()
@@ -496,6 +506,14 @@ def _wait_for_display_ready() -> bool:
                 except Exception as exc:
                     logger.debug("display ready (xset ok) but mss probe failed (attempt %s): %s", attempt, exc)
                 else:
+                    if not _desktop_presentation_ready():
+                        logger.debug(
+                            "display pixels ready but branded desktop marker is pending "
+                            "(attempt %s)",
+                            attempt,
+                        )
+                        time.sleep(interval_s)
+                        continue
                     logger.info(
                         "WebRTC display ready on %s after %s attempt(s)",
                         _display(),
@@ -1320,7 +1338,8 @@ def _rewrite_sdp_candidates(sdp: str, public_ip: str) -> str:
 
 async def _run_session(job: dict[str, Any]) -> None:
     try:
-        from aiortc import RTCIceCandidate, RTCPeerConnection, RTCSessionDescription
+        from aiortc import RTCPeerConnection, RTCSessionDescription
+        from aiortc.sdp import candidate_from_sdp
     except ImportError as e:
         logger.error("missing aiortc/av: %s", e)
         _agent_fail(job.get("session_id", ""), "missing_aiortc")
@@ -1742,11 +1761,20 @@ async def _run_session(job: dict[str, Any]) -> None:
                                 continue
                             applied_ice.add(sig)
                             try:
-                                ice = RTCIceCandidate(
-                                    sdpMid=c.get("sdpMid"),
-                                    sdpMLineIndex=c.get("sdpMLineIndex"),
-                                    candidate=cand,
-                                )
+                                # Browser trickle ICE arrives in SDP's
+                                # ``candidate:<foundation> ...`` wire format.
+                                # aiortc.RTCIceCandidate is a structured
+                                # dataclass and has never accepted a
+                                # ``candidate=`` SDP-string argument; doing so
+                                # silently discarded every browser route here
+                                # because this exception is intentionally
+                                # debug-only. Parse first, then attach the media
+                                # routing metadata expected by addIceCandidate.
+                                candidate_sdp = cand[len("candidate:"):] \
+                                    if cand.startswith("candidate:") else cand
+                                ice = candidate_from_sdp(candidate_sdp)
+                                ice.sdpMid = c.get("sdpMid")
+                                ice.sdpMLineIndex = c.get("sdpMLineIndex")
                                 await pc.addIceCandidate(ice)
                             except Exception as e:
                                 logger.debug("addIceCandidate: %s", e)

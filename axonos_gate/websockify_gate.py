@@ -7,9 +7,11 @@ This script is called by supervisord instead of websockify directly.
 """
 
 import os
+import re
 import sys
 import logging
 import json
+import math
 import time
 import secrets
 import select
@@ -140,6 +142,31 @@ except ImportError:
         from axonos_gate.deposit_router import verify_deposit_auto
     except ImportError:
         verify_deposit_auto = None
+
+try:
+    import guest_mode
+except ImportError:
+    try:
+        from axonos_gate import guest_mode
+    except ImportError:
+        guest_mode = None
+
+# The reserved guest-address prefix, mirrored so the SIWE namespace stays closed
+# even if guest_mode is unimportable. That guard is load-bearing, not
+# defence-in-depth: 10 hex nibbles is only 40 bits, so the prefix is within reach
+# of vanity mining, and the only thing stopping a mined address from signing in
+# is this refusal. It must therefore fail CLOSED rather than depend on an import.
+_GUEST_ADDRESS_RE_FALLBACK = re.compile(r"^0x6775657374[0-9a-f]{30}$")
+
+
+def _is_guest_shaped(address) -> bool:
+    """True for the reserved guest namespace; never raises, never fails open."""
+    if guest_mode is not None:
+        try:
+            return guest_mode.is_guest_identity(address)
+        except Exception:
+            pass
+    return bool(_GUEST_ADDRESS_RE_FALLBACK.match(str(address or "").strip().lower()))
 
 try:
     from session_manager import (
@@ -540,6 +567,106 @@ def _clear_auth_cookie() -> str:
     )
 
 
+def _guest_token_grace_seconds() -> int:
+    try:
+        from session_manager import session_grace_seconds
+    except ImportError:
+        try:
+            from axonos_gate.session_manager import session_grace_seconds
+        except ImportError:
+            return 60
+    try:
+        return int(session_grace_seconds())
+    except Exception:
+        return 60
+
+
+def _guest_auth_deadline(wallet_address: str) -> float | None:
+    if not _is_guest_shaped(wallet_address) or guest_mode is None:
+        return None
+    try:
+        record = guest_mode.guest_session_for(wallet_address)
+        if not record:
+            return None
+        expires_at = float(record["expires_at"])
+        if not math.isfinite(expires_at):
+            return None
+        return expires_at + max(0, _guest_token_grace_seconds())
+    except Exception:
+        return None
+
+
+def _guest_auth_ttl_seconds(
+    wallet_address: str,
+    *,
+    now_ts: float | None = None,
+) -> int | None:
+    """Whole seconds left before the immutable guest auth deadline."""
+    deadline = _guest_auth_deadline(wallet_address)
+    if deadline is None:
+        return None
+    try:
+        reference = time.time() if now_ts is None else float(now_ts)
+        if not math.isfinite(reference):
+            return None
+        ttl = int(deadline - reference)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    # Integer Max-Age/TTL values must never round a sub-second remainder past
+    # the absolute deadline. Refuse refresh conservatively once <1s remains.
+    return ttl if ttl > 0 else None
+
+
+def _guest_mode_ready() -> bool:
+    return guest_mode is not None and guest_mode.guest_mode_enabled()
+
+
+def _can_wallet_mint_guest_invites(wallet_address: str) -> bool:
+    """Expose invite eligibility to an authenticated wallet, fail-closed."""
+    try:
+        return bool(_guest_mode_ready() and guest_mode.can_mint_invites(wallet_address))
+    except Exception as exc:
+        logger.warning("Could not determine guest invite eligibility: %s", exc)
+        return False
+
+
+def _guest_rejection(wallet_address: str, what: str = "This endpoint"):
+    """Return ``(status, payload)`` to refuse a demo identity, or None to continue.
+
+    Checked before the auth-token test so a demo identity cannot reach a payment
+    rail even while holding a currently valid token.
+    """
+    if guest_mode is None:
+        return None
+    rejection = guest_mode.reject_if_guest(wallet_address, what)
+    if rejection is None:
+        return None
+    payload, status = rejection
+    logger.warning(
+        "guest identity refused: %s",
+        guest_mode.mask_guest_identity(wallet_address),
+    )
+    return status, payload
+
+
+def _guest_redeem_http_status(result) -> int:
+    """Map a redemption failure to a stable HTTP status (mirrors gate_server)."""
+    code = (result or {}).get("error_code")
+    if code == "guest_mode_disabled":
+        return 404
+    if code in ("invite_revoked", "invite_exhausted", "invite_expired"):
+        return 403
+    if code == "invite_session_active":
+        return 409
+    if code in ("sponsor_live_limit", "sponsor_daily_limit"):
+        return 429
+    if code == "not_invite_minter":
+        return 403
+    if code == "guest_db_unavailable":
+        return 503
+    return 400
+
+
 def _x402_v2_headers(minutes_wanted: float = 0.0, error: str = None) -> dict:
     """X-PAYMENT-REQUIRED (x402 v2) header for a 402, alongside the v1 body."""
     try:
@@ -569,9 +696,22 @@ def _x402_402_body(explicit_version=None, minutes_wanted: float = 0.0, error: st
     return payment_required_for_version(resolve_x402_body_version(explicit_version), minutes_wanted, error)
 
 
-def _issue_auth_token(wallet_address: str) -> tuple[str, int]:
+def _issue_auth_token(wallet_address: str, custom_ttl=None) -> tuple[str, int]:
     now_ts = time.time()
-    ttl = _auth_ttl_seconds()
+    if _is_guest_shaped(wallet_address):
+        guest_ttl = _guest_auth_ttl_seconds(wallet_address, now_ts=now_ts)
+        if guest_ttl is None:
+            raise RuntimeError("Guest auth deadline unavailable or expired")
+        requested_ttl = (
+            guest_ttl if custom_ttl is None else max(1, int(custom_ttl))
+        )
+        ttl = min(requested_ttl, guest_ttl)
+    else:
+        ttl = (
+            _auth_ttl_seconds()
+            if custom_ttl is None
+            else max(1, int(custom_ttl))
+        )
     token = secrets.token_urlsafe(32)
 
     if not _auth_pg_init_once():
@@ -615,6 +755,11 @@ def _issue_auth_token(wallet_address: str) -> tuple[str, int]:
 
 def _current_wallet_token_and_remaining(wallet_address: str) -> tuple[str | None, int | None]:
     now_ts = time.time()
+    guest_ttl = None
+    if _is_guest_shaped(wallet_address):
+        guest_ttl = _guest_auth_ttl_seconds(wallet_address, now_ts=now_ts)
+        if guest_ttl is None:
+            return None, None
     if not _auth_pg_init_once():
         return None, None
     conn = _auth_pg_get_connection()
@@ -625,12 +770,15 @@ def _current_wallet_token_and_remaining(wallet_address: str) -> tuple[str | None
             cur.execute(
                 f"""SELECT token, expires_at FROM {_AUTH_TABLE}
                     WHERE wallet_address = %s AND status = 'current' AND expires_at > %s
-                    ORDER BY expires_at DESC LIMIT 1""",
+                    ORDER BY expires_at DESC, issued_at DESC LIMIT 1""",
                 (wallet_address, now_ts),
             )
             row = cur.fetchone()
             if row:
-                return row[0], int(row[1] - now_ts)
+                remaining = max(0, int(float(row[1]) - now_ts))
+                if guest_ttl is not None:
+                    remaining = min(remaining, guest_ttl)
+                return row[0], remaining
     except Exception as e:
         logger.warning("Postgres auth token lookup failed: %s", e)
     finally:
@@ -667,6 +815,11 @@ def _is_auth_token_valid(token: str, wallet_address: str) -> bool:
     if not token:
         return False
     now_ts = time.time()
+    guest_deadline = None
+    if _is_guest_shaped(wallet_address):
+        guest_deadline = _guest_auth_deadline(wallet_address)
+        if guest_deadline is None or now_ts >= guest_deadline:
+            return False
     if not _auth_pg_init_once():
         return False
     conn = _auth_pg_get_connection()
@@ -684,9 +837,15 @@ def _is_auth_token_valid(token: str, wallet_address: str) -> bool:
                 return False
             status, expires_at, grace_until = row
             if status == "current":
-                return now_ts < expires_at
+                valid_until = float(expires_at)
+                if guest_deadline is not None:
+                    valid_until = min(valid_until, guest_deadline)
+                return now_ts < valid_until
             if status == "grace":
-                return now_ts < grace_until
+                valid_until = float(grace_until)
+                if guest_deadline is not None:
+                    valid_until = min(valid_until, guest_deadline)
+                return now_ts < valid_until
             return False
     except Exception as e:
         logger.warning("Postgres auth token validation failed: %s", e)
@@ -697,6 +856,11 @@ def _is_auth_token_valid(token: str, wallet_address: str) -> bool:
 
 def _rotate_auth_token(existing_token: str, wallet_address: str) -> tuple[str | None, int]:
     now_ts = time.time()
+    guest_ttl = None
+    if _is_guest_shaped(wallet_address):
+        guest_ttl = _guest_auth_ttl_seconds(wallet_address, now_ts=now_ts)
+        if guest_ttl is None:
+            return None, 0
     if not _auth_pg_init_once():
         return None, 0
     conn = _auth_pg_get_connection()
@@ -728,9 +892,12 @@ def _rotate_auth_token(existing_token: str, wallet_address: str) -> tuple[str | 
             row = cur.fetchone()
             if row:
                 conn.rollback()
-                return row[0], int(row[1] - now_ts)
+                remaining = max(0, int(float(row[1]) - now_ts))
+                if guest_ttl is not None:
+                    remaining = min(remaining, guest_ttl)
+                return row[0], remaining
             # Issue new token
-            ttl = _auth_ttl_seconds()
+            ttl = guest_ttl if guest_ttl is not None else _auth_ttl_seconds()
             new_token = secrets.token_urlsafe(32)
             grace_until = now_ts + _auth_grace_seconds()
             cur.execute(
@@ -771,7 +938,22 @@ def _extract_wallet_from_path_and_headers(path: str, headers) -> str | None:
     return wallet_address.strip()
 
 
-def _extract_auth_token_from_path_and_headers(path: str, headers) -> str | None:
+def _auth_token_candidates_from_path_and_headers(path: str, headers) -> list[str]:
+    """Return de-duplicated bearer candidates in explicit-first order."""
+    candidates = []
+
+    def add(value) -> None:
+        token = str(value or '').strip()
+        if token and token not in candidates:
+            candidates.append(token)
+
+    add(headers.get('X-AXGT-Auth-Token') if headers else None)
+    try:
+        parsed = urlparse(path if path else '/')
+        query_params = parse_qs(parsed.query)
+        add(query_params.get('auth_token', [None])[0])
+    except Exception:
+        pass
     cookie_header = headers.get('Cookie') if headers else None
     if cookie_header:
         try:
@@ -779,24 +961,34 @@ def _extract_auth_token_from_path_and_headers(path: str, headers) -> str | None:
             parsed_cookie.load(cookie_header)
             cookie_name = _auth_cookie_name()
             if cookie_name in parsed_cookie:
-                token = parsed_cookie[cookie_name].value.strip()
-                if token:
-                    return token
+                add(parsed_cookie[cookie_name].value)
         except Exception:
             pass
-    header_token = headers.get('X-AXGT-Auth-Token') if headers else None
-    if header_token:
-        token = header_token.strip()
-        if token:
+    return candidates
+
+
+def _extract_auth_token_from_path_and_headers(path: str, headers) -> str | None:
+    # Prefer an explicit bearer over an unrelated remembered cookie. This is
+    # essential during wallet↔demo handover. Callers still validate the selected
+    # token against the requested identity.
+    candidates = _auth_token_candidates_from_path_and_headers(path, headers)
+    return candidates[0] if candidates else None
+
+
+def _valid_auth_token_from_path_and_headers(
+    path: str,
+    headers,
+    wallet_address: str,
+) -> str | None:
+    """Choose the first candidate valid for this exact wallet.
+
+    A stale JS header must not shadow a newer same-wallet HttpOnly cookie, while
+    an old cookie from a different identity must not shadow an explicit guest
+    bearer. Every fallback candidate is independently wallet-bound before use.
+    """
+    for token in _auth_token_candidates_from_path_and_headers(path, headers):
+        if _is_auth_token_valid(token, wallet_address):
             return token
-    try:
-        parsed = urlparse(path if path else '/')
-        query_params = parse_qs(parsed.query)
-        token = query_params.get('auth_token', [None])[0]
-        if token:
-            return token.strip()
-    except Exception:
-        pass
     return None
 
 
@@ -859,7 +1051,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
     _response_no_cache: bool = False
 
     def log_message(self, format, *args):
-        """Preserve access logs without exposing one-use terminal tickets."""
+        """Preserve access logs without exposing query-carried capabilities."""
         safe_format = redact_terminal_websocket_query(format)
         safe_args = tuple(redact_terminal_websocket_query(arg) for arg in args)
         return super().log_message(safe_format, *safe_args)
@@ -877,6 +1069,21 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             super().send_header('Pragma', 'no-cache')
             self._response_no_cache = False
         super().end_headers()
+
+    def _guest_invite_url(self, token: str) -> str:
+        """Absolute demo link built from this request's own origin."""
+        from urllib.parse import quote
+        origin = (os.getenv("AXONOS_PUBLIC_ORIGIN") or "").strip().rstrip("/")
+        if not origin:
+            proto = (
+                self.headers.get("X-Forwarded-Proto") or "https"
+            ).split(",")[0].strip()
+            host = (
+                self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or ""
+            ).split(",")[0].strip()
+            origin = f"{proto}://{host}" if host else ""
+        path = f"/?invite={quote(token, safe='')}"
+        return f"{origin}{path}" if origin else path
 
     def _send_json(
         self,
@@ -1101,6 +1308,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 "gpu_profiles_enabled": (os.getenv("AXGT_GPU_PROFILES_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")),
                 "gpu_profiles": {"small": 1, "medium": 2, "large": 4, "max": 8},
                 "gpu_weighted_billing_enabled": policy.get("gpu_weighted_billing_enabled", False),
+                "guest_mode_enabled": _guest_mode_ready(),
                 "persistent_storage_enabled": (os.getenv("AXGT_PERSISTENT_STORAGE_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")),
                 "persistent_storage_gb_hour_cost_minutes": storage_cost,
                 "persistent_storage_min_balance_limit_minutes": min_balance_limit,
@@ -1265,6 +1473,10 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 return self._send_json(400, {'error': 'wallet_address is required'})
             if not validate_wallet_address(wallet_address):
                 return self._send_json(400, {'error': 'Invalid wallet address format.'})
+            if _is_guest_shaped(wallet_address):
+                # Reserved namespace: no challenge is ever issued for a guest
+                # identity, so no signature can mint a token for one.
+                return self._send_json(400, {'error': 'Invalid wallet address format.'})
             try:
                 challenge = get_challenge_message(wallet_address)
                 return self._send_json(200, {
@@ -1283,52 +1495,56 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 return self._send_json(400, {'verified': False, 'error': 'wallet_address is required'})
             if not validate_wallet_address(wallet_address):
                 return self._send_json(400, {'verified': False, 'error': 'Invalid wallet address format.'})
-            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+            auth_token = _valid_auth_token_from_path_and_headers(
+                self.path, self.headers, wallet_address
+            )
             if not auth_token:
-                return self._send_json(
-                    401,
-                    {'verified': False, 'error': 'AXGT auth token required. Please verify wallet again.'},
-                    set_cookie=_clear_auth_cookie()
-                )
-            if not _is_auth_token_valid(auth_token, wallet_address):
+                # Do not clear the shared browser cookie here: it may be a valid
+                # credential for a different identity in another tab (for
+                # example, a wallet tab beside a reloading demo tab).
                 return self._send_json(
                     401,
                     {'verified': False, 'error': 'Invalid or expired AXGT auth token. Please verify wallet again.'},
-                    set_cookie=_clear_auth_cookie()
                 )
 
             status = get_wallet_access_status(wallet_address, consume_usage=True)
             status['wallet_address'] = wallet_address
-            if not status.get("verified"):
-                status['error'] = status.get("reason") or 'Access denied for this wallet.'
-                return self._send_json(200, status)
-
-            remaining = _auth_token_remaining_seconds(auth_token, wallet_address)
-            if remaining is None:
-                return self._send_json(
-                    401,
-                    {'verified': False, 'error': 'Invalid or expired AXGT auth token. Please verify wallet again.'},
-                    set_cookie=_clear_auth_cookie()
+            status['guest_invite_minter'] = _can_wallet_mint_guest_invites(wallet_address)
+            # Canonicalize a valid grace/header token to the wallet's newest
+            # current token. Concurrent polls can otherwise validate old T1 in
+            # grace, fail the current-only TTL lookup, and clear the good T2
+            # cookie written by a peer request.
+            current_token, remaining = _current_wallet_token_and_remaining(wallet_address)
+            if current_token is None or remaining <= _auth_rotate_before_expiry_seconds():
+                new_token, ttl = _rotate_auth_token(
+                    current_token or auth_token,
+                    wallet_address,
                 )
-
-            if remaining <= _auth_rotate_before_expiry_seconds():
-                new_token, ttl = _rotate_auth_token(auth_token, wallet_address)
                 if not new_token:
                     return self._send_json(
-                        401,
-                        {'verified': False, 'error': 'AXGT auth token refresh failed. Please verify wallet again.'},
-                        set_cookie=_clear_auth_cookie()
+                        503,
+                        {'verified': False, 'error': 'AXGT auth token refresh is temporarily unavailable.'},
                     )
-                status['auth_token'] = new_token
-                status['auth_token_expires_in_seconds'] = ttl
-                return self._send_json(200, status, set_cookie=_build_auth_cookie(new_token, ttl))
+                current_token, remaining = new_token, ttl
 
-            # Echo the presented token so a reloaded page can restore its JS
-            # copy from the surviving HttpOnly cookie without a new signature.
-            # No new exposure: verify-wallet already returns this token in JSON.
-            status['auth_token'] = auth_token
+            # Echo the canonical token so a reloaded page can restore its JS
+            # copy without a new signature. A pre-upgrade guest may use its old
+            # cookie once; current guests retain this wallet-bound token per-tab.
+            status['auth_token'] = current_token
             status['auth_token_expires_in_seconds'] = remaining
-            return self._send_json(200, status)
+            if not status.get("verified"):
+                status['error'] = status.get("reason") or 'Access denied for this wallet.'
+            return self._send_json(
+                200,
+                status,
+                # A guest credential is tab-scoped and sent explicitly. Do not
+                # overwrite an adjacent real-wallet tab's shared origin cookie.
+                set_cookie=(
+                    None if _is_guest_shaped(wallet_address)
+                    else _build_auth_cookie(current_token, remaining)
+                ),
+                no_cache=True,
+            )
 
         from urllib.parse import parse_qs, urlparse
 
@@ -1885,7 +2101,13 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             data = self._read_json_body()
             wallet_address = (data.get('wallet_address') or '').strip()
             requested_profile = (data.get('requested_profile') or '').strip() or None
-            requested_template = (data.get('requested_template') or '').strip() or None
+            requested_template_raw = data.get('requested_template')
+            if requested_template_raw is not None and not isinstance(requested_template_raw, str):
+                return self._send_json(400, {
+                    'granted': False,
+                    'error': 'requested_template must be a string',
+                })
+            requested_template = (requested_template_raw or '').strip() or None
             raw_storage_gb = data.get('requested_storage_gb')
             requested_storage_gb = None
             if raw_storage_gb is not None:
@@ -1981,9 +2203,20 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             # Auth: wallet token OR per-session files_key (headless/SSH self-release).
             session_key = (self.headers.get('X-AXGT-Session-Key') or data.get('session_key') or '').strip()
             if not (session_key and validate_session_files_key and validate_session_files_key(wallet_address, session_key)):
-                auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
-                if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
-                    return self._send_json(401, {'released': False, 'error': 'Valid auth token required'})
+                # A pagehide sendBeacon cannot attach the tab-scoped guest
+                # header. Release alone accepts that guest bearer in JSON; an
+                # ordinary wallet can never authenticate through the body.
+                body_auth_token = data.get('auth_token')
+                guest_body_authenticated = (
+                    _is_guest_shaped(wallet_address)
+                    and isinstance(body_auth_token, str)
+                    and bool(body_auth_token.strip())
+                    and _is_auth_token_valid(body_auth_token.strip(), wallet_address)
+                )
+                if not guest_body_authenticated:
+                    auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+                    if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
+                        return self._send_json(401, {'released': False, 'error': 'Valid auth token required'})
             result = release_session(
                 wallet_address,
                 expected_session_id=expected_session_id,
@@ -2001,6 +2234,149 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             result = restart_desktop_session(wallet_address)
             return self._send_json(200, result)
 
+        if ponly == '/api/auth/guest-invite':
+            # Mint a demo invite as an authenticated, approved team member.
+            # Authorized by the operator's invite-minter list rather than the
+            # admin secret, so handing a prospect a demo never requires an infra
+            # credential that also unlocks the ledger and telemetry APIs.
+            data = self._read_json_body()
+            if not _guest_mode_ready():
+                return self._send_json(404, {"ok": False, "error": "Not found"})
+            wallet_address = (
+                data.get("wallet_address") or self.headers.get('X-Wallet-Address') or ''
+            ).strip()
+            if not wallet_address or not validate_wallet_address(wallet_address):
+                return self._send_json(
+                    400, {"ok": False, "error": "Valid wallet_address required"}
+                )
+            guest_reject = _guest_rejection(wallet_address, "Minting demo links")
+            if guest_reject:
+                return self._send_json(guest_reject[0], guest_reject[1])
+            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+            if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
+                return self._send_json(
+                    401, {"ok": False, "error": "Valid auth token required"}
+                )
+            if not guest_mode.can_mint_invites(wallet_address):
+                logger.warning(
+                    "guest invite mint refused for %s: not an approved minter",
+                    mask_wallet_address(wallet_address),
+                )
+                return self._send_json(403, {
+                    "ok": False,
+                    "error_code": "not_invite_minter",
+                    "error": "This wallet is not approved to create demo links.",
+                })
+            result = guest_mode.mint_invite(
+                label=data.get("label"),
+                max_uses=data.get("max_uses", 1),
+                session_minutes=data.get("session_minutes"),
+                allowed_profiles=data.get("allowed_profiles"),
+                allowed_templates=data.get("allowed_templates"),
+                ttl_hours=data.get("ttl_hours"),
+                created_by=wallet_address.lower(),
+            )
+            if not result.get("ok"):
+                return self._send_json(_guest_redeem_http_status(result), result)
+            result["invite_url"] = self._guest_invite_url(result["token"])
+            return self._send_json(200, result, no_cache=True)
+
+        if ponly == '/api/auth/guest':
+            # Wallet-free demo entry. The invite is the credential; there is no
+            # anonymous self-serve path. On success this issues an ordinary,
+            # tab-scoped auth token against a synthetic guest address, so every
+            # downstream session/heartbeat/expiry path is unchanged.
+            # Consume the bounded body BEFORE any availability response: leaving
+            # it unread corrupts the next HTTP/1.1 keep-alive request on this
+            # connection (the same reason the terminal-ticket route reads first).
+            data = self._read_json_body()
+            # 404 rather than 403: a disabled feature should not advertise itself.
+            if not _guest_mode_ready():
+                return self._send_json(404, {"ok": False, "error": "Not found"})
+            if _rate_limiter is not None and not _rate_limiter.allow(
+                f"{client_ip}|guest-invite"
+            ):
+                return self._send_json(429, {"ok": False, "error": "Rate limit exceeded"})
+            invite_value = data.get("invite") or data.get("invite_token") or ""
+            attempt_value = data.get("attempt_id")
+            # Require the stable retry key before consuming an invite. It is
+            # the only way to recover the same identity after a post-commit
+            # credit/auth failure.
+            if not isinstance(invite_value, str) or not isinstance(attempt_value, str):
+                return self._send_json(400, {
+                    "ok": False,
+                    "error_code": "invalid_attempt_id",
+                    "error": "invite and attempt_id are required",
+                })
+            invite = invite_value.strip()
+            if not invite or not attempt_value.strip():
+                return self._send_json(400, {
+                    "ok": False,
+                    "error_code": "invalid_attempt_id",
+                    "error": "invite and attempt_id are required",
+                })
+
+            redemption = guest_mode.redeem_invite(invite, attempt_id=attempt_value)
+            if not redemption.get("ok"):
+                return self._send_json(
+                    _guest_redeem_http_status(redemption), redemption
+                )
+
+            guest_address = redemption["guest_address"]
+            credit = guest_mode.grant_guest_credit(
+                guest_address,
+                redemption["session_minutes"],
+                redemption["allowed_profiles"],
+                redemption.get("token_hash") or invite,
+            )
+            if not credit.get("ok"):
+                logger.warning(
+                    "guest credit failed for %s: %s",
+                    guest_mode.mask_guest_identity(guest_address),
+                    credit.get("error_code"),
+                )
+                return self._send_json(503, {
+                    "ok": False,
+                    "error_code": credit.get("error_code") or "credit_failed",
+                    "retryable": True,
+                    "error": "Could not start the demo session. Please try again.",
+                })
+
+            # Central issuance derives the immutable demo deadline from the
+            # authoritative guest row and includes only its fixed API grace.
+            try:
+                token, ttl = _issue_auth_token(guest_address)
+            except Exception as ex:
+                logger.warning("guest auth token issue failed: %s", ex)
+                return self._send_json(503, {
+                    "ok": False,
+                    "error_code": "auth_unavailable",
+                    "retryable": True,
+                    "error": "Auth database unavailable; cannot start the demo session.",
+                })
+
+            logger.info(
+                "guest session started: %s minutes=%s profiles=%s",
+                guest_mode.mask_guest_identity(guest_address),
+                redemption["session_minutes"],
+                ",".join(redemption["allowed_profiles"]),
+            )
+            return self._send_json(200, {
+                "ok": True,
+                "verified": True,
+                "guest": True,
+                "guest_session": True,
+                "wallet_address": guest_address,
+                "auth_token": token,
+                "auth_token_expires_in_seconds": ttl,
+                "guest_remaining_seconds": redemption["remaining_seconds"],
+                "guest_warn_seconds": redemption["warn_seconds"],
+                "guest_session_minutes": redemption["session_minutes"],
+                "guest_expires_at": redemption["expires_at"],
+                "allowed_profiles": redemption["allowed_profiles"],
+                "allowed_templates": redemption["allowed_templates"],
+            })
+
         if ponly == '/api/auth/test-credit':
             data = self._read_json_body()
             wallet_address = (data.get("wallet_address") or "").strip()
@@ -2010,6 +2386,9 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 return self._send_json(
                     400, {"verified": False, "error": "Valid wallet_address required"}
                 )
+            guest_reject = _guest_rejection(wallet_address, "Test credit")
+            if guest_reject:
+                return self._send_json(guest_reject[0], guest_reject[1])
             auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
             if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
                 return self._send_json(
@@ -2048,6 +2427,9 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 )
             if not tx_hash:
                 return self._send_json(400, {"verified": False, "error": "tx_hash required"})
+            guest_reject = _guest_rejection(wallet_address, "Depositing")
+            if guest_reject:
+                return self._send_json(guest_reject[0], guest_reject[1])
             auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
             if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
                 return self._send_json(
@@ -2072,6 +2454,9 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 )
             if not tx_hash:
                 return self._send_json(400, {"verified": False, "error": "tx_hash required"})
+            guest_reject = _guest_rejection(wallet_address, "Depositing")
+            if guest_reject:
+                return self._send_json(guest_reject[0], guest_reject[1])
             auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
             if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
                 return self._send_json(
@@ -2096,6 +2481,9 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 )
             if not tx_hash:
                 return self._send_json(400, {"verified": False, "error": "tx_hash required"})
+            guest_reject = _guest_rejection(wallet_address, "Depositing")
+            if guest_reject:
+                return self._send_json(guest_reject[0], guest_reject[1])
             auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
             if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
                 return self._send_json(
@@ -2161,6 +2549,13 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             data = self._read_json_body() or {}
             wallet_address = (data.get("wallet_address") or self.headers.get('X-Wallet-Address') or '').strip()
             x_payment = self.headers.get('X-PAYMENT') or self.headers.get('PAYMENT-SIGNATURE') or ''
+
+            # A demo identity has no key to sign a payment with and no SSH path.
+            # Refused ahead of the 402 branch so a guest address can never be
+            # quoted payment requirements or reach a claim.
+            guest_reject = _guest_rejection(wallet_address, "The agent payment API")
+            if guest_reject:
+                return self._send_json(guest_reject[0], guest_reject[1])
 
             # 402-before-validation: an unpaid request (no X-PAYMENT) with no
             # prepaid minutes must get a 402 with x402 payment requirements BEFORE
@@ -2254,6 +2649,12 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 'verified': False,
                 'error': 'Invalid wallet address format. Must be 0x followed by 40 hex characters.'
             })
+        # The guest namespace is reachable only by redeeming an invite.
+        if _is_guest_shaped(wallet_address):
+            return self._send_json(400, {
+                'verified': False,
+                'error': 'Invalid wallet address format. Must be 0x followed by 40 hex characters.'
+            })
         if not message:
             return self._send_json(400, {'verified': False, 'error': 'message is required'})
         if not signature_hex:
@@ -2268,6 +2669,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
 
         status = get_wallet_access_status(wallet_address, consume_usage=False)
         status["wallet_address"] = wallet_address
+        status["guest_invite_minter"] = _can_wallet_mint_guest_invites(wallet_address)
         try:
             token, ttl = _issue_auth_token(wallet_address)
         except Exception as ex:

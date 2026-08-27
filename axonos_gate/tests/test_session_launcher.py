@@ -166,7 +166,7 @@ class SessionLauncherTests(unittest.TestCase):
                 wallet="0xAbC123",
                 profile="small",
                 gpu_ids=[0],
-                template="pytorch",
+                template="  PyTorch  ",
                 webrtc_agent_token="signed-capability",
             )
         
@@ -177,6 +177,29 @@ class SessionLauncherTests(unittest.TestCase):
         # Verify requested template is passed as environment variable
         self.assertIn("-e", cmd)
         self.assertIn("AXONOS_SELECTED_TEMPLATE=pytorch", cmd)
+
+    def test_direct_launcher_rejects_unknown_template_before_side_effects(self) -> None:
+        os.environ["AXGT_SESSION_LAUNCHER_MODE"] = "docker_cli"
+        os.environ["AXGT_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"
+        os.environ["AXGT_USER_CONTAINER_ENABLED"] = "true"
+
+        import session_launcher
+        with patch.object(session_launcher, "runtime_configuration_error") as preflight, \
+             patch.object(session_launcher.subprocess, "check_output") as docker:
+            ok, cid, err = session_launcher.launch_session(
+                session_id=42,
+                wallet="0xAbC123",
+                profile="small",
+                gpu_ids=[0],
+                template="not-deployed",
+                webrtc_agent_token="signed-capability",
+            )
+
+        self.assertFalse(ok)
+        self.assertIsNone(cid)
+        self.assertIn("unsupported requested_template", err)
+        preflight.assert_not_called()
+        docker.assert_not_called()
 
     @patch("subprocess.check_output")
     def test_launch_via_docker_cli_disabled(self, mock_check_output: MagicMock) -> None:
@@ -574,7 +597,7 @@ class SessionLauncherTests(unittest.TestCase):
             "wallet_address": "0xAbC123",
             "requested_profile": "small",
             "assigned_gpu_ids": [0],
-            "requested_template": "gromacs",
+            "requested_template": "  GROMACS  ",
             "webrtc_agent_token": "signed-capability",
         }
         cmd, err = _build_launch_cmd(payload)
@@ -583,6 +606,48 @@ class SessionLauncherTests(unittest.TestCase):
         
         self.assertIn("-e", cmd)
         self.assertIn("AXONOS_SELECTED_TEMPLATE=gromacs", cmd)
+
+    def test_service_rejects_unknown_template_before_volume_work(self) -> None:
+        os.environ["AXGT_HOST_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"
+        os.environ["AXGT_PERSISTENT_STORAGE_ENABLED"] = "true"
+
+        import session_launcher_service as service
+        payload = {
+            "session_id": 42,
+            "wallet_address": "0xAbC123",
+            "requested_profile": "small",
+            "assigned_gpu_ids": [0],
+            "requested_template": "not-deployed",
+            "webrtc_agent_token": "signed-capability",
+        }
+        with patch.object(service, "_ensure_persistent_storage_volume") as ensure:
+            cmd, err = service._build_launch_cmd(payload)
+        self.assertIsNone(cmd)
+        self.assertIn("unsupported requested_template", err)
+        ensure.assert_not_called()
+
+    def test_service_route_rejects_unknown_template_before_contract_inspection(self) -> None:
+        import session_launcher_service as service
+
+        service.app.testing = True
+        payload = {
+            "session_id": 42,
+            "wallet_address": "0xAbC123",
+            "requested_profile": "small",
+            "assigned_gpu_ids": [0],
+            "requested_template": "not-deployed",
+            "webrtc_agent_token": "signed-capability",
+        }
+        with patch.object(service, "_require_token", return_value=None), \
+             patch.object(service, "_configuration_errors", return_value=[]), \
+             patch.object(service, "_launch_row_authorized") as authorized, \
+             patch.object(service, "_inspect_managed_container_contract") as inspect_contract:
+            response = service.app.test_client().post("/launch", json=payload)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("unsupported requested_template", response.get_json()["error"])
+        authorized.assert_not_called()
+        inspect_contract.assert_not_called()
 
     def test_service_build_launch_cmd_disabled(self) -> None:
         os.environ["AXGT_HOST_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"

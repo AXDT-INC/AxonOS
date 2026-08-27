@@ -194,9 +194,9 @@ class FrontendTerminalContractTests(unittest.TestCase):
         self.assertIn("showDetach = viewerAttached", controls)
 
     def test_frontend_module_cache_tokens_stay_in_lockstep(self) -> None:
-        self.assertIn("axonos-theme.css?v=20.3&t=20260819a", self.page)
-        self.assertIn("app/ui.js?v=20260821d", self.page)
-        self.assertIn("./webrtc/axonos-webrtc.js?v=20260821d", self.ui)
+        self.assertIn("axonos-theme.css?v=20.3&t=20260827a", self.page)
+        self.assertIn("app/ui.js?v=20260827guest1", self.page)
+        self.assertIn("./webrtc/axonos-webrtc.js?v=20260827guest1", self.ui)
         self.assertIn("./terminal/axonos-terminal.js?v=20260729d", self.ui)
 
     def test_terminal_fallback_does_not_start_a_dashboard_status_refresh(self) -> None:

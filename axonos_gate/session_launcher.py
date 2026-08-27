@@ -23,6 +23,7 @@ try:
     from .docker_gpu_cli import (
         SESSION_MEDIA_ENV_NAMES,
         docker_run_gpus_device_value,
+        normalize_session_template,
         session_runtime_config_digest,
         session_container_ompi_mca_env_flags,
         subprocess_env_for_nested_docker,
@@ -34,6 +35,7 @@ except ImportError:
         from axonos_gate.docker_gpu_cli import (
             SESSION_MEDIA_ENV_NAMES,
             docker_run_gpus_device_value,
+            normalize_session_template,
             session_runtime_config_digest,
             session_container_ompi_mca_env_flags,
             subprocess_env_for_nested_docker,
@@ -44,6 +46,7 @@ except ImportError:
         from docker_gpu_cli import (
             SESSION_MEDIA_ENV_NAMES,
             docker_run_gpus_device_value,
+            normalize_session_template,
             session_runtime_config_digest,
             session_container_ompi_mca_env_flags,
             subprocess_env_for_nested_docker,
@@ -307,8 +310,18 @@ def launch_session(
     ssh_pubkey: Optional[str] = None,
     webrtc_agent_token: Optional[str] = None,
     requested_storage_gb: Optional[int] = None,
+    ephemeral_storage: bool = False,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
-    """Launch user session runtime; returns (ok, container_id, error)."""
+    """Launch user session runtime; returns (ok, container_id, error).
+
+    ``ephemeral_storage`` skips the per-wallet persistent volume entirely (demo
+    sessions): the container runs on the image's own home instead of provisioning
+    an ext4 image that would outlive it.
+    """
+    try:
+        template = normalize_session_template(template)
+    except (TypeError, ValueError) as exc:
+        return False, None, str(exc)
     if not _container_mode_enabled():
         return True, "shared-desktop", None
     mode = _launcher_mode()
@@ -324,6 +337,7 @@ def launch_session(
             ssh_pubkey,
             webrtc_agent_token,
             requested_storage_gb,
+            ephemeral_storage,
         )
     if mode == "noop":
         # Useful when validating scheduler/queue logic without runtime orchestration.
@@ -343,6 +357,7 @@ def launch_session(
             ssh_pubkey,
             webrtc_agent_token,
             requested_storage_gb,
+            ephemeral_storage,
         )
 
 
@@ -1009,6 +1024,7 @@ def _launch_via_docker_cli(
     ssh_pubkey: Optional[str] = None,
     webrtc_agent_token: Optional[str] = None,
     requested_storage_gb: Optional[int] = None,
+    ephemeral_storage: bool = False,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     image = (os.getenv("AXGT_SESSION_CONTAINER_IMAGE") or "").strip()
     if not image:
@@ -1038,6 +1054,7 @@ def _launch_via_docker_cli(
         image_name=image,
         requested_template=template or "",
         ssh_pubkey=ssh_pubkey or "",
+        ephemeral_storage=ephemeral_storage,
     )
     if not ssh_enabled and not (webrtc_agent_token or "").strip():
         return False, None, "webrtc_agent_token is required for a desktop session"
@@ -1099,7 +1116,7 @@ def _launch_via_docker_cli(
     cmd.extend(_publish_args_for_session(session_id, ssh_enabled))
     if network:
         cmd.extend(["--network", network])
-    if _persistent_storage_enabled():
+    if _persistent_storage_enabled() and not ephemeral_storage:
         safe_wallet = "".join(c for c in wallet if c.isalnum() or c in ("-", "_")).lower()
         volume_name = f"{_persistent_storage_volume_prefix()}{safe_wallet}"
         mount_path = _persistent_storage_mount_path()
@@ -1238,6 +1255,7 @@ def _launch_via_http(
     ssh_pubkey: Optional[str] = None,
     webrtc_agent_token: Optional[str] = None,
     requested_storage_gb: Optional[int] = None,
+    ephemeral_storage: bool = False,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     base_url = (os.getenv("AXGT_SESSION_LAUNCHER_URL") or "").strip().rstrip("/")
     if not base_url:
@@ -1253,6 +1271,7 @@ def _launch_via_http(
         "ssh_pubkey": ssh_pubkey,
         "webrtc_agent_token": webrtc_agent_token,
         "requested_storage_gb": requested_storage_gb,
+        "ephemeral_storage": bool(ephemeral_storage),
     }
     status, data, err = _http_json("POST", f"{base_url}/launch", payload)
     launch_ok = (not err) and status < 400 and isinstance(data, dict) and bool(data.get("ok"))

@@ -556,8 +556,10 @@ RUN apt update && apt install -y \
 
 # Set WhiteSur theme as default for XFCE (without changing wallpaper)
 RUN mkdir -p /home/$USER/.config/xfce4/xfconf/xfce-perchannel-xml && \
-    echo -e '<?xml version="1.0" encoding="UTF-8"?>\n<channel name="xfce4-desktop" version="1.0">\n  <property name="backdrop" type="empty">\n    <property name="screen0" type="empty">\n      <property name="monitor0" type="empty">\n        <property name="workspace0" type="empty">\n          <property name="color-style" type="int" value="0"/>\n          <property name="image-style" type="int" value="5"/>\n          <property name="last-image" type="string" value="/usr/share/desktop-base/active-theme/wallpaper/contents/images/1920x1080.svg"/>\n        </property>\n      </property>\n    </property>\n  </property>\n</channel>' \
+    echo -e '<?xml version="1.0" encoding="UTF-8"?>\n<channel name="xfce4-desktop" version="1.0">\n  <property name="backdrop" type="empty">\n    <property name="screen0" type="empty">\n      <property name="monitorDVI-D-0" type="empty">\n        <property name="workspace0" type="empty">\n          <property name="color-style" type="int" value="0"/>\n          <property name="image-style" type="int" value="5"/>\n          <property name="last-image" type="string" value="/usr/share/desktop-base/active-theme/wallpaper/contents/images/1920x1080.svg"/>\n        </property>\n      </property>\n    </property>\n  </property>\n</channel>' \
     > /home/$USER/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml && \
+    mkdir -p /etc/axonos/xfce4 && \
+    cp /home/$USER/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml /etc/axonos/xfce4/xfce4-desktop.xml && \
     echo -e '<?xml version="1.0" encoding="UTF-8"?>\n<channel name="xfwm4" version="1.0">\n  <property name="general" type="empty">\n    <property name="theme" type="string" value="WhiteSur-Dark"/>\n  </property>\n</channel>' \
     > /home/$USER/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml && \
     echo -e '<?xml version="1.0" encoding="UTF-8"?>\n<channel name="xsettings" version="1.0">\n  <property name="Net" type="empty">\n    <property name="ThemeName" type="string" value="WhiteSur-Dark"/>\n    <property name="IconThemeName" type="string" value="Adwaita"/>\n  </property>\n</channel>' \

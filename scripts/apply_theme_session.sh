@@ -2,6 +2,7 @@
 # Apply WhiteSur-Dark theme and os.svg wallpaper. Intended to run from XFCE autostart
 # (same session as xfce4), so DISPLAY and DBUS_SESSION_BUS_ADDRESS are already set.
 set -e
+rm -f /tmp/axonos-desktop-ready
 xfconf-query -c xsettings -p /Net/ThemeName -n -t string -s WhiteSur-Dark 2>/dev/null || xfconf-query -c xsettings -p /Net/ThemeName -s WhiteSur-Dark
 xfconf-query -c xfwm4 -p /general/theme -n -t string -s WhiteSur-Dark 2>/dev/null || xfconf-query -c xfwm4 -p /general/theme -s WhiteSur-Dark
 xfconf-query -c xsettings -p /Net/IconThemeName -n -t string -s Adwaita 2>/dev/null || xfconf-query -c xsettings -p /Net/IconThemeName -s Adwaita
@@ -31,3 +32,4 @@ pkill -f xfce4-screensaver 2>/dev/null || true
 pkill -f xss-lock          2>/dev/null || true
 pkill -f light-locker      2>/dev/null || true
 pkill -f xscreensaver      2>/dev/null || true
+touch /tmp/axonos-desktop-ready

@@ -897,14 +897,20 @@ const UI = {
         if (!grid) return;
         grid.replaceChildren();
 
+        const guestAllowedTemplates = (
+            window.axonosGuestSession &&
+            Array.isArray(window.axonosGuestSession.allowedTemplates)
+        ) ? window.axonosGuestSession.allowedTemplates : [];
         const filtered = AXONOS_TEMPLATES.filter(t => {
+            const permittedForGuest = guestAllowedTemplates.length === 0 ||
+                guestAllowedTemplates.includes(t.id);
             const matchesCategory = (activeCategory === 'all' || t.category === activeCategory);
             const matchesSearch = !searchTerm || 
                 t.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
                 t.desc.toLowerCase().includes(searchTerm.toLowerCase()) ||
                 t.tags.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase())) ||
                 t.packages.some(pkg => pkg.toLowerCase().includes(searchTerm.toLowerCase()));
-            return matchesCategory && matchesSearch;
+            return permittedForGuest && matchesCategory && matchesSearch;
         });
 
         if (filtered.length === 0) {
@@ -3514,6 +3520,18 @@ const UI = {
         }
         const url = new URL('/api/session/release', window.location.origin).toString();
         const payload = { wallet_address: wallet };
+        const guestSession = window.axonosGuestSession;
+        const guestUsesExplicitBearer = !!guestSession &&
+            String(guestSession.address || '').trim().toLowerCase() ===
+                String(wallet).trim().toLowerCase();
+        // sendBeacon cannot attach the tab-scoped guest header. Put the bearer
+        // only in this same-origin release body; both gates deliberately ignore
+        // body bearers for ordinary wallets, and access logs never see it.
+        if (guestUsesExplicitBearer &&
+            typeof window.verifiedWalletAuthToken === 'string' &&
+            window.verifiedWalletAuthToken) {
+            payload.auth_token = window.verifiedWalletAuthToken;
+        }
         const owned = window.axonosOwnedSession || window.axonosDetachedSession || null;
         const rawExpectedSessionId = owned && (
             owned.id || owned.session_id || owned.sessionId
@@ -4032,7 +4050,15 @@ const UI = {
             WebUtil.readSetting('axgt_ws_auth') ??
             'cookie'
         ).toLowerCase();
-        const includeQueryAuthToken = (wsAuthMode === 'query' || wsAuthMode === 'both');
+        // A cookie is origin-wide, while a demo identity deliberately belongs
+        // to one tab. Always carry the guest's explicit, tab-scoped bearer on
+        // RFB reconnect so another wallet/demo tab cannot replace its cookie
+        // and make the still-valid demo unrecoverable. Ordinary wallet behavior
+        // continues to honor the configured cookie/query mode.
+        const guestExplicitAuth = !!window.axonosGuestSession &&
+            !!window.verifiedWalletAuthToken;
+        const includeQueryAuthToken = guestExplicitAuth ||
+            wsAuthMode === 'query' || wsAuthMode === 'both';
 
         // Check if wallet is verified before connecting
         if (!window.verifiedWalletAddress) {
@@ -4261,7 +4287,7 @@ const UI = {
                         try {
                             // A stable module URL keeps negotiation generation/cancellation
                             // state shared across retries and rapid user reconnects.
-                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260821d');
+                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260827guest1');
                             if (!connectAttemptIsCurrent()) {
                                 return;
                             }
@@ -5146,6 +5172,11 @@ const UI = {
             .then((r) => (r.ok ? r.json() : null))
             .then((hb) => {
                 if (!pollIdentityIsCurrent()) return;
+                // Demo countdown: the server is authoritative about the deadline,
+                // and the heartbeat is its steady-state carrier.
+                if (typeof window.axonosGuestSyncFromPayload === 'function') {
+                    window.axonosGuestSyncFromPayload(hb);
+                }
                 if (hb && typeof hb.billing_gpu_count === 'number') {
                     window.axonosBillingGpuCount = hb.billing_gpu_count;
                 }
@@ -5199,6 +5230,15 @@ const UI = {
                 if (!pollIdentityIsCurrent()) return;
                 if (!ok) {
                     return;
+                }
+                // wallet-status canonicalizes concurrent/grace tokens. Keep the
+                // in-memory bearer aligned with the repaired HttpOnly cookie so
+                // heartbeat and WebRTC requests do not continue sending stale T1.
+                if (typeof data.auth_token === 'string' && data.auth_token) {
+                    window.verifiedWalletAuthToken = data.auth_token;
+                    if (typeof window.axonosGuestUpdateAuthToken === 'function') {
+                        window.axonosGuestUpdateAuthToken(data.auth_token);
+                    }
                 }
                 const remaining = typeof data.remaining_minutes === 'number' ? data.remaining_minutes : 0;
                 const creditExhausted = UI._axgtWalletStatusCreditExhausted(ok, data);

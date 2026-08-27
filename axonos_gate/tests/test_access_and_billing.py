@@ -346,13 +346,16 @@ class TestBillingAndSession(unittest.TestCase):
 
         session_manager._pg_init_done = True
 
-        def run(ssh_active, hard):
+        def run(ssh_active, hard, ssh_enabled=True):
             conn = MagicMock()
             cur = MagicMock()
             cur.fetchall.return_value = []
             cur.fetchone.side_effect = [
                 (True,),
-                (1, 1000.0, 2000.0, 500.0, "small", "0", "axgt-session-1", hard, True),
+                (
+                    1, 1000.0, 2000.0, 500.0, "small", "0",
+                    "axgt-session-1", hard, ssh_enabled,
+                ),
                 (5100.0,),
             ]
             conn.cursor.return_value = cur
@@ -380,6 +383,11 @@ class TestBillingAndSession(unittest.TestCase):
 
         # No presence: cap untouched, still reported.
         result, new_hard = run(ssh_active=False, hard=1600.0)
+        self.assertEqual(new_hard, 1600.0)
+        self.assertEqual(result.get("hard_cap_remaining_seconds"), 100)
+
+        # A caller cannot renew a non-SSH cap merely by forging ssh_active.
+        result, new_hard = run(ssh_active=True, hard=1600.0, ssh_enabled=False)
         self.assertEqual(new_hard, 1600.0)
         self.assertEqual(result.get("hard_cap_remaining_seconds"), 100)
 

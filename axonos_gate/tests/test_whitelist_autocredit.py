@@ -143,6 +143,7 @@ class TestTestCreditPolicy(unittest.TestCase):
             max_balance_minutes=60.0,
             request_id=REQUEST_ID,
             payment_rail="eth",
+            additive=True,
         )
 
     def test_disabled_and_ineligible_requests_never_touch_ledger(self):

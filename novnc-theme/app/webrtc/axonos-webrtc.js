@@ -58,6 +58,69 @@ function _waitIceConnected(pc, timeoutMs) {
     });
 }
 
+/** Guest session images can lag the gate during a hot deployment. Include the
+ * browser candidates in the initial SDP as well as trickling them, so either
+ * generation of the agent can establish the peer connection. */
+function _waitIceGatheringComplete(pc, timeoutMs) {
+    return new Promise((resolve) => {
+        if (pc.iceGatheringState === 'complete') {
+            resolve();
+            return;
+        }
+        let timer = null;
+        const finish = () => {
+            pc.removeEventListener('icegatheringstatechange', onState);
+            if (timer) clearTimeout(timer);
+            resolve();
+        };
+        const onState = () => {
+            if (pc.iceGatheringState === 'complete') finish();
+        };
+        pc.addEventListener('icegatheringstatechange', onState);
+        timer = setTimeout(finish, timeoutMs);
+    });
+}
+
+/** ICE/DTLS success is not desktop readiness. Resolve only after Chromium has
+ *  decoded a real video frame with non-zero dimensions. */
+function _waitForDecodedVideoFrame(video, pc, timeoutMs) {
+    return new Promise((resolve) => {
+        const ready = () => video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+            video.videoWidth > 0 && video.videoHeight > 0;
+        if (ready()) {
+            resolve(true);
+            return;
+        }
+        let timer = null;
+        let frameCallback = null;
+        const finish = (ok) => {
+            video.removeEventListener('loadeddata', onReady);
+            video.removeEventListener('resize', onReady);
+            pc.removeEventListener('connectionstatechange', onConnection);
+            if (timer) clearTimeout(timer);
+            if (frameCallback !== null && typeof video.cancelVideoFrameCallback === 'function') {
+                video.cancelVideoFrameCallback(frameCallback);
+            }
+            resolve(ok);
+        };
+        const onReady = () => {
+            if (ready()) finish(true);
+        };
+        const onConnection = () => {
+            if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+                finish(false);
+            }
+        };
+        video.addEventListener('loadeddata', onReady);
+        video.addEventListener('resize', onReady);
+        pc.addEventListener('connectionstatechange', onConnection);
+        if (typeof video.requestVideoFrameCallback === 'function') {
+            frameCallback = video.requestVideoFrameCallback(() => finish(ready()));
+        }
+        timer = setTimeout(() => finish(ready()), timeoutMs);
+    });
+}
+
 function _setBanner(text, state) {
     let el = document.getElementById('axonos_webrtc_banner');
     if (!el) {
@@ -503,7 +566,12 @@ export async function connectAxonOSWebRTC(opts) {
     await pc.setLocalDescription(offer);
     // Do not serialize the server-side display startup behind full browser ICE
     // gathering. onicecandidate above already trickles every route to the gate,
-    // so the offer can be posted immediately and both operations can overlap.
+    // so the offer can normally be posted immediately and both operations can
+    // overlap. Guest images are deliberately backward-compatible during a hot
+    // rollout: wait briefly so their initial SDP also embeds gathered routes.
+    if (/^0x6775657374[0-9a-f]{30}$/i.test(wallet)) {
+        await _waitIceGatheringComplete(pc, 5000);
+    }
 
     const offerRes = await _fetchJson('./api/webrtc/offer', {
         method: 'POST',
@@ -1629,6 +1697,43 @@ export async function connectAxonOSWebRTC(opts) {
     }
 
     if (await _finishNegotiationCancelled(negotiationGeneration, pc, video, sessionId, wallet)) {
+        return false;
+    }
+
+    reportProgress('webrtc-video');
+    _setBanner('WebRTC: waiting for desktop video…', 'connecting');
+    const videoReady = await _waitForDecodedVideoFrame(video, pc, 15000);
+    if (!videoReady) {
+        inputAbort.abort();
+        if (await _finishNegotiationCancelled(negotiationGeneration, pc, video, sessionId, wallet)) {
+            return false;
+        }
+        await _cleanup(pc, video, sessionId, wallet);
+        _clearOwnedPeerGlobals({
+            pc,
+            video,
+            pasteClipboard,
+            releasePointer: releaseMouseOnFocusLoss,
+        });
+        const chromiumCodecHint = /Chromium/i.test(navigator.userAgent || '')
+            ? ' This Chromium build may lack a working H.264 decoder; use Google Chrome or install Chromium H.264 codec support.'
+            : '';
+        const videoFailureDetail = 'WebRTC received the stream but decoded no desktop video.' +
+            chromiumCodecHint;
+        _lastConnectFailure = Object.freeze({
+            code: 'desktop_video_not_decoded',
+            detail: videoFailureDetail,
+            message: videoFailureDetail,
+            stage: 'video',
+            state: 'failed',
+            sessionId: String(sessionId || ''),
+            terminal: false,
+            retryable: true,
+        });
+        showFailure(videoFailureDetail, 'failed', 10000);
+        if (!deferFailureUi && typeof UI.updateVisualState === 'function') {
+            UI.updateVisualState('disconnected');
+        }
         return false;
     }
 

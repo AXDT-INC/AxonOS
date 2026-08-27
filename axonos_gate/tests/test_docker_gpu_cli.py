@@ -14,6 +14,29 @@ if _axonos_gate_root not in sys.path:
 
 
 class DockerGpuCliTests(unittest.TestCase):
+    def test_supported_session_template_normalization(self) -> None:
+        from docker_gpu_cli import (
+            SUPPORTED_SESSION_TEMPLATE_IDS,
+            normalize_session_template,
+        )
+
+        self.assertEqual(len(SUPPORTED_SESSION_TEMPLATE_IDS), 17)
+        self.assertEqual(
+            [normalize_session_template(value) for value in SUPPORTED_SESSION_TEMPLATE_IDS],
+            list(SUPPORTED_SESSION_TEMPLATE_IDS),
+        )
+        self.assertEqual(normalize_session_template("  PyTorch  "), "pytorch")
+        self.assertIsNone(normalize_session_template(None))
+        self.assertIsNone(normalize_session_template("  "))
+
+    def test_session_template_normalization_rejects_unknown_or_non_string(self) -> None:
+        from docker_gpu_cli import normalize_session_template
+
+        with self.assertRaises(ValueError):
+            normalize_session_template("not-deployed")
+        with self.assertRaises(TypeError):
+            normalize_session_template(["pytorch"])
+
     def test_strip_duplicate_gpus_flags(self) -> None:
         from docker_gpu_cli import strip_conflicting_gpu_run_flags
 

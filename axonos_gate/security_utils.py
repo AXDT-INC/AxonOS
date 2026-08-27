@@ -7,18 +7,26 @@ from typing import Optional, Set, Tuple
 _TERMINAL_WS_LOG_QUERY_RE = re.compile(
     r"(/api/terminal/ws)\?[^\s'\"<>]*"
 )
+_CAPABILITY_LOG_QUERY_RE = re.compile(
+    r"([?&](?:auth(?:_|%5f)token|invite)=)[^&\s'\"<>#]*",
+    re.IGNORECASE,
+)
 
 
 def redact_terminal_websocket_query(value):
-    """Remove terminal capability queries from log-bound text.
+    """Remove query-carried capabilities from log-bound text.
 
     Websockify logs both ``self.path`` and HTTP request lines. Terminal tickets
     are one-use capabilities, so retain the useful route while removing the
-    entire query in either representation. Other routes are left unchanged.
+    entire query in either representation. RFB can also authenticate with an
+    ``auth_token`` query parameter, and initial demo navigation carries a
+    single-use ``invite`` secret. Redact either value on every route while
+    preserving non-secret query fields for useful access logs.
     """
     if not isinstance(value, str):
         return value
-    return _TERMINAL_WS_LOG_QUERY_RE.sub(r"\1?[query-redacted]", value)
+    terminal_safe = _TERMINAL_WS_LOG_QUERY_RE.sub(r"\1?[query-redacted]", value)
+    return _CAPABILITY_LOG_QUERY_RE.sub(r"\1[redacted]", terminal_safe)
 
 
 def parse_cors_allowlist(value: Optional[str]) -> Tuple[bool, Set[str]]:

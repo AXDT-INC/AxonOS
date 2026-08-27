@@ -12,14 +12,13 @@ class ResponsiveWalletDialogContractTests(unittest.TestCase):
         )
 
     def test_compact_view_notice_explains_mobile_window_and_zoom_triggers(self) -> None:
-        self.assertIn("More screen space recommended", self.page)
-        self.assertIn(
-            "AxonOS is designed for desktop use. You're using a compact", self.page
-        )
-        self.assertIn("phone or", self.page)
-        self.assertIn("in a narrow window, or at higher browser zoom", self.page)
-        self.assertIn("widen the window or reduce", self.page)
-        self.assertIn("to a laptop or desktop to continue", self.page)
+        # The compact notice was intentionally shortened during the responsive
+        # polish. Pin the current user-facing contract instead of obsolete copy.
+        self.assertIn("Built for desktops", self.page)
+        self.assertIn("You're in a compact view", self.page)
+        self.assertIn("browse the environments here", self.page)
+        self.assertIn("open AxonOS on a desktop", self.page)
+        self.assertIn("widen the window / reduce zoom", self.page)
 
     def test_browse_environments_uses_a_lighter_dedicated_purple_style(self) -> None:
         browse = self.css.split("#axonos_hero_browse_btn {", 1)[1].split("}", 1)[0]

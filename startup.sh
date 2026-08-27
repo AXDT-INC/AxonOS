@@ -252,6 +252,19 @@ SSHD
     usermod -p '*' aXonian 2>/dev/null || true
 fi
 
+# Seed the actual NVIDIA virtual output before xfdesktop starts. A mounted home
+# masks the image default; without this prepaint config XFCE briefly renders its
+# stock wallpaper before the later theme pass corrects monitorDVI-D-0.
+rm -f /tmp/axonos-desktop-ready
+if [ "${AXGT_DESKTOP_ENABLED:-true}" != "false" ] && \
+   [ -f /etc/axonos/xfce4/xfce4-desktop.xml ]; then
+    install -d -m 755 -o aXonian -g aXonian \
+        /home/aXonian/.config/xfce4/xfconf/xfce-perchannel-xml
+    install -m 644 -o aXonian -g aXonian \
+        /etc/axonos/xfce4/xfce4-desktop.xml \
+        /home/aXonian/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml
+fi
+
 # Start supervisord
 /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf &
 SUPERVISOR_PID=$!
@@ -417,6 +430,7 @@ if DISPLAY=:0 xwininfo -root > ~/.vnc/geometry.log 2>&1; then
 else
     echo "Failed to get root window info" >> ~/.vnc/geometry.log
 fi
+touch /tmp/axonos-desktop-ready
 EOF
 
 # Make the script executable

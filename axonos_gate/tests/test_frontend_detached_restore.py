@@ -110,7 +110,8 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
             "var AXONOS_VERIFY_DEPOSIT_ENDPOINT",
         )
 
-        self.assertIn("Add up to ", eligibility)
+        self.assertIn("'Add ' + grantLabel + ' test credits'", eligibility)
+        self.assertIn("Each click adds ", eligibility)
         self.assertIn("axonos_dashboard_topup_btn", eligibility)
         self.assertIn("axonos_sidebar_topup_btn", eligibility)
         self.assertIn("test_credit_grant_minutes", self.page_source)

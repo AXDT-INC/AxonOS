@@ -26,6 +26,58 @@ Copyright (C) 2019 The noVNC Authors
 
     <meta charset="utf-8">
 
+    <script>
+        // Guest entry must win the boot race synchronously. The main application
+        // initializes on DOMContentLoaded, but remembered-wallet paint and wallet
+        // restore probes can run before an invite is redeemed. Capture and scrub
+        // the one-use bearer token now, before any external page resource or
+        // asynchronous startup path can observe the original URL.
+        (function captureAxonosGuestEntry() {
+            var storageKey = 'axonos_guest_session';
+            var invite = '';
+            var stored = null;
+
+            window.axonosGuestEntryPending = false;
+            window.axonosPendingGuestInvite = '';
+            window.axonosPendingStoredGuestSession = null;
+            window.axonosGuestEntryPendingOrActive = function () {
+                return window.axonosGuestEntryPending === true ||
+                    !!window.axonosGuestSession;
+            };
+
+            try {
+                var params = new URLSearchParams(window.location.search || '');
+                invite = (params.get('invite') || '').trim();
+                if (invite) {
+                    params.delete('invite');
+                    var query = params.toString();
+                    var clean = window.location.pathname + (query ? '?' + query : '') +
+                        (window.location.hash || '');
+                    window.history.replaceState(window.history.state, '', clean);
+                }
+            } catch (e) { /* URL APIs unavailable: ordinary startup remains usable */ }
+
+            try {
+                var raw = window.sessionStorage.getItem(storageKey);
+                if (raw) {
+                    var parsed = JSON.parse(raw);
+                    var address = String((parsed && parsed.address) || '').trim().toLowerCase();
+                    var expiresAtMs = Number(parsed && parsed.expiresAtMs);
+                    if (/^0x6775657374[0-9a-f]{30}$/.test(address) &&
+                        isFinite(expiresAtMs) && expiresAtMs > Date.now()) {
+                        stored = parsed;
+                    } else {
+                        window.sessionStorage.removeItem(storageKey);
+                    }
+                }
+            } catch (e) { /* private mode or malformed storage: ignore it */ }
+
+            window.axonosPendingGuestInvite = invite;
+            window.axonosPendingStoredGuestSession = stored;
+            window.axonosGuestEntryPending = !!(invite || stored);
+        })();
+    </script>
+
     <!-- Icons - Using AxonOS icon.png -->
     <link rel="icon" type="image/png" href="icon.png">
     <link rel="icon" sizes="16x16" type="image/png" href="icon.png">
@@ -69,7 +121,7 @@ Copyright (C) 2019 The noVNC Authors
     <!-- Stylesheets -->
     <link rel="stylesheet" href="app/styles/base.css">
     <link rel="stylesheet" href="app/vendor/xterm/xterm.css?v=6.0.0">
-    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.3&t=20260819a">
+    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.3&t=20260827a">
 
     <!-- Images that will later appear via CSS -->
     <link rel="preload" as="image" href="app/images/info.svg">
@@ -109,7 +161,7 @@ Copyright (C) 2019 The noVNC Authors
     </script>
     <script src="app/error-handler.js"></script>
     <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
-    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260821d"></script>
+    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260827guest1"></script>
 </head>
 
 <body>
@@ -477,6 +529,8 @@ Copyright (C) 2019 The noVNC Authors
                             <span id="axonos_topbar_wallet_addr">—</span>
                         </button>
                     </div>
+                    <button type="button" id="axonos_topbar_demo_code_btn"
+                        class="axonos-topbar-demo-cta" hidden>Use demo code</button>
                     <button type="button" id="axonos_topbar_connect_btn" class="axonos-topbar-cta">Connect
                         wallet</button>
                 </div>
@@ -517,15 +571,19 @@ Copyright (C) 2019 The noVNC Authors
                  (axonosSyncTopbar(null, null)) when the cookie has expired. -->
             <script>
                 (function () {
+                    if (typeof window.axonosGuestEntryPendingOrActive === 'function' &&
+                        window.axonosGuestEntryPendingOrActive()) return;
                     var w = null;
                     try { w = localStorage.getItem('axonos_last_wallet'); } catch (e) { }
                     if (!w || !/^0x[a-fA-F0-9]{40}$/.test(w)) return;
                     var btn = document.getElementById('axonos_topbar_connect_btn');
+                    var demoBtn = document.getElementById('axonos_topbar_demo_code_btn');
                     var wrap = document.getElementById('axonos_topbar_user_wrap');
                     var addr = document.getElementById('axonos_topbar_wallet_addr');
                     var credits = document.getElementById('axonos_topbar_credits_val');
                     var hero = document.getElementById('axonos_hero_browse_btn');
                     if (btn) btn.style.display = 'none';
+                    if (demoBtn) demoBtn.style.display = 'none';
                     if (wrap) wrap.style.display = 'flex';
                     if (addr) addr.textContent = w.slice(0, 6) + '…' + w.slice(-4);
                     if (credits) credits.textContent = '—';
@@ -812,12 +870,22 @@ Copyright (C) 2019 The noVNC Authors
                         <div class="axonos-dashboard-header__tag">WELCOME BACK</div>
                         <h1 class="axonos-dashboard-title">Your workspace</h1>
                     </div>
-                    <button type="button" id="axonos_dashboard_new_session_btn" class="axonos-dashboard-new-btn">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                            <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                        </svg>
-                        New session
-                    </button>
+                    <div class="axonos-dashboard-header__actions">
+                        <button type="button" id="axonos_dashboard_guest_invite_btn"
+                            class="axonos-dashboard-guest-btn" hidden>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                <path d="M10.5 13.5l3-3m-5.7 6.3-1.6 1.6a3 3 0 1 1-4.2-4.2l3.2-3.2a3 3 0 0 1 4.2 0m6.8-3.8 1.6-1.6a3 3 0 1 1 4.2 4.2L18.8 13a3 3 0 0 1-4.2 0"
+                                    stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                            </svg>
+                            Create demo invite
+                        </button>
+                        <button type="button" id="axonos_dashboard_new_session_btn" class="axonos-dashboard-new-btn">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                                <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                            </svg>
+                            New session
+                        </button>
+                    </div>
                 </div>
 
                 <div class="axonos-dashboard-stats-grid">
@@ -1056,7 +1124,7 @@ Copyright (C) 2019 The noVNC Authors
                                 profile.</p>
 
                             <!-- Storage selector -->
-                            <div class="axonos-storage-slider-wrap">
+                            <div id="axonos_wizard_storage_section" class="axonos-storage-slider-wrap">
                                 <div class="axonos-storage-slider-header">
                                     <span class="axonos-storage-slider-title">Persistent storage volume</span>
                                     <span id="axonos_wizard_storage_val" class="axonos-storage-slider-val">100 GB</span>
@@ -1126,6 +1194,31 @@ Copyright (C) 2019 The noVNC Authors
                                 <button type="button" id="axonos_wizard_connect_wallet_btn"
                                     class="axonos-rail-action-btn" style="max-width: 280px; margin: 0 auto;">Connect
                                     Wallet</button>
+                            </div>
+
+                            <!-- Demo session: Step 3 has nothing to collect. Shown
+                                 instead of the payment card when the identity came
+                                 from a demo invite rather than a wallet. -->
+                            <div id="axonos_wizard_guest_panel" class="axonos-wallet-state"
+                                style="display: none; border: 1px solid rgba(123,108,255,.28); background: linear-gradient(180deg,rgba(123,108,255,.1),rgba(255,255,255,.01)); padding: 28px; text-align: center; border-radius: 18px;">
+                                <div
+                                    style="width: 48px; height: 48px; margin: 0 auto 16px; border-radius: 14px; display: flex; align-items: center; justify-content: center; background: rgba(123,108,255,.16); border: 1px solid rgba(123,108,255,.3);">
+                                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                                        <circle cx="12" cy="12" r="9" stroke="#B7A6FF" stroke-width="1.7" />
+                                        <path d="M12 7v5l3 2" stroke="#B7A6FF" stroke-width="1.7"
+                                            stroke-linecap="round" />
+                                    </svg>
+                                </div>
+                                <div style="font-size: 17px; font-weight: 600; color: #f1f2f8;">Demo session — no
+                                    payment needed</div>
+                                <p
+                                    style="margin: 8px auto 0; max-width: 400px; font-size: 13px; line-height: 1.6; color: #9097b0; font-weight: 300;">
+                                    You have <strong
+                                        id="axonos_wizard_guest_minutes"
+                                        style="color:#B7A6FF;font-weight:600;">—</strong> of GPU desktop time. Files
+                                    are not kept after the demo ends, and you can connect a wallet at any point to
+                                    continue with your own session.
+                                </p>
                             </div>
 
                             <!-- Connected payment card -->
@@ -1204,8 +1297,8 @@ Copyright (C) 2019 The noVNC Authors
                                 <div id="axonos_wizard_test_credit_panel" class="axonos-test-credit-panel" hidden>
                                     <div>
                                         <strong>Release-test credit</strong>
-                                        <p>Issue bounded test credit to this signed-in wallet without sending a
-                                            transaction. The payment buttons above always submit real payments.</p>
+                                        <p>Add the configured test-credit grant to this signed-in wallet on every
+                                            click. The payment buttons above always submit real payments.</p>
                                     </div>
                                     <button type="button" id="axonos_wizard_test_credit_btn"
                                         class="axonos-test-credit-btn">Use test credit</button>
@@ -1261,7 +1354,7 @@ Copyright (C) 2019 The noVNC Authors
                                             Tesla V100 · 32 GB VRAM</div>
                                     </div>
                                 </div>
-                                <div class="axonos-rail-item">
+                                <div id="axonos_wizard_rail_storage_section" class="axonos-rail-item">
                                     <div class="axonos-rail-item__icon-wrap">
                                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
                                             <ellipse cx="12" cy="6.2" rx="7.2" ry="2.7" stroke="currentColor"
@@ -1656,7 +1749,7 @@ Copyright (C) 2019 The noVNC Authors
                         <div id="axonos_test_credit_panel" class="axonos-test-credit-panel" hidden>
                             <div>
                                 <strong>Release-test credit</strong>
-                                <p>Issue bounded test credit to this signed-in wallet without sending a transaction.
+                                <p>Add the configured test-credit grant on every click without sending a transaction.
                                     Pay with ETH, USDC, and AXGT always remain real on-chain actions.</p>
                             </div>
                             <button type="button" id="axonos_test_credit_btn"
@@ -1736,13 +1829,13 @@ Copyright (C) 2019 The noVNC Authors
     <!-- Session Telemetry Sidebar (visible when connected) -->
     <div id="axonos_session_sidebar" class="axonos-session-sidebar" translate="no">
         <!-- Section 1: Credits Remaining -->
-        <div class="axonos-session-sidebar__section">
+        <div id="axonos_sidebar_balance_section" class="axonos-session-sidebar__section">
             <div class="axonos-session-sidebar__sec-header">
-                <span class="axonos-session-sidebar__sec-label">Prepaid Credits</span>
+                <span id="axonos_sidebar_balance_label" class="axonos-session-sidebar__sec-label">Prepaid Credits</span>
             </div>
             <div class="axonos-session-sidebar__sec-value-row">
                 <span id="axonos_sidebar_credits" class="axonos-session-sidebar__sec-value">—</span>
-                <span class="axonos-session-sidebar__sec-value-unit">credits</span>
+                <span id="axonos_sidebar_balance_unit" class="axonos-session-sidebar__sec-value-unit">credits</span>
             </div>
             <p class="axonos-session-sidebar__sec-hint">Remaining time: ≈ <b id="axonos_sidebar_time_left">—</b></p>
             <div class="axonos-sidebar-progress-track">
@@ -1807,7 +1900,7 @@ Copyright (C) 2019 The noVNC Authors
         </div>
 
         <!-- Section 3: Storage volume -->
-        <div class="axonos-session-sidebar__section">
+        <div id="axonos_sidebar_storage_section" class="axonos-session-sidebar__section">
             <div class="axonos-session-sidebar__sec-header">
                 <span class="axonos-session-sidebar__sec-label">Storage Volume</span>
                 <span class="axonos-session-sidebar__sec-val" id="axonos_sidebar_storage_quota">—</span>
@@ -1946,6 +2039,20 @@ Copyright (C) 2019 The noVNC Authors
         </div>
     </div>
 
+
+    <!-- Demo countdown — only present during a wallet-free demo session.
+         Fed by guest_remaining_seconds from claim/status/heartbeat, so a reload
+         recovers the real deadline from the server rather than a local timer. -->
+    <div id="axonos_guest_banner" class="axonos-guest-banner axonos-guest-banner--hidden"
+        role="status" aria-live="polite" translate="no">
+        <span class="axonos-guest-banner__dot" aria-hidden="true"></span>
+        <span id="axonos_guest_banner_label" class="axonos-guest-banner__label">Demo session —</span>
+        <span id="axonos_guest_banner_time" class="axonos-guest-banner__time">—</span>
+        <span class="axonos-guest-banner__unit">remaining</span>
+        <button type="button" id="axonos_guest_banner_cta"
+            class="axonos-guest-banner__cta axonos-guest-banner__cta--hidden"
+            title="Connect a wallet to keep working past the demo">Connect Wallet</button>
+    </div>
 
     <!-- Session billing HUD — top-right corner, visible while the remote desktop is shown -->
     <div id="axonos_session_hud" class="axonos-session-hud axonos-session-hud--hidden" aria-hidden="true" translate="no"
@@ -2405,6 +2512,72 @@ Copyright (C) 2019 The noVNC Authors
                 <button type="button" id="axonos_confirm_cancel"
                     class="axonos-btn axonos-btn--secondary">Cancel</button>
                 <button type="button" id="axonos_confirm_ok" class="axonos-btn axonos-btn--primary">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Public wallet-free entry. The pasted value is held only long enough to
+         redeem it and may be either the raw bearer code or its complete URL. -->
+    <div id="axonos_guest_redeem_modal" class="axonos-modal" aria-hidden="true" role="dialog"
+        aria-modal="true" aria-labelledby="axonos_guest_redeem_title">
+        <div class="axonos-modal-overlay" id="axonos_guest_redeem_overlay"></div>
+        <div class="axonos-modal-content axonos-guest-invite-content">
+            <button type="button" id="axonos_guest_redeem_close" class="axonos-modal-close"
+                aria-label="Close demo code dialog">&times;</button>
+            <div class="axonos-guest-invite-kicker">WALLET-FREE DEMO</div>
+            <h2 id="axonos_guest_redeem_title">Use a demo code</h2>
+            <p class="axonos-guest-invite-intro">Paste the demo code or the complete guest link you received.</p>
+            <label class="axonos-guest-invite-label" for="axonos_guest_redeem_value">Demo code or link</label>
+            <input id="axonos_guest_redeem_value" class="axonos-guest-invite-input" type="text"
+                maxlength="2048" autocomplete="off" autocapitalize="none" spellcheck="false"
+                placeholder="Paste code or https://app.axonos.io/?invite=…">
+            <p class="axonos-guest-secret-note">Treat this as a bearer secret: anyone with it can use the invite.</p>
+            <div id="axonos_guest_redeem_message" class="axonos-guest-invite-message" aria-live="polite"></div>
+            <div class="axonos-guest-invite-footer">
+                <button type="button" id="axonos_guest_redeem_cancel"
+                    class="axonos-btn axonos-btn--secondary">Cancel</button>
+                <button type="button" id="axonos_guest_redeem_start"
+                    class="axonos-btn axonos-btn--primary">Start demo</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Authenticated sponsor workflow; never shown unless wallet-status confirms eligibility. -->
+    <div id="axonos_guest_invite_modal" class="axonos-modal" aria-hidden="true" role="dialog"
+        aria-modal="true" aria-labelledby="axonos_guest_invite_title">
+        <div class="axonos-modal-overlay" id="axonos_guest_invite_overlay"></div>
+        <div class="axonos-modal-content axonos-guest-invite-content">
+            <button type="button" id="axonos_guest_invite_close" class="axonos-modal-close"
+                aria-label="Close demo invite dialog">&times;</button>
+            <div class="axonos-guest-invite-kicker">WALLET-FREE DEMO</div>
+            <h2 id="axonos_guest_invite_title">Create a guest invite</h2>
+            <p class="axonos-guest-invite-intro">The link uses your configured demo duration, GPU tier,
+                environment catalog and expiry. The link and code are bearer secrets shown only once.</p>
+            <label class="axonos-guest-invite-label" for="axonos_guest_invite_label">Label <span>(optional)</span></label>
+            <input id="axonos_guest_invite_label" class="axonos-guest-invite-input" type="text"
+                maxlength="120" autocomplete="off" placeholder="Prospect or event name">
+            <label class="axonos-guest-invite-label" for="axonos_guest_invite_max_uses">Maximum uses</label>
+            <input id="axonos_guest_invite_max_uses" class="axonos-guest-invite-input" type="number"
+                min="1" max="100" step="1" value="1" inputmode="numeric">
+            <div id="axonos_guest_invite_message" class="axonos-guest-invite-message" aria-live="polite"></div>
+            <div id="axonos_guest_invite_result" class="axonos-guest-invite-result" hidden>
+                <label class="axonos-guest-invite-label" for="axonos_guest_invite_url">Guest link</label>
+                <div class="axonos-guest-invite-copy-row">
+                    <input id="axonos_guest_invite_url" class="axonos-guest-invite-input" type="text" readonly>
+                    <button type="button" id="axonos_guest_invite_copy" class="axonos-btn axonos-btn--secondary">Copy link</button>
+                </div>
+                <label class="axonos-guest-invite-label" for="axonos_guest_invite_token">Demo code</label>
+                <div class="axonos-guest-invite-copy-row">
+                    <input id="axonos_guest_invite_token" class="axonos-guest-invite-input" type="text" readonly>
+                    <button type="button" id="axonos_guest_invite_copy_token"
+                        class="axonos-btn axonos-btn--secondary">Copy code</button>
+                </div>
+                <p class="axonos-guest-secret-note">Both values grant the same demo access. Share either one privately.</p>
+                <div id="axonos_guest_invite_summary" class="axonos-guest-invite-summary"></div>
+            </div>
+            <div class="axonos-guest-invite-footer">
+                <button type="button" id="axonos_guest_invite_cancel" class="axonos-btn axonos-btn--secondary">Close</button>
+                <button type="button" id="axonos_guest_invite_create" class="axonos-btn axonos-btn--primary">Create link</button>
             </div>
         </div>
     </div>
@@ -2887,6 +3060,820 @@ Copyright (C) 2019 The noVNC Authors
         window.verifiedWalletAuthToken = null;
         window.axonosWalletProviderUnavailable = false;
         window.axonosWalletAccountMismatch = null;
+
+        // ---- Wallet-free demo (guest) sessions ------------------------------
+        // A demo prospect arrives on ?invite=<token>, which is redeemed once for a
+        // synthetic identity plus an ordinary auth token. From that point the
+        // normal launch path runs unchanged -- the identity simply has no wallet
+        // behind it, a hard server-side time cap, and no payment surfaces.
+        window.axonosGuestSession = null;
+        var AXONOS_GUEST_STORAGE_KEY = 'axonos_guest_session';
+        var AXONOS_GUEST_ATTEMPT_KEY = 'axonos_guest_attempt_id';
+        var axonosGuestTimer = null;
+        var axonosGuestWarned = false;
+        var axonosGuestUpsellShown = false;
+
+        function axonosGuestActive() {
+            return !!window.axonosGuestSession;
+        }
+        window.axonosGuestActive = axonosGuestActive;
+
+        /** Read ?invite= and remove it from the URL in the same breath.
+         *
+         *  The token is a single-use bearer credential, so it must not linger in
+         *  the address bar, in browser history, or in a Referer header on the
+         *  next outbound request. */
+        function axonosTakeGuestInviteFromUrl() {
+            var captured = String(window.axonosPendingGuestInvite || '').trim();
+            window.axonosPendingGuestInvite = '';
+            if (captured) return captured;
+            var token = '';
+            try {
+                var params = new URLSearchParams(window.location.search || '');
+                token = (params.get('invite') || '').trim();
+                if (token) {
+                    params.delete('invite');
+                    var query = params.toString();
+                    var clean = window.location.pathname + (query ? '?' + query : '') +
+                        (window.location.hash || '');
+                    window.history.replaceState(null, '', clean);
+                }
+            } catch (e) { /* no URL API: treat as no invite */ }
+            return token;
+        }
+
+        function axonosStoredGuestSessionIsValid(session) {
+            if (!session || !axonosIsGuestAddress(session.address)) return false;
+            var expiresAtMs = Number(session.expiresAtMs);
+            return isFinite(expiresAtMs) && expiresAtMs > Date.now();
+        }
+
+        function axonosStoreGuestSession(session) {
+            // sessionStorage, not localStorage: a demo belongs to this tab only and
+            // must not outlive it. The single-use INVITE token is never stored.
+            // The short-lived, guest-identity-bound auth bearer is kept per-tab so
+            // another same-origin wallet/demo tab cannot strand this demo by
+            // overwriting the browser's one shared HttpOnly compatibility cookie.
+            try {
+                window.sessionStorage.setItem(AXONOS_GUEST_STORAGE_KEY, JSON.stringify({
+                    address: session.address,
+                    authToken: typeof session.authToken === 'string'
+                        ? session.authToken : '',
+                    expiresAtMs: session.expiresAtMs,
+                    warnSeconds: session.warnSeconds,
+                    sessionMinutes: session.sessionMinutes,
+                    allowedProfiles: Array.isArray(session.allowedProfiles)
+                        ? session.allowedProfiles : [],
+                    allowedTemplates: Array.isArray(session.allowedTemplates)
+                        ? session.allowedTemplates : []
+                }));
+            } catch (e) { /* private mode: the in-memory session still works */ }
+        }
+
+        function axonosReadStoredGuestSession() {
+            var captured = window.axonosPendingStoredGuestSession;
+            window.axonosPendingStoredGuestSession = null;
+            if (axonosStoredGuestSessionIsValid(captured)) return captured;
+            try {
+                var raw = window.sessionStorage.getItem(AXONOS_GUEST_STORAGE_KEY);
+                if (!raw) return null;
+                var parsed = JSON.parse(raw);
+                if (!axonosStoredGuestSessionIsValid(parsed)) {
+                    axonosForgetStoredGuestSession();
+                    return null;
+                }
+                return parsed;
+            } catch (e) { return null; }
+        }
+
+        function axonosForgetStoredGuestSession() {
+            window.axonosPendingStoredGuestSession = null;
+            try { window.sessionStorage.removeItem(AXONOS_GUEST_STORAGE_KEY); } catch (e) { }
+        }
+
+        var axonosGuestTeardownPromise = null;
+
+        /** Release-confirmed demo teardown used by every identity exit.
+         *
+         *  The guest globals stay live until the shared teardown has confirmed
+         *  the server release. That lets the release carry the guest address/bearer,
+         *  and an ambiguous release preserves a reconnectable demo instead of
+         *  silently handing a possibly-running container to another identity. */
+        function axonosTeardownGuestSession(options) {
+            var opts = options && typeof options === 'object' ? options : {};
+            var session = window.axonosGuestSession;
+            if (!session) return Promise.resolve(true);
+            if (axonosGuestTeardownPromise) return axonosGuestTeardownPromise;
+
+            var guestAddress = String(session.address || '').trim().toLowerCase();
+            // Local viewer/owned flags can lag a server allocation after reload
+            // or an uncertain claim. Always use the wallet-change teardown: with
+            // no local state it first performs an authoritative status read, and
+            // only treats the demo as idle when that read proves it. A live or
+            // unknown session goes through the same confirmed release path.
+            var release = Promise.resolve(false);
+            if (typeof teardownSessionForWalletChange === 'function') {
+                try {
+                    release = Promise.resolve(teardownSessionForWalletChange({
+                        forceRelease: true,
+                        confirmIdleBeforeRelease: true,
+                        releaseSource: opts.releaseSource || 'guest-exit'
+                    })).then(function (released) { return released === true; });
+                } catch (error) {
+                    release = Promise.resolve(false);
+                }
+            }
+
+            var pending = release.then(function (released) {
+                // A newer demo activation owns the tab now; this completion is stale.
+                if (window.axonosGuestSession !== session ||
+                    String(window.verifiedWalletAddress || '').trim().toLowerCase() !==
+                        guestAddress) {
+                    return false;
+                }
+                if (released !== true) {
+                    if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                        UI.showStatus(
+                            'Could not confirm that the demo ended. The demo identity was preserved so you can retry safely.',
+                            'error',
+                            9000
+                        );
+                    }
+                    return false;
+                }
+                axonosClearGuestSession();
+                return true;
+            }).catch(function () {
+                if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                    UI.showStatus(
+                        'Could not confirm that the demo ended. The demo identity was preserved so you can retry safely.',
+                        'error',
+                        9000
+                    );
+                }
+                return false;
+            }).finally(function () {
+                if (axonosGuestTeardownPromise === pending) {
+                    axonosGuestTeardownPromise = null;
+                }
+            });
+            axonosGuestTeardownPromise = pending;
+            return pending;
+        }
+        window.axonosTeardownGuestSession = axonosTeardownGuestSession;
+
+        /** Drop the demo only after its viewer/session release is confirmed, then
+         *  let a real wallet take over the now-clean tab. */
+        function axonosEndGuestSessionForWalletHandover() {
+            return axonosTeardownGuestSession({ releaseSource: 'guest-wallet-handoff' })
+                .then(function (released) {
+                    if (released) axonosGuestUpsellShown = true;
+                    return released;
+                });
+        }
+
+        /** A rejected/cancelled wallet attempt is not a demo handoff. Preserve
+         *  the guest identity and bearer so the running demo remains usable. */
+        function axonosResetIdentityAfterFailedWalletAttempt() {
+            axonosSetTestCreditEligibility(false);
+            axonosSetGuestInviteEligibility(false);
+            if (window.axonosGuestSession) {
+                verifiedWalletAddress = window.axonosGuestSession.address;
+                window.verifiedWalletAddress = window.axonosGuestSession.address;
+                window.verifiedWalletAuthToken = window.axonosGuestSession.authToken || null;
+                window.axonosAllowVncConnect = true;
+                axonosApplyGuestUiRestrictions();
+                if (typeof axonosSyncTopbar === 'function') {
+                    axonosSyncTopbar(window.axonosGuestSession.address, null);
+                }
+                return;
+            }
+            verifiedWalletAddress = null;
+            window.verifiedWalletAddress = null;
+            window.verifiedWalletAuthToken = null;
+            window.axonosAllowVncConnect = false;
+        }
+
+        function axonosActivateGuestSession(session) {
+            // Never let a restored demo displace a connected wallet. Only the
+            // demo's own address (a re-activation) may overwrite the globals.
+            var live = String(window.verifiedWalletAddress || '').toLowerCase();
+            if (live && live !== String(session.address || '').toLowerCase() &&
+                !(typeof axonosIsGuestAddress === 'function' && axonosIsGuestAddress(live))) {
+                return false;
+            }
+            window.axonosGuestSession = session;
+            axonosGuestUpsellShown = false;
+            axonosGuestWarned = false;
+            verifiedWalletAddress = session.address;
+            window.verifiedWalletAddress = session.address;
+            if (session.authToken) window.verifiedWalletAuthToken = session.authToken;
+            window.axonosAllowVncConnect = true;
+            // Deliberately NOT written to localStorage 'axonos_last_wallet': a
+            // synthetic identity must never be offered as a returning wallet.
+            axonosStoreGuestSession(session);
+            axonosApplyGuestUiRestrictions();
+            if (typeof axonosSyncTopbar === 'function') {
+                axonosSyncTopbar(session.address, null);
+            }
+            axonosStartGuestCountdown();
+            return true;
+        }
+
+        /** Client-side mirror of the server's reserved guest-address prefix. */
+        function axonosIsGuestAddress(address) {
+            return /^0x6775657374[0-9a-f]{30}$/.test(
+                String(address || '').trim().toLowerCase()
+            );
+        }
+
+        function axonosClearGuestSession() {
+            var demoAddress = String(
+                (window.axonosGuestSession && window.axonosGuestSession.address) || ''
+            ).toLowerCase();
+            window.axonosGuestSession = null;
+            axonosForgetStoredGuestSession();
+            if (axonosGuestTimer) { clearInterval(axonosGuestTimer); axonosGuestTimer = null; }
+            axonosGuestWarned = false;
+            // Only tear down the shared wallet globals if THIS demo is still the
+            // live identity. A wallet connected during the demo owns them now, and
+            // the demo clock expiring must not sign that wallet out mid-session.
+            var live = String(window.verifiedWalletAddress || '').toLowerCase();
+            if (!live || live === demoAddress) {
+                verifiedWalletAddress = null;
+                window.verifiedWalletAddress = null;
+                window.verifiedWalletAuthToken = null;
+                window.axonosAllowVncConnect = false;
+                window.axonosSessionDetached = false;
+                window.axonosPendingResumeClaim = null;
+                window.axonosPausedResume = null;
+                window.axonosCurrentSessionReleaseOperation = null;
+                if (typeof window.axonosClearSessionReleaseFailure === 'function') {
+                    window.axonosClearSessionReleaseFailure();
+                } else {
+                    window.axonosSessionReleaseFailure = null;
+                }
+                if (typeof window.axonosClearDetachedSession === 'function') {
+                    window.axonosClearDetachedSession();
+                } else {
+                    window.axonosDetachedSession = null;
+                    window.axonosOwnedSession = null;
+                }
+                window.axonosDetachedSession = null;
+                window.axonosOwnedSession = null;
+                if (typeof window.axonosApplyResumeConnectUi === 'function') {
+                    window.axonosApplyResumeConnectUi(false);
+                }
+                if (typeof axonosSyncTopbar === 'function') {
+                    axonosSyncTopbar(null, null);
+                }
+            }
+            axonosRenderGuestBanner(null);
+            var banner = document.getElementById('axonos_guest_banner');
+            if (banner) banner.classList.remove('axonos-guest-banner--warning');
+            var cta = document.getElementById('axonos_guest_banner_cta');
+            if (cta) cta.classList.add('axonos-guest-banner__cta--hidden');
+            document.body.classList.remove('axonos-guest-mode');
+            axonosSyncGuestSidebar(false);
+            axonosSyncGuestWizardStorage(false);
+            var sshToggle = document.getElementById('axonos_ssh_toggle');
+            if (sshToggle) sshToggle.disabled = false;
+            var wizardSshCard = document.getElementById('axonos_wizard_ssh_toggle_card');
+            if (wizardSshCard) wizardSshCard.disabled = false;
+            if (typeof UI !== 'undefined' &&
+                typeof UI.resetAxonosSshLaunchIntent === 'function') {
+                UI.resetAxonosSshLaunchIntent();
+            }
+            if (typeof axonosApplyGuestProfileRestrictions === 'function') {
+                axonosApplyGuestProfileRestrictions();
+            }
+            if (typeof axonosApplyWizardGpuPinState === 'function') {
+                axonosApplyWizardGpuPinState();
+            }
+            if (typeof UI !== 'undefined' &&
+                typeof UI.renderAxonosTemplates === 'function') {
+                var templateSearch = document.getElementById('axonos_wizard_template_search');
+                UI.renderAxonosTemplates(
+                    templateSearch ? templateSearch.value : '',
+                    'all',
+                    '#axonos_wizard_templates_grid'
+                );
+            }
+        }
+        window.axonosClearGuestSession = axonosClearGuestSession;
+
+        function axonosGuestAttemptId() {
+            var existing = '';
+            try {
+                existing = String(
+                    window.sessionStorage.getItem(AXONOS_GUEST_ATTEMPT_KEY) || ''
+                ).trim();
+            } catch (e) { }
+            if (/^[A-Za-z0-9._:-]{16,128}$/.test(existing)) return existing;
+
+            var generated = '';
+            try {
+                if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+                    generated = 'guest-' + window.crypto.randomUUID();
+                } else if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
+                    var bytes = new Uint8Array(16);
+                    window.crypto.getRandomValues(bytes);
+                    generated = 'guest-' + Array.from(bytes).map(function (value) {
+                        return value.toString(16).padStart(2, '0');
+                    }).join('');
+                }
+            } catch (e) { }
+            if (!generated) {
+                generated = 'guest-' + Date.now().toString(36) + '-' +
+                    Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+            }
+            try { window.sessionStorage.setItem(AXONOS_GUEST_ATTEMPT_KEY, generated); } catch (e) { }
+            return generated;
+        }
+
+        function axonosForgetGuestAttempt() {
+            try { window.sessionStorage.removeItem(AXONOS_GUEST_ATTEMPT_KEY); } catch (e) { }
+        }
+
+        /** Redeem a demo invite. Resolves true when a demo identity is active. */
+        function axonosRedeemGuestInvite(token, retryAttemptId) {
+            if (!token) return Promise.resolve(false);
+            var attemptId = String(retryAttemptId || '').trim() || axonosGuestAttemptId();
+            var retriesRemaining = 2;
+
+            var requestRedemption = function () {
+                return axonosPromiseWithTimeout(fetch(
+                    new URL('/api/auth/guest', window.location.origin).toString(), {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ invite: token, attempt_id: attemptId })
+                }).then(function (r) {
+                    return r.json().then(function (d) { return { status: r.status, data: d || {} }; });
+                }),
+                    20000,
+                    'The demo server did not answer.'
+                ).then(function (res) {
+                    var data = res.data || {};
+                    if (!data.ok || !data.wallet_address) {
+                        if (res.status >= 500 && data.retryable !== false && retriesRemaining > 0) {
+                            retriesRemaining -= 1;
+                            return new Promise(function (resolve) {
+                                setTimeout(resolve, 500);
+                            }).then(requestRedemption);
+                        }
+                        if (res.status >= 500 && data.retryable !== false) {
+                            axonosOfferGuestRetry(token, data, attemptId);
+                            return false;
+                        }
+                        axonosShowGuestInviteError(res.status, data);
+                        return false;
+                    }
+                    var activated = axonosActivateGuestSession({
+                        address: String(data.wallet_address),
+                        authToken: data.auth_token || null,
+                        expiresAtMs: Date.now() + (Number(data.guest_remaining_seconds) || 0) * 1000,
+                        warnSeconds: Number(data.guest_warn_seconds) || 0,
+                        sessionMinutes: Number(data.guest_session_minutes) || 0,
+                        allowedProfiles: data.allowed_profiles || [],
+                        allowedTemplates: data.allowed_templates || []
+                    });
+                    if (activated) {
+                        axonosForgetGuestAttempt();
+                        window.axonosRetryGuestInvite = null;
+                    }
+                    return activated;
+                }).catch(function () {
+                    if (retriesRemaining > 0) {
+                        retriesRemaining -= 1;
+                        return new Promise(function (resolve) {
+                            setTimeout(resolve, 500);
+                        }).then(requestRedemption);
+                    }
+                    axonosOfferGuestRetry(token, {}, attemptId);
+                    return false;
+                });
+            };
+            return requestRedemption();
+        }
+
+        /** Keep the scrubbed invite only inside a retry closure. A transient
+         *  outage must not force the prospect to recover the original URL, and
+         *  retrying keeps the same sessionStorage attempt ID. */
+        function axonosOfferGuestRetry(token, data, attemptId) {
+            var message = (data && data.error) ||
+                'The demo server could not finish setup. Your link is still recoverable.';
+            var retry = function () {
+                var live = String(window.verifiedWalletAddress || '').trim().toLowerCase();
+                if (live && !axonosIsGuestAddress(live)) {
+                    window.axonosRetryGuestInvite = null;
+                    return Promise.resolve(false);
+                }
+                if (window.axonosGuestRetryInFlight) return window.axonosGuestRetryInFlight;
+                window.axonosGuestEntryPending = true;
+                var pending = Promise.resolve(
+                    axonosRedeemGuestInvite(token, attemptId)
+                ).finally(function () {
+                    if (window.axonosGuestRetryInFlight === pending) {
+                        window.axonosGuestRetryInFlight = null;
+                    }
+                    window.axonosGuestEntryPending = false;
+                });
+                window.axonosGuestRetryInFlight = pending;
+                return pending;
+            };
+            window.axonosRetryGuestInvite = retry;
+
+            // Schedule after the initial guest promise settles so its finalizer
+            // cannot clear the pending flag of a very fast Retry click.
+            setTimeout(function () {
+                if (typeof UI !== 'undefined' && typeof UI.showConfirm === 'function') {
+                    UI.showConfirm('Demo setup was interrupted', message, {
+                        confirmText: 'Retry Demo',
+                        cancelText: 'Not now'
+                    }).then(function (accepted) {
+                        if (accepted && window.axonosRetryGuestInvite === retry) retry();
+                        else if (window.axonosRetryGuestInvite === retry) {
+                            window.axonosRetryGuestInvite = null;
+                        }
+                    });
+                    return;
+                }
+                axonosShowGuestInviteError(0, data || {});
+            }, 0);
+        }
+
+        function axonosShowGuestInviteError(status, data) {
+            var code = (data && data.error_code) || '';
+            var message;
+            if (status === 404) {
+                message = 'Demo sessions are not available right now.';
+            } else if (code === 'invite_exhausted') {
+                message = 'This demo link has already been used. Ask your contact for a fresh link.';
+            } else if (code === 'invite_expired') {
+                message = 'This demo link has expired. Ask your contact for a fresh link.';
+            } else if (code === 'invite_revoked') {
+                message = 'This demo link is no longer active. Ask your contact for a fresh link.';
+            } else if (code === 'invite_session_active') {
+                message = 'A demo from this link is already running. Close the other tab and retry.';
+            } else {
+                message = (data && data.error) || 'This demo link could not be opened.';
+            }
+            if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                UI.showStatus(message, 'error', 12000);
+            }
+        }
+
+        /** Re-sync the countdown from any server payload that carries it.
+         *
+         *  The server is authoritative about the deadline; the local timer only
+         *  animates between updates. Claim, status and heartbeat all report it. */
+        function axonosGuestSyncFromPayload(payload) {
+            if (!axonosGuestActive() || !payload) return;
+            var remaining = payload.guest_remaining_seconds;
+            if (typeof remaining !== 'number' || !isFinite(remaining)) return;
+            window.axonosGuestSession.expiresAtMs = Date.now() + Math.max(0, remaining) * 1000;
+            if (typeof payload.guest_warn_seconds === 'number') {
+                window.axonosGuestSession.warnSeconds = payload.guest_warn_seconds;
+            }
+            axonosStoreGuestSession(window.axonosGuestSession);
+            axonosTickGuestCountdown();
+        }
+        window.axonosGuestSyncFromPayload = axonosGuestSyncFromPayload;
+
+        /** Keep the persisted per-tab bearer canonical after wallet-status
+         *  rotates a valid grace token to the newest current token. */
+        function axonosGuestUpdateAuthToken(token) {
+            var canonical = String(token || '').trim();
+            if (!axonosGuestActive() || !canonical) return;
+            window.axonosGuestSession.authToken = canonical;
+            window.verifiedWalletAuthToken = canonical;
+            axonosStoreGuestSession(window.axonosGuestSession);
+        }
+        window.axonosGuestUpdateAuthToken = axonosGuestUpdateAuthToken;
+
+        function axonosStartGuestCountdown() {
+            if (axonosGuestTimer) clearInterval(axonosGuestTimer);
+            axonosTickGuestCountdown();
+            axonosGuestTimer = setInterval(axonosTickGuestCountdown, 1000);
+        }
+
+        function axonosGuestRemainingSeconds() {
+            if (!axonosGuestActive()) return 0;
+            return Math.max(0, Math.round(
+                (Number(window.axonosGuestSession.expiresAtMs) - Date.now()) / 1000
+            ));
+        }
+
+        function axonosTickGuestCountdown() {
+            if (!axonosGuestActive()) return;
+            var remaining = axonosGuestRemainingSeconds();
+            var warnAt = Number(window.axonosGuestSession.warnSeconds) || 0;
+            axonosRenderGuestBanner(remaining, warnAt > 0 && remaining <= warnAt);
+            axonosRenderGuestSidebarTime(remaining);
+            // Early warning, while the prospect is still in the desktop and can
+            // act on it -- not at the cutoff, when the session is already gone.
+            if (warnAt > 0 && remaining > 0 && remaining <= warnAt && !axonosGuestWarned) {
+                axonosGuestWarned = true;
+                axonosShowGuestWarning(remaining);
+            }
+            if (remaining <= 0) {
+                if (axonosGuestTimer) { clearInterval(axonosGuestTimer); axonosGuestTimer = null; }
+                axonosShowGuestUpsell('expired');
+            }
+        }
+
+        function axonosFormatGuestClock(totalSeconds) {
+            var mins = Math.floor(totalSeconds / 60);
+            var secs = totalSeconds % 60;
+            return mins + ':' + (secs < 10 ? '0' : '') + secs;
+        }
+
+        function axonosRenderGuestSidebarTime(remaining) {
+            if (!axonosGuestActive()) return;
+            var seconds = Math.max(0, Number(remaining) || 0);
+            var value = document.querySelector('#axonos_sidebar_credits');
+            var time = document.getElementById('axonos_sidebar_time_left');
+            var progress = document.getElementById('axonos_sidebar_credits_progress');
+            if (value) value.textContent = String(Math.ceil(seconds / 60));
+            if (time) time.textContent = axonosFormatGuestClock(Math.round(seconds));
+            if (progress) {
+                var total = Math.max(1, Number(window.axonosGuestSession.sessionMinutes) * 60 || seconds);
+                progress.style.width = Math.min(100, (seconds / total) * 100) + '%';
+                progress.classList.remove('axonos-sidebar-progress-bar--orange');
+            }
+        }
+
+        function axonosSyncGuestSidebar(active) {
+            var label = document.getElementById('axonos_sidebar_balance_label');
+            var unit = document.getElementById('axonos_sidebar_balance_unit');
+            var topup = document.getElementById('axonos_sidebar_topup_btn');
+            var relaunch = document.getElementById('axonos_sidebar_swap_btn');
+            var storage = document.getElementById('axonos_sidebar_storage_section');
+            if (label) label.textContent = active ? 'Demo Time' : 'Prepaid Credits';
+            if (unit) unit.textContent = active ? 'minutes' : 'credits';
+            if (topup) topup.style.display = active ? 'none' : '';
+            if (relaunch) relaunch.style.display = active ? 'none' : '';
+            if (storage) storage.style.display = active ? 'none' : '';
+            if (active) axonosRenderGuestSidebarTime(axonosGuestRemainingSeconds());
+        }
+
+        function axonosSyncGuestWizardStorage(active) {
+            [
+                'axonos_wizard_storage_section',
+                'axonos_wizard_rail_storage_section'
+            ].forEach(function (id) {
+                var element = document.getElementById(id);
+                if (element) element.style.setProperty(
+                    'display', active ? 'none' : '', active ? 'important' : ''
+                );
+            });
+        }
+
+        function axonosRenderGuestBanner(remaining, warning) {
+            var banner = document.getElementById('axonos_guest_banner');
+            if (!banner) return;
+            if (remaining === null || !axonosGuestActive()) {
+                banner.classList.add('axonos-guest-banner--hidden');
+                return;
+            }
+            banner.classList.remove('axonos-guest-banner--hidden');
+            banner.classList.toggle('axonos-guest-banner--warning', !!warning);
+            var clock = document.getElementById('axonos_guest_banner_time');
+            if (clock) clock.textContent = axonosFormatGuestClock(remaining);
+            var label = document.getElementById('axonos_guest_banner_label');
+            if (label) {
+                label.textContent = warning
+                    ? 'Demo ending soon —'
+                    : 'Demo session —';
+            }
+        }
+
+        function axonosShowGuestWarning(remaining) {
+            var mins = Math.max(1, Math.round(remaining / 60));
+            if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                UI.showStatus(
+                    'Demo ends in about ' + mins + ' minute' + (mins === 1 ? '' : 's') +
+                    '. Connect a wallet to keep working past the demo.',
+                    'warn',
+                    15000
+                );
+            }
+            var cta = document.getElementById('axonos_guest_banner_cta');
+            if (cta) cta.classList.remove('axonos-guest-banner__cta--hidden');
+        }
+
+        /** Post-demo upsell. The container is already gone by design, so this
+         *  offers a fresh session rather than promising to resume this one. */
+        function axonosShowGuestUpsell(reason) {
+            // An identity handoff/end already owns the release. Do not open a
+            // competing expiry dialog while that authoritative check is pending.
+            if (axonosGuestTeardownPromise) return;
+            if (axonosGuestUpsellShown) return;
+            axonosGuestUpsellShown = true;
+            axonosRenderGuestBanner(0, true);
+            var title = 'Your demo session has ended';
+            var message = reason === 'denied'
+                ? 'This demo session is no longer valid. Connect a wallet to start your own ' +
+                  'session with the same environments and hardware.'
+                : 'Thanks for trying AxonOS. Connect a wallet to start your own session — ' +
+                  'you pick the environment and hardware, and you only pay for the minutes ' +
+                  'you use. Your demo desktop was temporary and has been shut down.';
+            var finish = function (connect) {
+                // The demo identity is dropped only after its release is
+                // authoritative. On ambiguity keep the guest bearer and owned
+                // state so End/Connect can be retried without orphaning compute.
+                return axonosTeardownGuestSession({
+                    releaseSource: connect ? 'guest-upsell-connect' : 'guest-upsell-exit'
+                }).then(function (released) {
+                    if (!released) {
+                        axonosGuestUpsellShown = false;
+                        return false;
+                    }
+                    if (!connect) {
+                        // The expired synthetic identity has no workspace to
+                        // return to. Route explicitly to the public landing
+                        // pane; otherwise the workspace expiry observer opens
+                        // this same modal again and traps the visitor in a loop.
+                        if (typeof UI !== 'undefined' &&
+                            typeof UI._axonosReturnToWorkspace === 'function') {
+                            UI._axonosReturnToWorkspace({
+                                refresh: false,
+                                reason: 'guest-expired-exit'
+                            });
+                        } else if (typeof axonosUpdateActiveScreen === 'function') {
+                            axonosUpdateActiveScreen('landing');
+                        }
+                        if (typeof UI !== 'undefined' &&
+                            typeof UI.openConnectPanel === 'function') {
+                            UI.openConnectPanel();
+                        }
+                        return true;
+                    }
+                    var dlg = document.getElementById('noVNC_credentials_dlg');
+                    if (dlg) dlg.classList.add('noVNC_open');
+                    if (typeof onConnectWalletClick === 'function') onConnectWalletClick();
+                    return true;
+                });
+            };
+            if (typeof UI !== 'undefined' && typeof UI.showConfirm === 'function') {
+                UI.showConfirm(title, message, {
+                    confirmText: 'Connect Wallet',
+                    cancelText: 'Not now'
+                }).then(finish);
+                return;
+            }
+            finish(false);
+        }
+        window.axonosShowGuestUpsell = axonosShowGuestUpsell;
+
+        /** Apply the invite's hardware allowlist to the landing picker too.
+         *  The wizard cards are only one claim surface; the primary Launch
+         *  button reads this hidden select directly. */
+        function axonosApplyGuestProfileRestrictions() {
+            var select = document.getElementById('axonos_profile_select');
+            if (!select) return;
+            var allowed = (axonosGuestActive() &&
+                Array.isArray(window.axonosGuestSession.allowedProfiles))
+                ? window.axonosGuestSession.allowedProfiles : [];
+            var restricted = allowed.length > 0;
+            if (restricted && allowed.indexOf(String(select.value || '')) === -1) {
+                select.value = allowed[0];
+            }
+            Array.from(select.options || []).forEach(function (option) {
+                var permitted = !restricted || allowed.indexOf(option.value) !== -1;
+                option.disabled = !permitted;
+                option.hidden = !permitted;
+            });
+
+            // The styled select mirrors the native options in separate divs.
+            // Keep that surface consistent even when it was built before the
+            // invite finished redeeming.
+            var wrapper = select.closest('.axonos-custom-select');
+            if (wrapper) {
+                wrapper.querySelectorAll('.axonos-custom-select__option').forEach(function (option) {
+                    var permitted = !restricted ||
+                        allowed.indexOf(option.getAttribute('data-value') || '') !== -1;
+                    option.hidden = !permitted;
+                    option.classList.toggle('axonos-custom-select__option--disabled', !permitted);
+                    option.setAttribute('aria-disabled', permitted ? 'false' : 'true');
+                });
+            }
+        }
+        window.axonosApplyGuestProfileRestrictions = axonosApplyGuestProfileRestrictions;
+
+        /** Hide every surface a demo identity cannot use.
+         *
+         *  These are refused server-side too; this only avoids offering a
+         *  prospect a control that would fail. */
+        function axonosApplyGuestUiRestrictions() {
+            if (!axonosGuestActive()) return;
+            document.body.classList.add('axonos-guest-mode');
+            axonosSyncGuestSidebar(true);
+            axonosSyncGuestWizardStorage(true);
+            axonosApplyGuestProfileRestrictions();
+            var sshToggle = document.getElementById('axonos_ssh_toggle');
+            if (sshToggle) {
+                sshToggle.checked = false;
+                sshToggle.disabled = true;
+            }
+            // The wizard's SSH control is a card button, not a checkbox.
+            var wizardSshCard = document.getElementById('axonos_wizard_ssh_toggle_card');
+            if (wizardSshCard) wizardSshCard.disabled = true;
+
+            // A remembered environment from an earlier paid session must not
+            // make the demo submit a choice outside its invite. Blank means the
+            // plain desktop, which is always permitted by the backend.
+            var allowedTemplates = Array.isArray(window.axonosGuestSession.allowedTemplates)
+                ? window.axonosGuestSession.allowedTemplates : [];
+            var selectedTemplate = String(window.axonosSelectedTemplateId || '').trim();
+            if (allowedTemplates.length && selectedTemplate &&
+                allowedTemplates.indexOf(selectedTemplate) === -1) {
+                window.axonosSelectedTemplateId = null;
+                try { window.sessionStorage.removeItem('axonosSelectedTemplateId'); } catch (e) { }
+                if (typeof UI !== 'undefined' &&
+                    typeof UI.updateAxonosSelectedTemplateBanner === 'function') {
+                    UI.updateAxonosSelectedTemplateBanner();
+                }
+            }
+
+            if (typeof axonosApplyWizardGpuPinState === 'function') {
+                // Stored-demo restoration can run earlier in this DOMContentLoaded
+                // handler than the wizard's lexical state initialization. Defer
+                // one task so the profile controller is fully initialized.
+                setTimeout(function () {
+                    if (axonosGuestActive()) axonosApplyWizardGpuPinState();
+                }, 0);
+            }
+        }
+        window.axonosApplyGuestUiRestrictions = axonosApplyGuestUiRestrictions;
+
+        /** Revalidate the per-tab guest bearer before a reloaded demo can launch
+         *  WebRTC/RFB. Pre-upgrade tabs without that bearer may fall back to the
+         *  same-identity HttpOnly cookie; an unrelated tab's cookie is harmless. */
+        function axonosRestoreStoredGuestSession(stored) {
+            var address = String(stored.address || '').trim().toLowerCase();
+            var url = new URL('/api/auth/wallet-status', window.location.origin);
+            url.searchParams.set('wallet_address', address);
+            var headers = { 'X-Wallet-Address': address };
+            var storedAuthToken = String(stored.authToken || '').trim();
+            if (storedAuthToken) {
+                // Explicit bearer wins over an unrelated cookie written by a
+                // wallet or a second demo tab. The server may still fall back to
+                // a valid same-identity cookie for pre-upgrade stored sessions.
+                headers['X-AXGT-Auth-Token'] = storedAuthToken;
+            }
+            return axonosPromiseWithTimeout(fetch(url.toString(), {
+                method: 'GET',
+                credentials: 'include',
+                headers: headers
+            }).then(function (response) {
+                return response.json().then(function (data) {
+                    data = data || {};
+                    var echoedAddress = String(data.wallet_address || '').trim().toLowerCase();
+                    if (!response.ok || echoedAddress !== address ||
+                        typeof data.auth_token !== 'string' || !data.auth_token) {
+                        if (response.status === 401 || response.status === 403) {
+                            axonosForgetStoredGuestSession();
+                        }
+                        throw new Error(data.error || 'The demo session could not be restored.');
+                    }
+                    return axonosActivateGuestSession({
+                        address: address,
+                        authToken: data.auth_token,
+                        expiresAtMs: Number(stored.expiresAtMs),
+                        warnSeconds: Number(stored.warnSeconds) || 0,
+                        sessionMinutes: Number(stored.sessionMinutes) || 0,
+                        allowedProfiles: Array.isArray(stored.allowedProfiles)
+                            ? stored.allowedProfiles : [],
+                        allowedTemplates: Array.isArray(stored.allowedTemplates)
+                            ? stored.allowedTemplates : []
+                    });
+                });
+            }), 15000, 'The demo server did not answer.').catch(function (error) {
+                if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                    UI.showStatus(
+                        (error && error.message) || 'The demo session could not be restored.',
+                        'error',
+                        12000
+                    );
+                }
+                return false;
+            });
+        }
+
+        /** Entry point: a fresh invite, or a reload of a demo already running in
+         *  this tab (identity and bearer from sessionStorage, with a legacy-cookie
+         *  fallback only for demos stored before the tab-scoped bearer upgrade). */
+        function axonosInitGuestMode() {
+            var token = axonosTakeGuestInviteFromUrl();
+            if (token) return axonosRedeemGuestInvite(token);
+            var stored = axonosReadStoredGuestSession();
+            if (!stored) return Promise.resolve(false);
+            return axonosRestoreStoredGuestSession(stored);
+        }
+        window.axonosInitGuestMode = axonosInitGuestMode;
+
         window.axonosWalletProviderIssueKind = null;
         window.axonosWalletUnavailableSessionPreserved = false;
         // Kept independently of the live session flags. A failed explicit
@@ -3119,6 +4106,11 @@ Copyright (C) 2019 The noVNC Authors
                         if (!data || typeof data !== 'object') data = {};
                         data._axonosHttpOk = r.ok;
                         data._axonosHttpStatus = r.status;
+                        // Demo countdown: status is what a reload reads first, so
+                        // this is where a restored demo recovers its real deadline.
+                        if (typeof window.axonosGuestSyncFromPayload === 'function') {
+                            window.axonosGuestSyncFromPayload(data);
+                        }
                         return data;
                     });
                 }),
@@ -3289,21 +4281,16 @@ Copyright (C) 2019 The noVNC Authors
                 if (!balanceButton) return;
                 if (eligible) {
                     var grant = Number(window.axonosTestCreditGrantMinutes);
-                    var cap = Number(window.axonosTestCreditMaxBalanceMinutes);
-                    var boundedGrant = Number.isFinite(grant) && grant > 0
-                        ? (Number.isFinite(cap) && cap > 0 ? Math.min(grant, cap) : grant)
-                        : null;
-                    var grantLabel = boundedGrant !== null
-                        ? String(Math.round(boundedGrant * 100) / 100)
+                    var grantLabel = Number.isFinite(grant) && grant > 0
+                        ? String(Math.round(grant * 100) / 100)
                         : '';
                     balanceButton.textContent = grantLabel
-                        ? ('Add up to ' + grantLabel + ' test credits')
+                        ? ('Add ' + grantLabel + ' test credits')
                         : 'Add test credits';
                     balanceButton.dataset.axonosTestCredit = 'true';
-                    balanceButton.title = Number.isFinite(cap) && cap > 0
-                        ? ('One click refills this eligible wallet toward the ' +
-                            (Math.round(cap * 100) / 100) + '-credit test balance cap.')
-                        : 'One click requests the bounded test-credit grant for this eligible wallet.';
+                    balanceButton.title = grantLabel
+                        ? ('Each click adds ' + grantLabel + ' test credits to this eligible wallet.')
+                        : 'Each click adds the configured test-credit grant.';
                 } else {
                     balanceButton.textContent = 'Top up credits';
                     balanceButton.dataset.axonosTestCredit = 'false';
@@ -3348,6 +4335,232 @@ Copyright (C) 2019 The noVNC Authors
         }
         window.axonosSetTestCreditEligibility = axonosSetTestCreditEligibility;
 
+        function axonosSetGuestInviteEligibility(dataOrEligible) {
+            var eligible = typeof dataOrEligible === 'boolean'
+                ? dataOrEligible
+                : !!(dataOrEligible && dataOrEligible.guest_invite_minter === true);
+            window.axonosGuestInviteMinter = eligible;
+            var button = document.getElementById('axonos_dashboard_guest_invite_btn');
+            if (button) button.hidden = !eligible;
+            if (!eligible) axonosCloseGuestInviteDialog();
+        }
+        window.axonosSetGuestInviteEligibility = axonosSetGuestInviteEligibility;
+
+        function axonosNormalizeGuestInviteInput(value) {
+            var raw = String(value || '').trim();
+            if (!raw) return '';
+            try {
+                // Accept absolute links, relative links and a bare ?invite= value.
+                if (raw.indexOf('invite=') !== -1 || /^[/?#]/.test(raw)) {
+                    var parsed = new URL(raw, window.location.origin);
+                    var fromUrl = String(parsed.searchParams.get('invite') || '').trim();
+                    if (fromUrl) raw = fromUrl;
+                }
+            } catch (e) { return ''; }
+            return /^[A-Za-z0-9_-]{16,128}$/.test(raw) ? raw : '';
+        }
+
+        function axonosOpenGuestRedeemDialog() {
+            if (window.verifiedWalletAddress || axonosGuestActive()) return;
+            var modal = document.getElementById('axonos_guest_redeem_modal');
+            var input = document.getElementById('axonos_guest_redeem_value');
+            var message = document.getElementById('axonos_guest_redeem_message');
+            var start = document.getElementById('axonos_guest_redeem_start');
+            if (!modal) return;
+            if (input) input.value = '';
+            if (message) {
+                message.textContent = '';
+                message.className = 'axonos-guest-invite-message';
+            }
+            if (start) { start.disabled = false; start.textContent = 'Start demo'; }
+            modal.classList.add('active');
+            modal.setAttribute('aria-hidden', 'false');
+            if (input) input.focus();
+        }
+
+        function axonosCloseGuestRedeemDialog() {
+            if (window.axonosGuestEntryPending === true) return;
+            var modal = document.getElementById('axonos_guest_redeem_modal');
+            var input = document.getElementById('axonos_guest_redeem_value');
+            if (input) input.value = '';
+            if (modal) {
+                modal.classList.remove('active');
+                modal.setAttribute('aria-hidden', 'true');
+            }
+        }
+
+        function axonosSubmitGuestRedeemDialog() {
+            if (window.axonosGuestEntryPending === true) return;
+            var input = document.getElementById('axonos_guest_redeem_value');
+            var message = document.getElementById('axonos_guest_redeem_message');
+            var start = document.getElementById('axonos_guest_redeem_start');
+            var token = axonosNormalizeGuestInviteInput(input && input.value);
+            if (!token) {
+                if (message) {
+                    message.textContent = 'Paste a valid demo code or guest link.';
+                    message.className = 'axonos-guest-invite-message axonos-guest-invite-message--error';
+                }
+                return;
+            }
+            window.axonosGuestEntryPending = true;
+            if (start) { start.disabled = true; start.textContent = 'Starting…'; }
+            if (message) {
+                message.textContent = 'Validating your demo invite…';
+                message.className = 'axonos-guest-invite-message';
+            }
+            axonosRedeemGuestInvite(token).then(function (activated) {
+                if (activated) {
+                    window.axonosGuestEntryPending = false;
+                    axonosCloseGuestRedeemDialog();
+                    return;
+                }
+                if (message) {
+                    message.textContent = 'The demo could not be started. Check the code and try again.';
+                    message.className = 'axonos-guest-invite-message axonos-guest-invite-message--error';
+                }
+            }).catch(function () {
+                if (message) {
+                    message.textContent = 'The demo server did not answer. Try again.';
+                    message.className = 'axonos-guest-invite-message axonos-guest-invite-message--error';
+                }
+            }).finally(function () {
+                window.axonosGuestEntryPending = false;
+                if (start) { start.disabled = false; start.textContent = 'Start demo'; }
+            });
+        }
+
+        function axonosGuestInviteElements() {
+            return {
+                modal: document.getElementById('axonos_guest_invite_modal'),
+                label: document.getElementById('axonos_guest_invite_label'),
+                maxUses: document.getElementById('axonos_guest_invite_max_uses'),
+                message: document.getElementById('axonos_guest_invite_message'),
+                result: document.getElementById('axonos_guest_invite_result'),
+                url: document.getElementById('axonos_guest_invite_url'),
+                token: document.getElementById('axonos_guest_invite_token'),
+                summary: document.getElementById('axonos_guest_invite_summary'),
+                create: document.getElementById('axonos_guest_invite_create')
+            };
+        }
+
+        function axonosOpenGuestInviteDialog() {
+            if (!window.axonosGuestInviteMinter || !axonosPaymentIdentityIsCurrent(
+                window.verifiedWalletAddress)) return;
+            var el = axonosGuestInviteElements();
+            if (!el.modal) return;
+            if (el.message) {
+                el.message.textContent = '';
+                el.message.className = 'axonos-guest-invite-message';
+            }
+            if (el.result) el.result.hidden = true;
+            if (el.url) el.url.value = '';
+            if (el.token) el.token.value = '';
+            if (el.summary) el.summary.textContent = '';
+            if (el.create) {
+                el.create.disabled = false;
+                el.create.textContent = 'Create link';
+            }
+            el.modal.classList.add('active');
+            el.modal.setAttribute('aria-hidden', 'false');
+            if (el.label) el.label.focus();
+        }
+        window.axonosOpenGuestInviteDialog = axonosOpenGuestInviteDialog;
+
+        function axonosCloseGuestInviteDialog() {
+            var modal = document.getElementById('axonos_guest_invite_modal');
+            if (!modal) return;
+            var url = document.getElementById('axonos_guest_invite_url');
+            var token = document.getElementById('axonos_guest_invite_token');
+            var result = document.getElementById('axonos_guest_invite_result');
+            if (url) url.value = '';
+            if (token) token.value = '';
+            if (result) result.hidden = true;
+            modal.classList.remove('active');
+            modal.setAttribute('aria-hidden', 'true');
+        }
+
+        function axonosCreateGuestInvite() {
+            var wallet = String(window.verifiedWalletAddress || '').trim().toLowerCase();
+            var token = String(window.verifiedWalletAuthToken || '').trim();
+            var el = axonosGuestInviteElements();
+            if (!window.axonosGuestInviteMinter || !wallet || !token || !el.create) return;
+            var maxUses = Number(el.maxUses && el.maxUses.value);
+            if (!Number.isInteger(maxUses) || maxUses < 1 || maxUses > 100) {
+                el.message.textContent = 'Maximum uses must be a whole number from 1 to 100.';
+                el.message.className = 'axonos-guest-invite-message axonos-guest-invite-message--error';
+                return;
+            }
+            el.create.disabled = true;
+            el.create.textContent = 'Creating…';
+            el.message.textContent = '';
+            el.message.className = 'axonos-guest-invite-message';
+            fetch('/api/auth/guest-invite', {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Wallet-Address': wallet,
+                    'X-AXGT-Auth-Token': token
+                },
+                body: JSON.stringify({
+                    wallet_address: wallet,
+                    label: String(el.label && el.label.value || '').trim() || null,
+                    max_uses: maxUses
+                })
+            }).then(function (response) {
+                return response.json().catch(function () { return {}; }).then(function (data) {
+                    return { ok: response.ok, data: data };
+                });
+            }).then(function (response) {
+                if (!axonosPaymentIdentityIsCurrent(wallet)) return;
+                var data = response.data || {};
+                if (!response.ok || !data.invite_url) {
+                    if (data.error_code === 'not_invite_minter') {
+                        axonosSetGuestInviteEligibility(false);
+                    }
+                    throw new Error(data.error || 'Could not create the demo invite.');
+                }
+                el.url.value = data.invite_url;
+                if (el.token) el.token.value = data.token || '';
+                el.result.hidden = false;
+                var expiry = Number(data.expires_at);
+                var expiryText = Number.isFinite(expiry)
+                    ? new Date(expiry * 1000).toLocaleString() : 'the configured expiry';
+                el.summary.textContent = String(data.session_minutes) + '-minute demo · ' +
+                    String(data.max_uses) + (Number(data.max_uses) === 1 ? ' use' : ' uses') +
+                    ' · expires ' + expiryText;
+                el.message.textContent = 'Invite created. Copy it now; the secret is not stored in plaintext.';
+                el.message.className = 'axonos-guest-invite-message axonos-guest-invite-message--success';
+                el.create.textContent = 'Create another';
+            }).catch(function (error) {
+                if (!axonosPaymentIdentityIsCurrent(wallet)) return;
+                el.message.textContent = error && error.message
+                    ? error.message : 'Could not create the demo invite.';
+                el.message.className = 'axonos-guest-invite-message axonos-guest-invite-message--error';
+                el.create.textContent = 'Try again';
+            }).finally(function () {
+                if (axonosPaymentIdentityIsCurrent(wallet) && el.create) el.create.disabled = false;
+            });
+        }
+
+        function axonosCopyGuestInvite(inputId, label) {
+            var input = document.getElementById(inputId || 'axonos_guest_invite_url');
+            var message = document.getElementById('axonos_guest_invite_message');
+            if (!input || !input.value) return;
+            var copied = navigator.clipboard && window.isSecureContext
+                ? navigator.clipboard.writeText(input.value)
+                : Promise.resolve((function () {
+                    input.select();
+                    return document.execCommand('copy');
+                }()));
+            Promise.resolve(copied).then(function () {
+                if (message) message.textContent = (label || 'Invite') + ' copied to clipboard.';
+            }).catch(function () {
+                input.select();
+                if (message) message.textContent = 'Select and copy the value manually.';
+            });
+        }
+
         function axonosFetchWalletAccessStatus(wallet) {
             const w = (wallet || window.verifiedWalletAddress || '').trim();
             if (!w) return Promise.resolve({ verified: false, remaining_minutes: 0 });
@@ -3369,6 +4582,7 @@ Copyright (C) 2019 The noVNC Authors
                             return { ok: false, data: {}, stale: true };
                         }
                         axonosSetTestCreditEligibility(data);
+                        axonosSetGuestInviteEligibility(data);
                         // Adopt a rotated token. The HttpOnly cookie follows on
                         // its own; the JS copy must too — it is the only
                         // credential on the cross-origin file plane, which
@@ -3722,6 +4936,12 @@ Copyright (C) 2019 The noVNC Authors
             var el = document.getElementById('axonos_profile_select');
             var val = el ? String(el.value || '').toLowerCase() : 'small';
             if (val !== 'small' && val !== 'medium' && val !== 'large' && val !== 'max') return 'small';
+            var guestAllowed = (window.axonosGuestSession &&
+                Array.isArray(window.axonosGuestSession.allowedProfiles))
+                ? window.axonosGuestSession.allowedProfiles : [];
+            if (guestAllowed.length && guestAllowed.indexOf(val) === -1) {
+                return guestAllowed[0];
+            }
             return val;
         }
 
@@ -3738,6 +4958,32 @@ Copyright (C) 2019 The noVNC Authors
             var hintEl = document.getElementById('axonos_wizard_gpu_pinned_hint');
             if (!cards.length) return;
             var pinned = axonosPinnedClaimProfile();
+            var guestAllowed = (
+                window.axonosGuestSession &&
+                Array.isArray(window.axonosGuestSession.allowedProfiles)
+            ) ? window.axonosGuestSession.allowedProfiles : [];
+            if (!pinned && guestAllowed.length) {
+                var selected = guestAllowed.indexOf(axonosSelectedGpuProfile) !== -1
+                    ? axonosSelectedGpuProfile : guestAllowed[0];
+                axonosSelectedGpuProfile = selected;
+                cards.forEach(function (card) {
+                    var profile = card.getAttribute('data-gpu') || '';
+                    var permitted = guestAllowed.indexOf(profile) !== -1;
+                    card.disabled = !permitted;
+                    card.classList.toggle('selected', profile === selected);
+                });
+                var guestSelect = document.getElementById('axonos_profile_select');
+                if (guestSelect) guestSelect.value = selected;
+                if (hintEl) {
+                    hintEl.textContent = guestAllowed.length === 1
+                        ? 'This demo includes the ' + axonosProfileLabel(selected) + ' hardware tier.'
+                        : 'This demo is limited to the highlighted hardware tiers.';
+                    hintEl.hidden = false;
+                }
+                axonosUpdateWizardSummaryRail();
+                axonosUpdatePayCalculator();
+                return;
+            }
             if (!pinned) {
                 cards.forEach(function (card) { card.disabled = false; });
                 if (hintEl) hintEl.hidden = true;
@@ -3974,6 +5220,12 @@ Copyright (C) 2019 The noVNC Authors
         }
 
         function axonosRefreshPausedResumeStatus(expectedWallet) {
+            if (typeof window.axonosGuestEntryPendingOrActive === 'function' &&
+                window.axonosGuestEntryPendingOrActive()) {
+                window.axonosPausedResume = null;
+                axonosApplyResumeConnectUi(false);
+                return Promise.resolve(null);
+            }
             var wallet = String(expectedWallet || window.verifiedWalletAddress || '').trim();
             if (!wallet) {
                 return axonosProbePausedResumeOnLoad();
@@ -4006,6 +5258,12 @@ Copyright (C) 2019 The noVNC Authors
         }
 
         function axonosProbePausedResumeOnLoad() {
+            if (typeof window.axonosGuestEntryPendingOrActive === 'function' &&
+                window.axonosGuestEntryPendingOrActive()) {
+                window.axonosPausedResume = null;
+                axonosApplyResumeConnectUi(false);
+                return Promise.resolve(null);
+            }
             var wallet = null;
             try { wallet = localStorage.getItem('axonos_last_wallet'); } catch (e) { }
             if (!wallet || !/^0x[a-fA-F0-9]{40}$/i.test(wallet)) {
@@ -4015,6 +5273,8 @@ Copyright (C) 2019 The noVNC Authors
             }
             var probeWallet = String(wallet).trim().toLowerCase();
             return sessionStatusForWallet(wallet).then(function (st) {
+                if (typeof window.axonosGuestEntryPendingOrActive === 'function' &&
+                    window.axonosGuestEntryPendingOrActive()) return null;
                 var storedWallet = null;
                 try { storedWallet = localStorage.getItem('axonos_last_wallet'); } catch (e) { }
                 var verifiedNow = String(window.verifiedWalletAddress || '').trim().toLowerCase();
@@ -4347,6 +5607,18 @@ Copyright (C) 2019 The noVNC Authors
             if (typeof window.axonosHideConnectionLoader === 'function') {
                 window.axonosHideConnectionLoader(true);
             }
+            // A demo that has already used its time (or whose record is gone)
+            // gets the upsell, not the generic "claim denied" overlay: for a
+            // prospect the interesting information is how to keep going.
+            var guestDenialCodes = [
+                'guest_session_expired', 'guest_session_unknown', 'guest_mode_disabled'
+            ];
+            if (claim && guestDenialCodes.indexOf(String(claim.error_code || '')) !== -1) {
+                if (typeof window.axonosShowGuestUpsell === 'function') {
+                    window.axonosShowGuestUpsell('denied');
+                    return;
+                }
+            }
             if (claim && claim.error_code === 'storage_below_provisioned') {
                 var storageWallet = claimWallet ||
                     window.verifiedWalletAddress || verifiedWalletAddress;
@@ -4405,6 +5677,12 @@ Copyright (C) 2019 The noVNC Authors
             hideSessionUnavailableOverlay();
             const credentialsDialog = document.getElementById('noVNC_credentials_dlg');
             if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
+            // Start the demo countdown from the claim that actually allocated the
+            // container, rather than from redemption: the deadline the server
+            // stored is what the banner must show.
+            if (typeof window.axonosGuestSyncFromPayload === 'function') {
+                window.axonosGuestSyncFromPayload(claim);
+            }
 
             var granted = claim && (claim.granted === true || claim.granted === 'true');
             if (granted && typeof window.axonosRememberOwnedSession === 'function') {
@@ -4874,6 +6152,14 @@ Copyright (C) 2019 The noVNC Authors
                         axonosConfig.session_claim_timeout_seconds <= 0) {
                         axonosConfig.session_claim_timeout_seconds = null;
                     }
+                    // Demo path: only offered when the server says the feature is on.
+                    axonosConfig.guest_mode_enabled = !!(cfg && cfg.guest_mode_enabled);
+                    var demoCodeButton = document.getElementById('axonos_topbar_demo_code_btn');
+                    if (demoCodeButton) {
+                        demoCodeButton.hidden = !axonosConfig.guest_mode_enabled;
+                        demoCodeButton.style.display = axonosConfig.guest_mode_enabled &&
+                            !window.verifiedWalletAddress ? 'inline-flex' : 'none';
+                    }
                     axonosConfig.persistent_storage_enabled = !cfg || cfg.persistent_storage_enabled !== false;
                     axonosConfig.persistent_storage_gb_hour_cost_minutes = (cfg && (cfg.persistent_storage_gb_hour_cost_minutes != null)) ? parseFloat(cfg.persistent_storage_gb_hour_cost_minutes) : 0.05;
                     if (isNaN(axonosConfig.persistent_storage_gb_hour_cost_minutes) || axonosConfig.persistent_storage_gb_hour_cost_minutes < 0) {
@@ -5049,6 +6335,32 @@ Copyright (C) 2019 The noVNC Authors
         })();
 
         syncAxonosPrerequisiteTickerMirror();
+
+        // Demo entry. Runs independently of /api/config so a demo link is not
+        // held up by the config round-trip; the server is the authority on
+        // whether the feature is on and answers 404 when it is not.
+        (function startAxonosGuestMode() {
+            var settle = function () {
+                window.axonosGuestEntryPending = false;
+                window.axonosPendingGuestInvite = '';
+                window.axonosPendingStoredGuestSession = null;
+            };
+            var begin = function () {
+                var initialization;
+                try {
+                    initialization = axonosInitGuestMode();
+                } catch (e) {
+                    settle();
+                    return;
+                }
+                Promise.resolve(initialization).then(settle, settle);
+            };
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', begin);
+            } else {
+                begin();
+            }
+        })();
 
         /** Open wallet credit dialog for top-up (keeps auth token; does not reconnect desktop). */
         window.axonosOpenWalletTopUpDialog = function (forcePayment) {
@@ -5860,15 +7172,31 @@ Copyright (C) 2019 The noVNC Authors
                         'Wallet verification server did not answer. Check the connection and retry.'
                     );
                 })
-                .then(function (res) {
+                .then(async function (res) {
                     axonosRequireWalletVerifyAttempt(verifyAttempt);
                     var data = res.data;
                     var st = res.status;
-                    if (data.verified) {
+                    if (data.verified && data.auth_token) {
+                        // A real wallet supersedes any demo running in this tab.
+                        // Leaving the demo flag set would make the launch/claim
+                        // preflight short-circuit for a PAID session, and would let
+                        // the demo clock later clear this wallet's credentials.
+                        if (window.axonosGuestSession) {
+                            var releasedGuest = await axonosEndGuestSessionForWalletHandover();
+                            axonosRequireWalletVerifyAttempt(verifyAttempt);
+                            if (!releasedGuest) {
+                                axonosResetIdentityAfterFailedWalletAttempt();
+                                setWalletUIState('axonos_wallet_state_connect_error', {
+                                    msg: 'Wallet verified, but the demo could not be ended safely. Retry End demo or Connect Wallet.'
+                                });
+                                return false;
+                            }
+                        }
                         verifiedWalletAddress = walletAddress;
                         window.verifiedWalletAddress = walletAddress;
                         window.verifiedWalletAuthToken = data.auth_token || null;
                         axonosSetTestCreditEligibility(data);
+                        axonosSetGuestInviteEligibility(data);
                         window.axonosAllowVncConnect = true;
                         axonosClearWalletProviderOutOfSync();
                         try { localStorage.setItem('axonos_last_wallet', walletAddress); } catch (e) { }
@@ -5924,53 +7252,49 @@ Copyright (C) 2019 The noVNC Authors
                         }
                         return;
                     }
-                    if (st === 503 || !data.auth_token) {
-                        verifiedWalletAddress = null;
-                        window.verifiedWalletAddress = null;
-                        window.verifiedWalletAuthToken = null;
-                        axonosSetTestCreditEligibility(false);
-                        window.axonosAllowVncConnect = false;
+                    var errLower = String(data.error || data.reason || '').toLowerCase();
+                    if (!data.auth_token || st >= 400 ||
+                        errLower.indexOf('ledger unavailable') >= 0) {
+                        axonosResetIdentityAfterFailedWalletAttempt();
+                        var errorMessage = data.error || data.reason;
+                        if (!errorMessage && st === 429) {
+                            errorMessage = 'Rate limited. Wait and try again.';
+                        } else if (!errorMessage && st === 401) {
+                            errorMessage = 'Signature did not verify. Request a new challenge and try again.';
+                        } else if (!errorMessage) {
+                            errorMessage = 'Server could not complete wallet sign-in. Check the connection and retry.';
+                        }
                         setWalletUIState('axonos_wallet_state_connect_error', {
-                            msg: data.error || 'Server could not issue a session (Postgres / AXGT_CHALLENGE_DB_URL required).'
+                            msg: errorMessage
                         });
-                        return;
+                        return false;
+                    }
+
+                    // A signed-in wallet with no credit is still a successful
+                    // identity handoff; it now owns the globals while the user
+                    // sees the ordinary top-up state.
+                    if (window.axonosGuestSession) {
+                        var releasedGuestWithoutCredit =
+                            await axonosEndGuestSessionForWalletHandover();
+                        axonosRequireWalletVerifyAttempt(verifyAttempt);
+                        if (!releasedGuestWithoutCredit) {
+                            axonosResetIdentityAfterFailedWalletAttempt();
+                            setWalletUIState('axonos_wallet_state_connect_error', {
+                                msg: 'Wallet verified, but the demo could not be ended safely. Retry End demo or Connect Wallet.'
+                            });
+                            return false;
+                        }
                     }
                     verifiedWalletAddress = walletAddress;
                     window.verifiedWalletAddress = walletAddress;
                     window.verifiedWalletAuthToken = data.auth_token;
                     axonosSetTestCreditEligibility(data);
+                    axonosSetGuestInviteEligibility(data);
                     window.axonosAllowVncConnect = false;
                     axonosClearWalletProviderOutOfSync();
                     try { localStorage.setItem('axonos_last_wallet', walletAddress); } catch (e) { }
-                    var errLower = String(data.error || data.reason || '').toLowerCase();
-                    if (errLower.indexOf('ledger unavailable') >= 0 || st >= 500) {
-                        verifiedWalletAddress = null;
-                        window.verifiedWalletAddress = null;
-                        window.verifiedWalletAuthToken = null;
-                        axonosSetTestCreditEligibility(false);
-                        window.axonosAllowVncConnect = false;
-                        setWalletUIState('axonos_wallet_state_connect_error', {
-                            msg: data.error || data.reason || ('Server error HTTP ' + st + '. Set AXGT_CHALLENGE_DB_URL / run Postgres (e.g. docker compose).')
-                        });
-                        return;
-                    }
-                    if (st === 429) {
-                        verifiedWalletAddress = null;
-                        window.verifiedWalletAddress = null;
-                        window.verifiedWalletAuthToken = null;
-                        axonosSetTestCreditEligibility(false);
-                        window.axonosAllowVncConnect = false;
-                        setWalletUIState('axonos_wallet_state_connect_error', { msg: data.error || 'Rate limited. Wait and try again.' });
-                        return;
-                    }
-                    if (st === 401) {
-                        verifiedWalletAddress = null;
-                        window.verifiedWalletAddress = null;
-                        window.verifiedWalletAuthToken = null;
-                        axonosSetTestCreditEligibility(false);
-                        window.axonosAllowVncConnect = false;
-                        setWalletUIState('axonos_wallet_state_connect_error', { msg: data.error || 'Signature did not verify. Request a new challenge and try again.' });
-                        return;
+                    if (typeof axonosSyncTopbar === 'function') {
+                        axonosSyncTopbar(walletAddress, data.remaining_minutes);
                     }
                     if (verifyOptions.releaseOnly === true && st < 400) {
                         return true;
@@ -5986,11 +7310,7 @@ Copyright (C) 2019 The noVNC Authors
                         verifyAttempt !== axonosWalletVerifyGeneration) {
                         return false;
                     }
-                    verifiedWalletAddress = null;
-                    window.verifiedWalletAddress = null;
-                    window.verifiedWalletAuthToken = null;
-                    axonosSetTestCreditEligibility(false);
-                    window.axonosAllowVncConnect = false;
+                    axonosResetIdentityAfterFailedWalletAttempt();
                     if (error && error._axonosUi && error._connectErr) {
                         setWalletUIState('axonos_wallet_state_connect_error', { msg: error._connectErr });
                         return;
@@ -6860,7 +8180,7 @@ Copyright (C) 2019 The noVNC Authors
             var operation = axonosBeginPaymentOperation(wallet, tok);
             axonosTestCreditBusy = true;
             setPayDepositButtonsBusy(true);
-            if (msgEl) msgEl.textContent = 'Issuing bounded test credit — no transaction will be sent…';
+            if (msgEl) msgEl.textContent = 'Adding test credit — no transaction will be sent…';
             showConnectionLoader('test-credit');
 
             var controller = typeof AbortController !== 'undefined'
@@ -6974,6 +8294,16 @@ Copyright (C) 2019 The noVNC Authors
         window.axonosRequestTestCredit = axonosRequestTestCredit;
 
         function onConnectWalletClick(provider) {
+            // An invite redemption owns the identity/cookie handoff until it
+            // settles. Letting wallet verification finish concurrently can
+            // consume the invite, overwrite the cookie, then have guest
+            // activation correctly refuse to replace the wallet globals.
+            if (window.axonosGuestEntryPending === true) {
+                if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                    UI.showStatus('Your demo is still starting. Try wallet connect again in a moment.', 'warn', 5000);
+                }
+                return;
+            }
             var connectAttempt = ++axonosWalletConnectGeneration;
             axonosInvalidateWalletVerification();
             if (provider) {
@@ -7292,6 +8622,7 @@ Copyright (C) 2019 The noVNC Authors
             window.verifiedWalletAddress = null;
             window.verifiedWalletAuthToken = null;
             axonosSetTestCreditEligibility(false);
+            axonosSetGuestInviteEligibility(false);
             window.axonosAllowVncConnect = false;
             window.axonosPendingResumeClaim = null;
             window.axonosPausedResume = null;
@@ -7687,6 +9018,11 @@ Copyright (C) 2019 The noVNC Authors
         // owns no running/detached/SSH/grace state. A valid idle switch is signed in
         // immediately; protected state still requires explicit release confirmation.
         function onWalletAccountsChanged(accounts, sourceProvider) {
+            // Provider events belong to a previously connected real wallet.
+            // They must never reconcile or clear the synthetic demo identity;
+            // an explicit Connect Wallet action performs the handoff instead.
+            if (typeof window.axonosGuestEntryPendingOrActive === 'function' &&
+                window.axonosGuestEntryPendingOrActive()) return;
             var activeProvider = window.__axonosSelectedProvider || selectedEthereumProvider;
             if (activeProvider && sourceProvider && sourceProvider !== activeProvider) {
                 console.log('[AxonOS] Ignoring accountsChanged from non-selected provider');
@@ -7900,6 +9236,15 @@ Copyright (C) 2019 The noVNC Authors
             // No verified identity: nothing stale to reconcile (the not-verified path in
             // UI.connect already routes to the credentials/sign-in dialog).
             if (!verified) {
+                return Promise.resolve(true);
+            }
+
+            // A demo session has no wallet account behind it, so there is nothing
+            // for this preflight to reconcile: the invite was the credential, and
+            // the server enforces the demo's own limits. Without this the check
+            // below would ask a non-existent provider for eth_accounts and fail
+            // closed, blocking every demo claim.
+            if (window.axonosGuestSession) {
                 return Promise.resolve(true);
             }
 
@@ -8330,6 +9675,8 @@ Copyright (C) 2019 The noVNC Authors
         // as a fallback, and the user-selected provider at connect time), idempotently.
         var _walletEventsBound = (typeof WeakSet === 'function') ? new WeakSet() : null;
         function onWalletProviderDisconnected(error, sourceProvider) {
+            if (typeof window.axonosGuestEntryPendingOrActive === 'function' &&
+                window.axonosGuestEntryPendingOrActive()) return;
             var activeProvider = window.__axonosSelectedProvider || selectedEthereumProvider;
             if (activeProvider && sourceProvider && sourceProvider !== activeProvider) return;
             if (!window.verifiedWalletAddress) return;
@@ -8363,6 +9710,8 @@ Copyright (C) 2019 The noVNC Authors
         }
 
         function onWalletProviderConnected(connectInfo, sourceProvider) {
+            if (typeof window.axonosGuestEntryPendingOrActive === 'function' &&
+                window.axonosGuestEntryPendingOrActive()) return;
             var activeProvider = window.__axonosSelectedProvider || selectedEthereumProvider;
             if (activeProvider && sourceProvider && sourceProvider !== activeProvider) return;
             if (!window.verifiedWalletAddress || !sourceProvider ||
@@ -8461,6 +9810,11 @@ Copyright (C) 2019 The noVNC Authors
             if (!dlg) return;
             var obs = new MutationObserver(function () {
                 if (!dlg.classList.contains('noVNC_open')) return;
+                // Opening noVNC's credentials dialog is also used by automatic
+                // reconnect machinery. A demo invite/restored demo owns startup;
+                // only an explicit wallet action may hand the tab over.
+                if (typeof window.axonosGuestEntryPendingOrActive === 'function' &&
+                    window.axonosGuestEntryPendingOrActive()) return;
                 var hasActiveVerifiedSession =
                     !!window.verifiedWalletAddress &&
                     !!window.verifiedWalletAuthToken;
@@ -8549,6 +9903,8 @@ Copyright (C) 2019 The noVNC Authors
                         if (autoConnectAttempt !== axonosWalletConnectGeneration ||
                             !dlg.classList.contains('noVNC_open') ||
                             window.verifiedWalletAddress ||
+                            (typeof window.axonosGuestEntryPendingOrActive === 'function' &&
+                                window.axonosGuestEntryPendingOrActive()) ||
                             (window.__axonosSelectedProvider &&
                                 window.__axonosSelectedProvider !== reconnectEth)) {
                             return;
@@ -8654,6 +10010,9 @@ Copyright (C) 2019 The noVNC Authors
                 Array.from(selectEl.options).forEach(function (opt, idx) {
                     const optDiv = document.createElement('div');
                     optDiv.className = 'axonos-custom-select__option';
+                    optDiv.hidden = !!opt.hidden;
+                    optDiv.classList.toggle('axonos-custom-select__option--disabled', !!opt.disabled);
+                    optDiv.setAttribute('aria-disabled', opt.disabled ? 'true' : 'false');
                     if (opt.value === selectEl.value) {
                         optDiv.classList.add('axonos-custom-select__option--selected');
                     }
@@ -8663,7 +10022,7 @@ Copyright (C) 2019 The noVNC Authors
 
                     optDiv.addEventListener('click', function (e) {
                         e.stopPropagation();
-                        if (selectEl.disabled) return;
+                        if (selectEl.disabled || opt.disabled || opt.hidden) return;
                         selectEl.value = opt.value;
                         selectEl.dispatchEvent(new Event('change', { bubbles: true }));
                         closeDropdown();
@@ -8703,6 +10062,8 @@ Copyright (C) 2019 The noVNC Authors
                 mutations.forEach(function (mutation) {
                     if (mutation.type === 'childList') {
                         optionsChanged = true;
+                    } else if (mutation.target && mutation.target.tagName === 'OPTION') {
+                        optionsChanged = true;
                     } else if (mutation.type === 'attributes') {
                         syncUI();
                     }
@@ -8711,7 +10072,12 @@ Copyright (C) 2019 The noVNC Authors
                     rebuildOptions();
                 }
             });
-            observer.observe(selectEl, { childList: true, attributes: true, attributeFilter: ['disabled'] });
+            observer.observe(selectEl, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['disabled', 'hidden']
+            });
 
             // Intercept property changes (direct script value sets)
             const originalValueDescriptor = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
@@ -8781,7 +10147,12 @@ Copyright (C) 2019 The noVNC Authors
             // Keyboard support
             trigger.addEventListener('keydown', function (e) {
                 if (selectEl.disabled) return;
-                const options = Array.from(optionsContainer.querySelectorAll('.axonos-custom-select__option'));
+                const options = Array.from(
+                    optionsContainer.querySelectorAll('.axonos-custom-select__option')
+                ).filter(function (option) {
+                    return !option.hidden &&
+                        !option.classList.contains('axonos-custom-select__option--disabled');
+                });
                 if (options.length === 0) return;
 
                 let activeIdx = options.findIndex(opt => opt.classList.contains('axonos-custom-select__option--selected'));
@@ -9076,12 +10447,14 @@ Copyright (C) 2019 The noVNC Authors
         // Sync topbar state elements
         function axonosSyncTopbar(wallet, credits) {
             const connectBtn = document.getElementById('axonos_topbar_connect_btn');
+            const demoCodeBtn = document.getElementById('axonos_topbar_demo_code_btn');
             const userWrap = document.getElementById('axonos_topbar_user_wrap');
             const addrEl = document.getElementById('axonos_topbar_wallet_addr');
             const creditsEl = document.getElementById('axonos_topbar_credits_val');
 
             if (wallet) {
                 if (connectBtn) connectBtn.style.display = 'none';
+                if (demoCodeBtn) demoCodeBtn.style.display = 'none';
                 if (userWrap) userWrap.style.display = 'flex';
                 if (addrEl) addrEl.textContent = wallet.slice(0, 6) + '…' + wallet.slice(-4);
                 // "—" for an unknown balance: rendering 0 fabricates a zero.
@@ -9102,6 +10475,8 @@ Copyright (C) 2019 The noVNC Authors
                 }
             } else {
                 if (connectBtn) connectBtn.style.display = 'block';
+                if (demoCodeBtn) demoCodeBtn.style.display =
+                    axonosConfig.guest_mode_enabled ? 'inline-flex' : 'none';
                 if (userWrap) userWrap.style.display = 'none';
             }
             axonosSyncHeroCta(wallet);
@@ -9121,6 +10496,7 @@ Copyright (C) 2019 The noVNC Authors
         // Handler when wallet is verified
         function axonosOnWalletVerified(walletAddress, data) {
             console.log('[AxonOS] Wallet verified:', walletAddress);
+            axonosSetGuestInviteEligibility(data);
             var credentialsDialog = document.getElementById('noVNC_credentials_dlg');
             if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
 
@@ -9848,6 +11224,12 @@ Copyright (C) 2019 The noVNC Authors
 
         function axonosStartWizard() {
             axonosCurrentWizardStep = 1;
+            // A guest may click an unrestricted landing-page catalog card after
+            // redemption. Reapply invite restrictions before rendering the
+            // wizard so that stale/disallowed choices never reach its summary.
+            if (typeof axonosGuestActive === 'function' && axonosGuestActive()) {
+                axonosApplyGuestUiRestrictions();
+            }
             axonosWizardStorageUserEdited = false;
             const storageGeneration = ++axonosWizardStorageGeneration;
             const wizardWallet = window.verifiedWalletAddress || verifiedWalletAddress;
@@ -10040,7 +11422,12 @@ Copyright (C) 2019 The noVNC Authors
                             UI.showConfirm('Invalid SSH Key', 'Please enter a valid SSH public key in the textarea (should start with ssh-rsa, ssh-ed25519, etc.).', 'Ok');
                             return;
                         }
-                        axonosGoToWizardStep(3);
+                        if (typeof axonosGuestActive === 'function' && axonosGuestActive()) {
+                            const guestWallet = window.verifiedWalletAddress || verifiedWalletAddress;
+                            axonosTriggerGuestLaunchFromWizard(guestWallet);
+                        } else {
+                            axonosGoToWizardStep(3);
+                        }
                     } else if (axonosCurrentWizardStep === 3) {
                         // Launch session!
                         axonosTriggerLaunchFromWizard();
@@ -10123,10 +11510,18 @@ Copyright (C) 2019 The noVNC Authors
             const primaryBtnText = document.querySelector('#axonos_wizard_primary_btn span');
             if (primaryBtnText) {
                 if (stepNum === 1) primaryBtnText.textContent = 'Choose Hardware';
-                else if (stepNum === 2) primaryBtnText.textContent = 'Configure Credits';
+                else if (stepNum === 2) {
+                    primaryBtnText.textContent = (
+                        typeof axonosGuestActive === 'function' && axonosGuestActive()
+                    ) ? 'Launch Demo Desktop' : 'Configure Credits';
+                }
                 else if (stepNum === 3) {
                     const isSsh = document.getElementById('axonos_ssh_toggle') && document.getElementById('axonos_ssh_toggle').checked;
-                    primaryBtnText.textContent = isSsh ? 'Launch Direct SSH Session' : 'Launch GPU Desktop';
+                    if (typeof axonosGuestActive === 'function' && axonosGuestActive()) {
+                        primaryBtnText.textContent = 'Launch Demo Desktop';
+                    } else {
+                        primaryBtnText.textContent = isSsh ? 'Launch Direct SSH Session' : 'Launch GPU Desktop';
+                    }
                 }
             }
 
@@ -10138,7 +11533,22 @@ Copyright (C) 2019 The noVNC Authors
                 const railBalanceRow = document.getElementById('axonos_wizard_rail_balance_row');
                 const railBalanceVal = document.getElementById('axonos_wizard_rail_balance');
 
-                if (wallet) {
+                if (wallet && typeof axonosGuestActive === 'function' && axonosGuestActive()) {
+                    // A demo has nothing to pay and no storage floor to reconcile:
+                    // show the demo panel and let Launch proceed directly.
+                    if (unconnectedPanel) unconnectedPanel.style.display = 'none';
+                    if (connectedPanel) connectedPanel.style.display = 'none';
+                    if (railBalanceRow) railBalanceRow.style.display = 'none';
+                    const guestPanel = document.getElementById('axonos_wizard_guest_panel');
+                    if (guestPanel) guestPanel.style.display = 'block';
+                    const guestMinutesEl = document.getElementById('axonos_wizard_guest_minutes');
+                    if (guestMinutesEl) {
+                        const mins = Math.max(
+                            1, Math.round((axonosGuestRemainingSeconds() || 0) / 60)
+                        );
+                        guestMinutesEl.textContent = mins + ' minute' + (mins === 1 ? '' : 's');
+                    }
+                } else if (wallet) {
                     const storageGeneration = axonosWizardStorageGeneration;
                     // The wizard can be opened before the wallet connects,
                     // leaving the floor keyed to ''. Re-key it here so the
@@ -10381,10 +11791,37 @@ Copyright (C) 2019 The noVNC Authors
             }, 350);
         }
 
+        /** Launch a demo session from wizard Step 3.
+         *
+         *  Kept separate from the wallet launch rather than branching inside it:
+         *  a demo has nothing to deposit and no persistent volume, so it must
+         *  skip the deposit and storage-floor preflight entirely -- and the
+         *  wallet path's own ordering (authoritative floor BEFORE any claim)
+         *  stays exactly as it was, with no demo branch threaded through it. */
+        function axonosTriggerGuestLaunchFromWizard(wallet) {
+            console.log('[AxonOS] Launching demo session from Step 3');
+            showConnectionLoader('preparing');
+            return claimSession().then(function (claim) {
+                if (claim && claim.granted) {
+                    tryConnectAfterClaim(claim);
+                } else {
+                    handleSessionClaimDenied(claim, 'Demo session could not start.', wallet);
+                }
+            }).catch(function () {
+                hideConnectionLoader();
+                if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                    UI.showStatus('Demo session could not start. Please retry.', 'error');
+                }
+            });
+        }
+
         // Perform session deposit & launch from within wizard Step 3
         function axonosTriggerLaunchFromWizard() {
             const wallet = window.verifiedWalletAddress || verifiedWalletAddress;
             if (!wallet) return;
+            if (typeof axonosGuestActive === 'function' && axonosGuestActive()) {
+                return axonosTriggerGuestLaunchFromWizard(wallet);
+            }
             const storageGeneration = axonosWizardStorageGeneration;
 
             console.log('[AxonOS] Triggering launch/deposit from Step 3 payment');
@@ -10524,6 +11961,31 @@ Copyright (C) 2019 The noVNC Authors
                 axonosStartWizard();
             });
         }
+        const dashGuestInviteBtn = document.getElementById('axonos_dashboard_guest_invite_btn');
+        if (dashGuestInviteBtn) {
+            dashGuestInviteBtn.addEventListener('click', axonosOpenGuestInviteDialog);
+        }
+        const guestInviteCreateBtn = document.getElementById('axonos_guest_invite_create');
+        if (guestInviteCreateBtn) {
+            guestInviteCreateBtn.addEventListener('click', axonosCreateGuestInvite);
+        }
+        const guestInviteCopyBtn = document.getElementById('axonos_guest_invite_copy');
+        if (guestInviteCopyBtn) {
+            guestInviteCopyBtn.addEventListener('click', function () {
+                axonosCopyGuestInvite('axonos_guest_invite_url', 'Guest link');
+            });
+        }
+        const guestInviteCopyTokenBtn = document.getElementById('axonos_guest_invite_copy_token');
+        if (guestInviteCopyTokenBtn) {
+            guestInviteCopyTokenBtn.addEventListener('click', function () {
+                axonosCopyGuestInvite('axonos_guest_invite_token', 'Demo code');
+            });
+        }
+        ['axonos_guest_invite_close', 'axonos_guest_invite_cancel', 'axonos_guest_invite_overlay']
+            .forEach(function (id) {
+                var closeButton = document.getElementById(id);
+                if (closeButton) closeButton.addEventListener('click', axonosCloseGuestInviteDialog);
+            });
         const dashEmptyBtn = document.getElementById('axonos_dashboard_first_session_btn');
         if (dashEmptyBtn) {
             dashEmptyBtn.addEventListener('click', () => {
@@ -10886,6 +12348,10 @@ Copyright (C) 2019 The noVNC Authors
                 // heartbeats, which cannot land while the gate is down, so the
                 // pre-outage balance remains accurate until connectivity returns.
                 if (res.unavailable || res.ok !== true) return;
+                if (axonosGuestActive()) {
+                    axonosRenderGuestSidebarTime(axonosGuestRemainingSeconds());
+                    return;
+                }
                 const data = (res && res.data) || {};
                 if (typeof data.remaining_minutes !== 'number') return;
                 const credits = data.remaining_minutes;
@@ -11000,11 +12466,51 @@ Copyright (C) 2019 The noVNC Authors
                 }
             });
         }
+        const topbarDemoCodeBtn = document.getElementById('axonos_topbar_demo_code_btn');
+        if (topbarDemoCodeBtn) {
+            topbarDemoCodeBtn.addEventListener('click', axonosOpenGuestRedeemDialog);
+        }
+        const guestRedeemStartBtn = document.getElementById('axonos_guest_redeem_start');
+        if (guestRedeemStartBtn) {
+            guestRedeemStartBtn.addEventListener('click', axonosSubmitGuestRedeemDialog);
+        }
+        const guestRedeemInput = document.getElementById('axonos_guest_redeem_value');
+        if (guestRedeemInput) {
+            guestRedeemInput.addEventListener('keydown', function (event) {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    axonosSubmitGuestRedeemDialog();
+                }
+            });
+        }
+        ['axonos_guest_redeem_close', 'axonos_guest_redeem_cancel', 'axonos_guest_redeem_overlay']
+            .forEach(function (id) {
+                var closeButton = document.getElementById(id);
+                if (closeButton) closeButton.addEventListener('click', axonosCloseGuestRedeemDialog);
+            });
 
         // Bind topbar Wallet click to disconnect
         const topbarWalletBtn = document.getElementById('axonos_topbar_wallet_btn');
         if (topbarWalletBtn) {
             topbarWalletBtn.addEventListener('click', function () {
+                if (typeof axonosGuestActive === 'function' && axonosGuestActive()) {
+                    var endGuest = function (ok) {
+                        if (!ok) return;
+                        axonosTeardownGuestSession({ releaseSource: 'guest-topbar-exit' });
+                    };
+                    if (typeof UI !== 'undefined' && typeof UI.showConfirm === 'function') {
+                        UI.showConfirm(
+                            'End demo session?',
+                            'This ends the temporary desktop and running jobs, then returns to the catalog.',
+                            { confirmText: 'End Demo', confirmType: 'danger' }
+                        ).then(endGuest);
+                    } else {
+                        endGuest(confirm(
+                            'End demo session? This ends the temporary desktop and running jobs.'
+                        ));
+                    }
+                    return;
+                }
                 if (typeof UI !== 'undefined' && typeof UI.showConfirm === 'function') {
                     UI.showConfirm('Sign out and end session?', 'Signing out ends the current compute session and running jobs, stops compute billing, then clears the wallet.', 'Sign out').then(function (ok) {
                         if (ok && typeof axonosDisconnectWalletSession === 'function') {
@@ -11028,6 +12534,8 @@ Copyright (C) 2019 The noVNC Authors
         // signature. An expired cookie responds 401 and the page simply stays
         // signed out — Connect wallet is then one signature away.
         (function () {
+            if (typeof window.axonosGuestEntryPendingOrActive === 'function' &&
+                window.axonosGuestEntryPendingOrActive()) return;
             var lastWallet = null;
             try { lastWallet = localStorage.getItem('axonos_last_wallet'); } catch (e) { }
             if (!lastWallet || !/^0x[a-fA-F0-9]{40}$/.test(lastWallet)) return;
@@ -11038,6 +12546,8 @@ Copyright (C) 2019 The noVNC Authors
             window.axonosWalletRestorePending = true;
             var revertOptimisticPaint = function () {
                 window.axonosWalletRestorePending = false;
+                if (typeof window.axonosGuestEntryPendingOrActive === 'function' &&
+                    window.axonosGuestEntryPendingOrActive()) return;
                 // A connect the user started in the meantime wins.
                 if (window.verifiedWalletAddress) return;
                 if (typeof axonosSyncTopbar === 'function') {
@@ -11055,6 +12565,14 @@ Copyright (C) 2019 The noVNC Authors
                 // verified:false on a 200 only reflects access/credit state.
                 return r.ok ? r.json() : null;
             }).then(function (data) {
+                // The probe may have started before a guest entry was observed by
+                // an older/cached startup path. Never let its stale wallet result
+                // replace a pending or active demo identity.
+                if (typeof window.axonosGuestEntryPendingOrActive === 'function' &&
+                    window.axonosGuestEntryPendingOrActive()) {
+                    window.axonosWalletRestorePending = false;
+                    return;
+                }
                 if (!data || window.verifiedWalletAddress) {
                     revertOptimisticPaint();
                     return;
@@ -11075,6 +12593,7 @@ Copyright (C) 2019 The noVNC Authors
         // the landing page in its connected state (topbar swap + hero "Open
         // workspace" CTA) — entering the workspace is always an explicit click.
         setTimeout(() => {
+            if (window.axonosGuestEntryPending === true) return;
             const wallet = window.verifiedWalletAddress || verifiedWalletAddress;
             if (wallet && !document.documentElement.classList.contains('noVNC_connected')) {
                 axonosSyncTopbar(wallet, null);

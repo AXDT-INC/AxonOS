@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 _TESTS_DIR = Path(__file__).resolve().parent
@@ -18,6 +20,20 @@ if str(_GATE_ROOT) not in sys.path:
 
 
 class StartupFastPathSourceTests(unittest.TestCase):
+    def test_wallpaper_is_preseeded_and_presentation_is_readiness_gated(self) -> None:
+        startup = (_REPO_ROOT / "startup.sh").read_text(encoding="utf-8")
+        dockerfile = (_REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+        autostart = (
+            _REPO_ROOT / "scripts" / "axonos-theme.desktop"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("monitorDVI-D-0", dockerfile)
+        self.assertIn("/etc/axonos/xfce4/xfce4-desktop.xml", startup)
+        self.assertLess(startup.index("/etc/axonos/xfce4/xfce4-desktop.xml"),
+                        startup.index("# Start supervisord"))
+        self.assertNotIn("sleep 25", autostart)
+        self.assertIn("touch /tmp/axonos-desktop-ready", startup)
+
     def test_supervisor_is_the_only_ipfs_daemon_owner(self) -> None:
         startup = (_REPO_ROOT / "startup.sh").read_text(encoding="utf-8")
         supervisor = (_REPO_ROOT / "supervisord.conf").read_text(encoding="utf-8")
@@ -204,6 +220,28 @@ monitor_critical_supervisor_children
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "terminated-after=6")
+
+
+class DesktopPresentationReadinessTests(unittest.TestCase):
+    def test_central_agent_does_not_require_desktop_marker(self) -> None:
+        import webrtc_agent_main as agent
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertTrue(agent._desktop_presentation_ready())
+
+    def test_tenant_agent_requires_completed_theme_marker(self) -> None:
+        import webrtc_agent_main as agent
+
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "ready"
+            env = {
+                "AXGT_SESSION_ID": "41",
+                "WEBRTC_DESKTOP_READY_FILE": str(marker),
+            }
+            with mock.patch.dict(os.environ, env, clear=True):
+                self.assertFalse(agent._desktop_presentation_ready())
+                marker.touch()
+                self.assertTrue(agent._desktop_presentation_ready())
 
 
 class IceGatheringFastPathTests(unittest.IsolatedAsyncioTestCase):

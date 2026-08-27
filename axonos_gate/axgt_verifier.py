@@ -58,6 +58,21 @@ def eth_deposits_enabled() -> bool:
     return raw in ("1", "true", "yes", "on")
 
 
+def _is_guest_identity(address: str) -> bool:
+    """True for a synthetic demo identity; False if guest mode is unavailable."""
+    try:
+        try:
+            from . import guest_mode
+        except ImportError:
+            try:
+                from axonos_gate import guest_mode
+            except ImportError:
+                import guest_mode
+        return guest_mode.is_guest_identity(address)
+    except Exception:
+        return False
+
+
 def mask_wallet_address(address: str) -> str:
     if not address or len(address) < 10:
         return "***"
@@ -844,10 +859,13 @@ def get_wallet_access_status(wallet_address: str, consume_usage: bool = False) -
                 )
     except Exception as exc:
         logger.debug("wallet billing context unavailable: %s", exc)
-    # Optional on-chain balance for UI (wallet dialog); None if RPC not configured or on error
-    balance_display = _get_axgt_balance_display(wallet_address)
-    if balance_display is not None:
-        response["balance_axgt"] = balance_display
+    # Optional on-chain balance for UI (wallet dialog); None if RPC not configured or on error.
+    # Skipped for a demo identity: the address is synthetic, so there is no chain
+    # state to read and this poll runs on every wallet-status refresh.
+    if not _is_guest_identity(wallet_address):
+        balance_display = _get_axgt_balance_display(wallet_address)
+        if balance_display is not None:
+            response["balance_axgt"] = balance_display
     return response
 
 
@@ -955,7 +973,7 @@ def get_test_credit_max_balance_minutes() -> float:
 
 
 def grant_test_credit(wallet_address: str, payment_rail: str, request_id: str) -> Dict[str, Any]:
-    """Grant an eligible wallet bounded test credit through the dedicated rail."""
+    """Add one configured test-credit grant to an explicitly eligible wallet."""
     wallet = (wallet_address or "").strip().lower()
     rail = (payment_rail or "").strip().lower()
     request_norm = (request_id or "").strip().lower()
@@ -1002,6 +1020,7 @@ def grant_test_credit(wallet_address: str, payment_rail: str, request_id: str) -
             max_balance_minutes=get_test_credit_max_balance_minutes(),
             request_id=request_norm,
             payment_rail=rail,
+            additive=True,
         )
     except Exception as exc:
         logger.error("Test-credit grant failed for %s: %s", mask_wallet_address(wallet), exc, exc_info=True)
