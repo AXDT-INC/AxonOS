@@ -1215,15 +1215,30 @@ const UI = {
             extendBtn.addEventListener('click', () => {
                 if (extendBtn.disabled) return;
                 const restoreLabel = extendBtn.textContent;
+                const previousDeadline = Number(UI._axonosSshHardCapDeadlineMs) || 0;
                 extendBtn.disabled = true;
                 extendBtn.textContent = 'Extending…';
                 UI._axonosFetchSessionClaim().then((claim) => {
                     const granted = claim && (claim.granted === true || claim.granted === 'true');
                     if (granted && typeof claim.hard_cap_remaining_seconds === 'number') {
+                        UI._axonosSshClaim = { ...(UI._axonosSshClaim || {}), ...claim, ssh_enabled: true };
                         UI._axonosUpdateSshCardCap(claim);
-                        extendBtn.textContent = 'Extended ✓';
+                        const newDeadline = Number(UI._axonosSshHardCapDeadlineMs) || 0;
+                        const addedSeconds = previousDeadline > 0
+                            ? Math.max(0, Math.round((newDeadline - previousDeadline) / 1000))
+                            : 0;
+                        if (addedSeconds >= 30) {
+                            const addedMinutes = Math.max(1, Math.round(addedSeconds / 60));
+                            const message = `Extended by ~${addedMinutes} min`;
+                            extendBtn.textContent = message;
+                            UI.showStatus(`${message}. The updated deadline is shown above.`, 'normal', 5000);
+                        } else {
+                            extendBtn.textContent = 'Already at maximum';
+                            UI.showStatus('Session is already extended to the current maximum allowed by your balance and session limit.', 'normal', 5000);
+                        }
                     } else if (granted) {
-                        extendBtn.textContent = 'Extended ✓';
+                        extendBtn.textContent = 'Extension confirmed';
+                        UI.showStatus('Session extension confirmed.', 'normal', 5000);
                     } else {
                         const reason = (claim && claim.reason) ? String(claim.reason) : 'Could not extend the session.';
                         UI.showStatus(reason, 'error');
@@ -1236,7 +1251,7 @@ const UI = {
                     setTimeout(() => {
                         extendBtn.disabled = false;
                         extendBtn.textContent = restoreLabel;
-                    }, 1600);
+                    }, 5000);
                 });
             });
         }
@@ -1363,6 +1378,9 @@ const UI = {
         const capSecs = (typeof payload.hard_cap_remaining_seconds === 'number')
             ? payload.hard_cap_remaining_seconds
             : null;
+        if (capSecs !== null) {
+            UI._axonosSshHardCapDeadlineMs = Date.now() + Math.max(0, capSecs) * 1000;
+        }
         const secs = capSecs !== null
             ? capSecs
             : (typeof payload.remaining_seconds === 'number' ? payload.remaining_seconds : null);
