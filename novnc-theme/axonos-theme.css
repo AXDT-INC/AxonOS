@@ -3259,10 +3259,50 @@ html:not(.noVNC_connected) #noVNC_connect_dlg {
   position: relative;
 }
 
+/* Fatal noVNC fallback. base.css owns the behavior; the product theme owns
+   presentation so a genuine script failure does not expose upstream styling. */
+#noVNC_fallback_error {
+  padding: 1rem;
+  background: rgba(8, 9, 16, 0.72);
+  backdrop-filter: blur(8px);
+}
+
+#noVNC_fallback_error > .axonos-fallback-card {
+  width: min(42rem, calc(100vw - 2rem));
+  max-width: none;
+  box-sizing: border-box;
+  padding: 1.5rem;
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-weight: 500;
+  line-height: 1.45;
+  border: 1px solid rgba(255, 95, 87, 0.36);
+  border-radius: 1rem;
+  background: linear-gradient(145deg, rgba(29, 24, 39, 0.98), rgba(12, 14, 24, 0.98));
+  box-shadow: 0 1.5rem 4rem rgba(0, 0, 0, 0.52), inset 3px 0 0 var(--coral);
+}
+
+#noVNC_fallback_errormsg .noVNC_message {
+  margin-top: 0.75rem;
+  color: #ff9a94;
+  font-family: var(--font-mono);
+}
+
+#noVNC_fallback_error .noVNC_location,
+#noVNC_fallback_error .noVNC_stack {
+  color: var(--ink-mute);
+}
+
+#noVNC_fallback_error .noVNC_stack {
+  border-color: rgba(255, 255, 255, 0.1);
+  border-radius: 0.5rem;
+  background: rgba(0, 0, 0, 0.28);
+}
+
 .axonos-fallback-dismiss {
   position: absolute;
-  top: -0.5rem;
-  right: -0.5rem;
+  top: 0.75rem;
+  right: 0.75rem;
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.2);
   color: var(--axonos-light);

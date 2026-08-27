@@ -72,6 +72,28 @@ class ResponsiveWalletDialogContractTests(unittest.TestCase):
         self.assertIn("outline: 2px solid", focus)
         self.assertIn("flex-wrap: wrap", mobile)
 
+    def test_extension_failures_do_not_open_the_novnc_fatal_overlay(self) -> None:
+        guard = self.page.split(
+            "// Suppress browser-extension errors", 1
+        )[1].split('<script src="app/error-handler.js"></script>', 1)[0]
+
+        self.assertIn("unhandledrejection", guard)
+        self.assertIn("isExtensionFailure(e.reason)", guard)
+        self.assertIn("isExtensionFailure(e.error)", guard)
+        self.assertIn("chrome-extension", guard)
+        self.assertIn("moz-extension", guard)
+        self.assertIn("safari-web-extension", guard)
+        self.assertIn("e.stopImmediatePropagation()", guard)
+        self.assertIn("e.preventDefault()", guard)
+
+    def test_fatal_fallback_uses_axonos_theme_and_can_be_dismissed(self) -> None:
+        self.assertIn('class="axonos-fallback-card"', self.page)
+        self.assertIn('class="axonos-fallback-dismiss"', self.page)
+        self.assertIn("fallback.classList.remove('noVNC_open')", self.page)
+        self.assertIn("message.replaceChildren()", self.page)
+        self.assertIn("#noVNC_fallback_error > .axonos-fallback-card", self.css)
+        self.assertIn("background: linear-gradient", self.css)
+
 
 if __name__ == "__main__":
     unittest.main()

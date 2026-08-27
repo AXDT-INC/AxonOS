@@ -121,7 +121,7 @@ Copyright (C) 2019 The noVNC Authors
     <!-- Stylesheets -->
     <link rel="stylesheet" href="app/styles/base.css">
     <link rel="stylesheet" href="app/vendor/xterm/xterm.css?v=6.0.0">
-    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.3&t=20260827a">
+    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.3&t=20260827b">
 
     <!-- Images that will later appear via CSS -->
     <link rel="preload" as="image" href="app/images/info.svg">
@@ -129,17 +129,34 @@ Copyright (C) 2019 The noVNC Authors
     <link rel="preload" as="image" href="app/images/warning.svg">
 
     <script>
-        // Suppress browser-extension errors (e.g. TronLink tronlinkParams proxy conflict)
+        // Suppress browser-extension errors (e.g. wallet injection/proxy conflicts)
         // before noVNC's error-handler.js can display them as fatal UI errors.
         (function () {
             function isExtensionSrc(src) {
                 return typeof src === 'string' &&
                     (src.indexOf('chrome-extension://') === 0 ||
-                        src.indexOf('moz-extension://') === 0);
+                        src.indexOf('moz-extension://') === 0 ||
+                        src.indexOf('safari-web-extension://') === 0);
+            }
+            function isExtensionFailure(value) {
+                if (!value) return false;
+                return isExtensionSrc(value.filename) ||
+                    isExtensionSrc(value.fileName) ||
+                    (typeof value.stack === 'string' &&
+                        /(chrome-extension|moz-extension|safari-web-extension):\/\//.test(value.stack));
             }
             // Capture phase fires before noVNC's bubble-phase error listener.
             window.addEventListener('error', function (e) {
-                if (e && isExtensionSrc(e.filename)) {
+                if (e && (isExtensionSrc(e.filename) || isExtensionFailure(e.error))) {
+                    e.stopImmediatePropagation();
+                    e.preventDefault();
+                }
+            }, true);
+            // Wallet extensions commonly reject a promise instead of throwing a script
+            // error. noVNC treats every unhandled rejection as an application-fatal
+            // failure, so keep extension-owned rejections in the console only.
+            window.addEventListener('unhandledrejection', function (e) {
+                if (e && isExtensionFailure(e.reason)) {
                     e.stopImmediatePropagation();
                     e.preventDefault();
                 }
@@ -206,8 +223,9 @@ Copyright (C) 2019 The noVNC Authors
         </div>
     </div>
 
-    <div id="noVNC_fallback_error" class="noVNC_center">
-        <div>
+    <div id="noVNC_fallback_error" class="noVNC_center" role="alert" aria-live="assertive">
+        <div class="axonos-fallback-card">
+            <button type="button" class="axonos-fallback-dismiss" aria-label="Dismiss error">&times;</button>
             <div>noVNC encountered an error:</div>
             <br>
             <div id="noVNC_fallback_errormsg"></div>
@@ -215,6 +233,17 @@ Copyright (C) 2019 The noVNC Authors
                 for the best experience.</p>
         </div>
     </div>
+    <script>
+        (function () {
+            var fallback = document.getElementById('noVNC_fallback_error');
+            var dismiss = fallback && fallback.querySelector('.axonos-fallback-dismiss');
+            if (dismiss) dismiss.addEventListener('click', function () {
+                fallback.classList.remove('noVNC_open');
+                var message = document.getElementById('noVNC_fallback_errormsg');
+                if (message) message.replaceChildren();
+            });
+        }());
+    </script>
 
     <!-- noVNC Control Bar -->
     <div id="noVNC_control_bar_anchor" class="noVNC_vcenter">
