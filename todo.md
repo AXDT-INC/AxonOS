@@ -559,3 +559,35 @@ Follow-ups (not done):
 - Demo expiry ends the container, so the upsell offers a *fresh* session. Letting
   a prospect keep the same desktop by connecting a wallet would need an
   ownership-transfer mechanism, since sessions are keyed by wallet.
+
+## Wallet provider request hygiene (from 2026-09-01 "Wallet unavailable" debugging)
+
+Root-caused a real multi-wallet lockout where the reconnect banner could never
+clear: another injected extension won the `window.ethereum` race, so the page's
+MetaMask-intended account checks went to the wrong provider (`eth_accounts` was
+empty and `eth_requestAccounts` returned its `-32000` throttle error). Repeated
+retries made that provider's queue worse, while extension reloads could also
+leave the page pinned to an orphaned provider object. Two frontend bugs made
+both variants sticky:
+
+- [x] Timed-out wallet requests are never cancelled wallet-side.
+  `axonosPromiseWithTimeout` in `vnc.html` rejects only the page-side
+  wrapper; the `eth_requestAccounts` prompt stays queued in the wallet. Each
+  Launch/Reconnect retry stacks another request until the wallet rate-limits
+  (`-32002` already-pending / `-32000` too-frequent) and silently refuses to
+  show any dialog. Fix: track an in-flight permission request and reuse its
+  promise instead of issuing a new one; retain it across the first page timeout
+  and quarantine it after a second so a later retry cannot stack another prompt;
+  re-discover a fresh provider object when available, otherwise tell the user to
+  finish the wallet request or reload; surface the -32002/-32000 codes ("approve
+  the pending request in your wallet" / "wait a minute") instead of the generic
+  failure.
+- [x] `resolveEthereumProvider` in `vnc.html` never re-runs EIP-6963
+  discovery outside the Connect dialog — it only re-reads the pinned
+  `__axonosSelectedProvider` / `window.ethereum`. After an extension update
+  orphans a tab's content script (MV3), the pinned object is a dead-but-intact
+  reference that still passes the `.request` type check, so every reconnect
+  path holds the corpse until a full page reload. Fix: re-run EIP-6963
+  discovery when a pinned provider fails, silently identify the freshly
+  announced provider that still exposes the verified account, revalidate it,
+  then atomically re-pin and bind that live provider object.

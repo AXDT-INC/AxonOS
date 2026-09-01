@@ -6005,10 +6005,332 @@ Copyright (C) 2019 The noVNC Authors
             return [];
         }
 
+        // --- Wallet provider re-discovery (EIP-6963) -------------------------
+        // Multiple injected wallets race for window.ethereum, and an extension
+        // reload/update orphans the provider object a long-lived tab captured.
+        // Keep a passive registry of EIP-6963 announcements so resolution and
+        // failure paths can prefer a live, correctly-identified provider over
+        // whatever won the window.ethereum race.
+        var axonosAnnouncedWalletProviders = [];
+        var axonosWalletProviderMetadata = new WeakMap();
+
+        function axonosRecordAnnouncedProvider(detail) {
+            if (!detail || !detail.provider || typeof detail.provider.request !== 'function') return;
+            var info = detail.info || {};
+            var rdns = String(info.rdns || '').toLowerCase();
+            var uuid = String(info.uuid || '').toLowerCase();
+            // EIP-6963 identifies a provider announcement by UUID. RDNS is
+            // self-attested and multiple independent providers can legitimately
+            // share it, so never collapse entries on RDNS alone.
+            axonosAnnouncedWalletProviders = axonosAnnouncedWalletProviders.filter(function (entry) {
+                if (entry.provider === detail.provider) return false;
+                if (uuid !== '' && entry.uuid === uuid) return false;
+                return true;
+            });
+            var entry = {
+                provider: detail.provider,
+                name: info.name || 'Wallet',
+                rdns: rdns,
+                uuid: uuid
+            };
+            axonosAnnouncedWalletProviders.push(entry);
+            axonosWalletProviderMetadata.set(detail.provider, entry);
+        }
+
+        window.addEventListener('eip6963:announceProvider', function (ev) {
+            axonosRecordAnnouncedProvider(ev.detail);
+        });
+        try {
+            window.dispatchEvent(new Event('eip6963:requestProvider'));
+        } catch (e) { }
+
+        function axonosRequestWalletProviderAnnouncements() {
+            // EIP-6963 providers answer requestProvider synchronously during the
+            // dispatch, so the registry is usable immediately afterwards.
+            try {
+                window.dispatchEvent(new Event('eip6963:requestProvider'));
+            } catch (e) { }
+            return axonosAnnouncedWalletProviders;
+        }
+
+        function axonosPreferredInjectedProvider() {
+            var eth = getSafeWindowEthereum();
+            var announced = axonosRequestWalletProviderAnnouncements();
+            if (!announced.length) return eth;
+            var rememberedRdns = '';
+            try {
+                rememberedRdns = String(
+                    localStorage.getItem('axonos_wallet_provider_rdns') || ''
+                ).toLowerCase();
+            } catch (e) { }
+            // A cookie-restored wallet should return to the provider the user
+            // explicitly verified with, not whichever extension won this page's
+            // window.ethereum race. Iterate newest-first so an extension reload's
+            // replacement object wins over its orphaned predecessor.
+            if (rememberedRdns) {
+                for (var i = announced.length - 1; i >= 0; i--) {
+                    if (announced[i].rdns === rememberedRdns) {
+                        return announced[i].provider;
+                    }
+                }
+            }
+            // window.ethereum was taken by an extension that never announced via
+            // EIP-6963 while a properly announced wallet exists. MetaMask is a
+            // migration fallback for existing remembered-wallet records created
+            // before provider identity was persisted.
+            for (var j = announced.length - 1; j >= 0; j--) {
+                if (announced[j].rdns === 'io.metamask') return announced[j].provider;
+            }
+            if (eth) {
+                for (var k = 0; k < announced.length; k++) {
+                    if (announced[k].provider === eth) return eth;
+                }
+            }
+            return announced[announced.length - 1].provider;
+        }
+
         function resolveEthereumProvider(provider) {
-            var eth = provider || selectedEthereumProvider || getSafeWindowEthereum();
+            var eth = provider || selectedEthereumProvider || axonosPreferredInjectedProvider();
             if (!eth || typeof eth.request !== 'function') return null;
             return eth;
+        }
+
+        // Adopt a provider as the page-selected one everywhere the rest of the
+        // page looks (resolution order, event binding) — used when recovery
+        // finds the verified account on a different provider object.
+        function axonosAdoptWalletProvider(eth) {
+            selectedEthereumProvider = eth;
+            window.__axonosSelectedProvider = eth;
+            try { bindWalletAccountEvents(eth); } catch (e) { }
+            if (window.verifiedWalletAddress) axonosRememberWalletProvider(eth);
+        }
+
+        function axonosRememberWalletProvider(eth) {
+            var metadata = eth ? axonosWalletProviderMetadata.get(eth) : null;
+            try {
+                if (metadata && metadata.rdns) {
+                    localStorage.setItem('axonos_wallet_provider_rdns', metadata.rdns);
+                } else {
+                    localStorage.removeItem('axonos_wallet_provider_rdns');
+                }
+            } catch (e) { }
+        }
+
+        function axonosCaptureWalletRecoveryContext(wallet) {
+            return {
+                wallet: String(wallet || '').trim().toLowerCase(),
+                connectGeneration: axonosWalletConnectGeneration || 0,
+                providerEventGeneration: window.axonosWalletProviderEventGeneration || 0,
+                accountEventGeneration: window.axonosWalletAccountEventGeneration || 0,
+                selectedProvider: window.__axonosSelectedProvider ||
+                    selectedEthereumProvider || null
+            };
+        }
+
+        function axonosWalletRecoveryContextIsCurrent(
+            context, allowProviderLifecycleChange
+        ) {
+            if (!context) return false;
+            return String(window.verifiedWalletAddress || '').trim().toLowerCase() ===
+                    context.wallet &&
+                (axonosWalletConnectGeneration || 0) === context.connectGeneration &&
+                (window.axonosWalletAccountEventGeneration || 0) ===
+                    context.accountEventGeneration &&
+                (allowProviderLifecycleChange ||
+                    (window.axonosWalletProviderEventGeneration || 0) ===
+                        context.providerEventGeneration) &&
+                (window.__axonosSelectedProvider || selectedEthereumProvider || null) ===
+                    context.selectedProvider &&
+                !window.axonosWalletSwitchInProgress &&
+                !window.axonosWalletDisconnectPromise;
+        }
+
+        function axonosIsWalletTransportError(error) {
+            if (!error) return false;
+            if (error.code === 'AXONOS_WALLET_TIMEOUT' ||
+                error.code === 'AXONOS_WALLET_STUCK_PROMPT' ||
+                error.code === 4900 || error.code === -32603) return true;
+            var msg = String(error.message || '');
+            return /failed to connect|extension context invalidated|disconnected/i.test(msg);
+        }
+
+        // Actionable text for wallet-request failures the generic copy hides:
+        // a queued prompt (-32002) or rate-limit (-32000) otherwise looks like
+        // a silent hang with no dialog, which users cannot act on.
+        function axonosDescribeWalletRequestError(error) {
+            if (!error) return '';
+            if (error.code === -32002) {
+                return 'Your wallet already has a request open — open the wallet extension and approve or dismiss it first.';
+            }
+            var msg = String(error.message || '');
+            if (error.code === -32000 && /too frequent/i.test(msg)) {
+                return 'The wallet is rate-limiting requests. Wait a minute, then retry once.';
+            }
+            if (error.code === 4001) {
+                return 'The wallet request was declined.';
+            }
+            if (error.code === 'AXONOS_WALLET_TIMEOUT') {
+                return 'The wallet did not answer — check for a hidden approval window, then retry.';
+            }
+            if (error.code === 'AXONOS_WALLET_STUCK_PROMPT') {
+                return 'The wallet still has an unresolved request. Finish it in the wallet, or reload this page before retrying.';
+            }
+            return '';
+        }
+
+        function axonosNewestSameWalletProvider(excludeEth) {
+            var metadata = excludeEth
+                ? axonosWalletProviderMetadata.get(excludeEth) : null;
+            var rdns = metadata ? metadata.rdns : '';
+            if (!rdns) {
+                try {
+                    rdns = String(
+                        localStorage.getItem('axonos_wallet_provider_rdns') || ''
+                    ).toLowerCase();
+                } catch (e) { }
+            }
+            if (!rdns) return null;
+            var announced = axonosRequestWalletProviderAnnouncements();
+            for (var i = announced.length - 1; i >= 0; i--) {
+                if (announced[i].provider !== excludeEth &&
+                    announced[i].rdns === rdns) {
+                    return announced[i];
+                }
+            }
+            return null;
+        }
+
+        // Passive discovery is sufficient when the replacement still has site
+        // permission. A user-initiated Launch/Reconnect may additionally prompt
+        // the newest object announced by the SAME remembered provider: this is
+        // the extension-reload case where the old object is dead and the fresh
+        // object returns [] until permission is granted again.
+        function axonosRecoverVerifiedWalletProvider(
+            verifiedNormalized, excludeEth, requestPermission, recoveryIsCurrent
+        ) {
+            return axonosProbeProvidersForVerifiedAccount(
+                verifiedNormalized, excludeEth
+            ).then(function (entry) {
+                if (entry || !requestPermission) return entry;
+                // Passive probes are harmless, but an old operation must never
+                // open a permission prompt after the user signed out, switched
+                // wallets, or selected another provider while probing.
+                if (typeof recoveryIsCurrent === 'function' &&
+                    !recoveryIsCurrent()) return null;
+                var replacement = axonosNewestSameWalletProvider(excludeEth);
+                if (!replacement) return null;
+                return axonosWalletProviderRequest(
+                    replacement.provider,
+                    { method: 'eth_requestAccounts' },
+                    'Wallet reconnect timed out. Open the wallet and retry.',
+                    60000
+                ).then(function (accounts) {
+                    if (typeof recoveryIsCurrent === 'function' &&
+                        !recoveryIsCurrent()) return null;
+                    var current = (Array.isArray(accounts) && accounts[0])
+                        ? String(accounts[0]).trim().toLowerCase() : '';
+                    if (current !== verifiedNormalized) return null;
+                    // A prompt response is only a snapshot. Re-read immediately
+                    // before the caller adopts this previously non-selected
+                    // provider so an A→B change around prompt settlement cannot
+                    // authorize protected work using stale account A.
+                    return axonosWalletProviderRequest(
+                        replacement.provider,
+                        { method: 'eth_accounts' },
+                        'Wallet recovery confirmation timed out.',
+                        3000
+                    ).then(function (confirmedAccounts) {
+                        if (typeof recoveryIsCurrent === 'function' &&
+                            !recoveryIsCurrent()) return null;
+                        var confirmed = (Array.isArray(confirmedAccounts) &&
+                            confirmedAccounts[0])
+                            ? String(confirmedAccounts[0]).trim().toLowerCase()
+                            : '';
+                        return confirmed === verifiedNormalized ? replacement : null;
+                    });
+                }).catch(function (error) {
+                    if (typeof recoveryIsCurrent === 'function' &&
+                        !recoveryIsCurrent()) return null;
+                    // The caller's outer provider catch must surface this error,
+                    // not recursively start the same replacement prompt again.
+                    var tagged = error;
+                    if (tagged && typeof tagged === 'object') {
+                        try { tagged._axonosProviderRecoveryAttempted = true; } catch (e) { }
+                    }
+                    if (!tagged || typeof tagged !== 'object' ||
+                        tagged._axonosProviderRecoveryAttempted !== true) {
+                        tagged = new Error(String(
+                            error && error.message || error ||
+                            'Wallet provider recovery failed.'
+                        ));
+                        tagged.code = error && error.code;
+                        tagged._axonosUi = error && error._axonosUi;
+                        tagged._connectErr = error && error._connectErr;
+                        tagged._axonosProviderRecoveryAttempted = true;
+                    }
+                    throw tagged;
+                });
+            });
+        }
+
+        // Silently ask every OTHER announced provider which account it exposes,
+        // and return the entry that still exposes the verified wallet. Uses
+        // eth_accounts only (never opens a prompt), so it is safe to run from
+        // any failure path.
+        function axonosProbeProvidersForVerifiedAccount(verifiedNormalized, excludeEth) {
+            var candidates = axonosRequestWalletProviderAnnouncements().filter(function (entry) {
+                return entry.provider !== excludeEth;
+            });
+            if (!candidates.length) return Promise.resolve(null);
+            // Resolve as soon as one candidate matches instead of waiting for a
+            // dead sibling's timeout. Provider calls are lifted into a promise so
+            // an orphaned extension that throws synchronously cannot abort every
+            // other probe.
+            return new Promise(function (resolve) {
+                var remaining = candidates.length;
+                var settled = false;
+                var finish = function (entry) {
+                    if (settled) return;
+                    if (entry) {
+                        settled = true;
+                        resolve(entry);
+                        return;
+                    }
+                    remaining -= 1;
+                    if (remaining === 0) resolve(null);
+                };
+                candidates.forEach(function (entry) {
+                    Promise.resolve().then(function () {
+                        return axonosWalletProviderRequest(
+                            entry.provider,
+                            { method: 'eth_accounts' },
+                            'Wallet probe timed out.',
+                            3000
+                        );
+                    }).then(function (accounts) {
+                        var current = (Array.isArray(accounts) && accounts[0])
+                            ? String(accounts[0]).trim().toLowerCase() : '';
+                        if (current !== verifiedNormalized) return null;
+                        // Confirm before declaring this candidate the winner. If
+                        // it changed accounts, remaining healthy candidates stay
+                        // eligible instead of being discarded.
+                        return axonosWalletProviderRequest(
+                            entry.provider,
+                            { method: 'eth_accounts' },
+                            'Wallet probe confirmation timed out.',
+                            3000
+                        ).then(function (confirmedAccounts) {
+                            var confirmed = (Array.isArray(confirmedAccounts) &&
+                                confirmedAccounts[0])
+                                ? String(confirmedAccounts[0]).trim().toLowerCase()
+                                : '';
+                            return confirmed === verifiedNormalized ? entry : null;
+                        });
+                    }).then(function (confirmedEntry) {
+                        finish(confirmedEntry);
+                    }).catch(function () { finish(null); });
+                });
+            });
         }
 
         function setEthDepositUiEnabled(enabled) {
@@ -6541,11 +6863,89 @@ Copyright (C) 2019 The noVNC Authors
             });
         }
 
+        // Prompt-opening requests must never stack wallet-side: the page-side
+        // timeout below cannot cancel the wallet's dialog, so a retried
+        // eth_requestAccounts would queue another prompt inside the extension
+        // until it rate-limits and silently stops showing dialogs at all.
+        // Reuse the still-pending wallet-side request instead; every caller
+        // keeps its own independent page-side timeout. A provider can abandon a
+        // request without ever settling it (for example after an extension
+        // service-worker restart). After two page-side timeouts, quarantine that
+        // unresolved request: retries fail immediately into provider re-discovery
+        // instead of either waiting forever or stacking a second wallet prompt.
+        var axonosPendingWalletPrompts = new WeakMap();
+
+        function axonosWalletPromptMethod(request) {
+            var method = request && request.method;
+            return (method === 'eth_requestAccounts' || method === 'wallet_requestPermissions')
+                ? String(method) : null;
+        }
+
         function axonosWalletProviderRequest(eth, request, message, timeoutMs) {
+            var promptMethod = axonosWalletPromptMethod(request);
+            var underlying;
+            var promptEntry = null;
+            var clearPending = function () {
+                if (!promptMethod) return;
+                var current = axonosPendingWalletPrompts.get(eth);
+                if (current === promptEntry) {
+                    axonosPendingWalletPrompts.delete(eth);
+                }
+            };
+            if (promptMethod) {
+                promptEntry = axonosPendingWalletPrompts.get(eth);
+                if (promptEntry) {
+                    if (promptEntry.timeoutCount >= 2) {
+                        var stuckError = new Error(
+                            'The wallet still has an unresolved request. Finish it in the wallet, or reload this page before retrying.'
+                        );
+                        stuckError.code = 'AXONOS_WALLET_STUCK_PROMPT';
+                        stuckError._axonosUi = true;
+                        return Promise.reject(stuckError);
+                    }
+                    if (promptEntry.method !== promptMethod) {
+                        // Wallet prompt UIs are provider-wide, not method-wide.
+                        // Never queue requestAccounts behind an unresolved
+                        // requestPermissions (or vice versa).
+                        var busyError = new Error(
+                            'Your wallet already has a request open — finish it in the wallet before starting another.'
+                        );
+                        busyError.code = -32002;
+                        busyError._axonosUi = true;
+                        busyError._connectErr = busyError.message;
+                        return Promise.reject(busyError);
+                    }
+                    underlying = promptEntry.promise;
+                } else {
+                    // Promise.resolve alone cannot catch a synchronous throw while
+                    // evaluating eth.request(...); invoke it inside the callback.
+                    underlying = Promise.resolve().then(function () {
+                        return eth.request(request);
+                    });
+                    promptEntry = {
+                        method: promptMethod,
+                        promise: underlying,
+                        timeoutCount: 0
+                    };
+                    axonosPendingWalletPrompts.set(eth, promptEntry);
+                    Promise.resolve(underlying).then(clearPending, clearPending);
+                }
+            } else {
+                // Always return a rejected promise for a provider's synchronous
+                // transport failure so probe/preflight callers can fail closed.
+                underlying = Promise.resolve().then(function () {
+                    return eth.request(request);
+                });
+            }
             return axonosPromiseWithTimeout(
-                eth.request(request),
+                underlying,
                 timeoutMs || 60000,
-                message || 'Wallet request timed out. Open your wallet and retry.'
+                message || 'Wallet request timed out. Open your wallet and retry.',
+                promptEntry ? function () {
+                    var current = axonosPendingWalletPrompts.get(eth);
+                    if (current !== promptEntry) return;
+                    promptEntry.timeoutCount += 1;
+                } : null
             );
         }
 
@@ -6608,12 +7008,14 @@ Copyright (C) 2019 The noVNC Authors
                         60000
                     );
                 } catch (permErr) {
-                    // User dismissed the selector → abort the switch (stay disconnected/cleared).
-                    if (permErr && (permErr.code === 4001 || permErr.code === 'AXONOS_WALLET_TIMEOUT' ||
-                        /reject|denied/i.test(String(permErr.message || '')))) {
-                        throw permErr;
-                    }
-                    // Method not supported by this wallet → fall back to eth_requestAccounts below.
+                    // Fall back only when the wallet explicitly says this method
+                    // is unsupported. Pending, throttled, timed-out, declined, or
+                    // quarantined prompts must propagate; issuing requestAccounts
+                    // behind any of them would stack another wallet-side dialog.
+                    var unsupportedPermissions = permErr &&
+                        (Number(permErr.code) === -32601 ||
+                            Number(permErr.code) === 4200);
+                    if (!unsupportedPermissions) throw permErr;
                 }
             }
             var accounts = await axonosWalletProviderRequest(
@@ -7229,6 +7631,7 @@ Copyright (C) 2019 The noVNC Authors
                         window.axonosAllowVncConnect = true;
                         axonosClearWalletProviderOutOfSync();
                         try { localStorage.setItem('axonos_last_wallet', walletAddress); } catch (e) { }
+                        axonosRememberWalletProvider(eth);
                         // Release-only re-auth refreshes proof of wallet ownership
                         // without entering the workspace, claiming compute, restoring
                         // SSH, or auto-resuming a credit-grace session before End.
@@ -7322,6 +7725,7 @@ Copyright (C) 2019 The noVNC Authors
                     window.axonosAllowVncConnect = false;
                     axonosClearWalletProviderOutOfSync();
                     try { localStorage.setItem('axonos_last_wallet', walletAddress); } catch (e) { }
+                    axonosRememberWalletProvider(eth);
                     if (typeof axonosSyncTopbar === 'function') {
                         axonosSyncTopbar(walletAddress, data.remaining_minutes);
                     }
@@ -8656,6 +9060,7 @@ Copyright (C) 2019 The noVNC Authors
             window.axonosPendingResumeClaim = null;
             window.axonosPausedResume = null;
             try { localStorage.removeItem('axonos_last_wallet'); } catch (e) { }
+            try { localStorage.removeItem('axonos_wallet_provider_rdns'); } catch (e) { }
             axonosApplyResumeConnectUi(false);
             setWalletUIState('axonos_wallet_state_disconnected');
             if (typeof axonosSyncTopbar === 'function') {
@@ -9279,7 +9684,10 @@ Copyright (C) 2019 The noVNC Authors
 
             // Same resolution order the rest of the page uses: the provider the user
             // connected with, then the page-selected provider, then the injected default.
-            var eth = resolveEthereumProvider(window.__axonosSelectedProvider);
+            var pinnedProvider = window.__axonosSelectedProvider ||
+                selectedEthereumProvider || null;
+            var providerWasUnpinnedFallback = !pinnedProvider;
+            var eth = resolveEthereumProvider(pinnedProvider);
             if (!eth || typeof eth.request !== 'function') {
                 window.axonosWalletPreflightFailure = 'provider_unavailable';
                 axonosMarkWalletProviderOutOfSync(
@@ -9291,13 +9699,37 @@ Copyright (C) 2019 The noVNC Authors
             }
 
             var method = requestPermission ? 'eth_requestAccounts' : 'eth_accounts';
+            // Capture before the original provider request. A protected
+            // accountsChanged event deliberately leaves verifiedWalletAddress in
+            // place, so identity equality alone cannot detect a switch that
+            // happened while this request was pending.
+            var preflightRecoveryContext =
+                axonosCaptureWalletRecoveryContext(verifiedNormalized);
+            var identityStillCurrent = function () {
+                return String(window.verifiedWalletAddress || '').trim().toLowerCase() ===
+                        verifiedNormalized &&
+                    (axonosWalletConnectGeneration || 0) ===
+                        preflightRecoveryContext.connectGeneration &&
+                    (window.__axonosSelectedProvider ||
+                        selectedEthereumProvider || null) ===
+                        preflightRecoveryContext.selectedProvider &&
+                    !window.axonosWalletSwitchInProgress &&
+                    !window.axonosWalletDisconnectPromise;
+            };
+            var preflightRecoveryIsCurrent = function () {
+                return identityStillCurrent() &&
+                    axonosWalletRecoveryContextIsCurrent(
+                        preflightRecoveryContext,
+                        true
+                    );
+            };
             return axonosWalletProviderRequest(
                 eth,
                 { method: method },
                 'Wallet confirmation timed out. The running session was left unchanged.',
                 requestPermission ? 60000 : 15000
             ).then(function (accounts) {
-                if (String(window.verifiedWalletAddress || '').trim().toLowerCase() !== verifiedNormalized) {
+                if (!identityStillCurrent()) {
                     window.axonosWalletPreflightFailure = 'stale_identity';
                     return false;
                 }
@@ -9305,29 +9737,137 @@ Copyright (C) 2019 The noVNC Authors
                     ? String(accounts[0]).trim() : '';
                 var valid = /^0x[a-fA-F0-9]{40}$/.test(current);
                 if (!current || !valid) {
-                    window.axonosWalletPreflightFailure = 'account_unavailable';
-                    onWalletAccountsChanged(accounts, eth);
-                    return false;
+                    // No usable account on this provider. With several wallet
+                    // extensions injected, this provider slot may belong to a
+                    // different wallet than the one that verified — check whether
+                    // another announced provider still exposes the verified
+                    // account and re-pin to it before failing closed.
+                    return axonosRecoverVerifiedWalletProvider(
+                        verifiedNormalized,
+                        eth,
+                        requestPermission,
+                        preflightRecoveryIsCurrent
+                    )
+                        .then(function (entry) {
+                            if (!preflightRecoveryIsCurrent()) return false;
+                            if (entry) {
+                                axonosAdoptWalletProvider(entry.provider);
+                                axonosClearWalletProviderOutOfSync();
+                                return true;
+                            }
+                            window.axonosWalletPreflightFailure = 'account_unavailable';
+                            onWalletAccountsChanged(accounts, eth);
+                            return false;
+                        });
                 }
                 if (current.toLowerCase() !== verifiedNormalized) {
+                    if (providerWasUnpinnedFallback) {
+                        // Cookie restore has no in-memory provider selection. If
+                        // window.ethereum belongs to a competing wallet, prefer a
+                        // passively verified announced provider before treating
+                        // the mismatch as an intentional account switch.
+                        return axonosRecoverVerifiedWalletProvider(
+                            verifiedNormalized,
+                            eth,
+                            false,
+                            preflightRecoveryIsCurrent
+                        ).then(function (entry) {
+                            if (!preflightRecoveryIsCurrent()) return false;
+                            if (entry) {
+                                axonosAdoptWalletProvider(entry.provider);
+                                axonosClearWalletProviderOutOfSync();
+                                return true;
+                            }
+                            window.axonosWalletPreflightFailure = 'account_mismatch';
+                            onWalletAccountsChanged(accounts, eth);
+                            return false;
+                        });
+                    }
+                    // A valid different account is an authoritative user action on
+                    // this provider — keep the explicit switch flow, no recovery.
                     window.axonosWalletPreflightFailure = 'account_mismatch';
                     onWalletAccountsChanged(accounts, eth);
                     return false;
                 }
-                axonosClearWalletProviderOutOfSync();
-                return true;
+                // The original response may be an A snapshot followed by an
+                // accountsChanged(B) event. Confirm passively before returning
+                // true. We intentionally do not require the old provider-event
+                // generation here: eth_requestAccounts commonly emits a same-A
+                // event, and this fresh read supersedes that harmless event.
+                return axonosWalletProviderRequest(
+                    eth,
+                    { method: 'eth_accounts' },
+                    'Wallet preflight confirmation timed out. The running session was left unchanged.',
+                    5000
+                ).then(function (confirmedAccounts) {
+                    if (!identityStillCurrent()) {
+                        window.axonosWalletPreflightFailure = 'stale_identity';
+                        return false;
+                    }
+                    var confirmed = (Array.isArray(confirmedAccounts) &&
+                        confirmedAccounts[0])
+                        ? String(confirmedAccounts[0]).trim().toLowerCase()
+                        : '';
+                    if (confirmed !== verifiedNormalized) {
+                        window.axonosWalletPreflightFailure = confirmed
+                            ? 'account_mismatch' : 'account_unavailable';
+                        onWalletAccountsChanged(confirmedAccounts, eth);
+                        return false;
+                    }
+                    // Migrate a cookie-restored legacy session to an explicit
+                    // provider selection. Besides binding provider-specific
+                    // events, this persists its EIP-6963 RDNS for later reloads.
+                    if (providerWasUnpinnedFallback) {
+                        axonosAdoptWalletProvider(eth);
+                    }
+                    axonosClearWalletProviderOutOfSync();
+                    return true;
+                });
             }).catch(function (error) {
+                // The failed request may belong to a wallet/provider that was
+                // explicitly superseded while it was pending. Never let that
+                // late rejection mark the new identity unavailable.
+                if (!preflightRecoveryIsCurrent()) return false;
                 // Provider failure or a dismissed prompt is non-authoritative: block the
                 // claim, keep the authenticated identity and retained jobs, and let retry
-                // perform a fresh preflight.
+                // perform a fresh preflight. A transport-dead provider (extension
+                // reloaded under a long-lived tab) gets one recovery attempt against a
+                // freshly announced provider before failing closed.
                 window.axonosWalletPreflightFailure = error && error.code === 'AXONOS_WALLET_TIMEOUT'
                     ? 'timeout' : 'request_failed';
-                axonosMarkWalletProviderOutOfSync(
-                    'unavailable',
-                    null,
-                    'Could not confirm the active wallet. New claims and payments are blocked; any running session was left unchanged.'
-                );
-                return false;
+                var failClosed = function (failure) {
+                    var detail = axonosDescribeWalletRequestError(failure || error);
+                    axonosMarkWalletProviderOutOfSync(
+                        'unavailable',
+                        null,
+                        (detail ? detail + ' ' : '') +
+                        'Could not confirm the active wallet. New claims and payments are blocked; any running session was left unchanged.'
+                    );
+                    return false;
+                };
+                if (error && error._axonosProviderRecoveryAttempted) {
+                    return failClosed();
+                }
+                if (!axonosIsWalletTransportError(error)) return failClosed();
+                return axonosRecoverVerifiedWalletProvider(
+                    verifiedNormalized,
+                    eth,
+                    requestPermission,
+                    preflightRecoveryIsCurrent
+                )
+                    .then(function (entry) {
+                        if (!preflightRecoveryIsCurrent()) return false;
+                        if (entry) {
+                            window.axonosWalletPreflightFailure = null;
+                            axonosAdoptWalletProvider(entry.provider);
+                            axonosClearWalletProviderOutOfSync();
+                            return true;
+                        }
+                        return failClosed();
+                    }).catch(function (recoveryError) {
+                        if (!preflightRecoveryIsCurrent()) return false;
+                        return failClosed(recoveryError);
+                    });
             });
         };
 
@@ -9579,7 +10119,10 @@ Copyright (C) 2019 The noVNC Authors
         if (walletReconnectBtn) {
             walletReconnectBtn.addEventListener('click', function () {
                 if (walletReconnectBtn.disabled) return;
-                var provider = resolveEthereumProvider(window.__axonosSelectedProvider);
+                var pinnedProvider = window.__axonosSelectedProvider ||
+                    selectedEthereumProvider || null;
+                var providerWasUnpinnedFallback = !pinnedProvider;
+                var provider = resolveEthereumProvider(pinnedProvider);
                 if (!provider || typeof provider.request !== 'function') {
                     axonosMarkWalletProviderOutOfSync(
                         'unavailable', null,
@@ -9590,15 +10133,50 @@ Copyright (C) 2019 The noVNC Authors
                 walletReconnectBtn.disabled = true;
                 if (walletEndSessionBtn) walletEndSessionBtn.disabled = true;
                 var releaseFailureAtStart = window.axonosSessionReleaseFailure;
-                var reconnectGeneration = (window.axonosWalletProviderEventGeneration || 0) + 1;
-                window.axonosWalletProviderEventGeneration = reconnectGeneration;
-                axonosWalletProviderRequest(
-                    provider,
-                    { method: 'eth_requestAccounts' },
-                    'Wallet reconnect timed out. Open the wallet and retry.',
-                    60000
-                ).then(function (accounts) {
-                    if (reconnectGeneration !== window.axonosWalletProviderEventGeneration) return;
+                var reconnectGeneration = (window.axonosWalletReconnectGeneration || 0) + 1;
+                window.axonosWalletReconnectGeneration = reconnectGeneration;
+                var reconnectRecoveryContext =
+                    axonosCaptureWalletRecoveryContext(window.verifiedWalletAddress);
+                var reconnectOperationIsCurrent = function (expectedSelectedProvider) {
+                    if (reconnectGeneration !== window.axonosWalletReconnectGeneration ||
+                        String(window.verifiedWalletAddress || '').trim().toLowerCase() !==
+                            reconnectRecoveryContext.wallet ||
+                        (axonosWalletConnectGeneration || 0) !==
+                            reconnectRecoveryContext.connectGeneration ||
+                        window.axonosWalletSwitchInProgress ||
+                        window.axonosWalletDisconnectPromise) {
+                        return false;
+                    }
+                    if (arguments.length > 0 &&
+                        (window.__axonosSelectedProvider ||
+                            selectedEthereumProvider || null) !==
+                            expectedSelectedProvider) {
+                        return false;
+                    }
+                    return true;
+                };
+                var reconnectRecoveryIsCurrent = function () {
+                    return reconnectOperationIsCurrent(
+                        reconnectRecoveryContext.selectedProvider
+                    ) && axonosWalletRecoveryContextIsCurrent(
+                        reconnectRecoveryContext,
+                        true
+                    );
+                };
+                var surfaceReconnectFailure = function (error) {
+                    if (!reconnectOperationIsCurrent()) return false;
+                    var detail = axonosDescribeWalletRequestError(error);
+                    axonosMarkWalletProviderOutOfSync(
+                        'unavailable', null,
+                        (detail ? detail + ' ' : '') +
+                        'Could not reconnect the signed-in wallet. The running session was left unchanged.'
+                    );
+                    return false;
+                };
+                var completeWalletReconnect = function (
+                    accounts, activeProvider, expectedSelectedProvider
+                ) {
+                    if (!reconnectOperationIsCurrent(expectedSelectedProvider)) return false;
                     if (releaseFailureAtStart && window.axonosSessionReleaseFailure) {
                         var expectedWallet = String(releaseFailureAtStart.wallet || '').trim().toLowerCase();
                         var exposedWallet = Array.isArray(accounts) && accounts[0]
@@ -9611,7 +10189,7 @@ Copyright (C) 2019 The noVNC Authors
                             return false;
                         }
                         return axonosReauthenticateWalletForSessionRelease(
-                            releaseFailureAtStart, provider
+                            releaseFailureAtStart, activeProvider
                         ).then(function (reauthed) {
                             if (reauthed !== true) return reauthed;
                             // The user already confirmed End once; finish it now
@@ -9632,17 +10210,148 @@ Copyright (C) 2019 The noVNC Authors
                                         clearWalletIdentityAndUi();
                                     }
                                     return released;
-                                });
+                            });
                         });
                     }
-                    onWalletAccountsChanged(accounts, provider);
+                    onWalletAccountsChanged(accounts, activeProvider);
                     return true;
-                }).catch(function () {
-                    if (reconnectGeneration !== window.axonosWalletProviderEventGeneration) return;
-                    axonosMarkWalletProviderOutOfSync(
-                        'unavailable', null,
-                        'Could not reconnect the signed-in wallet. The running session was left unchanged.'
+                };
+                var recoverWalletProvider = function (error) {
+                    if (!reconnectRecoveryIsCurrent()) return false;
+                    // Before surfacing a failure, check whether another announced
+                    // provider still exposes the signed-in account (the held
+                    // provider object may be dead, or owned by a different wallet
+                    // extension) and finish the reconnect through it.
+                    var verifiedNow = String(window.verifiedWalletAddress || '').trim().toLowerCase();
+                    var requestDeclined = error && (Number(error.code) === 4001 ||
+                        /reject|denied/i.test(String(error.message || '')));
+                    var requestMustBackOff = error &&
+                        (Number(error.code) === -32002 ||
+                            Number(error.code) === -32000 ||
+                            /already pending|too frequent|rate.?limit/i.test(
+                                String(error.message || '')
+                            ));
+                    var recovery = verifiedNow && !requestDeclined
+                        ? axonosRecoverVerifiedWalletProvider(
+                            verifiedNow,
+                            provider,
+                            !requestMustBackOff,
+                            reconnectRecoveryIsCurrent
+                        )
+                        : Promise.resolve(null);
+                    return recovery.then(function (entry) {
+                        // A selected provider's disconnect/connect lifecycle event
+                        // is the reason recovery may be needed, so it does not
+                        // invalidate this operation. Account events still do.
+                        if (!reconnectRecoveryIsCurrent()) return false;
+                        if (entry) {
+                            axonosAdoptWalletProvider(entry.provider);
+                            // Passive discovery is safe during -32002/-32000
+                            // backoff, but the failed-End completion path would
+                            // immediately re-authenticate (requestAccounts +
+                            // personal_sign). Keep the recovered provider pinned
+                            // and wait for a later explicit retry instead.
+                            if (requestMustBackOff && releaseFailureAtStart &&
+                                window.axonosSessionReleaseFailure) {
+                                return surfaceReconnectFailure(error);
+                            }
+                            // Feed a recovered provider through the exact same
+                            // completion path. In particular, a prior failed End
+                            // operation must re-authenticate and retry now, not
+                            // require a second Reconnect click.
+                            return completeWalletReconnect(
+                                [verifiedNow], entry.provider, entry.provider
+                            );
+                        }
+                        return surfaceReconnectFailure(error);
+                    });
+                };
+                axonosWalletProviderRequest(
+                    provider,
+                    { method: 'eth_requestAccounts' },
+                    'Wallet reconnect timed out. Open the wallet and retry.',
+                    60000
+                ).then(function (accounts) {
+                    var exposedWallet = Array.isArray(accounts) && accounts[0]
+                        ? String(accounts[0]).trim().toLowerCase() : '';
+                    if (providerWasUnpinnedFallback && exposedWallet &&
+                        /^0x[a-f0-9]{40}$/.test(exposedWallet) &&
+                        exposedWallet !== reconnectRecoveryContext.wallet) {
+                        return axonosRecoverVerifiedWalletProvider(
+                            reconnectRecoveryContext.wallet,
+                            provider,
+                            true,
+                            reconnectRecoveryIsCurrent
+                        ).then(function (entry) {
+                            if (!reconnectRecoveryIsCurrent()) return false;
+                            if (!entry) {
+                                return completeWalletReconnect(
+                                    accounts,
+                                    provider,
+                                    reconnectRecoveryContext.selectedProvider
+                                );
+                            }
+                            axonosAdoptWalletProvider(entry.provider);
+                            return completeWalletReconnect(
+                                [reconnectRecoveryContext.wallet],
+                                entry.provider,
+                                entry.provider
+                            );
+                        });
+                    }
+                    if (exposedWallet === reconnectRecoveryContext.wallet) {
+                        if (!reconnectOperationIsCurrent(
+                            reconnectRecoveryContext.selectedProvider
+                        )) return false;
+                        // As with the protected-action preflight, a prompt can
+                        // resolve with an A snapshot just after the provider has
+                        // moved to B. Passively re-read before treating A as
+                        // authoritative or retrying a failed session release.
+                        return axonosWalletProviderRequest(
+                            provider,
+                            { method: 'eth_accounts' },
+                            'Wallet reconnect confirmation timed out. Open the wallet and retry.',
+                            5000
+                        ).then(function (confirmedAccounts) {
+                            if (!reconnectOperationIsCurrent(
+                                reconnectRecoveryContext.selectedProvider
+                            )) return false;
+                            var confirmedWallet = Array.isArray(confirmedAccounts) &&
+                                confirmedAccounts[0]
+                                ? String(confirmedAccounts[0]).trim().toLowerCase()
+                                : '';
+                            if (confirmedWallet !==
+                                reconnectRecoveryContext.wallet) {
+                                return completeWalletReconnect(
+                                    confirmedAccounts,
+                                    provider,
+                                    reconnectRecoveryContext.selectedProvider
+                                );
+                            }
+                            if (providerWasUnpinnedFallback) {
+                                // Successful legacy fallback becomes the explicit
+                                // provider, including persisted EIP-6963 identity.
+                                axonosAdoptWalletProvider(provider);
+                                return completeWalletReconnect(
+                                    confirmedAccounts, provider, provider
+                                );
+                            }
+                            return completeWalletReconnect(
+                                confirmedAccounts,
+                                provider,
+                                reconnectRecoveryContext.selectedProvider
+                            );
+                        }, recoverWalletProvider);
+                    }
+                    return completeWalletReconnect(
+                        accounts,
+                        provider,
+                        reconnectRecoveryContext.selectedProvider
                     );
+                }, recoverWalletProvider).catch(function (error) {
+                    // Errors after account recovery (signature/release retry)
+                    // are surfaced but must never trigger another provider probe.
+                    return surfaceReconnectFailure(error);
                 }).finally(function () {
                     walletReconnectBtn.disabled = false;
                     if (walletEndSessionBtn) walletEndSessionBtn.disabled = false;
@@ -9804,19 +10513,32 @@ Copyright (C) 2019 The noVNC Authors
         // to see which provider object actually emits accountsChanged on a dropdown switch.
         (function diagnoseAccountsChangedSources() {
             try {
-                var we = getSafeWindowEthereum();
-                if (we && typeof we.on === 'function') {
-                    we.on('accountsChanged', function (a) {
-                        console.log('[AxonOS DIAG] window.ethereum accountsChanged:', a, 'isMetaMask=', we.isMetaMask, 'sameAsSelected=', we === window.__axonosSelectedProvider);
+                // requestProvider is intentionally dispatched during every
+                // rediscovery. Keep this diagnostic listener idempotent too.
+                var diagnosticProviders = [];
+                var bindDiagnosticProvider = function (provider, label) {
+                    if (!provider || typeof provider.on !== 'function' ||
+                        diagnosticProviders.indexOf(provider) !== -1) return;
+                    diagnosticProviders.push(provider);
+                    provider.on('accountsChanged', function (accounts) {
+                        console.log(
+                            '[AxonOS DIAG] ' + label + ' accountsChanged:',
+                            accounts,
+                            'isMetaMask=',
+                            provider.isMetaMask,
+                            'sameAsSelected=',
+                            provider === window.__axonosSelectedProvider
+                        );
                     });
-                }
+                };
+                var we = getSafeWindowEthereum();
+                bindDiagnosticProvider(we, 'window.ethereum');
                 window.addEventListener('eip6963:announceProvider', function (ev) {
                     var d = ev && ev.detail;
-                    if (d && d.provider && typeof d.provider.on === 'function') {
-                        d.provider.on('accountsChanged', function (a) {
-                            console.log('[AxonOS DIAG] EIP-6963 provider accountsChanged:', (d.info && d.info.name), a, 'sameAsSelected=', d.provider === window.__axonosSelectedProvider);
-                        });
-                    }
+                    bindDiagnosticProvider(
+                        d && d.provider,
+                        'EIP-6963 ' + String(d && d.info && d.info.name || 'provider')
+                    );
                 });
                 window.dispatchEvent(new Event('eip6963:requestProvider'));
             } catch (e) {

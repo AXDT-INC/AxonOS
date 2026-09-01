@@ -219,6 +219,7 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         ):
             self.assertIn(state_reset, cleanup)
         self.assertIn("localStorage.removeItem('axonos_last_wallet')", cleanup)
+        self.assertIn("localStorage.removeItem('axonos_wallet_provider_rdns')", cleanup)
         self.assertIn("clearInterval(UI._axgtStatusPollId)", cleanup)
         self.assertIn("UI._axgtStatusPollId = null", cleanup)
         self.assertIn("UI._axgtStopSessionTimer()", cleanup)
@@ -860,6 +861,184 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         self.assertIn("_axonosStaleWalletAttempt", verify)
         self.assertIn("axonosPromiseWithTimeout(", observer)
         self.assertIn("session status unavailable", observer)
+
+    def test_wallet_prompt_dedup_quarantines_stuck_request_and_sync_throw_safe(self) -> None:
+        helpers = self._page_between(
+            "var axonosPendingWalletPrompts = new WeakMap()",
+            "function axonosInvalidateWalletVerification()",
+        )
+
+        self.assertIn("eth_requestAccounts", helpers)
+        self.assertIn("wallet_requestPermissions", helpers)
+        self.assertIn("underlying = promptEntry.promise", helpers)
+        self.assertIn("timeoutCount: 0", helpers)
+        self.assertIn("promptEntry.timeoutCount += 1", helpers)
+        self.assertIn("promptEntry.timeoutCount >= 2", helpers)
+        self.assertIn("AXONOS_WALLET_STUCK_PROMPT", helpers)
+        self.assertIn("promptEntry.method !== promptMethod", helpers)
+        self.assertIn("busyError.code = -32002", helpers)
+        self.assertIn(
+            "axonosPendingWalletPrompts.set(eth, promptEntry)",
+            helpers,
+        )
+        self.assertNotIn("current[promptMethod]", helpers)
+        self.assertIn(
+            "Promise.resolve(underlying).then(clearPending, clearPending)",
+            helpers,
+        )
+        # A page timeout cannot cancel the extension's underlying prompt. Keep
+        # it quarantined until it actually settles instead of deleting it and
+        # stacking a second wallet-side prompt.
+        self.assertNotIn(
+            "promptEntry.timeoutCount >= 2) {\n                        clearPending()",
+            helpers,
+        )
+        # Calling request() inside a promise callback converts an extension's
+        # synchronous transport throw into the rejected-promise contract every
+        # preflight/recovery caller already handles.
+        self.assertGreaterEqual(
+            helpers.count("Promise.resolve().then(function ()"),
+            2,
+        )
+        self.assertNotIn("underlying = eth.request(request)", helpers)
+
+    def test_wallet_provider_probe_is_first_match_revalidated_and_fail_closed(self) -> None:
+        registry = self._page_between(
+            "var axonosAnnouncedWalletProviders = []",
+            "function resolveEthereumProvider(provider)",
+        )
+        recovery = self._page_between(
+            "function axonosCaptureWalletRecoveryContext(wallet)",
+            "function axonosIsWalletTransportError(error)",
+        )
+        probe = self._page_between(
+            "function axonosProbeProvidersForVerifiedAccount(verifiedNormalized, excludeEth)",
+            "function setEthDepositUiEnabled(enabled)",
+        )
+
+        self.assertIn("var uuid = String(info.uuid || '').toLowerCase()", registry)
+        self.assertIn("entry.uuid === uuid", registry)
+        self.assertNotIn("entry.rdns === rdns", registry)
+        self.assertIn("axonos_wallet_provider_rdns", registry)
+        self.assertIn("for (var i = announced.length - 1", registry)
+        self.assertIn("connectGeneration", recovery)
+        self.assertIn("providerEventGeneration", recovery)
+        self.assertIn("accountEventGeneration", recovery)
+        self.assertIn("allowProviderLifecycleChange", recovery)
+        self.assertIn("selectedProvider", recovery)
+        self.assertIn("!window.axonosWalletSwitchInProgress", recovery)
+        self.assertIn("!window.axonosWalletDisconnectPromise", recovery)
+        self.assertIn("return new Promise(function (resolve)", probe)
+        self.assertIn("if (entry)", probe)
+        self.assertNotIn("Promise.all", probe)
+        self.assertGreaterEqual(probe.count("{ method: 'eth_accounts' }"), 2)
+        self.assertIn("Wallet probe confirmation timed out.", probe)
+        self.assertIn(".catch(function () { finish(null); })", probe)
+        self.assertIn("return confirmed === verifiedNormalized ? entry : null", probe)
+
+    def test_prompted_provider_recovery_is_revalidated_before_adoption(self) -> None:
+        recovery = self._page_between(
+            "function axonosRecoverVerifiedWalletProvider(",
+            "// Silently ask every OTHER announced provider",
+        )
+
+        self.assertIn("{ method: 'eth_requestAccounts' }", recovery)
+        self.assertIn("{ method: 'eth_accounts' }", recovery)
+        self.assertIn("Wallet recovery confirmation timed out.", recovery)
+        self.assertIn("typeof recoveryIsCurrent === 'function'", recovery)
+        self.assertLess(
+            recovery.index("!recoveryIsCurrent()"),
+            recovery.index("{ method: 'eth_requestAccounts' }"),
+        )
+        self.assertIn(
+            "return confirmed === verifiedNormalized ? replacement : null",
+            recovery,
+        )
+
+    def test_wallet_permission_fallback_only_handles_explicit_unsupported_method(self) -> None:
+        connect = self._page_between(
+            "async function requestConnectedWallet(provider)",
+            "function axonosDiscountMinEthStr()",
+        )
+
+        self.assertIn("Number(permErr.code) === -32601", connect)
+        self.assertIn("Number(permErr.code) === 4200", connect)
+        self.assertIn("if (!unsupportedPermissions) throw permErr", connect)
+        self.assertNotIn("permErr.code === 'AXONOS_WALLET_TIMEOUT'", connect)
+
+    def test_successful_legacy_provider_fallback_is_adopted_and_persisted(self) -> None:
+        preflight = self._page_between(
+            "window.axonosEnsureWalletSessionCurrent = function (opts)",
+            "// HUD wallet controls",
+        )
+        reconnect = self._page_between(
+            "var walletReconnectBtn = document.getElementById('axonos_wallet_reconnect_btn')",
+            "// EIP-1193 wallet events fire",
+        )
+
+        self.assertIn("if (providerWasUnpinnedFallback) {", preflight)
+        self.assertIn("axonosAdoptWalletProvider(eth);", preflight)
+        self.assertIn(
+            "exposedWallet === reconnectRecoveryContext.wallet",
+            reconnect,
+        )
+        self.assertIn("Wallet reconnect confirmation timed out.", reconnect)
+        self.assertIn("axonosAdoptWalletProvider(provider);", reconnect)
+        self.assertIn("confirmedAccounts, provider, provider", reconnect)
+
+    def test_direct_preflight_match_is_passively_revalidated(self) -> None:
+        preflight = self._page_between(
+            "window.axonosEnsureWalletSessionCurrent = function (opts)",
+            "// HUD wallet controls",
+        )
+
+        self.assertIn("Wallet preflight confirmation timed out.", preflight)
+        self.assertGreaterEqual(preflight.count("{ method: 'eth_accounts' }"), 1)
+        self.assertIn("confirmed !== verifiedNormalized", preflight)
+        self.assertIn("preflightRecoveryContext.connectGeneration", preflight)
+        self.assertIn("!window.axonosWalletSwitchInProgress", preflight)
+        self.assertIn("!window.axonosWalletDisconnectPromise", preflight)
+        outer_catch = preflight.index("}).catch(function (error) {")
+        stale_guard = preflight.index(
+            "if (!preflightRecoveryIsCurrent()) return false;",
+            outer_catch,
+        )
+        failure_write = preflight.index(
+            "window.axonosWalletPreflightFailure = error",
+            outer_catch,
+        )
+        self.assertLess(stale_guard, failure_write)
+        self.assertLess(
+            preflight.index("confirmed !== verifiedNormalized"),
+            preflight.index("axonosAdoptWalletProvider(eth);"),
+        )
+
+    def test_reconnect_recovery_respects_decline_and_stale_identity(self) -> None:
+        actions = self._page_between(
+            "var walletReconnectBtn = document.getElementById('axonos_wallet_reconnect_btn')",
+            "// EIP-1193 wallet events fire",
+        )
+
+        self.assertIn("Number(error.code) === 4001", actions)
+        self.assertIn("!requestDeclined", actions)
+        self.assertIn("requestMustBackOff", actions)
+        self.assertIn("Number(error.code) === -32002", actions)
+        self.assertIn("Number(error.code) === -32000", actions)
+        self.assertIn("!requestMustBackOff", actions)
+        self.assertIn(
+            "if (requestMustBackOff && releaseFailureAtStart &&",
+            actions,
+        )
+        self.assertIn("reconnectRecoveryIsCurrent", actions)
+        self.assertIn("reconnectRecoveryContext,\n                        true", actions)
+        self.assertIn("reconnectRecoveryContext", actions)
+        self.assertIn("completeWalletReconnect", actions)
+        self.assertIn("releaseFailureAtStart, activeProvider", actions)
+        identity_guard = "axonosWalletRecoveryContextIsCurrent("
+        self.assertLess(
+            actions.index(identity_guard),
+            actions.index("axonosAdoptWalletProvider(entry.provider)"),
+        )
 
     def test_credit_exhaustion_warning_remains_readable(self) -> None:
         warning = "Credit exhausted · 2h top-up grace. Jobs are still running"
