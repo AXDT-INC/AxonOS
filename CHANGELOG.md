@@ -107,6 +107,28 @@ agent access over SSH.
   pinned for CUDA compatibility with MCA defaults wired into XFCE shells and
   session `docker run`.
 
+#### AxonAI (built-in AI assistant)
+
+- Added a loopback-only OpenCode 1.18.26 backend using Qwen 3.8, with one
+  persistent session per conversation, tool and subagent execution, live
+  progress, user approvals and questions, and screenshot attachments.
+- Added agent routing controls (`/agent`, `/chat`, `/vision`), server-side abort
+  through **Stop**, clean-session **Reset**, and a Settings switch to disable
+  agentic mode.
+- Added acknowledged asynchronous dispatch, fail-closed cancellation fencing,
+  and a root-managed permission policy so stopped or locally reconfigured turns
+  cannot silently resume with broader tool authority. Ambiguous cleanup requires
+  a full AxonOS session restart because detached tool processes cannot be fenced
+  by deleting a session or restarting OpenCode alone. A runtime marker carries
+  that fail-closed state across GUI crashes and multiple AxonAI windows. A
+  trusted shell-environment bridge preserves normal desktop HOME/XDG/display
+  behavior for approved tools.
+- Rebranded the built-in assistant as **AxonAI** and aligned its GTK/WebKit UI
+  with the AxonOS v2 near-black, purple, and teal design system.
+- Made AxonAI and Talk to K single-instance, initially maximized applications
+  with native move/minimize/maximize controls. Vision turns temporarily unmap
+  AxonAI before capturing the desktop, then restore it maximized.
+
 #### Documentation
 - New guides: `docs/WEBRTC.md`, `docs/ENVIRONMENT_VARIABLES.md`,
   `docs/TOKENOMICS.md` (rewritten), `docs/HOST_LAUNCHER.md`, `docs/GROMACS.md`,
@@ -128,7 +150,7 @@ agent access over SSH.
 - Default payment configuration switched to **mainnet**: AXGT on Ethereum
   mainnet, USDC on Base mainnet; dynamic USD pricing on at $1/hour with the AXGT
   pay-in bonus.
-- Default model switched to `gemma4:31b`; clipboard routed through the sidebar
+- Default model switched to `qwen3.8:latest`; clipboard routed through the sidebar
   panel; "Ending session…" / "Resuming session" loader copy clarified.
 - Telemetry note: statistics recorded before 2026-06-18 11:19 UTC are testnet.
 - Local env files (`.env.*`) are now gitignored; `env.example` stays tracked.

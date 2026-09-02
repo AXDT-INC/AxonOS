@@ -97,8 +97,7 @@ axonos config load --file my-config.json
     "ugene": true
   },
   "ollama_models": [
-    "gemma4:31b",
-    "granite3.2-vision"
+    "qwen3.8:latest"
   ],
   "username": "aXonian",
   "password": "REPLACE_WITH_STRONG_PASSWORD",

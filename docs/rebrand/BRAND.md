@@ -3,6 +3,7 @@
 ## Canonical Names
 
 - **Primary name**: `AxonOS` (one word, camelCase)
+- **Built-in AI name**: `AxonAI` (one word, camelCase)
 - **Alternative form**: `Axon OS` (two words) - avoid unless needed for readability
 - **Repository slug**: `axonos` (lowercase, no spaces)
 - **Lowercase variant**: `axonos` (for IDs, paths, identifiers)
@@ -11,7 +12,8 @@
 
 ### When to Use Each Form
 
-- **AxonOS**: Use in all user-facing text, titles, documentation
+- **AxonOS**: Use for the operating system and platform in user-facing text, titles, and documentation
+- **AxonAI**: Use for the built-in AI assistant in user-facing text and titles
 - **axonos**: Use in:
   - File paths and directory names
   - Code identifiers (variables, functions, classes)
@@ -36,7 +38,7 @@
 | DeSci OS | AxonOS | Avoid this form |
 | DeSciOS.io | AxonOS.io | Only if domain exists; otherwise remove |
 | DeSciOS Launcher | AxonOS Launcher | Application name |
-| DeSciOS Assistant | AxonOS Assistant | Application name |
+| DeSciOS Assistant | AxonAI | Application name |
 | deScier | aXonian | Default username |
 | GizmoQuest/DeSciOS | AxonDAO-AXGT/AxonOS | GitHub repository |
 | descios.desciindia.org | Remove or update | Domain references |
@@ -52,7 +54,7 @@
 
 ### Python
 - Module names: `axonos_launcher`, `axonos_assistant`
-- Class names: `AxonOSLauncher`, `AxonOSAssistant`
+- Class names: `AxonOSLauncher`, `AxonAIWindow`
 - Variable names: `axonos_dir`, `axonos_image`
 
 ### CSS

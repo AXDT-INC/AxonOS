@@ -369,7 +369,7 @@
 <rect x="1512" y="758" width="220" height="106" rx="10" fill="rgba(123,224,200,0.08)" stroke="rgba(123,224,200,0.22)" stroke-width="1"/>
 <text x="1622" y="778" text-anchor="middle" font-size="12" font-weight="700" fill="#e8edf4">Scientific Apps</text>
 <text x="1622" y="794" text-anchor="middle" font-size="9" fill="rgba(123,224,200,0.62)" font-family="'SF Mono',Menlo,Consolas,monospace">JupyterLab :8888</text>
-<text x="1622" y="809" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">Ollama gemma4 / granite3</text>
+<text x="1622" y="809" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">Ollama qwen3.8 (multimodal)</text>
 <text x="1622" y="824" text-anchor="middle" font-size="9" fill="rgba(170,210,225,0.44)" font-family="'SF Mono',Menlo,Consolas,monospace">IPFS / PyMOL / GROMACS</text>
 <text x="1622" y="856" text-anchor="middle" font-size="8" fill="rgba(123,224,200,0.36)" font-family="'SF Mono',Menlo,Consolas,monospace">RStudio / QGIS / Nextflow</text>
 

@@ -27,7 +27,7 @@ python3 axonos_launcher/main.py
 
 1. **Applications Tab**
    - Select which applications to install
-   - Mandatory: AxonOS Assistant, Font, and Python3-pip (always included)
+   - Mandatory: AxonAI, its UI font, and Python3-pip (always included)
    - Optional: All other scientific applications (JupyterLab is now truly optional!)
    - Custom applications marked with 🧩 emoji
    - Use "Select All", "Select None", or "Reset to Defaults" buttons
@@ -48,7 +48,7 @@ python3 axonos_launcher/main.py
    - Configure Ollama AI models (one per line)
    - Set username and VNC password
    - Enable/disable GPU support for deployment
-   - Default models: gemma4:31b, granite3.2-vision
+   - Default model: qwen3.8:latest
 
 4. **Build & Deploy Tab**
    - Set custom Docker image tag

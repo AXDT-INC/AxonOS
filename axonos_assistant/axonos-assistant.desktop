@@ -1,10 +1,12 @@
 [Desktop Entry]
-Name=AxonOS Assistant
-Comment=
+Name=AxonAI
+Comment=Private local research agent for AxonOS
 Exec=/usr/bin/python3 /opt/axonos_assistant/main.py
 Icon=/usr/share/pixmaps/axonos_assistant.png
 Terminal=false
 Type=Application
-Categories=Education
+Categories=Utility;
+Keywords=AI;Research;Science;Assistant;OpenCode;
+StartupWMClass=AxonAI
 StartupNotify=true
-X-GNOME-UsesNotifications=true 
+X-GNOME-UsesNotifications=true

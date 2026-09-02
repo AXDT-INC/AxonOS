@@ -28,7 +28,9 @@ import json
 import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('Notify', '0.7')
-from gi.repository import Gtk, GLib, Notify, Gdk, WebKit2, Pango
+gi.require_version('WebKit2', '4.0')
+from gi.repository import Gtk, GLib, Gio, Notify, Gdk, WebKit2, Pango
+import sys
 import threading
 import markdown
 import random
@@ -81,25 +83,23 @@ body { color: #e6e6e6; }
     
     return f"<style>{common_style}{theme_style}</style>"
 
-class TalkToKChatWidget(Gtk.Window):
-    def __init__(self):
-        Gtk.Window.__init__(self, title="Talk to K")
-        self.set_default_size(500, 680)
-        self.set_keep_above(True)
+class TalkToKChatWidget(Gtk.ApplicationWindow):
+    def __init__(self, application):
+        Gtk.ApplicationWindow.__init__(self, application=application, title="Talk to K")
+        self.set_name("talk_to_k_window")
+        self.set_wmclass("TalkToK", "TalkToK")
+        self.set_default_size(1000, 720)
         self.set_resizable(True)
-        self.set_position(Gtk.WindowPosition.CENTER_ALWAYS)
         self.set_border_width(0)
-        self.set_icon_name("applications-education")
-        self.set_app_paintable(True)
-        self.set_visual(self.get_screen().get_rgba_visual())
-        self.override_background_color(Gtk.StateFlags.NORMAL, Gdk.RGBA(0, 0, 0, 0))
-        self.set_decorated(False)
-        self.set_opacity(0.95)
-        self.set_events(Gdk.EventMask.BUTTON_PRESS_MASK)
-        self.connect("button-press-event", self.on_window_button_press)
+        try:
+            self.set_icon_from_file("/usr/share/pixmaps/talk_to_k.png")
+        except GLib.Error:
+            self.set_icon_name("applications-education")
+        self._launch_maximize_pending = True
+        self.connect("map-event", self.on_first_map)
         self.messages = []  # Store (sender, message) tuples for re-rendering
         self.ollama_url = "http://localhost:11434/api/generate"
-        self.text_model = "gemma4:31b"
+        self.text_model = "qwen3.8:latest"
         
         self.conversation_history = []  # Store conversation for context
         
@@ -124,9 +124,11 @@ class TalkToKChatWidget(Gtk.Window):
         # Header bar
         header = Gtk.HeaderBar()
         header.set_show_close_button(True)
-        header.set_title("Talk to K - In dialogue with Krishnamurti")
+        header.set_decoration_layout("menu:minimize,maximize,close")
+        header.set_title("Talk to K")
+        header.set_subtitle("In dialogue with Krishnamurti")
         header.set_name("headerbar")
-        main_vbox.pack_start(header, False, False, 0)
+        self.set_titlebar(header)
 
         # Chat area (scrollable)
         self.chat_listbox = Gtk.ListBox()
@@ -268,6 +270,7 @@ class TalkToKChatWidget(Gtk.Window):
                       "What questions arise in you about the nature of existence?")
         self.append_message("assistant", welcome_msg)
         self.update_app_theme()
+        self.maximize()
         self.show_all()
 
     def update_app_theme(self):
@@ -364,9 +367,12 @@ class TalkToKChatWidget(Gtk.Window):
         
         self.css_provider.load_from_data(css.encode())
 
-    def on_window_button_press(self, widget, event):
-        if event.type == Gdk.EventType.BUTTON_PRESS and event.button == 1:
-            self.begin_move_drag(event.button, int(event.x_root), int(event.y_root), event.time)
+    def on_first_map(self, _widget, _event):
+        """Ask the window manager for maximization once after the titlebar maps."""
+        if self._launch_maximize_pending:
+            self._launch_maximize_pending = False
+            self.maximize()
+        return False
 
     def append_message(self, sender, message):
         print(f"append_message called with sender={sender}, message={message}")
@@ -948,9 +954,23 @@ class TalkToKChatWidget(Gtk.Window):
         self.on_send_clicked(widget)
 
 def main():
-    win = TalkToKChatWidget()
-    win.connect("destroy", Gtk.main_quit)
-    Gtk.main()
+    GLib.set_application_name("Talk to K")
+    application = Gtk.Application(
+        application_id="org.axonos.TalkToK",
+        flags=Gio.ApplicationFlags.FLAGS_NONE,
+    )
+
+    def on_activate(app):
+        window = app.get_active_window()
+        if window is None:
+            window = TalkToKChatWidget(app)
+        else:
+            window.deiconify()
+            window.maximize()
+        window.present()
+
+    application.connect("activate", on_activate)
+    return application.run(sys.argv)
 
 if __name__ == "__main__":
-    main() 
+    raise SystemExit(main())

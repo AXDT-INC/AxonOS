@@ -28,6 +28,14 @@ if ! grep -q "AxonOS" /etc/hosts; then
     echo "127.0.0.1 AxonOS" >> /etc/hosts
 fi
 
+# An OpenCode prompt can outlive the GTK frontend that dispatched it. This
+# runtime marker is intentionally cleared only when the whole container/session
+# starts, which is the boundary that also terminates detached tool processes.
+install -d -m 0700 -o aXonian -g aXonian /run/axonos-assistant
+rm -f \
+    /run/axonos-assistant/opencode-active \
+    /run/axonos-assistant/opencode-active.lock
+
 # Refresh NVSHMEM library paths at runtime so GUI shells match SSH
 NVSHMEM_DIRS="$(ls -d \
   /opt/nvidia/hpc_sdk/Linux_x86_64/*/comm_libs/nvshmem*/lib \
@@ -343,8 +351,8 @@ if [ -d "/usr/share/themes/WhiteSur-Dark" ]; then
             DISPLAY=:0 xfconf-query -c xfce4-panel -p /panels/panel-1/show-tooltips -n -t bool -s false 2>/dev/null || true
             DISPLAY=:0 xfconf-query -c xfce4-panel -p /panels/panel-1/background-style -n -t int -s 0 2>/dev/null || true
             DISPLAY=:0 xfconf-query -c xfce4-panel -p /panels/panel-1/background-alpha -n -t uint -s 0 2>/dev/null || true
-            # Don't reserve space on borders - allows tooltips to appear above panel
-            DISPLAY=:0 xfconf-query -c xfce4-panel -p /panels/panel-1/don-t-reserve-space-on-borders -n -t bool -s true 2>/dev/null || true
+            # Reserve the panel strut so maximized windows never sit behind it.
+            DISPLAY=:0 xfconf-query -c xfce4-panel -p /panels/panel-1/disable-struts -n -t bool -s false 2>/dev/null || true
 
             # Separator plugins: force "Transparent" style (0) instead of visible line
             # plugin-3,6,8,10 are separators per /etc/xdg/xfce4/panel/default.xml
@@ -374,7 +382,22 @@ if [ -d "/usr/share/themes/WhiteSur-Dark" ]; then
             DISPLAY=:0 xfconf-query -c xfce4-panel -p /plugins/plugin-5/command -n -t string -s "" 2>/dev/null || true
 
             # Launcher plugins: hide labels to show only icons (images)
-            # plugin-7: AxonOS Assistant, plugin-9: Talk to K
+            # plugin-7: AxonAI, plugin-9: Talk to K
+            # XFCE copies launcher entries into each persistent user profile.
+            # Refresh AxonAI's copy during upgrades so an older display name and
+            # StartupWMClass cannot linger after the system entry is updated.
+            AXONAI_PANEL_DIR="/home/$USER/.config/xfce4/panel/launcher-7"
+            if [ -d "$AXONAI_PANEL_DIR" ] && [ -f "/usr/share/applications/axonos-assistant.desktop" ]; then
+                for AXONAI_PANEL_ENTRY in "$AXONAI_PANEL_DIR"/*.desktop; do
+                    [ -f "$AXONAI_PANEL_ENTRY" ] || continue
+                    if grep -q '/opt/axonos_assistant/main.py' "$AXONAI_PANEL_ENTRY" \
+                        && { ! grep -q '^Name=AxonAI$' "$AXONAI_PANEL_ENTRY" \
+                            || ! grep -q '^StartupWMClass=AxonAI$' "$AXONAI_PANEL_ENTRY"; }; then
+                        install -m 0644 /usr/share/applications/axonos-assistant.desktop "$AXONAI_PANEL_ENTRY"
+                        chown "$USER:$USER" "$AXONAI_PANEL_ENTRY"
+                    fi
+                done
+            fi
             DISPLAY=:0 xfconf-query -c xfce4-panel -p /plugins/plugin-7/show-label -n -t bool -s false 2>/dev/null || true
             DISPLAY=:0 xfconf-query -c xfce4-panel -p /plugins/plugin-7/names-visible -n -t bool -s false 2>/dev/null || true
             DISPLAY=:0 xfconf-query -c xfce4-panel -p /plugins/plugin-7/show-tooltips -n -t bool -s false 2>/dev/null || true
@@ -387,6 +410,7 @@ if [ -d "/usr/share/themes/WhiteSur-Dark" ]; then
             # Disable GTK tooltips globally (GTK3) + restore dark theme
             mkdir -p /home/$USER/.config/gtk-3.0
             cat > /home/$USER/.config/gtk-3.0/settings.ini << 'GTK3'
+[Settings]
 gtk-enable-tooltips=0
 gtk-theme-name=WhiteSur-Dark
 gtk-icon-theme-name=Adwaita

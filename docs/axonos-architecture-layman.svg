@@ -217,7 +217,7 @@
 
 <!-- Always-on services strip -->
 <rect x="80" y="404" width="1048" height="28" rx="7" fill="rgba(140,200,220,0.04)" stroke="rgba(140,200,220,0.10)" stroke-width="1" stroke-dasharray="5,3"/>
-<text x="604" y="422" text-anchor="middle" font-size="8.5" font-weight="600" letter-spacing="1.5" fill="rgba(170,210,225,0.38)" font-family="'SF Mono',Menlo,Consolas,monospace">Always running inside this server:  display driver  /  desktop  /  backup connection  /  gateway  /  API  /  video encoder  /  AI assistant  /  notebooks  /  file sharing</text>
+<text x="604" y="422" text-anchor="middle" font-size="8.5" font-weight="600" letter-spacing="1.5" fill="rgba(170,210,225,0.38)" font-family="'SF Mono',Menlo,Consolas,monospace">Always running inside this server:  display driver  /  desktop  /  backup connection  /  gateway  /  API  /  video encoder  /  AxonAI  /  notebooks  /  file sharing</text>
 
 <!-- Billing & Access strip -->
 <rect x="80" y="444" width="1048" height="72" rx="9" fill="rgba(78,195,212,0.04)" stroke="rgba(78,195,212,0.12)" stroke-width="1"/>

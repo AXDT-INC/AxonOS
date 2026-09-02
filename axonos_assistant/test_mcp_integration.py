@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test script for MCP integration in AxonOS Assistant
+Test script for MCP integration in AxonAI
 
 This script tests the MCP client manager and OS context functionality.
 """
@@ -38,7 +38,7 @@ from mcp_client import get_mcp_client_manager, shutdown_mcp_client_manager
 
 async def test_mcp_integration():
     """Test MCP client manager functionality"""
-    print("🧪 Testing MCP Integration for AxonOS Assistant")
+    print("🧪 Testing MCP Integration for AxonAI")
     print("=" * 60)
     
     try:
@@ -76,7 +76,7 @@ async def test_mcp_integration():
         
         print("\n" + "=" * 60)
         print("🎉 MCP Integration Test PASSED!")
-        print("The AxonOS Assistant now has full OS context awareness.")
+        print("AxonAI now has full OS context awareness.")
         
     except Exception as e:
         print(f"❌ Test failed: {e}")
@@ -98,7 +98,7 @@ def main():
     success = asyncio.run(test_mcp_integration())
     
     if success:
-        print("\n🚀 Ready to run AxonOS Assistant with MCP support!")
+        print("\n🚀 Ready to run AxonAI with MCP support!")
         print("Run: python3 main.py")
         sys.exit(0)
     else:
@@ -106,4 +106,4 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    main() 
+    main()

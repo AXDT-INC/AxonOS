@@ -16,8 +16,8 @@
     <property name="length" type="double" value="50"/>
     <!-- "Automatically increase the length" (Panel Preferences) -->
     <property name="length-adjust" type="bool" value="true"/>
-    <!-- Don't reserve space on borders - allows tooltips to appear above panel -->
-    <property name="don-t-reserve-space-on-borders" type="bool" value="true"/>
+    <!-- Reserve the panel strut so maximized windows keep controls above it. -->
+    <property name="disable-struts" type="bool" value="false"/>
     <property name="plugin-ids" type="array">
       <value type="int" value="1"/> <!-- Applications Menu -->
       <value type="int" value="2"/> <!-- Task List -->
@@ -26,7 +26,7 @@
       <value type="int" value="6"/> <!-- Separator (non-expand) -->
       <value type="int" value="9"/> <!-- Talk to K Launcher -->
       <value type="int" value="8"/> <!-- Separator (non-expand) -->
-      <value type="int" value="7"/> <!-- AxonOS Assistant Launcher -->
+      <value type="int" value="7"/> <!-- AxonAI Launcher -->
       <value type="int" value="10"/> <!-- Separator (non-expand) -->
       <value type="int" value="5"/> <!-- Clock -->
     </property>
@@ -95,4 +95,3 @@
     </property>
   </property>
 </channel>
-

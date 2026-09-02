@@ -15,7 +15,7 @@
 Originally inspired by the idea of a Stadia-like environment, **AxonOS** evolves that vision toward enabling:
 
 - Local-first scientific computing
-- AI-assistance (with Ollama and gemma4:31b model)
+- Local-first AI assistance with Qwen 3.8 and the OpenCode 1.18.26 agent runtime
 - Peer-to-peer workflows (IPFS support included)
 - Modular scientific desktop environments for students, researchers, and citizen scientists
 
@@ -29,7 +29,7 @@ AxonOS provides a comprehensive scientific computing environment with extensive 
 
 **Current Status:**
 - ✅ Full scientific software suite operational
-- ✅ AI assistant with vision capabilities
+- ✅ Agentic AxonAI interface with tools, subagents, approvals, and vision capabilities
 - ✅ Professional GUI launcher and deployment system
 - ✅ Comprehensive documentation and extensibility
 -  Active development with ongoing enhancements
@@ -59,7 +59,8 @@ AxonOS provides a comprehensive scientific computing environment with extensive 
 | **OpenCL**        | Critical for accelerated computing in diverse scientific tools   |
 | **TigerVNC**      | VNC server to expose the XFCE desktop                            |
 | **noVNC + Websockify** | Enables browser-based access via WebSocket                     |
-| **AxonOS Assistant** | Native GTK chat interface with Ollama integration for AI assistance |
+| **AxonAI** | Native GTK research agent with Qwen 3.8, OpenCode tools, and screenshot understanding |
+| **OpenCode 1.18.26** | Loopback-only agent runtime for persistent sessions, tools, and subagents |
 | **JupyterLab**    | Development notebook environment with BeakerX multi-language support |
 | **RStudio**       | Full-featured R development environment                          |
 | **Spyder**        | Scientific Python IDE                                            |
@@ -84,7 +85,7 @@ AxonOS provides a comprehensive scientific computing environment with extensive 
 ## 🛠️ Features
 
 - 🌐 **Full Linux desktop streaming from any modern browser**
-- 🤖 **Native AI assistant with dual-model Ollama integration (gemma4:31b for text, granite3.2-vision for vision) with automatic screenshot analysis capabilities**
+- 🤖 **Native agentic AxonAI interface with Qwen 3.8, a persistent local OpenCode session, live tool progress, approvals, and screenshot analysis**
 - 📁 **Persistent scientific workspace (home folder mountable)**
 - 🧬 **Comprehensive scientific software suite**
 - 📊 **Data analysis tools (R, Python, Octave)**
@@ -109,10 +110,12 @@ AxonOS provides a comprehensive scientific computing environment with extensive 
 | `supervisord.conf` | Orchestrates services like `vncserver`, `noVNC`, and `jupyterlab` |
 | `xfce4-panel.xml` | Pre-configured XFCE panel layout |
 | `os.svg` | AxonOS branding/logo image |
-| `axonos_assistant/` | AxonOS Assistant application directory |
-| `axonos_assistant/main.py` | GTK-based chat interface with Ollama integration |
-| `axonos_assistant/requirements.txt` | Python dependencies for the assistant |
-| `axonos_assistant/axonos-assistant.desktop` | Desktop entry for the assistant |
+| `axonos_assistant/` | AxonAI application directory (stable internal path) |
+| `axonos_assistant/main.py` | GTK chat interface, routing, live agent progress, and approval dialogs |
+| `axonos_assistant/opencode_client.py` | Persistent OpenCode session and event-stream client |
+| `axonos_assistant/opencode.json` | Local Qwen provider, agent, tool, and permission policy |
+| `axonos_assistant/requirements.txt` | Python dependencies for AxonAI |
+| `axonos_assistant/axonos-assistant.desktop` | Desktop entry for AxonAI |
 | `axonos_launcher/` | AxonOS Launcher application directory |
 | `axonos_launcher/main.py` | GUI for customizing AxonOS Docker builds |
 | `axonos_launcher/README.md` | Detailed launcher documentation |
@@ -120,20 +123,34 @@ AxonOS provides a comprehensive scientific computing environment with extensive 
 
 ---
 
-## 🧑‍🔬 AxonOS Assistant
+## 🧑‍🔬 AxonAI
 
-**AxonOS Assistant** is a native GTK application that provides AI-powered assistance within the AxonOS environment. It features:
+**AxonAI** is a native GTK application that combines local Qwen 3.8 inference with the OpenCode 1.18.26 agent runtime. While agentic mode is enabled, normal text requests share one OpenCode session for the lifetime of the conversation, so follow-up requests retain the agent's working context.
 
-- **Dual-Model Ollama Integration**: Connects to local Ollama instance with gemma4:31b for text responses and granite3.2-vision for vision analysis
-- **Vision Capabilities**: Desktop screenshot analysis with intelligent image resizing (1920x1080 → 1344x1344) for visual context understanding
+- **Local Agent Runtime**: Supervisor runs OpenCode on `127.0.0.1:4096`; it connects to Qwen 3.8 through the local Ollama service
+- **Tools and Subagents**: OpenCode can inspect and edit workspace files, run commands and tests, manage multi-step work, and delegate approved tasks to subagents
+- **Live Progress**: Tool state, file changes, plans, subagent starts, retries, and errors stream into the current response while work is running
+- **Explicit Control**: File mutations, shell commands, and subagent requests require approval; AxonAI can also present questions when it needs a user decision
+- **Enforced Policy**: The supervised backend uses a root-owned executable and isolated root-owned config/home paths, so project or user plugins and config cannot relax its denials or approval requirements; a root-owned environment bridge gives approved tools the normal desktop user's HOME and display, while terminal OpenCode remains independently configurable
+- **Vision Attachments**: Screen-dependent requests capture and resize the current desktop screenshot, then attach it to the same multimodal Qwen/OpenCode conversation
+- **Stop and Reset**: **Stop** aborts the active OpenCode turn; **Reset** clears the conversation and deletes its OpenCode session only after safe cleanup, and a per-container marker prevents another AxonAI process from bypassing an unproven stop
+- **Optional Agentic Mode**: OpenCode routing can be disabled in **Settings**, leaving AxonAI on its direct local chat and vision paths
 - **Scientific Context**: Aware of AxonOS environment and available tools
 - **Web Search**: Can search and summarize web content for research queries using Brave search
 - **Tool Discovery**: Scans and reports installed scientific software from system directories
 - **Modern UI**: Clean, responsive interface with Orbitron font and dark theme support
-- **Conversation Memory**: Maintains context across multiple interactions
-- **Real-time Updates**: Dynamic message updates with WebKit-based rendering
 
-### Assistant Capabilities
+OpenCode is bound only to the container's loopback interface; its API is not published as a host-facing port by the supplied run commands. Prompt dispatch is asynchronous and reconciled against OpenCode's event stream and session status. An atomic marker under `/run/axonos-assistant` also carries this fence across GTK crashes or multiple windows. **Stop** requires a proven terminal runner state before another turn can begin. If OpenCode cannot confirm that state, AxonAI fails closed and requires an AxonOS session/container restart rather than risking overlapping tool processes.
+
+### Routing Overrides
+
+AxonAI automatically sends ordinary text turns to OpenCode and recognizes requests that depend on the current screen. Prefix a prompt to override that choice:
+
+- `/agent <request>` forces an OpenCode agent turn, even when agent mode is not the default
+- `/chat <request>` uses the direct chat path without OpenCode tools
+- `/vision <request>` captures the current screen and submits it as an image attachment
+
+### AxonAI Capabilities
 
 - Answer questions about AxonOS and its components
 - Help with scientific computing workflows
@@ -141,6 +158,9 @@ AxonOS provides a comprehensive scientific computing environment with extensive 
 - List available tools and software
 - Provide guidance on using scientific applications
 - Assist with data analysis and visualization tasks
+- Inspect and modify workspace files with approval
+- Run commands, tests, and multi-step scientific or development workflows
+- Delegate approved work to OpenCode subagents
 - Analyze desktop screenshots and visual content using computer vision
 - Identify and explain scientific visualizations, plots, and interface elements
 - Support for markdown rendering in responses
@@ -194,7 +214,7 @@ The launcher automatically detects default configurations and uses the optimized
 
 The launcher allows you to customize which applications are included:
 
-- **Core Components** (always included): AxonOS Assistant, Python3, system fonts
+- **Core Components** (always included): AxonAI, Python3, system fonts
 - **Development**: JupyterLab, Spyder, BeakerX multi-language kernels
 - **Data Science**: R & RStudio, GNU Octave
 - **Bioinformatics**: UGENE, CellModeller bacterial simulation

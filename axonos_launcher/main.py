@@ -964,9 +964,9 @@ RUN git clone https://github.com/cellmodeller/CellModeller.git && \\
         
         # Mandatory items with checkmark emoji and success color
         mandatory_items = [
-            "✅ AxonOS Assistant",
+            "✅ AxonAI",
             "✅ Talk to K (Krishnamurti dialogue)",
-            "✅ AxonOS Assistant Font", 
+            "✅ AxonAI UI Font",
             "✅ Python3-pip (System Python package manager)",
             "✅ IPFS CLI & Desktop (Decentralized file system)"
         ]
@@ -1084,7 +1084,7 @@ RUN git clone https://github.com/cellmodeller/CellModeller.git && \\
                                    relief='solid', borderwidth=1,
                                    font=('TkDefaultFont', 13))  # 11 * 1.2 = 13
         self.ollama_models.pack(fill='x', padx=15, pady=(0, 15))
-        self.ollama_models.insert('1.0', 'gemma4:31b\ngranite3.2-vision')
+        self.ollama_models.insert('1.0', 'qwen3.8:latest')
         self.ollama_models.bind('<KeyRelease>', lambda e: self.update_config_status())
         
         # User settings
@@ -1353,7 +1353,7 @@ docker start axonos
         )
         
         # Check if default models and user settings
-        default_models = self.ollama_models.get('1.0', tk.END).strip() == 'gemma4:31b\ngranite3.2-vision'
+        default_models = self.ollama_models.get('1.0', tk.END).strip() == 'qwen3.8:latest'
         default_user = self.username_var.get() == 'aXonian'
         default_password = self.password_var.get() == 'axonpassword'
         default_cuda_archs = getattr(self, "cuda_archs_var", tk.StringVar(value="70;75;86;89")).get() == '70;75;86;89'
@@ -1437,7 +1437,7 @@ docker start axonos
             for i, line in enumerate(lines):
                 if 'Install pip for system Python' in line:
                     optional_section_start = i + 2  # Start after the RUN command
-                elif 'Install AxonOS Assistant' in line:
+                elif any(marker in line for marker in ('Install AxonAI', 'Install AxonOS Assistant')):
                     mandatory_section_start = i
                     in_optional = False
                     in_mandatory = True
@@ -1495,9 +1495,9 @@ RUN git clone https://github.com/cellmodeller/CellModeller.git && \\
                     else:
                         new_content.append(app_info['dockerfile_section'])
             
-            # Add mandatory AxonOS Assistant section
+            # Add mandatory AxonAI section
             new_content.append('''
-# Install AxonOS Assistant
+# Install AxonAI
 WORKDIR /opt
 COPY axonos_assistant /opt/axonos_assistant
 RUN cd /opt/axonos_assistant && \\
@@ -1514,7 +1514,7 @@ RUN cd /opt/talk_to_k && \\
     cp talk-to-k.desktop /usr/share/applications/ && \\
     chown -R $USER:$USER /opt/talk_to_k
 
-# Install AxonOS Assistant font
+# Install AxonAI UI font
 RUN apt-get update && apt-get install -y wget fontconfig && \\
     mkdir -p /usr/share/fonts/truetype/orbitron && \\
     wget -O /usr/share/fonts/truetype/orbitron/Orbitron.ttf https://github.com/google/fonts/raw/main/ofl/orbitron/Orbitron%5Bwght%5D.ttf && \\

@@ -2,7 +2,7 @@
 """
 MCP Filesystem Server for AxonOS
 
-This server provides filesystem operations and file context for the AxonOS assistant.
+This server provides filesystem operations and file context for AxonAI.
 """
 
 # MIT License
@@ -291,4 +291,4 @@ def main():
     mcp.run()
 
 if __name__ == "__main__":
-    main() 
+    main()

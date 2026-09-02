@@ -84,16 +84,24 @@ BUG_REPORT_URL="https://github.com/AxonDAO-AXGT/AxonOS/issues"' > /etc/os-releas
     echo '#!/bin/sh\nif [ "$1" = "-a" ]; then\n  echo -n "AxonOS " && /bin/uname.real -a\nelse\n  /bin/uname.real "$@"\nfi' > /bin/uname && \
     chmod +x /bin/uname
 
-# Install Ollama (supply-chain hardening: optional SHA256 verification of install script)
+# Install Ollama and pull qwen3.8:latest (optional install-script SHA256 verification).
 # Provide OLLAMA_INSTALL_SHA256 to verify the downloaded script before execution.
 ARG OLLAMA_INSTALL_SHA256=""
-RUN curl --proto '=https' --tlsv1.2 -fsSL https://ollama.com/install.sh -o /tmp/ollama_install.sh && \
-    if [ -n "$OLLAMA_INSTALL_SHA256" ]; then echo "$OLLAMA_INSTALL_SHA256  /tmp/ollama_install.sh" | sha256sum -c - ; fi && \
+RUN curl --proto '=https' --tlsv1.2 -fsSL https://ollama.com/install.sh \
+      -o /tmp/ollama_install.sh && \
+    if [ -n "$OLLAMA_INSTALL_SHA256" ]; then \
+      echo "$OLLAMA_INSTALL_SHA256  /tmp/ollama_install.sh" | sha256sum -c -; \
+    fi && \
     sh /tmp/ollama_install.sh && \
-    rm -f /tmp/ollama_install.sh
-
-# Pull the gemma4:31b model
-RUN ollama serve & sleep 5 && ollama pull granite3-guardian && ollama pull gemma4:31b && ollama pull granite3.2-vision
+    rm -f /tmp/ollama_install.sh && \
+    (ollama serve >/tmp/ollama-build.log 2>&1 & \
+     OLLAMA_PID=$!; \
+     sleep 5; \
+     ollama pull qwen3.8:latest; \
+     PULL_STATUS=$?; \
+     kill "$OLLAMA_PID" 2>/dev/null || true; \
+     wait "$OLLAMA_PID" 2>/dev/null || true; \
+     exit "$PULL_STATUS")
 
 # Create user and set password
 RUN useradd -ms /bin/bash $USER && echo "$USER:$PASSWORD" | chpasswd && adduser $USER sudo
@@ -106,12 +114,11 @@ if [ -z "$HOSTNAME" ] || [[ "$HOSTNAME" =~ ^[0-9a-f]{12}$ ]]; then\n\
 fi' >> /home/$USER/.bashrc && \
     chown $USER:$USER /home/$USER/.bashrc
 
-# OpenCode CLI: install as desktop user (not root) and expose on PATH for XFCE terminals
-RUN su - $USER -c 'curl -fsSL https://opencode.ai/install | bash' && \
-    ln -sf /home/$USER/.opencode/bin/opencode /usr/local/bin/opencode && \
-    echo 'export PATH="/home/'"$USER"'/.opencode/bin:$PATH"' > /etc/profile.d/opencode.sh && \
-    echo 'export PATH="/home/'"$USER"'/.opencode/bin:$PATH"' >> /home/$USER/.bashrc && \
-    echo 'export PATH="/home/'"$USER"'/.opencode/bin:$PATH"' >> /home/$USER/.profile
+# OpenCode CLI: pin the server API version used by the GTK integration.
+ARG OPENCODE_VERSION="1.18.26"
+RUN su - $USER -c "curl -fsSL https://opencode.ai/install | bash -s -- --version ${OPENCODE_VERSION}" && \
+    install -D -o root -g root -m 0755 /home/$USER/.opencode/bin/opencode /usr/local/libexec/opencode && \
+    ln -sf /usr/local/libexec/opencode /usr/local/bin/opencode
 
 # Install JupyterLab and other global Python tools with default pip
 RUN pip install --no-cache-dir jupyterlab
@@ -396,14 +403,18 @@ RUN apt update && apt install -y wget && \
     apt clean && rm -rf /var/lib/apt/lists/*
 COPY docs/PYMOL_LICENSE.md /usr/share/doc/pymol-open-source/LICENSE
 
-# Install AxonOS Assistant
+# Install AxonAI
 WORKDIR /opt
 COPY axonos_assistant /opt/axonos_assistant
 RUN cd /opt/axonos_assistant && \
     /usr/bin/python3 -m pip install -r requirements.txt && \
     chmod +x main.py && \
     cp axonos-assistant.desktop /usr/share/applications/ && \
-    chown -R $USER:$USER /opt/axonos_assistant
+    chown -R $USER:$USER /opt/axonos_assistant && \
+    install -d -o root -g root -m 0755 /etc/axonos-opencode /etc/axonos-opencode/opencode /etc/axonos-opencode/opencode/plugins /var/empty/axonos-opencode && \
+    install -d -o $USER -g $USER -m 0700 /var/lib/axonos-opencode/data /var/lib/axonos-opencode/state /var/cache/axonos-opencode && \
+    install -o root -g root -m 0644 opencode.json /etc/axonos-opencode/opencode.json && \
+    install -o root -g root -m 0644 desktop-shell-env.js /etc/axonos-opencode/opencode/plugins/desktop-shell-env.js
 
 # Install Talk to K Assistant
 COPY talk_to_k /opt/talk_to_k
@@ -420,7 +431,7 @@ COPY novnc-theme/axonos_assistant.png /usr/share/pixmaps/axonos_assistant.png
 COPY novnc-theme/talk_to_k.png /usr/share/pixmaps/talk_to_k.png
 RUN chmod 644 /usr/share/pixmaps/axonos_assistant.png /usr/share/pixmaps/talk_to_k.png
 
-# Install AxonOS Assistant font
+# Install AxonAI UI font
 RUN apt-get update && apt-get install -y wget fontconfig && \
     mkdir -p /usr/share/fonts/truetype/orbitron && \
     wget -O /usr/share/fonts/truetype/orbitron/Orbitron.ttf https://github.com/google/fonts/raw/main/ofl/orbitron/Orbitron%5Bwght%5D.ttf && \

@@ -1,10 +1,10 @@
-# MCP Integration for AxonOS Assistant
+# MCP Integration for AxonAI
 
-This document describes the Model Context Protocol (MCP) integration in the AxonOS Assistant, which provides **strictly OS-context-aware** capabilities for real-time system monitoring and management.
+This document describes the Model Context Protocol (MCP) integration in AxonAI, which provides **strictly OS-context-aware** capabilities for real-time system monitoring and management.
 
 ## Overview
 
-The MCP integration transforms the AxonOS Assistant from a simple chat interface into a **truly OS-aware AI assistant** that can:
+The MCP integration transforms AxonAI from a simple chat interface into a **truly OS-aware AI assistant** that can:
 
 - Monitor system resources in real-time
 - Manage processes and applications
@@ -17,7 +17,7 @@ The MCP integration transforms the AxonOS Assistant from a simple chat interface
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    AxonOS Assistant (main.py)                  │
+│                         AxonAI (main.py)                       │
 │  ┌────────────────┐  ┌──────────────────┐  ┌─────────────────┐  │
 │  │   GTK UI       │  │   Ollama LLM     │  │   MCP Client    │  │
 │  │   Chat Widget  │  │   Integration    │  │   Manager       │  │
@@ -85,7 +85,7 @@ The MCP server exposes OS capabilities through:
 
 ### 3. Main Integration (`main.py`)
 
-The main AxonOS Assistant integrates MCP through:
+AxonAI integrates MCP through:
 
 - **Async initialization**: MCP client manager starts with the application
 - **Context-aware prompts**: System context included in LLM prompts
@@ -163,7 +163,7 @@ User: "What applications are currently open?"
    python3 test_mcp_integration.py
    ```
 
-3. **Run AxonOS Assistant**:
+3. **Run AxonAI**:
    ```bash
    python3 main.py
    ```
@@ -227,4 +227,4 @@ When contributing to MCP integration:
 
 ## License
 
-This MCP integration is part of the AxonOS Assistant project and follows the same license terms. 
+This MCP integration is part of AxonAI and follows the same license terms.

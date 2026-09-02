@@ -2,7 +2,7 @@
 """
 MCP OS Context Server for AxonOS
 
-This server provides OS-aware tools, resources, and prompts for the AxonOS assistant.
+This server provides OS-aware tools, resources, and prompts for AxonAI.
 It exposes system monitoring, process management, and desktop environment integration
 through the Model Context Protocol (MCP).
 """
@@ -570,4 +570,4 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    main() 
+    main()

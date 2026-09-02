@@ -1,0 +1,90 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "ollama/qwen3.8:latest",
+  "small_model": "ollama/qwen3.8:latest",
+  "default_agent": "build",
+  "autoupdate": false,
+  "share": "disabled",
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama (local)",
+      "options": {
+        "baseURL": "http://127.0.0.1:11434/v1"
+      },
+      "models": {
+        "qwen3.8:latest": {
+          "name": "Qwen 3.8",
+          "attachment": true,
+          "reasoning": true,
+          "tool_call": true,
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "limit": {
+            "context": 65536,
+            "output": 8192
+          }
+        }
+      }
+    }
+  },
+  "permission": {
+    "*": "ask",
+    "external_directory": "deny",
+    "read": {
+      "*": "allow",
+      "*.env": "deny",
+      "*.env.*": "deny",
+      "*.env.example": "allow",
+      ".ssh/*": "deny",
+      "*.ssh/*": "deny",
+      ".gnupg/*": "deny",
+      "*.gnupg/*": "deny",
+      ".aws/*": "deny",
+      "*.aws/*": "deny",
+      ".config/gcloud/*": "deny",
+      "*.config/gcloud/*": "deny",
+      ".config/gh/hosts.yml": "deny",
+      "*.config/gh/hosts.yml": "deny",
+      ".config/chromium/*": "deny",
+      "*.config/chromium/*": "deny",
+      ".config/google-chrome/*": "deny",
+      "*.config/google-chrome/*": "deny",
+      ".mozilla/*": "deny",
+      "*.mozilla/*": "deny",
+      ".local/share/opencode/auth.json": "deny",
+      "*.local/share/opencode/auth.json": "deny"
+    },
+    "glob": "allow",
+    "grep": "ask",
+    "list": "allow",
+    "lsp": "allow",
+    "todo*": "allow",
+    "question": "allow",
+    "task": "ask",
+    "edit": "ask",
+    "bash": {
+      "*": "ask",
+      "rm": "deny",
+      "rm *": "deny",
+      "sudo": "deny",
+      "sudo *": "deny",
+      "su": "deny",
+      "su *": "deny",
+      "dd": "deny",
+      "dd *": "deny",
+      "mkfs": "deny",
+      "mkfs *": "deny",
+      "shutdown": "deny",
+      "shutdown *": "deny",
+      "reboot": "deny",
+      "reboot *": "deny",
+      "poweroff": "deny",
+      "poweroff *": "deny",
+      "git push": "deny",
+      "git push *": "deny"
+    }
+  }
+}

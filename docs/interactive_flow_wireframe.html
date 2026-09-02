@@ -872,7 +872,7 @@
             font-weight: 500;
         }
 
-        /* GTK AI Assistant Overlay */
+        /* AxonAI GTK overlay */
         .assistant-window {
             position: absolute;
             top: 2rem;
@@ -1163,7 +1163,7 @@
                 <span class="step-num">5</span>
                 <div>
                     <span class="step-label">Scientific Desktop</span>
-                    <span class="step-desc">noVNC & AI Assistant</span>
+                    <span class="step-desc">noVNC & AxonAI</span>
                 </div>
             </button>
         </aside>
@@ -1455,10 +1455,10 @@ Timestamp: 1717922880
                             </div>
                         </div>
 
-                        <!-- GTK AI Assistant (Floating panel) -->
+                        <!-- AxonAI GTK window -->
                         <div class="assistant-window">
                             <div class="gtk-titlebar">
-                                <span class="gtk-title">🤖 AxonOS Assistant</span>
+                                <span class="gtk-title">🤖 AxonAI</span>
                                 <div class="gtk-controls">
                                     <div class="gtk-dot min"></div>
                                     <div class="gtk-dot max"></div>
@@ -1467,11 +1467,11 @@ Timestamp: 1717922880
                             </div>
                             <div class="chat-body" id="chat-conversation">
                                 <div class="chat-msg assistant">
-                                    Hello! I am your AI assistant, powered by the local <strong>gemma4:31b</strong> model. I can access installed scientific software, check system files, perform web search queries, and analyze screenshots of your active work. How can I help you today?
+                                    Hello! I am AxonAI, powered by the local <strong>qwen3.8:latest</strong> model. I can access installed scientific software, check system files, perform web search queries, and analyze screenshots of your active work. How can I help you today?
                                 </div>
                             </div>
                             <div class="chat-input-area">
-                                <input type="text" class="chat-input" id="chat-input-box" placeholder="Ask assistant or request search..." onkeydown="handleChatKey(event)">
+                                <input type="text" class="chat-input" id="chat-input-box" placeholder="Ask AxonAI or request a search..." onkeydown="handleChatKey(event)">
                                 <button class="chat-send-btn" onclick="sendChatMessage()">→</button>
                             </div>
                         </div>
@@ -1988,7 +1988,7 @@ Timestamp: 1717922880
             }, 600);
         }
 
-        // --- Assistant Chat Logic ---
+        // --- AxonAI Chat Logic ---
         function handleChatKey(e) {
             if (e.key === 'Enter') {
                 sendChatMessage();
@@ -2017,7 +2017,7 @@ Timestamp: 1717922880
                 
                 let query = msgText.toLowerCase();
                 if (query.includes('screenshot') || query.includes('vision') || query.includes('analyze')) {
-                    assistantMsg.innerHTML = `📸 <strong>Granite-Vision Model:</strong> Analyzing active frame buffer (resizing 1920x1080 to 1344x1344 for network optimization)... I detect you are currently exploring the AxonOS interactive wireframe with a VNC desktop panel at the top and a floating assistant terminal.`;
+                    assistantMsg.innerHTML = `📸 <strong>Qwen Multimodal Model:</strong> Analyzing the active frame buffer directly (resizing up to 1344x1344)... I detect you are currently exploring the AxonOS interactive wireframe with a VNC desktop panel at the top and a floating AxonAI window.`;
                 } else if (query.includes('search') || query.includes('brave') || query.includes('google')) {
                     assistantMsg.innerHTML = `🌐 <strong>Brave Search API:</strong> Querying the web for research... <em>"AxonOS decentralized open science"</em>. Found 3 sources. Highlighting core: AxonOS is developed by AxonDAO as a local-first computing desktop utilizing ERC-20 staking incentives.`;
                 } else if (query.includes('tool') || query.includes('discover') || query.includes('software')) {
@@ -2029,7 +2029,7 @@ Timestamp: 1717922880
                       <li>QGIS & GRASS (Geospatial Analysis)</li>
                     </ul>`;
                 } else {
-                    assistantMsg.innerHTML = `🧬 <strong>Gemma-31B Local Model:</strong> Understood. For scientific computing in AxonOS, you can run workflows via <strong>Nextflow</strong> or process visual bioinformatics data with <strong>Fiji/ImageJ</strong>. Let me know if you would like me to draft a launcher script for your tools.`;
+                    assistantMsg.innerHTML = `🧬 <strong>Qwen 3.8 Local Model:</strong> Understood. For scientific computing in AxonOS, you can run workflows via <strong>Nextflow</strong> or process visual bioinformatics data with <strong>Fiji/ImageJ</strong>. Let me know if you would like me to draft a launcher script for your tools.`;
                 }
 
                 chatBox.appendChild(assistantMsg);

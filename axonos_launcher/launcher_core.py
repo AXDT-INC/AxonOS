@@ -273,7 +273,7 @@ RUN git clone https://github.com/cellmodeller/CellModeller.git && \\
         # Configuration
         self.app_selections = {app_id: app_info.get('enabled', False) 
                               for app_id, app_info in self.get_all_applications().items()}
-        self.ollama_models = ['gemma4:31b', 'granite3.2-vision']
+        self.ollama_models = ['qwen3.8:latest']
         self.username = 'aXonian'
         self.password = 'axonpassword'
         self.gpu_enabled = False
@@ -358,7 +358,7 @@ RUN git clone https://github.com/cellmodeller/CellModeller.git && \\
             for app_id in self.custom_applications.keys()
         )
         
-        default_models = self.ollama_models == ['gemma4:31b', 'granite3.2-vision']
+        default_models = self.ollama_models == ['qwen3.8:latest']
         default_user = self.username == 'aXonian'
         default_password = self.password == 'axonpassword'
         default_cuda_archs = self.gmx_cuda_archs == '70;75;86;89'
@@ -386,7 +386,7 @@ RUN git clone https://github.com/cellmodeller/CellModeller.git && \\
         for i, line in enumerate(lines):
             if 'Install pip for system Python' in line:
                 optional_section_start = i + 2
-            elif 'Install AxonOS Assistant' in line:
+            elif any(marker in line for marker in ('Install AxonAI', 'Install AxonOS Assistant')):
                 mandatory_section_start = i
                 break
         
@@ -431,9 +431,9 @@ RUN git clone https://github.com/cellmodeller/CellModeller.git && \\
                 else:
                     new_content.append(app_info['dockerfile_section'])
         
-        # Add mandatory AxonOS Assistant section
+        # Add mandatory AxonAI section
         new_content.append('''
-# Install AxonOS Assistant
+# Install AxonAI
 WORKDIR /opt
 COPY axonos_assistant /opt/axonos_assistant
 RUN cd /opt/axonos_assistant && \\
@@ -450,7 +450,7 @@ RUN cd /opt/talk_to_k && \\
     cp talk-to-k.desktop /usr/share/applications/ && \\
     chown -R $USER:$USER /opt/talk_to_k
 
-# Install AxonOS Assistant font
+# Install AxonAI UI font
 RUN apt-get update && apt-get install -y wget fontconfig && \\
     mkdir -p /usr/share/fonts/truetype/orbitron && \\
     wget -O /usr/share/fonts/truetype/orbitron/Orbitron.ttf https://github.com/google/fonts/raw/main/ofl/orbitron/Orbitron%5Bwght%5D.ttf && \\

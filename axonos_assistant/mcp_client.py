@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MCP Client for AxonOS Assistant
+MCP Client for AxonAI
 
 This module provides MCP (Model Context Protocol) client capabilities
 for OS-aware context management, real-time system monitoring, and
@@ -814,4 +814,4 @@ async def shutdown_mcp_client_manager():
     global _mcp_client_manager
     if _mcp_client_manager:
         await _mcp_client_manager.stop()
-        _mcp_client_manager = None 
+        _mcp_client_manager = None

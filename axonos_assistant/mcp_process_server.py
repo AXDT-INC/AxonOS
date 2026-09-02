@@ -2,7 +2,7 @@
 """
 MCP Process Manager Server for AxonOS
 
-This server provides process management and monitoring tools for the AxonOS assistant.
+This server provides process management and monitoring tools for AxonAI.
 """
 
 # MIT License
@@ -402,4 +402,4 @@ def main():
     mcp.run()
 
 if __name__ == "__main__":
-    main() 
+    main()

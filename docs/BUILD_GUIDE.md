@@ -37,13 +37,11 @@ The build process includes:
 1. **Base Image**: NVIDIA CUDA 12.2 on Ubuntu 22.04 (jammy)
 2. **System Packages**: XFCE4, VNC, noVNC, scientific tools
 3. **Ollama Installation**: AI model server
-4. **Model Downloads**: 
-   - granite3-guardian (safety model)
-   - gemma4:31b (text model)
-   - granite3.2-vision (vision model)
-5. **Scientific Applications**: JupyterLab, RStudio, Spyder, UGENE, etc.
-6. **AxonOS Assistant**: Custom AI assistant application
-7. **Theme Installation**: AxonOS noVNC theme
+4. **Model Download**: qwen3.8:latest (multimodal model)
+5. **OpenCode Installation**: Version 1.18.26, pinned to the server API used by AxonAI
+6. **Scientific Applications**: JupyterLab, RStudio, Spyder, UGENE, etc.
+7. **AxonAI**: GTK research agent with persistent sessions, live events, approvals, and screenshot attachments
+8. **Theme Installation**: AxonOS noVNC theme
 
 ## Build Output
 
@@ -83,6 +81,25 @@ docker run -d -p 6080:6080 -p 5901:5901 \
   --name axonos axonos:latest
 ```
 
+## AxonAI Runtime
+
+Supervisor starts Ollama and the pinned OpenCode 1.18.26 server with the container. OpenCode listens only on `127.0.0.1:4096` inside the container and uses the local `qwen3.8:latest` model through Ollama.
+
+AxonAI keeps one OpenCode session per conversation. It can use tools and approved subagents, streams live activity into the chat, asks before protected actions, and can attach a freshly captured desktop screenshot to visual turns. **Stop** aborts and reconciles active work, and a successor cannot dispatch until terminal runner state is proven. An atomic `/run/axonos-assistant/opencode-active` marker extends that fence across GTK crashes and multiple windows; `startup.sh` clears it only at the full container/session boundary. If cleanup proof fails, AxonAI therefore requires an AxonOS session/container restart instead of risking overlap with a detached tool process. **Reset** deletes the current OpenCode session only after safe cleanup and begins a clean conversation. The supervised service uses a root-owned executable and policy at `/etc/axonos-opencode/opencode.json`, isolated config/home paths, disabled project discovery, and only a root-owned shell-environment plugin. Local files therefore cannot weaken its approval rules, while approved shell tools still see the desktop user's normal HOME/XDG/display. This isolation applies only to AxonAI's backend; OpenCode launched from a terminal remains independently configurable.
+
+Agentic mode is enabled by default; disabling it in **Settings** changes the default to direct chat. The following prompt prefixes override automatic routing:
+
+- `/agent <request>` — use the OpenCode agent even when direct chat is the default
+- `/chat <request>` — use direct local chat without agent tools
+- `/vision <request>` — capture and attach the current desktop screenshot
+
+After the container starts, verify both local AI services:
+
+```bash
+docker exec axonos curl -fsS http://127.0.0.1:4096/global/health
+docker exec axonos curl -fsS http://127.0.0.1:11434/api/tags
+```
+
 ## Troubleshooting
 
 ### Build Fails with "No space left on device"
@@ -106,6 +123,21 @@ df -h
 - Ollama model downloads can be slow
 - Check network connection
 - Models will be retried automatically
+
+### AxonAI Reports OpenCode Is Unavailable
+
+```bash
+# Check the supervised local services
+docker exec axonos supervisorctl status opencode ollama
+
+# Verify the loopback-only OpenCode API
+docker exec axonos curl -fsS http://127.0.0.1:4096/global/health
+
+# Review startup or runtime errors
+docker logs axonos
+```
+
+OpenCode is intentionally not exposed as a Docker host port. If Ollama is healthy but OpenCode is not, confirm the image was rebuilt after the OpenCode 1.18.26 integration was added.
 
 ### Password Warning
 
@@ -143,7 +175,8 @@ After building:
 1. **Test the container**: Run and verify it starts
 2. **Access the web interface**: http://localhost:6080/vnc.html
 3. **Verify branding**: Check that AxonOS branding appears correctly
-4. **Test applications**: Launch AxonOS Assistant and other tools
+4. **Test AxonAI**: Launch AxonAI, try `/agent` and `/vision`, approve a harmless tool request, then verify **Stop** and **Reset**
+5. **Test other applications**: Launch the scientific tools needed by your workflow
 
 ## Build Logs
 

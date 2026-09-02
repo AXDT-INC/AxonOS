@@ -16,7 +16,7 @@ graph TD
     Gate --> |Claim / Heartbeat / Queue| SM["Session Manager (session_manager.py)"]
     SM --> |Spawn / Stop Adapter| SL["Session Launcher (session_launcher.py)"]
     SL --> |"Launcher Mode (CLI or HTTP API)"| HostLauncher["Host Docker Launcher / CLI"]
-    HostLauncher --> |Manage Lifecycle| DockerContainers["AxonOS Desktop Containers (XFCE, Assistant, VNC)"]
+    HostLauncher --> |Manage Lifecycle| DockerContainers["AxonOS Desktop Containers (XFCE, AxonAI, VNC)"]
     DockerContainers -.-> |VNC Stream via WebSocket| Client
 ```
 

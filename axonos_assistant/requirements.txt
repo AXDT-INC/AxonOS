@@ -1,6 +1,7 @@
 requests
 beautifulsoup4
 markdown
+bleach
 Pillow
 # MCP (Model Context Protocol) dependencies for OS-aware context management
 mcp>=1.0.0
