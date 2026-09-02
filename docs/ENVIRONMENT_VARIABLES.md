@@ -180,14 +180,18 @@ Agent-native HTTP-402 rail: `GET /api/x402/access` returns payment requirements,
 
 ### Dynamic USD-equivalent pricing (price oracle)
 
-When enabled, ETH and AXGT deposits credit at their **live USD value** (CoinGecko free API, cached in Postgres); USDC stays fixed at $1. On a feed outage the last-known price is used up to `PRICE_MAX_STALE_SECONDS`, after which the fixed crypto rates apply. Read by [`axonos_gate/price_oracle.py`](../axonos_gate/price_oracle.py).
+When enabled, ETH and AXGT deposits credit at their **live USD value**, cached in Postgres; USDC stays fixed at $1. AXGT uses a 30-minute TWAP from the same Uniswap v3 AXGT/WETH pool and Chainlink ETH/USD sources as the axondao.io dashboard. A change beyond the configured deviation limit requires independent CoinGecko confirmation; CoinGecko is otherwise an outage fallback. On a feed outage the last-known price is used up to `PRICE_MAX_STALE_SECONDS`, after which the fixed crypto rates apply. Read by [`axonos_gate/price_oracle.py`](../axonos_gate/price_oracle.py).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `AXGT_DYNAMIC_PRICING` | `false` | Enable live USD-equivalent crediting (introduces a server-side price oracle). |
 | `AXGT_USD_PER_HOUR` | `1.0` | USD price of one hour of `small` (1-GPU) desktop time → minutes per USD. |
-| `AXGT_COINGECKO_ID` | `axondao-governance-token-2` | CoinGecko coin ID for the AXGT/USD quote. |
-| `PRICE_POLL_INTERVAL_SECONDS` | `10800` | Price refresh cadence (3 h ≈ 8×/day). |
+| `ETHEREUM_RPC_URL` | `https://ethereum-rpc.publicnode.com` | Ethereum mainnet RPC used for the Uniswap and Chainlink price reads. Falls back to `AXGT_RPC_URL` when set. |
+| `AXGT_UNISWAP_V3_POOL` | `0xf9c56A9CcC1398Bed3C519ef2F0B42CE52AaA440` | AXGT/WETH Uniswap v3 pool used by the dashboard price path. |
+| `AXGT_TWAP_WINDOW_SECONDS` | `1800` | Uniswap observation window used for billing; minimum 60 seconds. |
+| `AXGT_MAX_PRICE_DEVIATION_PERCENT` | `25` | A TWAP move this far from the cached price must also agree with CoinGecko within this percentage. |
+| `AXGT_COINGECKO_ID` | `axondao-governance-token-2` | CoinGecko coin ID used only if the on-chain AXGT quote fails. |
+| `PRICE_POLL_INTERVAL_SECONDS` | `300` | Price refresh cadence (5 minutes, matching the dashboard). |
 | `PRICE_MAX_STALE_SECONDS` | `86400` | Reject cached prices older than this (then fall back to fixed rates). |
 
 ### Deposit verification tuning

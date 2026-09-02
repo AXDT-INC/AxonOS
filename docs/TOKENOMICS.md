@@ -193,9 +193,13 @@ credited at their **live USD value** rather than the fixed crypto rates, so a fi
 USD price of compute holds as token prices move. Mechanics:
 
 - Minutes are priced at **`AXGT_USD_PER_HOUR`** (default $1/hour = 60 min/$).
-- Token→USD quotes come from the **CoinGecko free API** (`AXGT_COINGECKO_ID` for
-  AXGT), polled ~8×/day (`PRICE_POLL_INTERVAL_SECONDS`) and cached **server-side**
-  in Postgres. Client-reported prices are never trusted.
+- AXGT→USD quotes use a **30-minute Uniswap v3 AXGT/WETH TWAP × Chainlink
+  ETH/USD**, hardening the same sources used by the axondao.io dashboard for
+  billing. They refresh every five minutes (`PRICE_POLL_INTERVAL_SECONDS`) and
+  are cached **server-side** in Postgres. A move beyond
+  `AXGT_MAX_PRICE_DEVIATION_PERCENT` must agree with CoinGecko within the same
+  limit; CoinGecko is otherwise an outage fallback. Client-reported prices are
+  never trusted.
 - On a feed outage the last-known price is used up to `PRICE_MAX_STALE_SECONDS`
   (default 24 h); beyond that the system falls back to the fixed crypto rates above.
 - **USDC stays fixed at $1** regardless of this setting.

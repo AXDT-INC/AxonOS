@@ -1,8 +1,8 @@
 """
-USD price oracle for ETH and AXGT (CoinGecko free API).
+USD price oracle for ETH and AXGT.
 
 Minutes are priced in USD ($1/hour by default). ETH and AXGT payment amounts are
-derived from live USD prices polled ~8x/day and cached in Postgres (shared across
+derived from live USD prices refreshed every five minutes and cached in Postgres (shared across
 both gate processes, survives restart). USDC is a stablecoin and is NOT priced
 here — it stays at its fixed rate.
 
@@ -29,7 +29,21 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# CoinGecko free API (no key). ids verified live: ETH + current AXGT token.
+# AXGT starts from the axondao.io dashboard's Uniswap v3 AXGT/WETH pool and
+# Chainlink ETH/USD sources, but billing uses a time-weighted average rather
+# than manipulable slot0 spot price. CoinGecko remains an independent fallback.
+_DEFAULT_ETHEREUM_RPC_URL = "https://ethereum-rpc.publicnode.com"
+_AXGT_UNISWAP_V3_POOL_DEFAULT = "0xf9c56A9CcC1398Bed3C519ef2F0B42CE52AaA440"
+_AXGT_TOKEN_CONTRACT = "0x6112c3509a8a787df576028450febb3786a2274d"
+_CHAINLINK_ETH_USD_FEED = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419"
+_CHAINLINK_MAX_STALENESS_SECONDS = 6 * 60 * 60
+_TOKEN0_SELECTOR = "0x0dfe1681"
+_OBSERVE_SELECTOR = "0x883bdbfd"
+_LATEST_ROUND_DATA_SELECTOR = "0xfeaf968c"
+_DEFAULT_TWAP_WINDOW_SECONDS = 30 * 60
+_DEFAULT_MAX_PRICE_DEVIATION_PERCENT = Decimal("25")
+
+# CoinGecko free API fallback. ids verified live: ETH + current AXGT token.
 _CG_URL = "https://api.coingecko.com/api/v3/simple/price"
 _ETH_ID = "ethereum"
 _AXGT_ID_DEFAULT = "axondao-governance-token-2"
@@ -38,7 +52,7 @@ _PRICE_TABLE = "axgt_price_cache"
 _DEFAULT_USD_PER_HOUR = Decimal("1.0")
 _DEFAULT_AXGT_BONUS_PCT = Decimal("25")
 _DEFAULT_MAX_STALE_SECONDS = 24 * 3600
-_DEFAULT_POLL_INTERVAL_SECONDS = 3 * 3600  # ~8x/day
+_DEFAULT_POLL_INTERVAL_SECONDS = 5 * 60
 
 _init_done = False
 
@@ -61,6 +75,139 @@ def _get_conn():
 
 def _axgt_cg_id() -> str:
     return (os.getenv("AXGT_COINGECKO_ID") or "").strip() or _AXGT_ID_DEFAULT
+
+
+def _ethereum_rpc_url() -> str:
+    # ETHEREUM_RPC_URL matches the dashboard. AXGT_RPC_URL is accepted because
+    # it is already the Ethereum-mainnet RPC setting used throughout AxonOS.
+    return (
+        (os.getenv("ETHEREUM_RPC_URL") or "").strip()
+        or (os.getenv("AXGT_RPC_URL") or "").strip()
+        or _DEFAULT_ETHEREUM_RPC_URL
+    )
+
+
+def _axgt_uniswap_pool() -> str:
+    return (
+        (os.getenv("AXGT_UNISWAP_V3_POOL") or "").strip()
+        or _AXGT_UNISWAP_V3_POOL_DEFAULT
+    )
+
+
+def _rpc_eth_call(to: str, data: str) -> str:
+    response = requests.post(
+        _ethereum_rpc_url(),
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_call",
+            "params": [{"to": to, "data": data}, "latest"],
+        },
+        timeout=15,
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if payload.get("error"):
+        raise RuntimeError(payload["error"].get("message") or "Ethereum RPC error")
+    result = payload.get("result")
+    if not isinstance(result, str) or not result.startswith("0x"):
+        raise ValueError("Ethereum RPC returned an invalid eth_call result")
+    return result
+
+
+def _abi_word(result: str, index: int) -> int:
+    start = 2 + index * 64
+    word = result[start:start + 64]
+    if len(word) != 64:
+        raise ValueError("Ethereum RPC result is shorter than expected")
+    return int(word, 16)
+
+
+def _abi_signed_word(result: str, index: int) -> int:
+    value = _abi_word(result, index)
+    return value - (1 << 256) if value >= (1 << 255) else value
+
+
+def twap_window_seconds() -> int:
+    raw = (os.getenv("AXGT_TWAP_WINDOW_SECONDS") or "").strip()
+    try:
+        value = int(raw)
+        if value >= 60:
+            return value
+    except ValueError:
+        pass
+    return _DEFAULT_TWAP_WINDOW_SECONDS
+
+
+def max_price_deviation_percent() -> Decimal:
+    raw = (os.getenv("AXGT_MAX_PRICE_DEVIATION_PERCENT") or "").strip()
+    try:
+        value = Decimal(raw)
+        if value > 0:
+            return value
+    except (InvalidOperation, ValueError):
+        pass
+    return _DEFAULT_MAX_PRICE_DEVIATION_PERCENT
+
+
+def _observe_call_data(seconds_ago: int) -> str:
+    # observe(uint32[]) ABI: dynamic-array offset, length, then [past, now].
+    return (
+        _OBSERVE_SELECTOR
+        + f"{32:064x}"
+        + f"{2:064x}"
+        + f"{seconds_ago:064x}"
+        + f"{0:064x}"
+    )
+
+
+def _mean_tick(observe_result: str, window_seconds: int) -> int:
+    # observe() returns (int56[] tickCumulatives, uint160[] secondsPerLiquidity).
+    # The first word points to the tick array; its first two values are past/now.
+    tick_array_offset = _abi_word(observe_result, 0)
+    array_word = tick_array_offset // 32
+    if _abi_word(observe_result, array_word) < 2:
+        raise ValueError("Uniswap observe returned fewer than two tick values")
+    tick_past = _abi_signed_word(observe_result, array_word + 1)
+    tick_now = _abi_signed_word(observe_result, array_word + 2)
+    delta = tick_now - tick_past
+    # Python // rounds toward negative infinity, matching the conservative
+    # rounding required for negative arithmetic-mean ticks.
+    return delta // window_seconds
+
+
+def _fetch_axgt_usd_price_onchain() -> Optional[Decimal]:
+    """AXGT/USD from a Uniswap v3 TWAP times Chainlink ETH/USD."""
+    try:
+        pool = _axgt_uniswap_pool()
+        window = twap_window_seconds()
+        token0_result = _rpc_eth_call(pool, _TOKEN0_SELECTOR)
+        observe_result = _rpc_eth_call(pool, _observe_call_data(window))
+        round_result = _rpc_eth_call(_CHAINLINK_ETH_USD_FEED, _LATEST_ROUND_DATA_SELECTOR)
+
+        eth_usd = Decimal(_abi_word(round_result, 1)) / Decimal(10 ** 8)
+        feed_updated_at = _abi_word(round_result, 3)
+        if eth_usd <= 0:
+            return None
+        if int(time.time()) - feed_updated_at > _CHAINLINK_MAX_STALENESS_SECONDS:
+            return None
+
+        token1_per_token0 = Decimal("1.0001") ** _mean_tick(observe_result, window)
+        if token1_per_token0 <= 0:
+            return None
+
+        token0 = "0x" + token0_result[-40:].lower()
+        weth_per_axgt = (
+            token1_per_token0
+            if token0 == _AXGT_TOKEN_CONTRACT
+            else Decimal(1) / token1_per_token0
+        )
+        usd = weth_per_axgt * eth_usd
+        return usd if usd > 0 else None
+    except Exception as exc:
+        logger.warning("price_oracle: on-chain AXGT price failed: %s", exc)
+        return None
 
 
 def usd_per_hour() -> Decimal:
@@ -194,38 +341,88 @@ def _read_price(asset: str) -> Optional[Tuple[Decimal, float]]:
         conn.close()
 
 
+def _price_deviation_percent(candidate: Decimal, reference: Decimal) -> Decimal:
+    if candidate <= 0 or reference <= 0:
+        return Decimal("Infinity")
+    return abs(candidate - reference) * Decimal("100") / reference
+
+
 def poll_prices() -> bool:
-    """Fetch ETH + AXGT USD prices from CoinGecko and cache them. Returns success."""
+    """Fetch live prices, applying TWAP and independent-source safety checks."""
+    onchain_axgt = _fetch_axgt_usd_price_onchain()
+    previous = _read_price("AXGT")
+    previous_axgt = previous[0] if previous else None
+    needs_confirmation = (
+        onchain_axgt is not None
+        and previous_axgt is not None
+        and _price_deviation_percent(onchain_axgt, previous_axgt)
+        > max_price_deviation_percent()
+    )
     axgt_id = _axgt_cg_id()
+    now = time.time()
+    ok = False
+
     try:
+        coin_ids = (
+            f"{_ETH_ID},{axgt_id}"
+            if onchain_axgt is None or needs_confirmation
+            else _ETH_ID
+        )
         resp = requests.get(
             _CG_URL,
-            params={"ids": f"{_ETH_ID},{axgt_id}", "vs_currencies": "usd"},
+            params={"ids": coin_ids, "vs_currencies": "usd"},
             timeout=15,
             headers={"Accept": "application/json"},
         )
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:
-        logger.warning("price_oracle: CoinGecko poll failed: %s", exc)
-        return False
+        logger.warning("price_oracle: CoinGecko fallback poll failed: %s", exc)
+        data = {}
 
-    now = time.time()
-    ok = False
     eth = (data.get(_ETH_ID) or {}).get("usd")
-    axgt = (data.get(axgt_id) or {}).get("usd")
+    axgt_fallback = (data.get(axgt_id) or {}).get("usd")
+    axgt = None
+    axgt_source = None
     try:
         if eth and Decimal(str(eth)) > 0:
             _store_price("ETH", Decimal(str(eth)), now)
             ok = True
-        if axgt and Decimal(str(axgt)) > 0:
-            _store_price("AXGT", Decimal(str(axgt)), now)
+
+        fallback_price = Decimal(str(axgt_fallback)) if axgt_fallback else None
+        if fallback_price is not None and fallback_price <= 0:
+            fallback_price = None
+
+        if onchain_axgt is not None and not needs_confirmation:
+            axgt = onchain_axgt
+            axgt_source = "onchain-twap"
+        elif onchain_axgt is not None and fallback_price is not None:
+            cross_deviation = _price_deviation_percent(onchain_axgt, fallback_price)
+            if cross_deviation <= max_price_deviation_percent():
+                axgt = onchain_axgt
+                axgt_source = "onchain-twap+coingecko-confirmed"
+            else:
+                logger.warning(
+                    "price_oracle: rejected AXGT TWAP change; %.2f%% from cached and "
+                    "%.2f%% from CoinGecko",
+                    float(_price_deviation_percent(onchain_axgt, previous_axgt)),
+                    float(cross_deviation),
+                )
+        elif onchain_axgt is None and fallback_price is not None:
+            axgt = fallback_price
+            axgt_source = "coingecko-fallback"
+
+        if axgt is not None:
+            _store_price("AXGT", axgt, now)
             ok = True
     except (InvalidOperation, ValueError) as exc:
         logger.warning("price_oracle: bad price payload: %s", exc)
         return False
     if ok:
-        logger.info("price_oracle: updated ETH=%s AXGT=%s USD", eth, axgt)
+        logger.info(
+            "price_oracle: updated ETH=%s AXGT=%s USD (AXGT source=%s)",
+            eth, axgt, axgt_source,
+        )
     return ok
 
 
@@ -237,7 +434,7 @@ def _maybe_refresh() -> None:
 
     Avoids needing a separate cron/supervisor job — any pricing call triggers a
     refresh at most once per interval. Throttled in-process so concurrent requests
-    don't stampede CoinGecko.
+    don't stampede the Ethereum RPC or fallback feed.
     """
     global _last_poll_attempt
     now = time.time()
