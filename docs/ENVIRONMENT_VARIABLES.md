@@ -180,7 +180,7 @@ Agent-native HTTP-402 rail: `GET /api/x402/access` returns payment requirements,
 
 ### Dynamic USD-equivalent pricing (price oracle)
 
-When enabled, ETH and AXGT deposits credit at their **live USD value**, cached in Postgres; USDC stays fixed at $1. AXGT uses a 30-minute TWAP from the same Uniswap v3 AXGT/WETH pool and Chainlink ETH/USD sources as the axondao.io dashboard. A change beyond the configured deviation limit requires independent CoinGecko confirmation; CoinGecko is otherwise an outage fallback. On a feed outage the last-known price is used up to `PRICE_MAX_STALE_SECONDS`, after which the fixed crypto rates apply. Read by [`axonos_gate/price_oracle.py`](../axonos_gate/price_oracle.py).
+When enabled, ETH and AXGT deposits credit at their **live USD value**, cached in Postgres; USDC stays fixed at $1. AXGT uses a 30-minute TWAP from the same Uniswap v3 AXGT/WETH pool and Chainlink ETH/USD sources as the axondao.io dashboard. If the pool lacks TWAP observations, its dashboard-compatible spot quote is accepted only when CoinGecko agrees within the configured deviation limit. A large TWAP change requires the same independent confirmation; CoinGecko is otherwise an outage fallback. On a feed outage the last-known price is used up to `PRICE_MAX_STALE_SECONDS`, after which the fixed crypto rates apply. Read by [`axonos_gate/price_oracle.py`](../axonos_gate/price_oracle.py).
 
 | Variable | Default | Description |
 |----------|---------|-------------|

@@ -38,6 +38,7 @@ _AXGT_TOKEN_CONTRACT = "0x6112c3509a8a787df576028450febb3786a2274d"
 _CHAINLINK_ETH_USD_FEED = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419"
 _CHAINLINK_MAX_STALENESS_SECONDS = 6 * 60 * 60
 _TOKEN0_SELECTOR = "0x0dfe1681"
+_SLOT0_SELECTOR = "0x3850c7bd"
 _OBSERVE_SELECTOR = "0x883bdbfd"
 _LATEST_ROUND_DATA_SELECTOR = "0xfeaf968c"
 _DEFAULT_TWAP_WINDOW_SECONDS = 30 * 60
@@ -210,6 +211,39 @@ def _fetch_axgt_usd_price_onchain() -> Optional[Decimal]:
         return None
 
 
+def _fetch_axgt_usd_price_spot() -> Optional[Decimal]:
+    """Dashboard-compatible slot0 quote; callers must independently confirm it."""
+    try:
+        pool = _axgt_uniswap_pool()
+        token0_result = _rpc_eth_call(pool, _TOKEN0_SELECTOR)
+        slot0_result = _rpc_eth_call(pool, _SLOT0_SELECTOR)
+        round_result = _rpc_eth_call(_CHAINLINK_ETH_USD_FEED, _LATEST_ROUND_DATA_SELECTOR)
+
+        eth_usd = Decimal(_abi_word(round_result, 1)) / Decimal(10 ** 8)
+        feed_updated_at = _abi_word(round_result, 3)
+        if eth_usd <= 0:
+            return None
+        if int(time.time()) - feed_updated_at > _CHAINLINK_MAX_STALENESS_SECONDS:
+            return None
+
+        sqrt_price_x96 = Decimal(_abi_word(slot0_result, 0))
+        token1_per_token0 = (sqrt_price_x96 / Decimal(2 ** 96)) ** 2
+        if token1_per_token0 <= 0:
+            return None
+
+        token0 = "0x" + token0_result[-40:].lower()
+        weth_per_axgt = (
+            token1_per_token0
+            if token0 == _AXGT_TOKEN_CONTRACT
+            else Decimal(1) / token1_per_token0
+        )
+        usd = weth_per_axgt * eth_usd
+        return usd if usd > 0 else None
+    except Exception as exc:
+        logger.warning("price_oracle: on-chain AXGT spot price failed: %s", exc)
+        return None
+
+
 def usd_per_hour() -> Decimal:
     raw = (os.getenv("AXGT_USD_PER_HOUR") or "").strip()
     if raw:
@@ -349,14 +383,20 @@ def _price_deviation_percent(candidate: Decimal, reference: Decimal) -> Decimal:
 
 def poll_prices() -> bool:
     """Fetch live prices, applying TWAP and independent-source safety checks."""
-    onchain_axgt = _fetch_axgt_usd_price_onchain()
+    twap_axgt = _fetch_axgt_usd_price_onchain()
+    spot_axgt = _fetch_axgt_usd_price_spot() if twap_axgt is None else None
+    onchain_axgt = twap_axgt if twap_axgt is not None else spot_axgt
+    using_guarded_spot = twap_axgt is None and spot_axgt is not None
     previous = _read_price("AXGT")
     previous_axgt = previous[0] if previous else None
     needs_confirmation = (
-        onchain_axgt is not None
-        and previous_axgt is not None
-        and _price_deviation_percent(onchain_axgt, previous_axgt)
-        > max_price_deviation_percent()
+        using_guarded_spot
+        or (
+            onchain_axgt is not None
+            and previous_axgt is not None
+            and _price_deviation_percent(onchain_axgt, previous_axgt)
+            > max_price_deviation_percent()
+        )
     )
     axgt_id = _axgt_cg_id()
     now = time.time()
@@ -400,14 +440,29 @@ def poll_prices() -> bool:
             cross_deviation = _price_deviation_percent(onchain_axgt, fallback_price)
             if cross_deviation <= max_price_deviation_percent():
                 axgt = onchain_axgt
-                axgt_source = "onchain-twap+coingecko-confirmed"
-            else:
-                logger.warning(
-                    "price_oracle: rejected AXGT TWAP change; %.2f%% from cached and "
-                    "%.2f%% from CoinGecko",
-                    float(_price_deviation_percent(onchain_axgt, previous_axgt)),
-                    float(cross_deviation),
+                axgt_source = (
+                    "onchain-spot+coingecko-confirmed"
+                    if using_guarded_spot
+                    else "onchain-twap+coingecko-confirmed"
                 )
+            else:
+                if using_guarded_spot:
+                    logger.warning(
+                        "price_oracle: rejected AXGT spot price; %.2f%% from CoinGecko",
+                        float(cross_deviation),
+                    )
+                else:
+                    logger.warning(
+                        "price_oracle: rejected AXGT TWAP change; %.2f%% from cached and "
+                        "%.2f%% from CoinGecko",
+                        float(_price_deviation_percent(onchain_axgt, previous_axgt)),
+                        float(cross_deviation),
+                    )
+        elif onchain_axgt is not None:
+            logger.warning(
+                "price_oracle: rejected AXGT %s price without CoinGecko confirmation",
+                "spot" if using_guarded_spot else "TWAP",
+            )
         elif onchain_axgt is None and fallback_price is not None:
             axgt = fallback_price
             axgt_source = "coingecko-fallback"

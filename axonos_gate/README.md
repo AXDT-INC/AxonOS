@@ -84,6 +84,7 @@ The two rails are mutually exclusive at runtime (the flag picks one), so you can
 ### Dynamic USD-equivalent pricing (price oracle)
 
 - `AXGT_DYNAMIC_PRICING` (default `false`): credit ETH/AXGT at live USD value; USDC stays fixed at $1.
+- AXGT uses a 30-minute Uniswap TWAP first; when pool history is unavailable, the dashboard-compatible spot quote requires CoinGecko agreement before billing accepts it.
 - `AXGT_USD_PER_HOUR` (default `1.0`), `AXGT_USD_BONUS_PERCENT` (default `25`, AXGT Model-B bonus), `ETHEREUM_RPC_URL`, `AXGT_UNISWAP_V3_POOL`, `AXGT_TWAP_WINDOW_SECONDS` (default `1800`), `AXGT_MAX_PRICE_DEVIATION_PERCENT` (default `25`), `AXGT_COINGECKO_ID` (fallback/confirmation), `PRICE_POLL_INTERVAL_SECONDS`, `PRICE_MAX_STALE_SECONDS`.
 
 ### Optional

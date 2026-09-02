@@ -198,8 +198,9 @@ USD price of compute holds as token prices move. Mechanics:
   billing. They refresh every five minutes (`PRICE_POLL_INTERVAL_SECONDS`) and
   are cached **server-side** in Postgres. A move beyond
   `AXGT_MAX_PRICE_DEVIATION_PERCENT` must agree with CoinGecko within the same
-  limit; CoinGecko is otherwise an outage fallback. Client-reported prices are
-  never trusted.
+  limit. If TWAP history is unavailable, the dashboard-compatible spot quote is
+  used only when it passes that CoinGecko check. CoinGecko is otherwise an
+  outage fallback. Client-reported prices are never trusted.
 - On a feed outage the last-known price is used up to `PRICE_MAX_STALE_SECONDS`
   (default 24 h); beyond that the system falls back to the fixed crypto rates above.
 - **USDC stays fixed at $1** regardless of this setting.

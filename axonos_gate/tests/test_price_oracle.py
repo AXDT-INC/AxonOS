@@ -56,6 +56,25 @@ class PriceOracleOnChainTests(unittest.TestCase):
         ):
             self.assertIsNone(price_oracle._fetch_axgt_usd_price_onchain())
 
+    def test_spot_quote_matches_dashboard_math(self):
+        sqrt_price_x96 = int(Decimal("0.001").sqrt() * Decimal(2 ** 96))
+        token0 = "0x" + ("0" * 24) + price_oracle._AXGT_TOKEN_CONTRACT[2:]
+        slot0 = "0x" + _word(sqrt_price_x96) + (_word(0) * 6)
+        round_data = "0x" + "".join(
+            _word(value)
+            for value in (1, 2000 * 10 ** 8, int(time.time()), int(time.time()), 1)
+        )
+
+        with mock.patch.object(
+            price_oracle,
+            "_rpc_eth_call",
+            side_effect=[token0, slot0, round_data],
+        ):
+            quote = price_oracle._fetch_axgt_usd_price_spot()
+
+        self.assertIsNotNone(quote)
+        self.assertAlmostEqual(float(quote), 2.0, places=10)
+
     def test_poll_prefers_onchain_axgt_and_keeps_coingecko_for_eth(self):
         response = mock.Mock()
         response.raise_for_status.return_value = None
@@ -123,6 +142,56 @@ class PriceOracleOnChainTests(unittest.TestCase):
 
         stored = {call.args[0]: call.args[1] for call in store.call_args_list}
         self.assertEqual(stored["AXGT"], Decimal("0.50"))
+
+    def test_spot_fallback_is_accepted_only_when_coingecko_confirms(self):
+        response = mock.Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "ethereum": {"usd": 2500},
+            "axondao-governance-token-2": {"usd": 0.0273},
+        }
+
+        with (
+            mock.patch.object(
+                price_oracle, "_fetch_axgt_usd_price_onchain", return_value=None
+            ),
+            mock.patch.object(
+                price_oracle, "_fetch_axgt_usd_price_spot", return_value=Decimal("0.0272")
+            ),
+            mock.patch.object(
+                price_oracle, "_read_price", return_value=(Decimal("0.0270"), time.time())
+            ),
+            mock.patch.object(price_oracle.requests, "get", return_value=response),
+            mock.patch.object(price_oracle, "_store_price") as store,
+        ):
+            self.assertTrue(price_oracle.poll_prices())
+
+        stored = {call.args[0]: call.args[1] for call in store.call_args_list}
+        self.assertEqual(stored["AXGT"], Decimal("0.0272"))
+
+    def test_spot_fallback_is_rejected_when_coingecko_disagrees(self):
+        response = mock.Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "ethereum": {"usd": 2500},
+            "axondao-governance-token-2": {"usd": 0.10},
+        }
+
+        with (
+            mock.patch.object(
+                price_oracle, "_fetch_axgt_usd_price_onchain", return_value=None
+            ),
+            mock.patch.object(
+                price_oracle, "_fetch_axgt_usd_price_spot", return_value=Decimal("0.50")
+            ),
+            mock.patch.object(price_oracle, "_read_price", return_value=None),
+            mock.patch.object(price_oracle.requests, "get", return_value=response),
+            mock.patch.object(price_oracle, "_store_price") as store,
+        ):
+            self.assertTrue(price_oracle.poll_prices())  # ETH still updates.
+
+        axgt_stores = [call for call in store.call_args_list if call.args[0] == "AXGT"]
+        self.assertEqual(axgt_stores, [])
 
     def test_default_refresh_interval_matches_dashboard(self):
         with mock.patch.dict("os.environ", {}, clear=True):
