@@ -6349,7 +6349,22 @@ Copyright (C) 2019 The noVNC Authors
         function getWalletProviders() {
             return new Promise(function (resolve) {
                 var list = [];
+                var seenProviders = [];
+                var seenProviderUuids = Object.create(null);
                 var done = false;
+                function addProvider(provider, name, info) {
+                    if (!provider || typeof provider.request !== 'function') return;
+                    // Some extensions announce the same EIP-6963 provider more
+                    // than once for a single request. Keep discovery tolerant of
+                    // that behaviour without merging distinct wallets which
+                    // happen to publish the same self-attested RDNS value.
+                    if (seenProviders.indexOf(provider) !== -1) return;
+                    var uuid = String(info && info.uuid || '').trim().toLowerCase();
+                    if (uuid && seenProviderUuids[uuid]) return;
+                    seenProviders.push(provider);
+                    if (uuid) seenProviderUuids[uuid] = true;
+                    list.push({ provider: provider, name: name || 'Wallet' });
+                }
                 function finish() {
                     if (done) return;
                     done = true;
@@ -6365,12 +6380,12 @@ Copyright (C) 2019 The noVNC Authors
                             providerList.forEach(function (p, i) {
                                 if (p && typeof p.request === 'function') {
                                     var name = (p.providerInfo && p.providerInfo.name) || (p.isMetaMask ? 'MetaMask' : 'Wallet ' + (i + 1));
-                                    list.push({ provider: p, name: name });
+                                    addProvider(p, name, p.providerInfo);
                                 }
                             });
                         }
                         if (list.length === 0) {
-                            list.push({ provider: prov, name: (prov.providerInfo && prov.providerInfo.name) || (prov.isMetaMask ? 'MetaMask' : 'Browser Wallet') });
+                            addProvider(prov, (prov.providerInfo && prov.providerInfo.name) || (prov.isMetaMask ? 'MetaMask' : 'Browser Wallet'), prov.providerInfo);
                         }
                     }
                     resolve(list);
@@ -6378,7 +6393,7 @@ Copyright (C) 2019 The noVNC Authors
                 function onAnnounce(ev) {
                     var d = ev.detail;
                     if (d && d.provider && typeof d.provider.request === 'function' && d.info) {
-                        list.push({ provider: d.provider, name: d.info.name || 'Wallet' });
+                        addProvider(d.provider, d.info.name || 'Wallet', d.info);
                     }
                 }
                 window.addEventListener('eip6963:announceProvider', onAnnounce);

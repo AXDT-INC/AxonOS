@@ -42,6 +42,23 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         self.assertIn("jobs and compute billing continue, even if this tab closes", self.page_source)
         self.assertIn("Closing an attached tab requests session end", self.page_source)
 
+    def test_wallet_picker_deduplicates_repeated_eip6963_announcements(self) -> None:
+        discovery = self._page_between(
+            "function getWalletProviders()",
+            "function syncAxonosPrerequisiteTickerMirror()",
+        )
+
+        self.assertIn("var seenProviders = [];", discovery)
+        self.assertIn("var seenProviderUuids = Object.create(null);", discovery)
+        self.assertIn("function addProvider(provider, name, info)", discovery)
+        self.assertIn("seenProviders.indexOf(provider) !== -1", discovery)
+        self.assertIn("seenProviderUuids[uuid]", discovery)
+        self.assertIn("addProvider(d.provider, d.info.name || 'Wallet', d.info)", discovery)
+        self.assertNotIn(
+            "list.push({ provider: d.provider, name: d.info.name || 'Wallet' })",
+            discovery,
+        )
+
     def test_credit_exhaustion_copy_describes_logical_top_up_grace(self) -> None:
         self.assertIn("Credit exhausted · 2h top-up grace", self.ui_source)
         self.assertIn("Jobs are still running; compute billing and viewer access have stopped", self.ui_source)
