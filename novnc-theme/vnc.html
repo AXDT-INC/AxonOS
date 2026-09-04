@@ -12487,23 +12487,30 @@ Copyright (C) 2019 The noVNC Authors
             const dyn = !!axonosConfig.dynamic_pricing_enabled;
             let receivedCredits = null;
             if (amount > 0) {
-                if (token === 'usdc') {
-                    receivedCredits = amount * Number(axonosConfig.usdc_credit_per_usdc || 60);
-                } else if (!dyn) {
-                    if (token === 'eth') {
-                        receivedCredits = amount * Number(axonosConfig.eth_credit_per_eth || 120000);
-                    } else if (token === 'axgt') {
-                        receivedCredits = amount / 100 * Number(axonosConfig.credit_per_100_axgt || 60)
-                            * (1 + Number(axonosConfig.axgt_bonus_percent || 25) / 100);
-                    }
+                // ETH and USDC holder pricing is wallet-specific, so the wizard
+                // must use the same authoritative quote as the top-up dialog.
+                // Showing the base conversion here made eligible holders appear
+                // to be Tier 0 even though deposit verification credited the
+                // discount correctly.
+                if (token === 'axgt' && !dyn) {
+                    receivedCredits = amount / 100 * Number(axonosConfig.credit_per_100_axgt || 60)
+                        * (1 + Number(axonosConfig.axgt_bonus_percent || 25) / 100);
                 }
             }
 
             axonosWizardApplyCalculatorCredits(receivedCredits);
             if (bonusRow) bonusRow.style.display = (token === 'axgt') ? 'flex' : 'none';
+            if (tierVal) {
+                tierVal.textContent = token === 'axgt'
+                    ? 'Not applicable (flat bonus)'
+                    : (amount > 0 ? 'Checking on-chain balance…' : '—');
+            }
             if (gpuLabel) gpuLabel.textContent = axonosProfileLabel(axonosSelectedGpuProfile);
 
-            if (amount > 0 && dyn && token !== 'usdc') {
+            // Always quote ETH/USDC because holder discounts apply even when
+            // dynamic USD pricing is disabled. AXGT only needs a quote when its
+            // live-price mode is enabled.
+            if (amount > 0 && (token !== 'axgt' || dyn)) {
                 axonosWizardScheduleQuote(token, amount);
             }
         }
@@ -12537,9 +12544,11 @@ Copyright (C) 2019 The noVNC Authors
             if (axonosWizardQuoteTimer) clearTimeout(axonosWizardQuoteTimer);
             var wallet = window.verifiedWalletAddress || '';
             if (!/^0x[a-fA-F0-9]{40}$/.test(wallet)) return;
+            // Invalidate an already-running request as soon as the amount or
+            // rail changes, rather than waiting for this debounce to fire.
+            var seq = ++axonosWizardQuoteSeq;
             axonosWizardQuoteTimer = setTimeout(function () {
                 axonosWizardQuoteTimer = null;
-                var seq = ++axonosWizardQuoteSeq;
                 var url = new URL('/api/discount/quote', window.location.origin);
                 url.searchParams.set('wallet_address', wallet);
                 url.searchParams.set('currency', token);
@@ -12552,8 +12561,24 @@ Copyright (C) 2019 The noVNC Authors
                         var cur = document.getElementById('axonos_wizard_pay_amount');
                         if (!cur || (parseFloat(cur.value) || 0) !== amount || axonosSelectedPaymentToken !== token) return;
                         axonosWizardApplyCalculatorCredits(Number(d.estimated_minutes));
+                        var tierVal = document.getElementById('axonos_wizard_pay_tier');
+                        if (tierVal) {
+                            if (token === 'axgt') {
+                                tierVal.textContent = 'Not applicable (flat bonus)';
+                            } else if (d.balance_check_ok === false) {
+                                tierVal.textContent = 'Unavailable (balance check failed)';
+                            } else {
+                                var tierLabel = d.tier_label || ('Tier ' + Number(d.tier_index || 0));
+                                var discount = Number(d.discount_percent || 0);
+                                tierVal.textContent = tierLabel + ' (' + discount + '% discount)';
+                            }
+                        }
                     })
-                    .catch(function () { /* leave '—' */ });
+                    .catch(function () {
+                        if (seq !== axonosWizardQuoteSeq || axonosSelectedPaymentToken !== token) return;
+                        var tierVal = document.getElementById('axonos_wizard_pay_tier');
+                        if (tierVal && token !== 'axgt') tierVal.textContent = 'Unavailable (quote failed)';
+                    });
             }, 350);
         }
 
