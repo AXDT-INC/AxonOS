@@ -59,7 +59,7 @@ Only the desktop layout is supported for launching sessions; breakpoints are at
 | `icons/` | 13 PNG sizes (16–192 px), `files.svg`, `novnc-icon*.svg`, `Makefile`. |
 | `icon.png`, `axon-x.png`, `images/linux.svg` | Page icon and UI images. |
 | `axonos_assistant.png`, `talk_to_k.png` | Desktop pixmaps for the in-session assistants. |
-| `descios-icon.svg` | Legacy icon, unused by the page. |
+| legacy `*-icon.svg` | Pre-rebrand icon left in the directory, unused by the page (safe to delete). |
 | `install-theme.sh` | Legacy helper; see below. |
 
 ## Design tokens
