@@ -2,6 +2,8 @@
 
 This directory contains custom application definitions that extend AxonOS with additional software packages.
 
+The launcher reads `./axonos_plugins/` relative to its working directory (normally the repo root) and creates it if missing. Only `*.yaml` and `*.json` files are loaded (`*.yml` is ignored). Files are read once at launcher start.
+
 ## Plugin Format
 
 ### YAML Format
@@ -10,8 +12,10 @@ app_id:
   name: "Display Name"
   description: "Brief description of the application"
   dockerfile_section: "RUN command to install the application"
-  enabled: false  # Default state when loaded
+  enabled: false  # Optional; defaults to false
 ```
+
+Fields: `name`, `description` and `dockerfile_section` are required; entries missing any of them are skipped silently. `enabled` is optional. Internally each app is registered as `custom_<app_id>`. In `dockerfile_section`, doubled backslashes (`\\`) are collapsed to single ones, which matters for JSON authors.
 
 ### JSON Format
 ```json
@@ -29,24 +33,27 @@ app_id:
 
 ### Method 1: Using Templates (Recommended)
 
-1. Open AxonOS Launcher
+1. Open the AxonOS Launcher GUI from the repo root: `python3 axonos_launcher/main.py --gui`
 2. Go to the "🧩 Custom Apps" tab
 3. Choose a template from the dropdown:
-   - **Python Package**: Install Python packages via pip
-   - **APT Package**: Install system packages via apt
-   - **GitHub Release**: Download and install from GitHub releases
-   - **Web App**: Create desktop shortcuts for web applications
-   - **Custom**: Write your own Dockerfile commands
+   - `python_package`: Install Python packages via pip
+   - `apt_package`: Install system packages via apt
+   - `github_release`: Download and install from GitHub releases
+   - `web_app`: Create desktop shortcuts for web applications
+   - `custom`: Write your own Dockerfile commands
 
 4. Fill in the form fields
-5. Preview the generated Dockerfile section
-6. Click "💾 Save Application"
+5. Click "🔄 Update Preview" to see the generated Dockerfile section
+6. Click "💾 Save Application" (writes `axonos_plugins/<app_id>.yaml` with extra `template`/`template_fields` metadata)
+7. Restart the launcher; new applications appear only after a restart
 
 ### Method 2: Manual Plugin Files
 
 1. Create a new `.yaml` or `.json` file in this directory
 2. Define your applications using the format above
 3. Restart AxonOS Launcher to load the new applications
+
+Alternatively, use "📁 Load Plugin File" in the Custom Apps tab to copy an existing YAML/JSON file into this directory, then restart.
 
 ## Examples
 
@@ -124,7 +131,7 @@ To share your custom applications with the community:
 
 **Plugin not loading?**
 - Check YAML/JSON syntax is valid
-- Ensure all required fields are present
+- Ensure the required fields `name`, `description` and `dockerfile_section` are present (a missing field skips the entry without any message)
 - Restart AxonOS Launcher after adding new files
 
 **Application not installing?**

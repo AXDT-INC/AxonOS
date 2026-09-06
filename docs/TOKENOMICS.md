@@ -16,7 +16,8 @@ This document describes the **ETH-first, AXGT-discount** access model for AxonOS
 Three additional rails sit alongside ETH and feed the **same prepaid-minutes
 ledger** (see [Additional payment rails](#additional-payment-rails)):
 
-- **USDC** — a fixed-$1 stablecoin rail (tx-hash verified, no holder tier).
+- **USDC** — a fixed-$1 stablecoin rail (tx-hash verified; AXGT holder tiers
+  apply exactly as for ETH).
 - **x402** — an agent-native HTTP-402 rail for off-the-shelf x402 clients.
 - **AXGT (Model B)** — paying *in* AXGT, credited at live USD value with a flat
   bonus and no holder tier (the "best deal").
@@ -46,10 +47,17 @@ for legacy / migration use cases by setting `AXGT_ENABLE_AXGT_DEPOSITS=true`,
 in which case the legacy minutes-per-100-AXGT path is preserved alongside
 ETH.
 
-### No trial period
+### No anonymous trial period
 
 Access is strictly conditional on having **remaining_minutes > 0** from at
-least one verified ETH deposit. There is no time-limited free trial.
+least one verified deposit. There is no anonymous, self-serve free trial. Two
+operator-gated exceptions exist and are both disabled unless configured:
+
+- **Guest / demo sessions** (`axonos_gate/guest_mode.py`) — wallet-free,
+  time-boxed sessions mintable only from an admin-issued invite
+  (`POST /api/auth/guest-invite`, `POST /api/auth/guest`).
+- **Test-credit rail** (`POST /api/auth/test-credit`) — a capped credit grant
+  for approved wallets, recorded separately from paid deposits.
 
 ---
 
@@ -160,17 +168,32 @@ ETH/AXGT rail runs on Ethereum mainnet. Two ways to pay:
 2. **x402 protocol** (below).
 
 Defaults: 1 USDC → 60 minutes (`USDC_CREDIT_PER_USDC_MINUTES`), minimum 1 USDC,
-6 confirmations. Holder discount tiers do **not** apply to USDC.
+6 confirmations (`USDC_DEPOSIT_MIN_CONFIRMATIONS`). Holder discount tiers **apply
+to USDC** with the same math as ETH: a tier-adjusted minimum
+(`1 USDC × (1 − d)`) and a discount-adjusted credit rate
+(`USDC_CREDIT_PER_USDC_MINUTES ÷ (1 − d)`); the response carries the same `tier`
+object as the ETH path.
 
 ### x402 (agent-native HTTP-402)
 
 For autonomous agents using an off-the-shelf x402 client. `GET /api/x402/access`
 returns **HTTP 402** with payment requirements; the client signs an EIP-3009
-`transferWithAuthorization`; `POST /api/x402/settle` broadcasts it and **the gate
-pays the gas** from a dedicated low-balance settlement wallet
-(`X402_SETTLEMENT_PRIVATE_KEY`). The verified payment credits minutes exactly like
-the USDC tx-hash rail. The agent can then provision a headless SSH session for
-fully unattended compute.
+`transferWithAuthorization` and retries the **same** request with the payment
+header (`X-PAYMENT`, or its alias `PAYMENT-SIGNATURE`). The gate settles inline —
+on the paid retry of `/api/x402/access`, on `POST /api/x402/settle` (explicit
+settle), or on `POST /api/x402/session` (pay **and** claim a headless SSH session
+in one call) — broadcasting the transfer itself so **the gate pays the gas** from a
+dedicated low-balance settlement wallet (`X402_SETTLEMENT_PRIVATE_KEY`). The
+verified payment credits minutes exactly like the USDC tx-hash rail.
+
+Optional extensions (all off by default):
+
+- **CDP facilitator rail** (`AXGT_X402_FACILITATOR_ENABLED=true`,
+  `axonos_gate/x402_facilitator.py`) routes verify/settle through Coinbase's
+  facilitator instead of self-settling, which is what lists the resource in the
+  x402 Bazaar. The 402 then carries a Bazaar discovery extension.
+- **AgentLink** (`axonos_gate/agentlink_verifier.py`) lets an agent present a
+  signed owner delegation alongside the payment.
 
 > SDK interop: the gate serves both the v1 402 **body** (absolute `resource` URL,
 > for JS `x402-fetch`) and the v2 `PAYMENT-REQUIRED` **header** (for the Python
@@ -234,7 +257,7 @@ read-only server-side cache and never blocks payment.
 
 ### GPU-weighted session billing
 
-When multi-GPU profiles are enabled (`AXGT_GPU_PROFILES_ENABLED`), usage billing
+When multi-GPU profiles are enabled (`AXGT_GPU_PROFILES_ENABLED`, default on), usage billing
 multiplies wall-clock time by the number of GPUs in the active session:
 
 | Profile | GPUs | Billed per 1 wall-clock minute |
@@ -259,15 +282,23 @@ Disable with `AXGT_GPU_WEIGHTED_BILLING=false` (not recommended for production).
 Query parameters:
 
 - `wallet_address` (required) — `0x…` wallet to quote.
-- `base_eth` (optional) — override the ETH price; defaults to
-  `ETH_MIN_DEPOSIT`.
+- `currency` (optional) — `eth` (default), `usdc`, or `axgt`. ETH and USDC
+  quotes carry the holder tier; `axgt` quotes report `discount_percent: 0` and
+  fold the Model-B bonus (and live USD price when the oracle is on) into
+  `estimated_minutes`.
+- `base_amount` (optional) — override the amount to quote, in the selected
+  currency; defaults to that rail's minimum. `base_eth` is accepted as a
+  legacy alias.
 
-Response (200 OK):
+Response (200 OK, `currency=eth`):
 
 ```json
 {
   "ok": true,
   "wallet_address": "0xabc…",
+  "currency": "eth",
+  "base_amount": "0.0005",
+  "final_amount": "0.000375",
   "base_eth": "0.0005",
   "final_eth": "0.000375",
   "discount_percent": 25,
@@ -283,6 +314,11 @@ Response (200 OK):
   "eth_credit_per_eth_minutes": 120000.0
 }
 ```
+
+`base_amount` / `final_amount` are always present; the per-currency aliases
+(`base_eth`/`final_eth`/`eth_credit_per_eth_minutes`,
+`base_usdc`/`final_usdc`/`usdc_credit_per_usdc_minutes`,
+`base_axgt`/`final_axgt`/`credit_per_100_axgt_minutes`) follow `currency`.
 
 `balance_check_ok=false` indicates an RPC failure; the response still
 returns a quote (with `discount_percent=0`) so the UI can render and let the
@@ -340,8 +376,9 @@ the discount applied at credit time:
 ### Additional rail endpoints
 
 - `POST /api/auth/verify-usdc-deposit` — verify a USDC transfer by tx hash (USDC rail).
-- `GET /api/x402/access` — returns HTTP 402 with payment requirements (v1 body + v2 header).
-- `POST /api/x402/settle` — settles an EIP-3009 `transferWithAuthorization` (gate pays gas).
+- `GET /api/x402/access` — returns HTTP 402 with payment requirements (v1 body + v2 header); a retry carrying `X-PAYMENT` settles inline and returns access.
+- `POST /api/x402/settle` — explicitly settles an EIP-3009 `transferWithAuthorization` (gate pays gas).
+- `POST /api/x402/session` — pays (if needed) and claims a headless SSH compute session in one call.
 - `GET /.well-known/x402` — x402 discovery document.
 - `GET /api/config` additionally exposes the USDC contract/chain and dynamic-pricing flags when configured.
 
@@ -353,7 +390,7 @@ the discount applied at credit time:
 | -------------------------------------- | ----------- | ----------------------------------- |
 | AXGT contract (mainnet)                | —           | `AXGT_CONTRACT_ADDRESS` (use `0x6112C3509A8a787df576028450FebB3786A2274d`) |
 | Mainnet RPC URL (for `balanceOf`)      | —           | `AXGT_RPC_URL`                      |
-| Chain ID                               | 1           | `AXGT_CHAIN_ID`                     |
+| Chain ID (advertised via `/api/config`) | — (set to `1` for mainnet) | `AXGT_CHAIN_ID`          |
 | Revenue wallet                         | —           | `AXGT_REVENUE_WALLET`               |
 | Min ETH deposit                        | 0.0005 ETH  | `ETH_MIN_DEPOSIT`                   |
 | Minutes per 1 ETH                      | 120000      | `ETH_CREDIT_PER_ETH_MINUTES`        |
@@ -369,6 +406,10 @@ the discount applied at credit time:
 | Challenge TTL                          | 180 s       | `AXGT_CHALLENGE_TTL_SECONDS`        |
 | USDC rail enabled                      | true        | `AXGT_ENABLE_USDC_DEPOSITS`         |
 | USDC contract / chain                  | — / 8453    | `USDC_CONTRACT_ADDRESS` / `USDC_CHAIN_ID` |
+| USDC confirmations before credit       | 6           | `USDC_DEPOSIT_MIN_CONFIRMATIONS`    |
+| x402 via CDP facilitator (Bazaar)      | false       | `AXGT_X402_FACILITATOR_ENABLED`     |
+| Multi-GPU profiles / weighted billing  | true / true | `AXGT_GPU_PROFILES_ENABLED` / `AXGT_GPU_WEIGHTED_BILLING` |
+| Credit-exhausted top-up grace          | 120 min     | `AXGT_SESSION_CREDIT_GRACE_MINUTES` |
 | Minutes per 1 USDC                     | 60          | `USDC_CREDIT_PER_USDC_MINUTES`      |
 | x402 settlement enabled                | true        | `AXGT_ENABLE_X402_SETTLEMENT`       |
 | x402 settlement signer (pays gas)      | —           | `X402_SETTLEMENT_PRIVATE_KEY`       |
@@ -396,11 +437,14 @@ Open `http://HOST:6080/vnc.html`. Verification steps:
 
 - Wallet connection works (EIP-6963 / `window.ethereum`).
 - Wallet AXGT balance is detected and printed in the **AXGT discount tier**
-  card on the wallet dialog.
-- Correct tier label + percentage shown.
-- ETH payable amount updates from base → final after the wallet connects.
-- Clicking **Pay with ETH** sends exactly the final discounted amount.
-- Users with no AXGT (Tier 0) still see the card and can pay full ETH.
+  rows of the workspace payment wizard (ETH and USDC rails; the AXGT rail shows
+  the flat bonus instead).
+- Correct tier label + percentage shown, sourced from `GET /api/discount/quote`
+  (the wizard shows an explicit loading / quote-failed state rather than a
+  misleading Tier 0).
+- ETH / USDC payable amount updates from base → final after the wallet connects.
+- Clicking **Pay with ETH** / **Pay with USDC** sends exactly the final discounted amount.
+- Users with no AXGT (Tier 0) still see the tier row and can pay the full amount.
 - After credit, `remaining_minutes` reflects discount-adjusted minutes
   (e.g. a Tier 4 holder paying `0.000375 ETH` gets 60 minutes, the same as
   a Tier 0 holder paying `0.0005 ETH`).
@@ -423,7 +467,11 @@ Operator-side checks:
   - `axonos_gate/deposit_verifier.py` — ETH-first verification + discount-adjusted credit.
   - `axonos_gate/axgt_verifier.py` — challenge/signature + credit policy.
   - `axonos_gate/deposit_ledger.py` — Postgres deposit ledger + audit trail.
+  - `axonos_gate/x402_verifier.py` — USDC tx-hash rail + x402 self-settlement (v1 body / v2 header).
+  - `axonos_gate/x402_facilitator.py` — optional CDP facilitator / Bazaar rail.
+  - `axonos_gate/price_oracle.py` — Uniswap v3 TWAP × Chainlink oracle with guarded spot / CoinGecko fallbacks.
+  - `axonos_gate/guest_mode.py` — invite-gated demo sessions.
   - `axonos_gate/gate_server.py` / `axonos_gate/websockify_gate.py` — HTTP API
     (incl. `/api/config`, `/api/discount/quote`, `/api/auth/verify-deposit`).
-  - `novnc-theme/vnc.html` — wallet dialog with discount tier panel.
+  - `novnc-theme/vnc.html` — workspace payment wizard with per-rail discount tier rows.
   - `axonos_gate/tests/test_discount.py` — full tier + edge-case test suite.

@@ -48,7 +48,7 @@ v.describeTeardownMouseupSafety();
 
 - Every cycle: `errors: []`
 - No duplicate `#axonos_webrtc_video` or paste sinks after teardown
-- Click-path smoke test completes without `ReferenceError` (regression guard for `clipboardBeforeClickMs` and async mousedown)
+- Click-path smoke test completes without `ReferenceError` (regression guard for the clipboard-before-click delay and async mousedown)
 - Manual spot-check: after 3+ cycles, left click, right click, and click-drag still work on the remote desktop
 
 ## Agent unit tests (CI)

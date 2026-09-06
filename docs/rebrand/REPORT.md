@@ -2,7 +2,24 @@
 
 ## Executive Summary
 
-Successfully completed rebranding of DeSciOS fork to AxonOS across the entire repository. All user-facing text, code identifiers, directory names, and documentation have been updated while maintaining backward compatibility where appropriate.
+Rebranding of the DeSciOS fork to AxonOS is complete **with the exceptions listed under
+"Known exceptions" below**. All user-facing text, code identifiers, directory names, and
+documentation have been updated. Note that `docs/rebrand/INVENTORY.md` is a historical
+snapshot of the pre-rebrand state and is not kept current.
+
+## Known exceptions (as of 2026-09-06)
+
+Old-brand or inconsistent references that intentionally or accidentally remain:
+
+- `.gitignore` lines for `build/descios_launcher/`, `build/descios_launcher_*/` and
+  `DeSciOS-Launcher-*` — kept so stale local build artifacts stay untracked.
+- `scripts/check_branding.sh` and `scripts/test_docker_build.sh` — contain the old
+  names by design (they are the strings being searched for).
+- Repository URL is inconsistent across the tree: `README.md` points at one GitHub
+  organization, `build/build_all.py` and `build/build_deb.py` at an older one, and the
+  live `git remote` at a third. Treat `git remote -v` as canonical until these are unified.
+- No `descios.yaml` compatibility reader was ever implemented (earlier drafts of
+  `BRAND.md` / `MIGRATION.md` described one); those docs have been corrected.
 
 ## What Changed
 
@@ -63,9 +80,9 @@ Successfully completed rebranding of DeSciOS fork to AxonOS across the entire re
 - No backward compatibility needed as this is a new rename
 
 ### 2. GitHub URLs
-- **Repository URL**: Updated to `AxonDAO-AXGT/AxonOS`
-- Rationale: Repository location confirmed and updated
-- Status: ✅ All placeholders updated
+- **Repository URL**: Placeholders were replaced, but not with a single value —
+  `README.md` and the build scripts name different organizations (see "Known exceptions")
+- Status: ⚠️ Needs a final pass to unify on the canonical remote
 
 ### 3. Domain References
 - **Removed**: `descios.desciindia.org` references removed from Dockerfile
@@ -81,7 +98,7 @@ Successfully completed rebranding of DeSciOS fork to AxonOS across the entire re
 
 ### Backward Compatibility
 1. **Username `aXonian`**: Renamed from `deScier` (no backward compatibility needed)
-2. **Config files**: Launcher code updated to use new paths, but old configs may still work
+2. **Config files**: Launcher configs are JSON (`axonos config save/load`); no old-brand file names are read
 3. **Docker images**: Old images with `descios` tag will need rebuilding with new tag
 
 ### Breaking Changes
@@ -93,7 +110,7 @@ Successfully completed rebranding of DeSciOS fork to AxonOS across the entire re
 ## Remaining TODOs
 
 ### High Priority
-1. **Update GitHub repository URL**: ✅ Completed - All placeholders updated to AxonDAO-AXGT/AxonOS
+1. **Unify GitHub repository URL**: README, `build/build_all.py`, `build/build_deb.py` and the git remote disagree
 2. **Test builds**: Verify all build scripts work with new names
 3. **Update CI/CD**: Ensure GitHub Actions work correctly
 
@@ -140,10 +157,12 @@ This will identify any remaining old-brand references (excluding exempt files).
 
 ## Conclusion
 
-Rebranding completed successfully. The codebase now consistently uses AxonOS branding throughout while maintaining backward compatibility where appropriate. All user-facing text, code identifiers, and documentation have been updated.
+Rebranding is complete with the exceptions listed above. The codebase uses AxonOS branding
+in all user-facing text, code identifiers, and documentation; the remaining old-brand
+strings are confined to ignore patterns and the branding-check tooling itself.
 
 Next steps:
-1. ✅ Update repository URL placeholders - Completed
+1. Unify the repository URL across README, build scripts and the git remote
 2. Run full test suite
 3. Verify builds on all platforms
 4. Update any external references (if applicable)

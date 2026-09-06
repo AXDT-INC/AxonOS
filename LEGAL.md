@@ -19,7 +19,7 @@ Repository-level license texts:
 - `LICENSE` (MIT License) - **main license file** for MIT-licensed files
 - `LICENSE-MPL` (Mozilla Public License 2.0) - **required for MPL compliance** for MPL-licensed files
 
-**Note**: Individual file headers determine the license for each file. See `LEGAL.md` for details.
+**Note**: Individual file headers determine the license for each file. See the file headers and `LICENSE` / `LICENSE-MPL`.
 
 ## Commercial / proprietary forks: allowed, with conditions
 
@@ -43,6 +43,10 @@ These files are derived from the upstream noVNC project and are licensed under *
 - `novnc-theme/ui.js`
 - `novnc-theme/vnc.html`
 
+The container image also ships the upstream noVNC package (MPL 2.0, from the
+Ubuntu `novnc` package) and xterm.js (MIT, vendored in
+`novnc-theme/app/vendor/xterm/` with its license files).
+
 ### MIT (Category B: original AxonOS-authored)
 
 Unless a file header states otherwise, AxonOS-authored files in this repository are intended to be under **MIT** (see file headers).
@@ -53,9 +57,8 @@ If you distribute binaries, containers, images, installers, or appliances that i
 
 - **Keep license headers intact** in all source files you ship.
 - **Include license texts** in your distribution:
-  - `LICENSE-MIT`
+  - `LICENSE` (MIT)
   - `LICENSE-MPL`
-  - (and/or `LICENSE`, if you include it)
 - **For MPL files you modified**:
   - provide the **exact source code** of those MPL files (including your modifications),
   - under **MPL 2.0**, and

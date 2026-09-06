@@ -40,7 +40,7 @@
 | DeSciOS Launcher | AxonOS Launcher | Application name |
 | DeSciOS Assistant | AxonAI | Application name |
 | deScier | aXonian | Default username |
-| GizmoQuest/DeSciOS | AxonDAO-AXGT/AxonOS | GitHub repository |
+| GizmoQuest/DeSciOS | the current AxonOS GitHub organization (see `git remote -v`) | GitHub repository |
 | descios.desciindia.org | Remove or update | Domain references |
 
 ## Tone Guidelines
@@ -68,7 +68,7 @@
 
 ### File Names
 - Desktop entries: `axonos-assistant.desktop`
-- Config files: `axonos.yaml` (with backward compatibility for `descios.yaml`)
+- Config files: `axonos-config.json` (launcher CLI default); plugin manifests `*.yaml` under `axonos_plugins/`
 - Build outputs: `AxonOS-Launcher-0.1.0`
 
 ## Domain and URLs
@@ -87,9 +87,9 @@
 
 ## Backward Compatibility
 
-- Support reading old config file names (`descios.yaml`) with deprecation warning
+- No old-brand config file names are read; the launcher never shipped a `descios.yaml` reader
 - Username `aXonian`: Renamed from `deScier` as part of rebrand (no backward compatibility needed)
-- Docker image tags: support both old and new during transition period
+- Docker image tags: only the new names are produced; re-tag old images if you still have them
 
 ## Examples
 

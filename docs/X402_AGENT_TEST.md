@@ -7,12 +7,21 @@ the **public URL** (`https://app.axonos.io`), using the official Coinbase
 Everything runs in throwaway Docker containers — nothing installed on your host.
 
 - **Test 1** (no money): discovery + 402 — proves the public endpoints work.
-- **Test 2** (spends ~1 test USDC): full SDK payment end-to-end.
+- **Test 2** (spends ~1 USDC): full SDK payment end-to-end.
 - **Test 3** (optional): agent pays AND gets an SSH GPU session in one call.
 - **Test 4**: verification — SSH in & run GPU commands, confirm the tx on-chain,
   re-check credit, and view live pricing.
 
-> Testnet: Base Sepolia. Test USDC only — not real funds.
+> **Network:** the public gate settles on **Base mainnet** (`eip155:8453`,
+> USDC `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`). Tests 2–4 spend **real USDC**
+> (about $1 per test). To rehearse with test funds instead, run your own stack
+> from `.env.testnet` (Base Sepolia, `eip155:84532`) and point `GATE` at it — see
+> the **Testnet variant** notes in each step and
+> [`tools/x402-agent-test/README.md`](../tools/x402-agent-test/README.md).
+>
+> The wire format is the same on both networks: the 402 carries an x402 **v1
+> body** (for JS `x402-fetch`) plus a **v2 `PAYMENT-REQUIRED` header** (for the
+> Python `x402` SDK used below).
 
 ---
 
@@ -33,19 +42,23 @@ If you get those, the public ingress is serving x402 correctly.
 
 ---
 
-## Test 2 — Full payment with the official x402 SDK (spends ~1 test USDC)
+## Test 2 — Full payment with the official x402 SDK (spends ~1 USDC)
 
 ### a) Create + fund a throwaway wallet
 
 ```bash
-# Generate a throwaway EVM wallet (prints address + private key — testnet only)
+# Generate a throwaway EVM wallet (prints address + private key — keep it low-value)
 docker run --rm python:3.11-slim sh -c \
   "pip install -q eth-account >/dev/null 2>&1; python -c 'from eth_account import Account; a=Account.create(); print(a.address); print(a.key.hex())'"
 ```
 
-Copy the **address** (line 1) and **private key** (line 2). Send **~1–2 test USDC on
-Base Sepolia** to the address (Circle faucet: https://faucet.circle.com → Base
-Sepolia, or transfer from another testnet wallet). No ETH(Base) needed — AxonOS pays gas.
+Copy the **address** (line 1) and **private key** (line 2). Send **~1–2 USDC on
+Base mainnet** to the address (from an exchange or another wallet). No ETH(Base)
+needed — AxonOS pays gas.
+
+> **Testnet variant:** fund with Base Sepolia test USDC instead (Circle faucet:
+> https://faucet.circle.com → Base Sepolia) and target your self-hosted
+> `.env.testnet` gate.
 
 ### b) Run the official SDK against the public URL
 
@@ -60,12 +73,15 @@ from x402.mechanisms.evm import EthAccountSigner
 from x402.mechanisms.evm.exact import ExactEvmClientScheme
 
 GATE = os.environ.get("GATE", "https://app.axonos.io").rstrip("/")
+# CAIP-2 network the gate advertises: Base mainnet for the public gate,
+# eip155:84532 for a self-hosted Base Sepolia (.env.testnet) stack.
+NETWORK = os.environ.get("X402_NETWORK", "eip155:8453")
 acct = Account.from_key(os.environ["EVM_PRIVKEY"])
-print(f"Generic x402 agent wallet: {acct.address}\nGate: {GATE}\n")
+print(f"Generic x402 agent wallet: {acct.address}\nGate: {GATE}\nNetwork: {NETWORK}\n")
 
 client = x402ClientSync()
-# v2 scheme, registered under the CAIP-2 network AxonOS advertises (Base Sepolia)
-client.register("eip155:84532", ExactEvmClientScheme(signer=EthAccountSigner(acct)))
+# v2 scheme, registered under the CAIP-2 network AxonOS advertises
+client.register(NETWORK, ExactEvmClientScheme(signer=EthAccountSigner(acct)))
 http = x402HTTPClientSync(client)
 
 url = f"{GATE}/api/x402/access?wallet_address={acct.address}"
@@ -88,12 +104,17 @@ print("\n=== RESULT:", "PASS — off-the-shelf x402 SDK paid AxonOS" if ok else 
 sys.exit(0 if ok else 1)
 ```
 
-Run it (replace the key with your funded throwaway key):
+Run it (replace the key with your funded throwaway key). The snippet targets the
+Python `x402` SDK 2.13.x; if a newer release renames these imports, compare with
+`tools/x402-agent-test/agent.py`, which is kept in step with the SDK:
 
 ```bash
 docker run --rm -e EVM_PRIVKEY=0xYOUR_THROWAWAY_KEY \
   -v "$PWD/x402_agent_test.py:/t.py:ro" \
   python:3.11-slim sh -c "pip install -q 'x402[evm]' requests >/dev/null 2>&1; python /t.py"
+
+# Testnet variant (self-hosted .env.testnet stack):
+#   add  -e GATE=http://<testbox>:6080 -e X402_NETWORK=eip155:84532
 ```
 
 **Expect:**
@@ -106,8 +127,8 @@ GET access + payment -> HTTP 200
 === RESULT: PASS — off-the-shelf x402 SDK paid AxonOS ===
 ```
 
-That `settlement_tx_hash` is a real Base Sepolia transaction — verify it on
-https://sepolia.basescan.org if you like.
+That `settlement_tx_hash` is a real Base transaction — verify it on
+https://basescan.org (or https://sepolia.basescan.org for a testnet stack).
 
 ---
 
@@ -131,8 +152,10 @@ Test 2, then POST it to `/api/x402/session` with your `agent_key.pub`:
 # ...after add_headers from handle_402_response (Test 2)...
 pay = list(add_headers.values())[0]
 ssh_pub = open("agent_key.pub").read().strip()
+# The gate derives the paying wallet from the payment's authorization.from;
+# wallet_address in the body must match it.
 r = requests.post(f"{GATE}/api/x402/session",
-    headers={"PAYMENT-SIGNATURE": pay, "X-Wallet-Address": acct.address},
+    headers={"PAYMENT-SIGNATURE": pay},
     json={"wallet_address": acct.address, "ssh_pubkey": ssh_pub}, timeout=180)
 d = r.json(); print(d)
 # then: ssh -i agent_key -p <d['ssh_port']> <d['ssh_user']>@<d['ssh_host']>
@@ -159,21 +182,23 @@ ssh -i ./agent_key -p <PORT> \
   'echo READY && hostname && nproc && nvidia-smi -L && python3 -c "print(sum(i*i for i in range(1_000_000)))"'
 ```
 
-**Expect:** `READY`, the container hostname, CPU count, a line like
-`GPU 0: Tesla V100-SXM2-32GB (...)`, and `333332833333500000`. That's an agent
-running a real workload on a GPU it paid for.
+**Expect:** `READY`, the container hostname, CPU count, one `GPU 0: …` line per
+assigned GPU (model depends on the host), and `333332833333500000`. That's an
+agent running a real workload on a GPU it paid for.
 
-> The host is the public DNS (e.g. `axonconsole.io`) on the per-session port. If a
-> direct `ssh` is blocked by your network, the same key works from anywhere with
-> outbound access to that host/port.
+> `ssh_host` is whatever the operator set in `AXGT_SSH_PUBLIC_HOST` (the public
+> DNS name of the compute host) on the per-session port. If a direct `ssh` is
+> blocked by your network, the same key works from anywhere with outbound access
+> to that host/port.
 
 ### 4b — Verify the settlement on-chain (independent of AxonOS)
 
-Take the `settlement_tx_hash` from Test 2/3 and confirm it on Base Sepolia:
+Take the `settlement_tx_hash` from Test 2/3 and confirm it on Base (use
+`https://sepolia.base.org` for a testnet stack):
 
 ```bash
 TX=0xYOUR_SETTLEMENT_TX_HASH
-docker run --rm curlimages/curl:latest -s -X POST https://sepolia.base.org \
+docker run --rm curlimages/curl:latest -s -X POST https://mainnet.base.org \
   -H 'content-type: application/json' \
   --data "{\"jsonrpc\":\"2.0\",\"method\":\"eth_getTransactionReceipt\",\"params\":[\"$TX\"],\"id\":1}" \
   | docker run --rm -i python:3.11-slim python -c \
@@ -181,7 +206,7 @@ docker run --rm curlimages/curl:latest -s -X POST https://sepolia.base.org \
 ```
 
 **Expect:** `status 0x1`, a block number, and `USDC Transfer logs: 2`. Or just open
-`https://sepolia.basescan.org/tx/<TX>` in a browser — you'll see the USDC transfer
+`https://basescan.org/tx/<TX>` in a browser — you'll see the USDC transfer
 to the revenue wallet. Proof the payment is real, not AxonOS's say-so.
 
 ### 4c — Re-check access (credit persisted, no second payment)
@@ -218,12 +243,13 @@ AXGT will also show a non-zero `discount_percent` on the ETH/USDC quotes.
 
 ## Notes
 
-- **Costs:** Test 1 = free. Test 2 = ~1 test USDC + (AxonOS pays the gas). Test 3 =
-  another ~1 test USDC and starts a real (billable, by the minute) GPU session.
+- **Costs:** Test 1 = free. Test 2 = ~1 USDC (AxonOS pays the gas). Test 3 =
+  another ~1 USDC and starts a real (billable, by the minute) GPU session.
 - **Default pricing:** 1 USDC ≈ 60 minutes ($1/hour). AXGT holders get a discount
   on ETH/USDC; paying in AXGT gets a +25% bonus.
-- **Security:** use a *throwaway* wallet with only a little test USDC. The private
+- **Security:** use a *throwaway* wallet with only a little USDC. The private
   key goes in an env var for the test container only.
-- **Mainnet:** the SDK reads chain/asset/amount from the discovery doc, so the same
-  test works against a mainnet deployment — just register the scheme under that
-  chain's `eip155:<id>` and fund with real USDC.
+- **Testnet:** the SDK reads chain/asset/amount from the 402, so the same test
+  works against a self-hosted Base Sepolia stack (`cp .env.testnet .env` on a
+  non-production box) — register the scheme under `eip155:84532` and fund with
+  test USDC. Never copy `.env.testnet` onto the production host.

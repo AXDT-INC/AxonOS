@@ -1,200 +1,131 @@
-# 🧬 AxonOS noVNC Theme
+# AxonOS noVNC Theme (Web Frontend)
 
-A comprehensive scientific computing theme that transforms the standard noVNC interface into an inspiring, DeSci-vision aligned experience.
+This directory holds the AxonOS browser frontend. It started as a restyled noVNC
+login page and has grown into the full production client: landing page,
+dashboard, launch/payment wizard, WebRTC streaming client, file-transfer plane,
+web terminal, and a public telemetry page. The classic noVNC client is still the
+fallback path when WebRTC is unavailable.
 
-## 🎨 Enhanced Login Experience
+The frontend is served by the gate (`axonos_gate/websockify_gate.py` on `:6080`)
+from `/usr/share/novnc/` inside the container. Every `/api/...` path it calls is
+implemented by the gate.
 
-The login UI has been completely redesigned to embody the DeSci vision of **decentralized, open, and AI-powered scientific computing**:
+## What the frontend does
 
-### ✨ Visual Features
+- **Landing page as home** (`vnc.html`): hero "A real GPU desktop, spun up in a
+  minute", tagline "GPU-Native Scientific Computing", environment catalogue.
+  Wallet connect and page reload both stay on the landing page; the hero CTA
+  becomes "Open workspace" once a session exists.
+- **Dashboard + Launch Wizard**: Quick Launch grid with a catalogue "View all"
+  entry, GPU profile picker, storage sizing, payment rails (USDC / ETH / AXGT)
+  with holder-discount quotes from `/api/discount/quote`.
+- **Wallet auth**: EIP-6963 provider discovery with a deduplicated picker,
+  challenge/verify flow (`/api/auth/challenge`, `/api/auth/verify-wallet`),
+  short-lived auth tokens refreshed via `/api/auth/wallet-status`.
+- **Guest demo mode**: invite-code redemption and invite generation
+  (`/api/auth/guest`, `/api/auth/guest-invite`), enabled when `/api/config`
+  reports `guest_mode_enabled`.
+- **Sessions**: claim / heartbeat / release / restart / status under
+  `/api/session/*`; "Relaunch as Console / Desktop" mode switch from the sidebar.
+- **WebRTC client** (`app/webrtc/axonos-webrtc.js`): `/api/webrtc/session`,
+  `offer`, `ice`, `status`, `metrics`, `close`. Falls back to noVNC.
+- **File plane** (`app/files/axonos-files.js`): `/api/public/files-config` then
+  `/api/files/*`, optionally on a separate files origin, with adaptive chunking.
+- **Web terminal / SSH** (`app/terminal/axonos-terminal.js` + vendored xterm.js):
+  `/api/terminal/ticket`, direct-SSH toggle with public-key entry, host-key
+  fingerprint display.
+- **Telemetry**: `telemetry.html` and the sidebar read
+  `/api/public/telemetry/*`; CPU/RAM/disk come from the authenticated
+  `/api/files/stats`. Unavailable values render as "—", never mocked.
+- **Compact / mobile view**: browse-only. Launching requires a desktop browser.
 
-- **🚀 Hero Section**: Large, animated "AxonOS" title with glowing effects
-- **🧬 Scientific Motifs**: Animated DNA helix, molecular patterns, and particle effects  
-- **📊 Data Visualization**: Subtle grid patterns reminiscent of scientific graphs
-- **🌟 Dynamic Backgrounds**: Multi-layered molecular drift animations
-- **💫 Interactive Elements**: Hover effects, pulsing animations, and smooth transitions
+Only the desktop layout is supported for launching sessions; breakpoints are at
+992px (compact), 768px and 600px (progressive tightening).
 
-### 🎯 DeSci Mission Integration
+## Files
 
-- **Mission Statement**: "Breaking barriers in scientific collaboration and discovery"
-- **Core Values**: Open Science • AI-Powered • Browser-Native • Decentralized
-- **Feature Highlights**: Research Tools, Data Analysis, AI Assistant, Decentralized workflows
-- **Inspirational Quote**: "The best way to predict the future is to invent it." — Alan Kay
+| Path | Purpose |
+|------|---------|
+| `vnc.html` | Whole single-page frontend (landing, dashboard, wizard, modals, noVNC client). ~745 KB. |
+| `ui.js` | Patched noVNC `ui.js` with AxonOS defaults, session/sidebar logic, SSH options. ~256 KB. |
+| `axonos-theme.css` | Complete stylesheet ("AxonOS v2" design). ~200 KB. |
+| `telemetry.html` | Public live-telemetry page. |
+| `app/webrtc/axonos-webrtc.js` | WebRTC streaming client. |
+| `app/webrtc/axonos-webrtc-input-validation.js` | Input-validation helpers (see `docs/WEBRTC_INPUT_VALIDATION.md`); not currently copied into the image. |
+| `app/files/axonos-files.js` | File upload/download client. |
+| `app/terminal/axonos-terminal.js` | Web terminal client. |
+| `app/vendor/xterm/` | Vendored xterm.js 6.0.0 + addon-fit 0.11.0 (see its README). |
+| `app/fonts/` | BrutalType (5 weights) + Orbitron woff2. |
+| `icons/` | 13 PNG sizes (16–192 px), `files.svg`, `novnc-icon*.svg`, `Makefile`. |
+| `icon.png`, `axon-x.png`, `images/linux.svg` | Page icon and UI images. |
+| `axonos_assistant.png`, `talk_to_k.png` | Desktop pixmaps for the in-session assistants. |
+| `descios-icon.svg` | Legacy icon, unused by the page. |
+| `install-theme.sh` | Legacy helper; see below. |
 
-### 🔧 Technical Enhancements
+## Design tokens
 
-- **Enhanced Connect Button**: 3D-styled with rocket emoji and descriptive text
-- **Typing Animation**: Tagline appears with typewriter effect
-- **Particle System**: Floating scientific elements in the background
-- **Responsive Design**: Optimized for desktop, tablet, and mobile viewing
-- **Loading States**: Enhanced animations during connection process
+Defined on `:root` in `axonos-theme.css`:
 
-## 🎨 Color Palette
+| Token | Value | Usage |
+|-------|-------|-------|
+| `--axonos-primary` | `#7b6cff` | Primary purple, buttons and accents |
+| `--axonos-secondary` | `#8b7cff` | Gradients, secondary emphasis |
+| `--axonos-warm` | `#f2c14e` | Warnings and warm highlights |
+| `--axonos-dark` / `-2` / `-3` | `#080910` / `#0d0e18` / `#12131f` | Backgrounds |
+| `--axonos-light` | `#e9ebf2` | Text on dark backgrounds |
+| `--axonos-hover` | `#4fe0c0` | Hover / success feedback |
+| `--axonos-shadow` | `rgba(123,108,255,.25)` | Glow shadows |
 
-| Color | Hex | Usage |
-|-------|-----|-------|
-| **Sea Green** | `#2E8B57` | Primary brand color, scientific theme |
-| **Steel Blue** | `#4682B4` | Secondary color, data visualization |
-| **Gold** | `#FFD700` | Accent color, highlights and emphasis |
-| **Dark Gray** | `#1C1C1C` | Background, professional appearance |
-| **Off White** | `#F5F5F5` | Text on dark backgrounds |
-| **Lime Green** | `#32CD32` | Hover states, interactive feedback |
+Override these tokens to recolour the UI. Background motion uses the
+`grid-drift`, `rocket-fly-*`, `spaceship-cruise-*`, `planet-float-*`,
+`comet-streak` and `satellite-orbit` keyframes, all disabled under
+`prefers-reduced-motion`.
 
-## 📁 Theme Components
+## noVNC defaults (`ui.js`)
 
-### Core Files
-- **`axonos-theme.css`** (19KB) - Complete styling system
-- **`vnc.html`** (20KB) - Enhanced HTML with DeSci branding
-- **`ui.js`** (57KB) - JavaScript with optimal defaults
-- **`axonos-icon.svg`** (1.3KB) - Custom scientific icon
+| Setting | Value |
+|---------|-------|
+| Resize | `scale` (local scaling) |
+| Quality | 9 |
+| Compression | 9 |
+| Auto-reconnect | off (5000 ms delay when enabled); session resume is handled by the gate |
 
-### Icon Set (15 PNG files)
-- 16x16 to 192x192 pixel variants
-- Scientific DNA/molecular design
-- Consistent branding across all sizes
+## Installation
 
-### Installation
-- **`install-theme.sh`** (2.5KB) - Automated deployment script
-- **`README.md`** (3.3KB) - Complete documentation
+The root `Dockerfile` already installs the theme. The relevant block is:
 
-## 🚀 Features
-
-### Login Screen
-- **Vision Header**: Animated title with particle effects
-- **Mission Statement**: Clear articulation of DeSci values
-- **Enhanced Connect Button**: Prominent call-to-action with rocket icon
-- **Feature Grid**: Visual representation of platform capabilities
-- **Scientific Quote**: Inspirational message from computing pioneer
-
-### Animations & Effects
-- **DNA Helix**: Twisting double helix in header
-- **Particle Float**: Subtle scientific elements drifting
-- **Molecular Drift**: Large-scale background molecular patterns
-- **Pulse Effects**: Connect button with heartbeat-like animation
-- **Hover States**: Interactive feedback on all elements
-- **Typing Effect**: Tagline appears character by character
-
-### User Experience
-- **Loading States**: Enhanced feedback during connection
-- **Responsive Design**: Works on all screen sizes
-- **Accessibility**: High contrast, readable fonts
-- **Performance**: Optimized animations, minimal resource usage
-- **Cross-browser**: Compatible with all modern browsers
-
-## 🎯 DeSci Vision Alignment
-
-The theme explicitly reflects AxonOS's mission:
-
-1. **🧬 Open Science**: Emphasizes collaborative, barrier-free research
-2. **🤖 AI-Powered**: Highlights the integrated AI assistant capabilities  
-3. **🌐 Browser-Native**: Showcases the "Full Linux environment in your browser"
-4. **📊 Data-Driven**: Visual elements inspired by scientific visualization
-5. **🚀 Future-Forward**: Modern design suggesting innovation and progress
-
-## 📊 Default Settings
-
-Optimized for scientific computing workflows:
-- **Scaling Mode**: Local Scaling (for better performance)
-- **Quality**: Maximum (9/9) for crisp scientific visualizations
-- **Compression**: Minimum (0/9) for fastest response times
-- **Reconnect**: Automatic with minimal delay
-
-## 🛠️ Installation
-
-### Automatic (Recommended)
-```bash
-./install-theme.sh
-```
-
-### Manual
-```bash
-# Copy all theme files to noVNC directory
-cp axonos-theme.css /usr/share/novnc/app/styles/
-cp vnc.html /usr/share/novnc/
-cp ui.js /usr/share/novnc/app/
-cp icons/* /usr/share/novnc/app/images/icons/
-```
-
-### Docker Integration
-The theme is automatically installed in the AxonOS Dockerfile:
 ```dockerfile
 COPY novnc-theme/axonos-theme.css /usr/share/novnc/app/styles/
 COPY novnc-theme/vnc.html /usr/share/novnc/
 COPY novnc-theme/ui.js /usr/share/novnc/app/
+COPY novnc-theme/app/fonts/ /usr/share/novnc/app/fonts/
+COPY novnc-theme/app/webrtc/axonos-webrtc.js /usr/share/novnc/app/webrtc/axonos-webrtc.js
+COPY novnc-theme/app/files/axonos-files.js /usr/share/novnc/app/files/axonos-files.js
+COPY novnc-theme/app/terminal/ /usr/share/novnc/app/terminal/
+COPY novnc-theme/app/vendor/xterm/ /usr/share/novnc/app/vendor/xterm/
 COPY novnc-theme/icons/* /usr/share/novnc/app/images/icons/
+COPY novnc-theme/icon.png /usr/share/novnc/icon.png
+COPY novnc-theme/images/linux.svg /usr/share/novnc/app/images/linux.svg
+COPY novnc-theme/telemetry.html /usr/share/novnc/
+COPY novnc-theme/axon-x.png /usr/share/novnc/axon-x.png
 ```
 
-## 🎨 Customization
+`install-theme.sh` predates most of these files: it only inserts the CSS,
+`vnc.html` and icon COPY lines, so running it against a fresh Dockerfile
+produces a broken page. Do not use it; edit the Dockerfile block above instead.
 
-### Colors
-Modify the CSS custom properties in `axonos-theme.css`:
-```css
-:root {
-  --axonos-primary: #2E8B57;    /* Your primary color */
-  --axonos-secondary: #4682B4;  /* Your secondary color */
-  --axonos-accent: #FFD700;     /* Your accent color */
-}
-```
+Cache busting is done with query strings on the `<link>`/`<script>` tags in
+`vnc.html` (for example `axonos-theme.css?v=...`). Bump them when shipping
+frontend changes so browsers pick up the new assets.
 
-### Messaging
-Update the vision and mission text in `vnc.html`:
-```html
-<p class="axonos-mission-text">
-    🧬 <strong>Your Values</strong> • 🤖 <strong>Your Mission</strong>
-</p>
-```
+## Client-side storage
 
-### Animations
-Control animation timing in the CSS:
-```css
-.axonos-connect-icon {
-  animation: rocket-pulse 2s infinite ease-in-out;
-}
-```
+`localStorage` keys used by the frontend: `axonos_wallet_provider_rdns`,
+`axonos_last_wallet`, `axonos_nav`, `axonos_pay_rail`,
+`axonosSelectedTemplateId`, `axonosSshEnabled`, `axonosSshPubkey`.
 
-## 📈 Performance
+## Licensing
 
-- **CSS Size**: 19KB (gzipped: ~4KB)
-- **Load Time**: <100ms on typical connections
-- **Memory Usage**: Minimal impact on browser performance
-- **Animation Performance**: 60fps on modern hardware
-- **Mobile Optimized**: Responsive design with reduced animations
-
-## 🔧 Browser Compatibility
-
-| Browser | Version | Status |
-|---------|---------|--------|
-| Chrome | 88+ | ✅ Full Support |
-| Firefox | 85+ | ✅ Full Support |
-| Safari | 14+ | ✅ Full Support |
-| Edge | 88+ | ✅ Full Support |
-
-## 📱 Responsive Breakpoints
-
-- **Desktop**: 1200px+ (Full experience)
-- **Tablet**: 768px-1199px (Adapted layout)
-- **Mobile**: <768px (Simplified, vertical layout)
-
-## 🎓 Educational Impact
-
-Perfect for:
-- **University Labs**: Professional appearance for academic environments
-- **Research Institutions**: Branding aligned with scientific mission
-- **Student Projects**: Inspiring interface for learning scientific computing
-- **DeSci Communities**: Visual representation of decentralized science values
-
-## 🌟 Future Enhancements
-
-Planned improvements:
-- **Interactive Tutorials**: Guided tour of scientific tools
-- **Usage Analytics**: Track most-used applications
-- **Theme Variants**: Light mode, accessibility themes
-- **Localization**: Multi-language support for global research
-- **Integration**: Deeper connections with DeSci ecosystem tools
-
----
-
-**Theme Version**: 5.0  
-**Last Updated**: January 2025  
-**Compatibility**: AxonOS v1.0+  
-**License**: MIT (same as AxonOS project) 
+`vnc.html` and `ui.js` derive from noVNC and keep their MPL 2.0 headers.
+`axonos-theme.css`, the `app/*.js` clients and `install-theme.sh` are MIT.
+xterm.js in `app/vendor/xterm/` is MIT. See `LEGAL.md` at the repo root.

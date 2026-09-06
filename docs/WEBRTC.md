@@ -34,7 +34,9 @@ On a host with **1:1 NAT** and a fixed inbound UDP range, pin the agent's media 
 - **`WEBRTC_PORT_RANGE`**: e.g. `40000-41000` — restrict the agent's UDP media ports to a range your firewall/NAT forwards.
 - **`WEBRTC_PUBLIC_IP`**: rewrite the SDP host candidate to the public/NAT IP so remote peers can reach it.
 
-With both set, TURN becomes a fallback rather than the default path.
+With both set, TURN becomes a fallback rather than the default path. The browser
+leaves `iceTransportPolicy` at its default (`all`), so direct `srflx` candidates are
+preferred and relay is used only when they fail.
 
 ## Reverse proxies and ports
 
@@ -50,7 +52,7 @@ For **WebSocket-only** proxies, signaling still uses **HTTPS fetch** on the same
 
 ## Session security
 
-- Browser signaling **create/offer/status/ice** requires a valid **AXGT auth token** and the exact active compute-session ownership returned by `POST /api/session/claim`.
+- Browser signaling (`POST /api/webrtc/session` to create, then `/offer`, `/status`, `/ice`, `/close`) requires a valid **AXGT auth token** and the exact active compute-session ownership returned by `POST /api/session/claim`. `GET /api/webrtc/config` returns the ICE server list.
 - WebRTC session IDs are **random 256-bit** tokens stored in Postgres; they are not derivable from the wallet address.
 - Agent offers, row reads, answers, ICE, and failures are SQL-scoped by signaling ID, compute ID, and wallet after signed capability and live allocation checks. The queue is not global.
 - A live agent renews its capability before expiry through the unpublished
@@ -64,7 +66,7 @@ For **WebSocket-only** proxies, signaling still uses **HTTPS fetch** on the same
 
 ## Observability
 
-- Logger name **`axonos.webrtc`** emits negotiation and lifecycle lines (`webrtc_negotiation_*`, `webrtc_agent_answer`, `webrtc_fallback_novnc`, etc.).
+- Gate-side logger **`axonos.webrtc`** (`axonos_gate/webrtc/metrics.py`) emits structured negotiation events (`webrtc_negotiation_start`, `webrtc_negotiation_ok`, …). The in-container agent logs under **`axonos.webrtc_agent`** (with `.capture` and `.x11` children), e.g. `WebRTC answer stored`.
 - Clients may `POST /api/webrtc/metrics` with RTT / packet loss (best-effort; used for operations dashboards later).
 
 ## Docker Compose test path
@@ -83,11 +85,11 @@ For **WebSocket-only** proxies, signaling still uses **HTTPS fetch** on the same
 | Stuck on “Connecting” | STUN/TURN reachability; restrictive NAT → configure TURN. |
 | 403 on signaling | Auth token or session claim missing/expired. |
 | Agent idle | In user-container mode, confirm the claim returned a compute ID, the tenant has `AXGT_WEBRTC_AGENT_TOKEN`, and it can resolve `axonos-gate:8890`. Keep `WEBRTC_AGENT_INTERNAL_KEY` only on the central gate. |
-| Scroll blur / hazy video | Default H.264 capture is tuned for **lowest-latency 1080p desktop** (`p1`/`llhp`, 12 Mbps, one-frame buffer). If latency is clean, try `WEBRTC_CAPTURE_BITRATE=14000000`; if loss appears, use `WEBRTC_CAPTURE_MAX_WIDTH=1600` or `1280` rather than pushing bitrate higher. |
+| Scroll blur / hazy video | Default H.264 capture is tuned for **lowest-latency 1080p desktop** (`WEBRTC_CAPTURE_NVENC_PRESET=p1`, `WEBRTC_CAPTURE_NVENC_TUNE=ll`, 12 Mbps, one-frame buffer). If latency is clean, try `WEBRTC_CAPTURE_BITRATE=14000000`; if loss appears, use `WEBRTC_CAPTURE_MAX_WIDTH=1600` or `1280` rather than pushing bitrate higher. |
 | Lag / clicks stop / jitter buffer climbs | Path saturated or buffering. Confirm `packetsLost`, `nackCount`, and jitter buffer delay in `chrome://webrtc-internals`. Keep `WEBRTC_CAPTURE_NVENC_PRESET=p1` and `WEBRTC_CAPTURE_LOW_LATENCY=true`, then try `WEBRTC_CAPTURE_BITRATE=8000000` or `WEBRTC_CAPTURE_MAX_WIDTH=1600`; reconnect after deploy and hard-refresh the page. |
 | Black screen, ICE connected | In `chrome://webrtc-internals`, if **inbound video codec is VP8** while the agent runs H.264 capture, SDP negotiated the wrong codec. Agent + browser must prefer **H.264** (fixed in `capture.prefer_h264_for_pc` and `axonos-webrtc.js`). Hard-refresh the page after deploy. |
 | Two cursors / sluggish clicks | H.264 capture embeds the host cursor; disable the browser overlay with `WEBRTC_LOCAL_CURSOR=auto` (default) or `false`. Click lag from mousemove floods is reduced by server-side move coalescing and client throttling. |
-| Multi-second video/input lag | aiortc `MediaPlayer(mpegts pipe)` treated live NVENC as a file and paced frames to timestamps; combined with large `thread_queue_size` this stacked ~10s delay. Fixed via `_throttle_playback = false`, `thread_queue_size=4`, and optional stale-packet dropping (`WEBRTC_CAPTURE_MAX_STALE_FRAMES`, default `1`). Reconnect after deploy. |
+| Multi-second video/input lag | Historically, aiortc's file-style media player paced live NVENC frames to their timestamps and, with a large input queue, stacked several seconds of delay. The capture path now feeds frames live with a shallow queue and drops stale packets (`WEBRTC_CAPTURE_MAX_STALE_FRAMES`, default `1`). Reconnect after deploy. |
 | Still frame loss at 1080p30 | Confirm ffmpeg shows the intended `-framerate` and bitrate. If `packetsLost` climbs through TURN, try `WEBRTC_CAPTURE_BITRATE=6000000` to `8000000` and/or `WEBRTC_CAPTURE_MAX_WIDTH=1280`. |
 
 ## Capture backends

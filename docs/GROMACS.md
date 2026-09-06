@@ -28,7 +28,7 @@ GROMACS was compiled without thread-MPI
 
 | Tutorial command | On AxonOS |
 |------------------|-----------|
-| `gmx mdrun -ntmpi 1 -ntomp 4` | `gmx_mpi mdrun -ntomp 4 -gpu_id 0` |
+| `gmx mdrun -ntmpi 1 -ntomp 4` | `gmx_mpi mdrun -ntomp 8 -gpu_id 0 -nb gpu -pme cpu -update cpu -pin on` |
 | `gmx mdrun -ntmpi 8 ...` | `gmx_mpi mdrun -ntomp 2 -gpu_id 0,1,2,3,4,5,6,7` or `mpirun -np 8 gmx_mpi mdrun ...` |
 | `mpirun -np 8 gmx mdrun` | `mpirun -np 8 gmx_mpi mdrun ...` |
 
@@ -129,8 +129,9 @@ source /opt/gromacs/bin/GMXRC
 curl -fsSL -o 1aki.pdb https://files.rcsb.org/download/1AKI.pdb
 
 # Topology: select the force field by stable name, not its menu number.
-# Menu numbering changes when a build adds force fields. This tutorial uses CHARMM36.
-gmx_mpi pdb2gmx -f 1aki.pdb -o processed.gro -water spce -ff charmm36-jul2022
+# Menu numbering can vary between builds. AxonOS uses AMBER99SB-ILDN / TIP3P
+# (the same choice the GROMACS template terminal prints on start-up).
+gmx_mpi pdb2gmx -f 1aki.pdb -o processed.gro -water tip3p -ff amber99sb-ildn
 
 # Box and solvate
 gmx_mpi editconf -f processed.gro -o newbox.gro -c -d 1.0 -bt cubic
@@ -139,15 +140,15 @@ gmx_mpi solvate -cp newbox.gro -cs spc216.gro -o solv.gro -p topol.top
 
 After `solvate`, `solv.gro` and `topol.top` are in the working directory.
 
-For an AMBER99SB-ILDN/TIP3P workflow, use the same stable-name approach:
+The original tutorial uses OPLS-AA/L with SPC/E water; if you want to follow it
+exactly, use the same stable-name approach:
 
 ```bash
-gmx_mpi pdb2gmx -f input.pdb -o processed.gro \
-  -water tip3p -ff amber99sb-ildn
+gmx_mpi pdb2gmx -f 1aki.pdb -o processed.gro -water spce -ff oplsaa
 ```
 
-Do not copy a numeric force-field menu choice from a tutorial. In this image,
-additional AMBER force fields can shift the menu positions while names remain
+Do not copy a numeric force-field menu choice from a tutorial: menu positions
+depend on the force fields present in a given build, while names remain
 unambiguous. Always inspect the generated `topol.top` before continuing.
 
 ---
@@ -177,7 +178,9 @@ curl -fsSL -o md.mdp \
 ls -l *.mdp
 ```
 
-These MDP files match the tutorial’s **CHARMM36** force-field choice from `pdb2gmx`.
+These MDP files were written for the tutorial's OPLS-AA/L setup; they run unchanged
+with AMBER99SB-ILDN / TIP3P as well (the only differences are force-field
+parameters carried in `topol.top`, not in the `.mdp` files).
 
 ---
 
@@ -196,8 +199,12 @@ gmx_mpi genion -s ions.tpr -o solv_ions.gro -p topol.top -pname NA -nname CL -ne
 
 ```bash
 gmx_mpi grompp -f minim.mdp -c solv_ions.gro -p topol.top -o em.tpr
-gmx_mpi mdrun -v -deffnm em -ntomp 4 -gpu_id 0
+gmx_mpi mdrun -v -deffnm em -ntomp 8 -gpu_id 0 -nb gpu -pme cpu -update cpu -pin on
 ```
+
+The `-nb gpu -pme cpu -update cpu -pin on` flags are the verified single-GPU
+compatibility set on this image (see [Step 4](#step-4--validate-single-gpu-usage));
+use them for every single-rank `mdrun` below.
 
 Expect: `Steepest Descents converged to Fmax < 1000`.
 
@@ -205,14 +212,14 @@ Expect: `Steepest Descents converged to Fmax < 1000`.
 
 ```bash
 gmx_mpi grompp -f nvt.mdp -c em.gro -r em.gro -p topol.top -o nvt.tpr
-gmx_mpi mdrun -deffnm nvt -ntomp 4 -gpu_id 0
+gmx_mpi mdrun -deffnm nvt -ntomp 8 -gpu_id 0 -nb gpu -pme cpu -update cpu -pin on
 ```
 
 ### NPT equilibration
 
 ```bash
 gmx_mpi grompp -f npt.mdp -c nvt.gro -r nvt.gro -t nvt.cpt -p topol.top -o npt.tpr
-gmx_mpi mdrun -deffnm npt -ntomp 4 -gpu_id 0
+gmx_mpi mdrun -deffnm npt -ntomp 8 -gpu_id 0 -nb gpu -pme cpu -update cpu -pin on
 ```
 
 If `grompp` complains about a missing `.cpt`, omit `-t nvt.cpt` on the first attempt for that stage.
@@ -227,22 +234,24 @@ gmx_mpi grompp -f md.mdp -c npt.gro -t npt.cpt -p topol.top -o md.tpr
 
 ## Step 4 — Validate single-GPU usage
 
-The current AxonOS GROMACS 2026 development build can fail while creating a
-single-GPU PME cuFFT plan (`cufftPlanMany R2C plan failure (error code 11)`).
-Until GPU PME is validated on the deployed image, the following compatibility
-command uses GPU nonbonded offload with PME and coordinate updates on the CPU:
+The current AxonOS GROMACS 2026 development build has been observed to fail while
+creating a single-GPU PME cuFFT plan (`cufftPlanMany R2C plan failure (error code
+11)`). Until GPU PME is validated on the deployed image, the following
+compatibility command uses GPU nonbonded offload with PME and coordinate updates
+on the CPU. It is the same command the GROMACS template terminal prints on
+start-up, which also exports `OMP_NUM_THREADS=8`:
 
 ```bash
-OMP_NUM_THREADS=8 gmx_mpi mdrun -deffnm md -ntomp 8 -nb gpu -pme cpu -update cpu -pin on
+OMP_NUM_THREADS=8 gmx_mpi mdrun -deffnm md -ntomp 8 -gpu_id 0 -nb gpu -pme cpu -update cpu -pin on
 ```
 
-This compatibility command completed a 33,675-atom deployment smoke test. An
-automatic 112-thread run also completed on that water benchmark and was faster,
-so eight threads are not imposed as a global performance default. The reported
-112-thread `libgomp` crash remains workload-specific and was not reproduced by
-this smoke test. Benchmark the thread count for the actual molecular system.
-Treat `-pme gpu` as experimental on this image until its cuFFT planning failure
-is resolved.
+In deployment smoke tests this command completed a ~34k-atom system. A run with
+the automatic (all-core) thread count also completed on that water benchmark and
+was faster, so eight threads are a compatibility fallback rather than a global
+performance default; an earlier `libgomp` crash at very high thread counts
+appears workload-specific. Benchmark the thread count for your actual molecular
+system. Treat `-pme gpu` as experimental on this image until its cuFFT planning
+failure is resolved.
 
 ### What to look for in `mdrun` output
 
@@ -321,7 +330,7 @@ GPU direct communication will be used between MPI ranks.
 watch -n 1 nvidia-smi
 ```
 
-On 8× V100 with lysozyme you may see **~18–20% util** and **~2.5 GiB** on each GPU — that indicates all ranks are active, not that the hardware is underperforming. Communication overhead dominates on small systems.
+On an 8-GPU session with lysozyme you may see only **~20% util** and a few GiB on each GPU (figures observed on V100-class hardware) — that indicates all ranks are active, not that the hardware is underperforming. Communication overhead dominates on small systems.
 
 ### Compare 1-GPU vs 8-GPU
 
@@ -416,16 +425,18 @@ mpirun -np 8 gmx_mpi mdrun -s benchPEP-h.tpr -deffnm peph_8gpu \
 
 ### 1-GPU baseline (same systems)
 
-Compare against multi-GPU on the **same `.tpr`**:
+Compare against multi-GPU on the **same `.tpr`**. Start with the verified
+CPU-PME flags; switch to `-pme gpu` (and `-bonded gpu -update gpu` for
+`benchPEP-h`) only if GPU PME works on your session:
 
 ```bash
 gmx_mpi mdrun -s benchRIB.tpr -deffnm rib_1gpu \
   -ntomp 16 -gpu_id 0 \
-  -nb gpu -pme gpu -pin on -nsteps 5000
+  -nb gpu -pme cpu -update cpu -pin on -nsteps 5000
 
 gmx_mpi mdrun -s benchPEP-h.tpr -deffnm peph_1gpu \
   -ntomp 16 -gpu_id 0 \
-  -nb gpu -pme gpu -bonded gpu -update gpu -pin on -nsteps 2000
+  -nb gpu -pme cpu -update cpu -pin on -nsteps 2000
 ```
 
 ### What “maxed out” looks like
@@ -549,8 +560,8 @@ source /opt/gromacs/bin/GMXRC
 # MPI smoke test
 mpirun -np 2 gmx_mpi --version
 
-# Single GPU MD
-gmx_mpi mdrun -deffnm md -ntomp 8 -gpu_id 0
+# Single GPU MD (verified compatibility flags; -pme gpu is experimental on this image)
+gmx_mpi mdrun -deffnm md -ntomp 8 -gpu_id 0 -nb gpu -pme cpu -update cpu -pin on
 
 # Multi-GPU MD (N = number of GPUs — mpirun required; -npme if -pme gpu)
 mpirun -np 8 gmx_mpi mdrun -deffnm md -ntomp 2 -gpu_id 0,1,2,3,4,5,6,7 \

@@ -2,11 +2,11 @@
 
 ## 📦 Package Information
 
-**Package Name**: `axonos-launcher_0.1.0_amd64.deb`  
+**Package Name**: `AxonOS-Launcher-0.1.0-Linux-amd64.deb`  
 **Version**: 0.1.0  
 **Architecture**: amd64  
-**Size**: ~12.2 MB  
-**Build Date**: July 16, 2025
+**Size**: varies per build (see `dist/BUILD_INFO.txt`)  
+**Build Date**: see `RELEASE_INFO.txt` produced by `make release`
 
 ## 🎯 What's Included
 
@@ -21,13 +21,13 @@ This Ubuntu 22.04 package (.deb) contains:
 
 ```bash
 # Install the package
-sudo dpkg -i axonos-launcher_0.1.0_amd64.deb
+sudo dpkg -i AxonOS-Launcher-0.1.0-Linux-amd64.deb
 
 # Fix any dependency issues (if needed)
 sudo apt-get install -f
 
-# Launch AxonOS
-axonos
+# Launch the GUI launcher (bare `axonos` runs the CLI and prints help)
+axonos --gui
 ```
 
 ### Verify Installation
@@ -64,8 +64,11 @@ sudo apt install -y nvidia-container-toolkit
 
 ### Launching AxonOS Launcher
 ```bash
-# Command line
-axonos
+# Command line: GUI
+axonos --gui
+
+# Command line: CLI
+axonos list
 
 # Or find it in your applications menu
 # Applications → Science → AxonOS Launcher
@@ -125,13 +128,13 @@ sudo apt install python3-tk
 ls -la /usr/local/bin/axonos
 
 # Reinstall if needed
-sudo dpkg -i axonos-launcher_0.1.0_amd64.deb
+sudo dpkg -i AxonOS-Launcher-0.1.0-Linux-amd64.deb
 ```
 
 ### Logs and Debugging
 ```bash
 # Run with verbose output
-axonos --verbose
+axonos --version
 
 # Check system logs
 journalctl -u docker.service

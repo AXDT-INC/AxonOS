@@ -199,12 +199,29 @@ Request JSON:
 {
   "session_id": 42,
   "wallet_address": "0x...",
-  "requested_profile": "medium",
   "assigned_gpu_ids": [2, 3],
+  "requested_profile": "medium",
+  "requested_storage_gb": 100,
+  "requested_template": "pytorch",
+  "ssh_enabled": false,
+  "ssh_pubkey": "",
+  "ephemeral_storage": false,
   "files_key": "<per-session-secret>",
   "webrtc_agent_token": "<signed-per-session-capability>"
 }
 ```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `session_id` | yes | Positive integer; names the container `axgt-session-<id>` and network `axgt-session-net-<id>`. |
+| `wallet_address` | yes | Lower-cased and compared against the live scheduler row. |
+| `assigned_gpu_ids` | yes | Must equal the GPU set recorded for the active row. |
+| `requested_profile` | no | Defaults to `small`; must match the row. |
+| `requested_storage_gb` | no | 10–500; omitted = keep the row's provisioned capacity (default 100). Volumes are growth-only. |
+| `requested_template` | no | Science template name; validated, invalid values return 400. Part of the runtime-contract digest. |
+| `ssh_enabled` / `ssh_pubkey` | no | Headless SSH mode; the pubkey is injected as `AXGT_SSH_PUBKEY`. Part of the digest. |
+| `ephemeral_storage` | no | Skip the persistent volume. Forced on for demo/guest identities regardless of the flag. |
+| `files_key` / `webrtc_agent_token` | supplied by gate | Per-session bearer values; never logged or user-supplied. |
 
 The gate supplies `files_key` and `webrtc_agent_token` automatically. The host
 launcher verifies the request against the exact live scheduler row and reuses an
@@ -246,8 +263,37 @@ Response JSON:
 }
 ```
 
+### `GET /enumerate-gpus`
+
+Bearer-protected. Runs a one-shot `nvidia-smi` in a throwaway container using
+`AXGT_LAUNCHER_GPU_ENUMERATE_IMAGE` (falls back to
+`AXGT_HOST_SESSION_CONTAINER_IMAGE`) and returns the host GPU indices the gate
+should schedule when it has no GPU visibility of its own
+(`AXGT_GPU_ENUMERATE_VIA_LAUNCHER`, HTTP mode only).
+
+Response JSON:
+
+```json
+{ "ok": true, "indices": [0, 1, 2, 3] }
+```
+
+Returns HTTP 500 with `error` (and `raw` output) when the probe fails or reports no GPUs.
+
 ### `GET /healthz`
 
 Returns `{"ok": true}` only when required configuration is present, Docker can
 be inspected, and no legacy unlabeled session container remains. Otherwise it
 returns HTTP 503 with an `errors` list.
+
+### Status codes
+
+| Code | Meaning |
+|------|---------|
+| `200` | Success (`ok: true`). |
+| `400` | Malformed request: missing required field, non-positive/non-integer `session_id`, invalid template, invalid launcher arguments. |
+| `401` | Missing or invalid bearer token. |
+| `409` | Live-row authorization failed, runtime-contract mismatch, or ownership-label mismatch on `/stop`. The gate treats this as "not ours" and does not retry blindly. |
+| `500` | Docker operation failed (`docker run`, network setup/cleanup, container removal). |
+| `503` | Launcher misconfigured (`/launch` and `/healthz` share the same checks), legacy unlabeled containers present, or the existing container could not be inspected. |
+
+Every response carries `ok` plus either `error` (single string) or `errors` (list).

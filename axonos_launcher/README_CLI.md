@@ -2,13 +2,28 @@
 
 Command-line interface for building and deploying AxonOS on headless GPU servers.
 
+## Installation
+
+Run the CLI from the AxonOS repo root, either from source or as the built binary:
+
+```bash
+# From source (no install step)
+python3 axonos_launcher/cli.py list
+
+# Or build the standalone binary and put it on PATH
+python3 build/build_launcher.py && sudo cp dist/axonos /usr/local/bin/
+```
+
+The examples below assume `axonos` is on PATH (or `alias axonos='python3 axonos_launcher/cli.py'`).
+Requires Python 3.8+ and PyYAML (`pip install -r axonos_launcher/requirements.txt`).
+
 ## Quick Start
 
 ```bash
 # List available applications
 axonos list
 
-# Generate Dockerfile (default configuration)
+# Generate Dockerfile (with the default configuration no file is written; the stock Dockerfile is used)
 axonos generate
 
 # Build Docker image
@@ -37,9 +52,14 @@ axonos generate
 # Generate with custom config file
 axonos generate --config my-config.json
 
-# Specify output file
+# Specify output file (default Dockerfile.custom)
 axonos generate --output Dockerfile.custom
+
+# GROMACS build knobs
+axonos generate --cuda-archs "70;86;89" --no-gmx-cufftmp   # or --gmx-cufftmp
 ```
+
+Short flags: `-c/--config`, `-o/--output`.
 
 ### Build Image
 
@@ -56,9 +76,14 @@ axonos build --image axonos:custom --password myPassword
 # Build using specific Dockerfile
 axonos build --dockerfile Dockerfile.custom
 
-# Build with config file
+# Build with config file (note: the image tag still comes from --image, default axonos:latest)
 axonos build --config my-config.json --password myPassword
+
+# GROMACS build knobs
+axonos build --cuda-archs "70;86;89" --gmx-cufftmp
 ```
+
+Short flags: `-i/--image` (default `axonos:latest`), `-f/--dockerfile`, `-c/--config`, `-p/--password`.
 
 ### Deploy Container
 
@@ -72,19 +97,26 @@ axonos deploy
 # Deploy with custom image and container name
 axonos deploy --image axonos:custom --name my-axonos --gpu
 
-# Deploy with VNC ports only (no IPFS)
-axonos deploy --ports-only
+# Also publish direct VNC (5901) and/or IPFS ports
+axonos deploy --gpu --expose-vnc --expose-ipfs
+
+# Use a specific env file (default .env)
+axonos deploy --gpu --env-file .env.prod
 ```
+
+By default only port 6080 is published. `--ports-only` is kept for backward compatibility and is a no-op (it just forces `--expose-vnc`/`--expose-ipfs` off). Short flags: `-i/--image` (default `axonos:latest`), `-n/--name` (default `axonos`).
 
 ### Configuration Management
 
 ```bash
-# Save current configuration
+# Save current configuration (default file: axonos-config.json)
 axonos config save --file my-config.json
 
-# Load configuration
+# Validate a configuration file (loads it into a transient process; nothing is persisted)
 axonos config load --file my-config.json
 ```
+
+Saved configurations are applied with `generate --config` / `build --config`.
 
 ## Configuration File Format
 
@@ -102,7 +134,9 @@ axonos config load --file my-config.json
   "username": "aXonian",
   "password": "REPLACE_WITH_STRONG_PASSWORD",
   "image_tag": "axonos:latest",
-  "gpu_enabled": true
+  "gpu_enabled": true,
+  "gmx_cuda_archs": "70;75;86;89",
+  "gmx_use_cufftmp": true
 }
 ```
 
@@ -150,9 +184,9 @@ ssh user@gpu-server
 
 # Clone and setup
 git clone https://github.com/AxonDAO-AXGT/AxonOS.git
-cd axonos
+cd AxonOS
 
-# Build with GPU support
+# Build image
 axonos build --password secure_password
 
 # Deploy with GPU
@@ -164,15 +198,17 @@ axonos deploy --gpu
 
 ## Ports
 
-Default deployment exposes:
+Default deployment publishes only:
 - **6080**: noVNC web interface
+
+`--expose-vnc` adds:
 - **5901**: Direct VNC access
+
+`--expose-ipfs` adds:
 - **4001**: IPFS swarm (TCP and UDP)
 - **5001**: IPFS API
 - **8080**: IPFS Gateway
 - **9090**: IPFS Web UI
-
-Use `--ports-only` to only expose VNC ports (6080, 5901).
 
 ## GPU Support
 
@@ -196,5 +232,5 @@ Add your user to docker group: `sudo usermod -aG docker $USER`
 
 ### GPU not working
 - Verify NVIDIA drivers: `nvidia-smi`
-- Check Docker GPU support: `docker run --rm --gpus all nvidia/cuda:11.0-base nvidia-smi`
+- Check Docker GPU support: `docker run --rm --gpus all nvidia/cuda:12.2.2-base-ubuntu22.04 nvidia-smi`
 - Ensure `--gpu` flag is used on deploy

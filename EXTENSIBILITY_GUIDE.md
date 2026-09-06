@@ -14,7 +14,7 @@ AxonOS now supports a comprehensive extensibility system that allows researchers
 
 ### 2. Plugin System
 - **YAML/JSON Support**: Define applications in standard formats
-- **Hot Loading**: Plugins are loaded automatically from the `axonos_plugins/` directory
+- **Startup Loading**: Plugins in `./axonos_plugins/` (relative to the launcher's working directory, normally the repo root) are read once at launcher start; use "Load Plugin File" in the Custom Apps tab and restart to pick up new files
 - **Community Sharing**: Easy sharing and distribution of application definitions
 
 ### 3. Installation Templates
@@ -162,8 +162,7 @@ axonos_plugins/
 ├── README.md                    # Plugin documentation
 ├── example_python_packages.yaml # Python library examples
 ├── example_bioinformatics.yaml  # Bioinformatics tools
-├── my_research_tools.yaml       # Your custom tools
-└── community_contributions.yaml  # Shared community plugins
+└── my_research_tools.yaml       # Your own files (any *.yaml or *.json; *.yml is not picked up)
 ```
 
 ## 🎯 Best Practices
@@ -238,8 +237,8 @@ for app_id, app in data.items():
 ```bash
 # Enable debug output
 PYTHONPATH=. python3 -c "
-import axonos_launcher.main as launcher
-app = launcher.AxonOSLauncher()
+import axonos_launcher.launcher_core as core
+app = core.AxonOSLauncherCore()   # headless core; the GUI class needs a Tk root
 app.load_custom_applications()
 print('Custom apps loaded:', len(app.custom_applications))
 for app_id, app_info in app.custom_applications.items():
@@ -250,6 +249,11 @@ for app_id, app_info in app.custom_applications.items():
 ## 📈 Advanced Features
 
 ### Conditional Installation
+
+The stock Dockerfile defines no `GPU_ENABLED` build argument, so add
+`ARG GPU_ENABLED=false` yourself and pass `--build-arg GPU_ENABLED=true` when
+building; otherwise the condition below is always false.
+
 ```yaml
 gpu_accelerated_tool:
   name: "GPU Accelerated Tool"

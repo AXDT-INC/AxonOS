@@ -1,6 +1,10 @@
 # Rebrand Inventory: DeSciOS → AxonOS
 
-This document catalogs all occurrences of DeSciOS branding that need to be changed to AxonOS.
+> **Historical snapshot.** This inventory was taken before the rebrand and describes the
+> pre-rebrand tree (old `descios_*` paths, "Change Needed" columns). It is kept for
+> traceability only; for the current state see `REPORT.md` ("Known exceptions").
+
+This document catalogs all occurrences of DeSciOS branding that needed to be changed to AxonOS.
 
 ## Summary
 

@@ -53,11 +53,9 @@ axonos config load --file config.json
 
 ## Remaining Folders
 
-The following `descios_*` folders remain:
-- `build/descios_launcher/` - Build artifacts (can be cleaned)
-- `build/descios_launcher_linux/` - Build artifacts (can be cleaned)
-
-These are build outputs and don't affect functionality. They can be safely removed or will be regenerated with new names on next build.
+No `descios_*` folders remain in the tree. The old build-output directories
+(`build/descios_launcher/`, `build/descios_launcher_linux/`) have been removed; only
+their `.gitignore` patterns are still present so stale local artifacts stay untracked.
 
 ## Migration Notes
 

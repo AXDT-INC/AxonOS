@@ -9,7 +9,7 @@ If you believe you have found a security vulnerability in AxonOS, please **do no
 
 ### Scope
 
-This repository includes container build scripts, a browser-accessible desktop stack (noVNC/VNC), and an optional token-gating component (AXGT gate). Reports covering any of these components are in scope.
+This repository includes container build scripts, a browser-accessible desktop stack (noVNC/VNC and WebRTC streaming), the session gate (`axonos_gate/`: wallet authentication, on-chain deposit verification, the x402 settlement signer, session scheduling with Docker-socket access, SSH and web-terminal gateways, guest demo mode), and the AxonAI/OpenCode agent with its permission policy (`axonos_assistant/opencode.json`). Reports covering any of these components are in scope; payment verification, the x402 hot wallet, launcher/Docker isolation, and agent permission enforcement are of particular interest.
 
 ### Safe Harbor
 

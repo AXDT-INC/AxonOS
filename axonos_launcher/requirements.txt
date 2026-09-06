@@ -1,6 +1,6 @@
 # AxonOS Launcher Requirements
 # Using built-in tkinter (no additional GUI dependencies needed)
-# No external dependencies required - using Python standard library only 
+# PyYAML is the only third-party dependency; tkinter (GUI mode) comes with Python
 
 # For YAML plugin support
 PyYAML>=6.0 

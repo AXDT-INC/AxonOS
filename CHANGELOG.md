@@ -3,13 +3,58 @@
 All notable changes to AxonOS are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-This is the first changelog entry; it summarizes everything the
-`feat/webrtc-nvenc-stability` branch adds on top of `main` for the
-**public-beta** stack (`axonos:public-beta`).
+The first entry summarizes everything the `feat/webrtc-nvenc-stability` branch
+(merged) added on top of `main` for the hosted multi-container stack.
 
-## [public-beta] - 2026-06-19
+## [1.0.0] - 2026-09-09 — Launch release
 
-The public-beta release turns AxonOS from a single shared noVNC desktop into a
+First production release, self-hosted by AxonDAO. Covers the `frontend-revamp`
+branch work from 2026-06-20 to 2026-09-04 on top of the 0.9 stack.
+
+### Added
+- **Guest demo mode**: invite-code redemption for wallet-free sessions
+  (`axonos_gate/guest_mode.py`, `/api/auth/guest`, `/api/auth/guest-invite`,
+  admin `/api/admin/guest-invite*`, `scripts/guest_invite.py`, `AXONOS_GUEST_*`).
+- **Secure web terminal** (`/api/terminal/ticket`, `/api/terminal/ws`,
+  `novnc-theme/app/terminal/`) and SSH host-key fingerprint publishing.
+- **Direct TLS file plane on 443**: `docker/files-tls/` nginx demuxes TLS to the
+  gate file plane and TURN-over-TCP to coturn; adaptive 4-256 MB upload chunks.
+- **Environment catalog "View all"** entry in Quick Launch and a browse-catalog modal.
+- **Desktop <-> Console mode switch** ("Relaunch", formerly "Swap") with MOTD banner.
+- **Persistent volume sizing**: wizard storage slider, growth-only resizing,
+  authoritative wallet capacity from `wallet-status`.
+- **AgentLink identity layer** (`axonos_gate/agentlink_verifier.py`); x402 v2
+  Bazaar discovery and `/openapi.json`.
+- **Live AXGT pricing** from a Uniswap v3 TWAP with Chainlink ETH/USD, CoinGecko
+  as fallback/confirmation, guarded dashboard spot-price fallback.
+- **AxonAI as a native local research agent**: OpenCode-backed agentic mode
+  with approvals, `/agent` `/chat` `/vision` routing overrides.
+- Gate liveness credit so live sessions survive control-plane redeploys.
+
+### Changed
+- Landing page stays home across wallet connect and reload; compact/mobile view
+  is browse-only.
+- Release-stage chip beside the brand removed from the default UI (`AXONOS_HIDE_BETA_BADGE`, default `true`).
+- Payment dialog decluttered; holder discounts applied correctly in the
+  workspace wizard.
+- EIP-6963 wallet picker deduplicated; stale injected providers recovered safely.
+- GPU ML stack pinned and advertised version corrected; session `python3` is
+  `/usr/bin/python3` (conda stays off PATH).
+- Port 443 is now shared between the TLS file plane and TURN-over-TCP.
+
+### Fixed
+- Fresh loop-ext4 home volumes are writable by the session user (self-heal on start).
+- Service outages no longer render as a zero credit balance; transient zeroing removed.
+- "Deposit not credited" after in-wizard AXGT payment; expired wallet auth tokens
+  recover with one signature.
+- SSH session extension outcome is explicit; extension errors isolated from the
+  noVNC fallback.
+- WebSocket close codes moved into the valid application range.
+- GPU telemetry made fresh and session-scoped; forked noVNC workers reaped on restart.
+
+## [0.9.0] - 2026-06-19
+
+The 0.9 release turns AxonOS from a single shared noVNC desktop into a
 multi-session, GPU-scheduled, WebRTC-streamed compute platform with a
 multi-currency prepaid-billing rail (ETH / USDC / AXGT / x402) and headless
 agent access over SSH.
@@ -65,8 +110,8 @@ agent access over SSH.
   (`x402-fetch`) and Python (`x402`) SDKs both interoperate.
 - **AXGT Model B**: paying in AXGT is credited at live USD value with a flat
   bonus (`AXGT_USD_BONUS_PERCENT`, +25%) and no holder tier.
-- Optional **dynamic USD-equivalent pricing** via a server-side CoinGecko price
-  oracle cached in Postgres (`AXGT_DYNAMIC_PRICING`, `AXGT_USD_PER_HOUR`).
+- Optional **dynamic USD-equivalent pricing** via a server-side price
+  oracle cached in Postgres (CoinGecko at the time; now Uniswap TWAP, see Unreleased) (`AXGT_DYNAMIC_PRICING`, `AXGT_USD_PER_HOUR`).
 - Heartbeat-based incremental billing with sliding idle cap; deposit verification
   uses the ERC-20 **Transfer event log** (smart-account safe), returns HTTP 200
   while pending, and HTTP 400 for hard failures.
@@ -134,7 +179,8 @@ agent access over SSH.
   `docs/TOKENOMICS.md` (rewritten), `docs/HOST_LAUNCHER.md`, `docs/GROMACS.md`,
   `docs/VOLUME_RETENTION_POLICY.md`, `docs/WEBRTC_INPUT_VALIDATION.md`,
   `docs/X402_AGENT_TEST.md`, `docs/axonos_user_flow.md`, architecture SVGs, and an
-  interactive flow wireframe. Annotated `env.example` covering every variable.
+  interactive flow wireframe. Annotated `env.example` covering nearly every variable
+  (`WEBRTC_PORT_RANGE` is documented in `docs/ENVIRONMENT_VARIABLES.md` only).
 - Test harness `tools/x402-agent-test/` (JS + Python) for end-to-end x402 payment.
 
 #### Tests
@@ -142,7 +188,7 @@ agent access over SSH.
   deposit verifier, session launcher, Docker GPU CLI, and file-agent smoke.
 
 ### Changed
-- Single, self-contained **public-beta compose stack** (`axonos:public-beta`,
+- Single, self-contained **compose stack** (image tag set in `docker-compose.yml`,
   gate + Postgres + session launcher): Postgres and the Docker-socket launcher
   stay on `axonos_control`, coturn uses the shared media network, and each tenant
   gets a dynamic `axgt-session-net-<id>` bridge shared only with the central
@@ -189,4 +235,5 @@ agent access over SSH.
 - Per-session file-transfer and WebRTC signaling require wallet auth + session
   ownership; auth-token rotation and CORS/rate-limit controls are configurable.
 
-[public-beta]: https://github.com/AxonDAO-AXGT/AxonOS/compare/main...feat/webrtc-nvenc-stability
+[1.0.0]: https://github.com/AxonDAO-AXGT/AxonOS/compare/main...frontend-revamp
+[0.9.0]: https://github.com/AxonDAO-AXGT/AxonOS/compare/main...feat/webrtc-nvenc-stability

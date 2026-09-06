@@ -23,7 +23,7 @@ SCHRODINGER, LLC DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE, INCLUDIN
 When the container is run with **`--gpus all`** (and the host has NVIDIA drivers), PyMOL is launched with **VirtualGL** (`vglrun`) so that OpenGL rendering uses the GPU:
 
 - A headless X server (display **:0**) is started with the NVIDIA driver for 3D.
-- The VNC desktop uses display **:0** (served via x11vnc on port 5901). PyMOL runs OpenGL directly on **:0** (GPU).
+- The desktop runs on display **:0**. In launcher-managed sessions it is streamed to the browser by the WebRTC agent; only the legacy single-container mode also serves it via x11vnc on port 5901. PyMOL runs OpenGL directly on **:0** (GPU) in both cases.
 - If no GPU is present, PyMOL falls back to software rendering and the container still runs.
 
 Ensure the host has the NVIDIA driver and the container is started with `docker run --gpus all ...` (or equivalent) for GPU-accelerated molecular viewing.

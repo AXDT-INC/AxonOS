@@ -76,12 +76,9 @@ docker run -d --name axonos axonos:custom
 
 ### 5. Config Files
 
-**Old**: `descios.yaml` (if used)
-**New**: `axonos.yaml`
-
-**Migration**: The launcher will continue to read `descios.yaml` with a deprecation warning. Migrate by:
-1. Rename `descios.yaml` to `axonos.yaml`
-2. Update any references in your scripts
+The launcher stores its configuration as JSON (`axonos config save --file axonos-config.json`
+/ `axonos config load --file …`). No old-brand config file name is read; if you kept a
+launcher config from the DeSciOS era, re-save it with the new CLI.
 
 ### 6. CSS Theme Classes
 
@@ -101,10 +98,12 @@ docker run -d --name axonos axonos:custom
 - No code changes needed
 
 ### GitHub URLs
-- Repository URLs updated to new location
+- Repository URLs were updated to the new location. Use the URL shown by `git remote -v`
+  on a fresh clone as the canonical one; a few build-script metadata strings still
+  carry older organization names (see `docs/rebrand/REPORT.md`, "Known exceptions").
 - Update your git remotes:
 ```bash
-git remote set-url origin https://github.com/[new-org]/axonos.git
+git remote set-url origin <canonical AxonOS repository URL>
 ```
 
 ## Backward Compatibility
@@ -112,8 +111,8 @@ git remote set-url origin https://github.com/[new-org]/axonos.git
 The following are maintained for compatibility:
 
 1. **Username**: The default username `aXonian` (renamed from `deScier` as part of rebrand)
-2. **Config files**: Old config file names are still read (with deprecation warning)
-3. **Docker paths**: During transition, both old and new paths may work
+2. **Config files**: launcher configs are JSON; no old-brand file names are read
+3. **Docker paths**: only the new `axonos_*` paths exist in the image
 
 ## Upgrade Steps
 

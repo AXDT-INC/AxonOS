@@ -23,9 +23,9 @@ Originally inspired by the idea of a Stadia-like environment, **AxonOS** evolves
 
 ## ✅ Project Status
 
-✅ **Feature Complete — Active Development**
+✅ **Launch Release — 9 September 2026**
 
-AxonOS provides a comprehensive scientific computing environment with extensive tooling and AI integration. While feature-complete and well-tested, it remains under active development with regular enhancements and improvements.
+AxonOS 1.0 launches on 2026-09-09 as a production service self-hosted by AxonDAO, alongside the self-hostable container and launcher in this repository. It provides a comprehensive scientific computing environment with extensive tooling and AI integration, and remains under active development with regular enhancements.
 
 **Current Status:**
 - ✅ Full scientific software suite operational
@@ -57,16 +57,21 @@ AxonOS provides a comprehensive scientific computing environment with extensive 
 |------------------|------------------------------------------------------------------|
 | **XFCE4**         | Lightweight desktop environment with customized layout           |
 | **OpenCL**        | Critical for accelerated computing in diverse scientific tools   |
-| **TigerVNC**      | VNC server to expose the XFCE desktop                            |
+| **x11vnc**        | Exposes the GPU-backed Xorg display over VNC (port 5901, legacy/fallback path) |
+| **WebRTC streaming** | Low-latency NVENC desktop streaming via the gate (see `docs/WEBRTC.md`) |
 | **noVNC + Websockify** | Enables browser-based access via WebSocket                     |
 | **AxonAI** | Native GTK research agent with Qwen 3.8, OpenCode tools, and screenshot understanding |
 | **OpenCode 1.18.26** | Loopback-only agent runtime for persistent sessions, tools, and subagents |
+| **Talk to K**     | Krishnamurti dialogue companion (GTK, local model)               |
 | **JupyterLab**    | Development notebook environment with BeakerX multi-language support |
 | **RStudio**       | Full-featured R development environment                          |
 | **Spyder**        | Scientific Python IDE                                            |
 | **UGENE**         | Bioinformatics suite                                             |
 | **CellModeller**  | Multicellular modelling framework                                |
 | **GNU Octave**    | MATLAB-like numerical computing                                  |
+| **PyMOL**         | Molecular visualization (open-source build; see `docs/PYMOL_LICENSE.md`) |
+| **GROMACS**       | GPU-accelerated molecular dynamics (see `docs/GROMACS.md`)       |
+| **Audacity**      | Audio editing and analysis                                       |
 | **Fiji/ImageJ**   | Image processing and analysis                                    |
 | **QGIS**          | Geographic Information System                                    |
 | **GRASS GIS**     | Geographic Information System with full GUI support              |
@@ -101,13 +106,27 @@ AxonOS provides a comprehensive scientific computing environment with extensive 
 
 ---
 
+## 🌐 Hosted Platform
+
+Beyond the single-container desktop, the repo contains the production multi-container stack (`docker-compose.yml`), self-hosted by AxonDAO, built around the session gate in `axonos_gate/`:
+
+- **Wallet-gated sessions** with prepaid billing in ETH, USDC or AXGT, holder discounts, and dynamic USD pricing (see `docs/TOKENOMICS.md`)
+- **Agent access via x402** (`/api/x402/session`, `/.well-known/x402`, `/openapi.json`) for machine clients (see `docs/X402_AGENT_TEST.md`)
+- **WebRTC/NVENC streaming** with coturn TURN fallback and noVNC as the last resort (see `docs/WEBRTC.md`)
+- **Direct SSH sessions** and a secure in-browser terminal
+- **Guest demo mode** with invite codes (`AXONOS_GUEST_*` in `env.example`)
+- **Desktop ↔ Console "Relaunch"** mode switch and per-wallet persistent storage volumes (see `docs/VOLUME_RETENTION_POLICY.md`)
+- **Multi-session GPU scheduling** on the host (see `docs/HOST_LAUNCHER.md`)
+
+---
+
 ## 📁 File Structure
 
 | File | Description |
 |------|-------------|
 | `Dockerfile` | Builds the full container with XFCE, noVNC, scientific tools, etc. |
 | `startup.sh` | Entrypoint script for initializing the desktop environment |
-| `supervisord.conf` | Orchestrates services like `vncserver`, `noVNC`, and `jupyterlab` |
+| `supervisord.conf` | Orchestrates Xorg, XFCE, x11vnc, noVNC/gate, the WebRTC agent, file/terminal agents, sshd, Ollama, OpenCode, IPFS and JupyterLab |
 | `xfce4-panel.xml` | Pre-configured XFCE panel layout |
 | `os.svg` | AxonOS branding/logo image |
 | `axonos_assistant/` | AxonAI application directory (stable internal path) |
@@ -116,10 +135,15 @@ AxonOS provides a comprehensive scientific computing environment with extensive 
 | `axonos_assistant/opencode.json` | Local Qwen provider, agent, tool, and permission policy |
 | `axonos_assistant/requirements.txt` | Python dependencies for AxonAI |
 | `axonos_assistant/axonos-assistant.desktop` | Desktop entry for AxonAI |
+| `axonos_assistant/assistant_routing.py` | Deterministic agent / chat / vision route selection |
+| `axonos_assistant/mcp_*_server.py` | MCP context servers (see `axonos_assistant/MCP_README.md`) |
+| `axonos_gate/` | Session gate: wallet auth, billing, WebRTC signaling, SSH/terminal, x402 (see `axonos_gate/README.md`) |
+| `docker-compose.yml` | Production multi-container stack (gate, coturn, postgres, files-tls) |
+| `talk_to_k/` | Talk to K companion app |
 | `axonos_launcher/` | AxonOS Launcher application directory |
-| `axonos_launcher/main.py` | GUI for customizing AxonOS Docker builds |
+| `axonos_launcher/main.py` | Launcher entrypoint: CLI by default, Tk GUI with `--gui` |
 | `axonos_launcher/README.md` | Detailed launcher documentation |
-| `axonos_launcher/requirements.txt` | Launcher dependencies (uses Python standard library) |
+| `axonos_launcher/requirements.txt` | Launcher dependencies (PyYAML for plugin loading; GUI uses stdlib tkinter) |
 
 ---
 
@@ -136,7 +160,7 @@ AxonOS provides a comprehensive scientific computing environment with extensive 
 - **Stop and Reset**: **Stop** aborts the active OpenCode turn; **Reset** clears the conversation and deletes its OpenCode session only after safe cleanup, and a per-container marker prevents another AxonAI process from bypassing an unproven stop
 - **Optional Agentic Mode**: OpenCode routing can be disabled in **Settings**, leaving AxonAI on its direct local chat and vision paths
 - **Scientific Context**: Aware of AxonOS environment and available tools
-- **Web Search**: Can search and summarize web content for research queries using Brave search
+- **Web Search**: Can search and summarize web content for research queries using the DuckDuckGo Instant Answer API, with a Brave search fallback
 - **Tool Discovery**: Scans and reports installed scientific software from system directories
 - **Modern UI**: Clean, responsive interface with Orbitron font and dark theme support
 
@@ -187,7 +211,10 @@ AxonAI automatically sends ordinary text turns to OpenCode and recognizes reques
 ```bash
 # Clone the repo
 git clone https://github.com/AxonDAO-AXGT/AxonOS.git
-cd axonos
+cd AxonOS
+
+# Run the CLI from source (or install the `axonos` binary via `cd build && make install`)
+alias axonos='python3 axonos_launcher/cli.py'
 
 # List available applications
 axonos list
@@ -262,7 +289,8 @@ The launcher includes example plugins and comprehensive documentation in the `ax
 ### Required Software
 
 #### For AxonOS Launcher
-- **Python**: 3.6 or later
+- **Python**: 3.8 or later
+- **PyYAML**: `pip install -r axonos_launcher/requirements.txt`
 - **tkinter**: GUI toolkit (usually included with Python)
 - **Docker**: 20.10 or later for container management
 - **xdg-open** (Linux/macOS): For automatic browser launching
@@ -277,8 +305,8 @@ The launcher includes example plugins and comprehensive documentation in the `ax
 #### GPU Acceleration (NVIDIA only)
 - **NVIDIA GPU**: CUDA-compatible graphics card
 - **NVIDIA Container Toolkit**: For Docker GPU access
-- **NVIDIA Drivers**: 450.80.02+ or compatible with your GPU
-- **CUDA**: 11.0+ (installed automatically in container)
+- **NVIDIA Drivers**: 580-series recommended (must support CUDA 12.2)
+- **CUDA**: 12.2 with cuDNN 8 (bundled in the container base image)
 
 #### Performance Recommendations
 - **Multi-core CPU**: 4+ cores recommended for scientific computing
@@ -339,8 +367,12 @@ AxonOS is accessed through a web browser using noVNC. Supported browsers:
 
 ### Network Configuration
 
-- **Port 6080**: HTTP access to noVNC interface
-- **Port 5901**: Direct VNC access (optional)
+- **Port 6080**: HTTP access to the web frontend and gate API (noVNC path)
+- **Port 8889**: AXGT gate API (`axgt-api`), used by the compose stack
+- **Port 8890**: Internal WebRTC agent listener; never publish it
+- **Port 5901**: Direct VNC access (optional, off by default in the launcher)
+- **Ports 3478 and 40500-40999/udp**: coturn TURN relay (compose stack only)
+- **Port 443**: TLS file plane and TURN-over-TCP demux (compose stack only)
 - **Firewall**: Ensure ports are accessible if accessing from remote machines
 
 ---
@@ -364,7 +396,10 @@ cp env.example .env
 ```bash
 # Clone the repo
 git clone https://github.com/AxonDAO-AXGT/AxonOS.git
-cd axonos
+cd AxonOS
+
+# Run the CLI from source (or install the `axonos` binary via `cd build && make install`)
+alias axonos='python3 axonos_launcher/cli.py'
 
 # List applications
 axonos list
@@ -394,7 +429,7 @@ Use the intuitive GUI to:
 ```bash
 # Clone the repo
 git clone https://github.com/AxonDAO-AXGT/AxonOS.git
-cd axonos
+cd AxonOS
 
 # Build the Docker image (with custom password - recommended)
 docker build --build-arg PASSWORD="$AXONOS_VNC_PASSWORD" -t axonos .
@@ -460,6 +495,6 @@ AxonOS is designed for:
 
 ## ⚖️ License
 
-This project is licensed under the **MIT License**.
+AxonOS is mixed-licensed: **MIT** for AxonOS-authored files and **MPL 2.0** for the noVNC-derived files (`novnc-theme/ui.js`, `novnc-theme/vnc.html`). See `LEGAL.md`, `LICENSE` and `LICENSE-MPL`.
 
 > AxonOS is free and open — built for the community, by the community.

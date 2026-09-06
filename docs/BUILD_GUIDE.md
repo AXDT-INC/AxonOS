@@ -48,7 +48,7 @@ The build process includes:
 After successful build, you'll have:
 - **Image**: `axonos:latest` (or your specified tag)
 - **Size**: ~8-12GB (depending on included applications)
-- **Layers**: ~51 build steps
+- **Layers**: ~130 build steps
 
 ## Verifying the Build
 
@@ -65,21 +65,31 @@ docker images axonos --format "{{.Repository}}:{{.Tag}} - {{.Size}}"
 
 ## Running the Built Image
 
-### With GPU Support (Recommended)
+These commands run the image standalone (single-container legacy mode: desktop + gate in one container). For the multi-tenant stack use `docker compose up -d --build` instead — see [`HOST_LAUNCHER.md`](HOST_LAUNCHER.md).
+
+### With GPU Support (Recommended, secure by default)
 
 ```bash
-docker run -d --gpus all -p 6080:6080 -p 5901:5901 \
+docker run -d --gpus all --env-file .env -p 6080:6080 -p 8889:8889 \
+  --name axonos axonos:latest
+```
+
+Only the web UI (`6080`) and gate API (`8889`) are published. `.env` supplies the runtime configuration ([`ENVIRONMENT_VARIABLES.md`](ENVIRONMENT_VARIABLES.md)); set `AXGT_USER_CONTAINER_ENABLED=false` for standalone mode so the desktop starts in this container.
+
+### Advanced: also publish VNC and IPFS ports
+
+Only when host-side access to raw VNC or IPFS is explicitly required:
+
+```bash
+docker run -d --gpus all --env-file .env -p 6080:6080 -p 8889:8889 \
+  -p 5901:5901 \
   -p 4001:4001 -p 4001:4001/udp -p 5001:5001 -p 8080:8080 -p 9090:9090 \
   --name axonos axonos:latest
 ```
 
 ### Without GPU
 
-```bash
-docker run -d -p 6080:6080 -p 5901:5901 \
-  -p 4001:4001 -p 4001:4001/udp -p 5001:5001 -p 8080:8080 -p 9090:9090 \
-  --name axonos axonos:latest
-```
+Drop `--gpus all` from either command above. WebRTC NVENC capture and GPU workloads are unavailable; the noVNC path still works in standalone mode.
 
 ## AxonAI Runtime
 
@@ -122,7 +132,7 @@ df -h
 
 - Ollama model downloads can be slow
 - Check network connection
-- Models will be retried automatically
+- The `ollama pull` runs once inside its layer; a failed pull fails that layer. Re-run the build — every earlier layer is cached, so only the model download repeats.
 
 ### AxonAI Reports OpenCode Is Unavailable
 
@@ -160,13 +170,18 @@ The Dockerfile doesn't use multi-stage builds, but you can optimize by:
 
 ## Custom Builds
 
-For custom builds with selected applications, use the AxonOS Launcher:
+For custom builds with selected applications, use the AxonOS Launcher. The GUI (`main.py`) needs a display (tkinter); the CLI works headless:
 
 ```bash
+# GUI
 python3 axonos_launcher/main.py
+
+# Headless: generate, then build
+python3 axonos_launcher/cli.py generate --output Dockerfile.custom
+python3 axonos_launcher/cli.py build
 ```
 
-The launcher will generate a `Dockerfile.custom` with your selected applications.
+Both generate a `Dockerfile.custom` with your selected applications. See [`axonos_launcher/README_CLI.md`](../axonos_launcher/README_CLI.md).
 
 ## Next Steps
 
@@ -180,8 +195,10 @@ After building:
 
 ## Build Logs
 
-Build logs are saved to `/tmp/axonos_build.log` when using the build script, or you can redirect manually:
+The build script prints to the terminal and does not write a log file. Capture one yourself:
 
 ```bash
+./scripts/build_axonos.sh "$AXONOS_VNC_PASSWORD" 2>&1 | tee build.log
+# or, for a manual build
 docker build --build-arg PASSWORD="$AXONOS_VNC_PASSWORD" -t axonos:latest . 2>&1 | tee build.log
 ```

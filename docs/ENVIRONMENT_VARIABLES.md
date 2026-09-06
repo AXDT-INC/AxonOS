@@ -119,9 +119,9 @@ recorded with separate ledger/provenance fields and are disabled unless both the
 feature flag and wallet eligibility list permit them.
 
 For an eligible signed-in wallet, the dashboard balance card becomes a one-click
-test-credit action and displays the configured grant. The default policy refills
-*toward* a 60-credit balance cap (0→60, 25→60, 60→60), rather than adding an
-unconditional 60 on every click. A successful grant reconnects an existing
+test-credit action and displays the configured grant. The wallet button uses the
+additive grant path: every new request adds `AXONOS_TEST_CREDIT_GRANT_MINUTES`
+(0→60, 25→85, 60→120). A successful grant reconnects an existing
 credit-grace session only; it never silently starts a new compute session.
 
 | Variable | Default | Description |
@@ -129,7 +129,7 @@ credit-grace session only; it never silently starts a new compute session.
 | `AXONOS_TEST_CREDITS_ENABLED` | `false` | Explicit fail-closed switch for token-free test credit. A wallet list alone never enables it. |
 | `AXONOS_TEST_CREDIT_WALLETS` | *(none)* | Comma-separated wallets eligible to request test credit. |
 | `AXONOS_TEST_CREDIT_GRANT_MINUTES` | `60` | Minutes requested per grant; finite hard maximum `1440`. |
-| `AXONOS_TEST_CREDIT_MAX_BALANCE_MINUTES` | `60` | Atomic wallet-balance cap; finite hard maximum `10080`. Partial grants stop exactly at the cap. |
+| `AXONOS_TEST_CREDIT_MAX_BALANCE_MINUTES` | `60` | Balance cap for bounded (non-additive) grant paths such as guest funding; finite hard maximum `10080`. The wallet test-credit button is additive and is **not** capped by this value. |
 | `AXONOS_WHITELISTED_WALLETS` | *(none)* | Legacy wallet-list alias only. It does not enable test credits. |
 
 ### ETH deposits (primary payment rail)
@@ -155,7 +155,7 @@ Self-verified on-chain (no facilitator) into the same deposit ledger. USDC lands
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AXGT_ENABLE_USDC_DEPOSITS` | `true` | Enable the USDC rail + UI. Falsy (`0/false/no/off`) disables it. |
+| `AXGT_ENABLE_USDC_DEPOSITS` | `true` | Enable the USDC rail + UI. Unset or `1/true/yes/on` enables verification; any other value disables it. `/api/config` uses the inverse falsy list (`0/false/no/off`), so keep to canonical boolean values. |
 | `USDC_RPC_URL` | *(none)* | JSON-RPC endpoint for the USDC chain. Required for verification. |
 | `USDC_CONTRACT_ADDRESS` | *(none)* | USDC token contract. Presence gates the "Pay with USDC" UI. |
 | `USDC_CHAIN_ID` | `8453` | USDC chain ID (`8453` Base mainnet, `84532` Base Sepolia). |
@@ -177,6 +177,31 @@ Agent-native HTTP-402 rail: `GET /api/x402/access` returns payment requirements,
 | `X402_RESOURCE` | `/api/x402/access` | Resource path advertised in the 402 challenge. |
 | `X402_RESOURCE_URL` | *(none)* | Absolute base URL for the advertised resource (the JS `x402-fetch` SDK requires an absolute `resource`). Falls back to `AXGT_PUBLIC_BASE_URL`, then the first CORS origin. |
 | `AXGT_PUBLIC_BASE_URL` | *(none)* | Exact public origin (e.g. `https://app.axonos.io`) used for absolute x402 resource URLs and as the sole accepted terminal ticket/WebSocket browser Origin. For that exact Origin, a syntactically valid internal proxy `Host` is allowed and `X-Forwarded-Proto` may describe the internal hop. Without this setting, Origin, Host, and any supplied forwarded scheme must agree exactly. |
+| `AXONOS_PUBLIC_ORIGIN` | *(none)* | Public origin advertised in gate responses (trailing slash stripped). |
+| `AXGT_CONTACT_EMAIL` | *(none)* | Merchant contact included in x402 payment requirements; omitted when unset. |
+| `X402_ACCESS_RESOURCE_URL` | *(none)* | Explicit AgentLink resource URI for the access endpoint; defaults to `<base_url>/api/x402/access`. |
+
+### x402 facilitator, Bazaar discovery, and AgentLink
+
+Optional Coinbase CDP facilitator settlement and directory listing. Read by [`axonos_gate/x402_facilitator.py`](../axonos_gate/x402_facilitator.py) and [`axonos_gate/agentlink_verifier.py`](../axonos_gate/agentlink_verifier.py). Off by default; the gate self-settles when disabled.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AXGT_X402_FACILITATOR_ENABLED` | `false` | Route settlement through the CDP facilitator instead of the local `X402_SETTLEMENT_PRIVATE_KEY` hot wallet. |
+| `CDP_FACILITATOR_URL` | `https://api.cdp.coinbase.com/platform/v2/x402` | Facilitator API base URL. |
+| `CDP_API_KEY_ID` | *(none)* | CDP API key ID (control plane only; never log). |
+| `CDP_API_KEY_SECRET` | *(none)* | CDP API key secret (control plane only; never log). |
+| `AXGT_X402_BAZAAR_DISCOVERABLE` | inherits `AXGT_X402_FACILITATOR_ENABLED` | Advertise the resource in the x402 Bazaar directory. |
+| `AXGT_X402_BAZAAR_CATEGORY` | `compute` | Bazaar listing category. |
+| `AXGT_X402_BAZAAR_TAGS` | `gpu,compute,ssh,linux` | Comma-separated Bazaar tags. An explicitly empty value clears the list. |
+| `AXGT_X402_DEBUG` | `false` | Verbose facilitator request/response logging. |
+| `AXGT_AGENTLINK_ENABLED` | `false` | Enable AgentLink resource advertisement/verification. |
+| `AXGT_AGENTLINK_MODE` | `advertise_only` | `advertise_only` or `verify_only`. |
+| `AXGT_AGENTLINK_RPC_URL` | *(falls back to `USDC_RPC_URL`)* | RPC used for AgentLink registry reads. |
+| `AXGT_AGENTLINK_REGISTRY_ADDRESS` | *(none)* | AgentLink registry contract. |
+| `AXGT_AGENTLINK_MAX_AGE_SECONDS` | `300` | Maximum age of an AgentLink attestation. |
+
+When neither `X402_RESOURCE_URL` nor `AXGT_PUBLIC_BASE_URL` is set, the AgentLink resource falls back to a hard-coded `https://app.axonos.io`; set one of them for self-hosted deployments.
 
 ### Dynamic USD-equivalent pricing (price oracle)
 
@@ -260,10 +285,10 @@ Read primarily by [`axonos_gate/session_manager.py`](../axonos_gate/session_mana
 |----------|---------|-------------|
 | `AXGT_MULTI_SESSION_ENABLED` | `true` when user containers are enabled | Multi-session scheduler (exclusive GPU allocation). Forced off when `AXGT_USER_CONTAINER_ENABLED=false` so multiple wallets can never share one desktop. |
 | `AXGT_GPU_PROFILES_ENABLED` | `true` | GPU profile selection (`small`/`medium`/`large`/`max`). |
-| `AXONOS_HIDE_BETA_BADGE` | `true` | Hide the "BETA" chip beside the AxonOS brand in the UI (served to the client via `/api/config`). Set `false` to show the chip. |
+| `AXONOS_HIDE_BETA_BADGE` | `true` | Hide the release-stage chip beside the AxonOS brand in the UI (served to the client via `/api/config`). Set `false` to show the chip. The `:8889` gate accepts only `1/true/yes/on` as "hide"; the `:6080` listener hides unless `0/false/no/off` — use canonical values. |
 | `AXGT_GPU_WEIGHTED_BILLING` | `true`* | Bill `wall_clock_minutes × GPU count` on heartbeat when profiles enabled. Set `false` for 1× billing. (*Enabled when profiles enabled and var not explicitly off.) |
 | `AXGT_USER_CONTAINER_ENABLED` | `false` in code; `true` in compose | One container per claimed session vs shared desktop. |
-| `AXGT_SESSION_PRESERVE_ON_CREDIT_EXHAUST` | `true` | On zero credit, stop viewer access and compute billing but retain the same running container, jobs, and GPU assignment for the configured top-up grace. When `false`, end the session immediately. |
+| `AXGT_SESSION_PRESERVE_ON_CREDIT_EXHAUST` | `true` | On zero credit, stop viewer access and compute billing but retain the same running container, jobs, and GPU assignment for the configured top-up grace. When `false`, end the session immediately. Demo/guest identities are never preserved and end at their hard cap. |
 
 ### GPU pool
 
@@ -276,7 +301,8 @@ Read primarily by [`axonos_gate/session_manager.py`](../axonos_gate/session_mana
 | `AXGT_GPU_DEVICE_CACHE_SECONDS` | `120` | TTL for cached auto-detected GPU list. |
 | `AXGT_GPU_TELEMETRY_INTERVAL_SECONDS` | `1.0` | Central persistent-NVML sampling interval in seconds (clamped to 0.5–60). One sampler covers every GPU and every viewer. |
 | `AXGT_GPU_TELEMETRY_FILE` | `/run/axonos/gpu-telemetry.json` | Root-owned atomic GPU snapshot read by forked gate workers. The Compose base uses NVIDIA `utility` access only; GPU device access remains shareable with tenant sessions. |
-| `AXGT_GPU_ENUMERATE_VIA_LAUNCHER` | `true` | When gate has no GPUs, probe host via HTTP launcher. |
+| `AXGT_GPU_ENUMERATE_VIA_LAUNCHER` | `true` | When gate has no GPUs, probe host via HTTP launcher. Only used when `AXGT_SESSION_LAUNCHER_MODE=http`. |
+| `AXGT_GPU_TELEMETRY_LOG_LEVEL` | `INFO` | Log level of the central GPU telemetry sampler process. |
 
 ### Session lifecycle
 
@@ -288,7 +314,9 @@ Read primarily by [`axonos_gate/session_manager.py`](../axonos_gate/session_mana
 | `AXGT_SESSION_COOLDOWN_SECONDS` | `0` | Seconds before same wallet can reclaim after release. |
 | `AXGT_SESSION_CREDIT_GRACE_MINUTES` | `120` | Top-up grace after credit exhaustion. The container and jobs keep running, compute billing/viewer access remain stopped, and cleanup stops the container when this grace expires. |
 | `AXGT_SESSION_PAUSED_MAX_MINUTES` | *(unset)* | Legacy fallback for `AXGT_SESSION_CREDIT_GRACE_MINUTES`; ignored when the canonical variable is set. |
-| `AXGT_SESSION_RESET_SCRIPT` | `/usr/local/bin/reset_session.sh` | Script run between users (desktop cleanup). |
+| `AXGT_SESSION_GRACE_SECONDS` | `60` | Grace window applied to lease/heartbeat expiry checks before a session is released (accepts `>= 0`). Also read by both launchers when reconciling session networks. |
+| `AXGT_GATE_LIVENESS_INTERVAL_SECONDS` | `15` | How often the gate stamps its own liveness row (must be `> 0`). Measured control-plane downtime is credited back to live sessions so they survive gate restarts/redeploys. |
+| `AXGT_SESSION_RESET_SCRIPT` | `/usr/local/bin/reset_session.sh` | Script run between users (desktop cleanup). Ignored when the file does not exist on disk. |
 
 ### Desktop mode (container runtime)
 
@@ -311,7 +339,13 @@ Set by session launcher on `axgt-session-*` containers (not operator `.env`):
 | `AXGT_WEBRTC_AGENT_TOKEN` | Gate via launcher | Signed bearer capability bound to this session ID, wallet, and file-key fingerprint. Generated automatically; never configure or forward it globally. |
 | `WEBRTC_GATE_INTERNAL_URL` | Launcher | Internal-only agent API. Launcher-managed sessions use `http://axonos-gate:8890`; legacy single-container mode uses loopback. |
 | `AXGT_GATE_HEARTBEAT_URL` | Launcher | Central gate URL the heartbeat daemon posts to. Launcher-managed sessions use `http://axonos-gate:8889`. |
-| `AXGT_HEARTBEAT_INTERVAL_SECONDS` | Launcher | Durable in-container heartbeat interval for every tenant session, including desktops (default `30`). Keep it below `AXGT_HEARTBEAT_TIMEOUT_SECONDS`; this keeps detached compute alive and billed independently of the browser. |
+| `AXGT_HEARTBEAT_INTERVAL_SECONDS` | Launcher (only when set on the launcher) | Durable in-container heartbeat interval for every tenant session, including desktops. Injected only if the launcher process itself has it set; otherwise the in-container daemon's own default of `30` applies. Keep it below `AXGT_HEARTBEAT_TIMEOUT_SECONDS`; this keeps detached compute alive and billed independently of the browser. |
+| `AXGT_DESKTOP_ENABLED` | Launcher | `true` for desktop sessions, `false` for SSH-only sessions. Selected by session mode; cannot be overridden via passthrough. |
+| `WEBRTC_ENABLED` / `WEBRTC_AGENT_ENABLED` | Launcher | `true` for desktop sessions; `WEBRTC_AGENT_ENABLED=false` for SSH-only sessions. Selected by session mode; cannot be overridden via passthrough. |
+| `WEBRTC_PORT_RANGE` | Launcher | Per-session UDP media port slice derived from the session ID (desktop sessions). |
+| `AXGT_SSH_ENABLED` | Launcher | `true` on SSH-only sessions; enables `sshd` in supervisord and disables the desktop stack. |
+| `AXGT_SSH_PUBKEY` | Launcher | The user-supplied SSH public key (validated by the gate) written to `authorized_keys` by `startup.sh`. |
+| `AXONOS_SELECTED_TEMPLATE` | Launcher | Selected science template; `startup.sh` persists it to `~/.config/axonos/selected_template` and [`scripts/apply_session_template.sh`](../scripts/apply_session_template.sh) applies it (override the file path with `AXONOS_TEMPLATE_FILE`). |
 
 ---
 
@@ -352,8 +386,8 @@ container.
 | `AXGT_SESSION_LAUNCHER_BIND_HOST` | `127.0.0.1` | Listen address (`0.0.0.0` in compose). |
 | `AXGT_SESSION_LAUNCHER_BIND_PORT` | `8090` | Listen port. |
 | `AXGT_SESSION_LAUNCHER_TOKEN` | *(see above)* | Bearer auth for `/launch`, `/stop`, `/enumerate-gpus`. Empty = no auth (dev only). |
-| `AXGT_HOST_SESSION_CONTAINER_IMAGE` | *(none)* | Image for session desktops. Compose: `axonos:public-beta`. |
-| `AXGT_HOST_SESSION_CONTAINER_COMMAND` | `/startup.sh` | Container entry command tokens. |
+| `AXGT_HOST_SESSION_CONTAINER_IMAGE` | *(none)* | Image for session desktops. Compose: the image tag set in `docker-compose.yml`. |
+| `AXGT_HOST_SESSION_CONTAINER_COMMAND` | *(empty; image `CMD`)* | Container entry command tokens. Compose sets `/startup.sh`. |
 | `AXGT_HOST_SESSION_CONTAINER_EXTRA_ARGS` | *(empty)* | Restricted extra `docker run` flags. Network, ports, mounts/devices, namespaces, capabilities, runtime/security settings, environment injection, conflicting GPUs, and privileged mode are stripped. |
 | `AXGT_HOST_SESSION_CONTAINER_SHM_SIZE` | `32g` | `--shm-size` for session containers. Empty string omits flag. |
 | `AXGT_HOST_SESSION_NETWORK_ISOLATION` | `true` | Create a labeled bridge `axgt-session-net-<id>` for each tenant and remove it on stop. |
@@ -401,7 +435,7 @@ and weakens the tenant boundary.
 |----------|---------|-------------|
 | `GATE_HOST` | `127.0.0.1` | Bind address. Compose: `0.0.0.0` so browsers and session heartbeats reach the central gate. |
 | `GATE_PORT` | `8889` | Gate HTTP/WebSocket API port. |
-| `GATE_USE_GEVENT` | `1` | Use gevent WSGI server when truthy. |
+| `GATE_USE_GEVENT` | `1` | Use gevent WSGI server when truthy (`1`, `true`, `yes` — `on` is not accepted here). |
 | `GATE_AGENT_API_ENABLED` | `false` | Enables WebRTC agent-only endpoints. Set only on the supervisor-managed internal `:8890` listener. |
 | `GATE_AGENT_ONLY` | `false` | Reject every non-agent path on that listener. Set with `GATE_AGENT_API_ENABLED`; do not enable on the public gate. |
 
@@ -443,13 +477,13 @@ Configuration: [`axonos_gate/webrtc/config.py`](../axonos_gate/webrtc/config.py)
 | `WEBRTC_AGENT_INTERNAL_KEY` | *(none)* | Central WebRTC capability signing secret (**required** for WebRTC). Launcher-managed tenants never receive it. Legacy single-container mode also uses it directly over loopback. |
 | `WEBRTC_AGENT_CAPABILITY_TTL_SECONDS` | `86400` | Lifetime of each signed per-session agent capability; clamped to 600–604800 seconds. The tenant renews before expiry through the internal listener while preserving the revocable session JTI. Its newest renewal is stored in agent-root-owned mode `0600` at `/run/axonos/webrtc-agent-token` so a Supervisor agent-process restart can reload it; the central gate still validates every request. |
 | `AXGT_WEBRTC_AGENT_TOKEN` | *(runtime-injected)* | Signed per-session bearer capability. The gate mints it and the launcher injects it; operators must not configure or passthrough it. |
-| `WEBRTC_GATE_INTERNAL_URL` | `http://127.0.0.1:8890` | Agent-only gate URL. Launcher-managed sessions are forced to `http://axonos-gate:8890`; the internal listener is not host-published. |
-| `WEBRTC_STUN_URLS` | *(empty → Google STUN)* | Comma-separated `stun:…` URLs. |
+| `WEBRTC_GATE_INTERNAL_URL` | agent: `http://axonos-gate:8890`; gate helper: `http://127.0.0.1:8890` | Agent-only gate URL. The capture agent defaults to the compose service alias and the launcher injects that same value; compose pins the base `axonos` container to loopback. The internal listener is not host-published. |
+| `WEBRTC_STUN_URLS` | *(empty → Google STUN, unless TURN URLs are configured)* | Comma-separated `stun:…` URLs. |
 | `WEBRTC_TURN_URLS` | *(none)* | Comma-separated `turn:` / `turns:` URLs. In multi-user mode use a hostname/IP reachable from isolated session networks, not the compose-only `coturn` alias. |
 | `WEBRTC_TURN_USERNAME` | *(none)* | TURN long-term username. |
 | `WEBRTC_TURN_CREDENTIAL` | *(none)* | TURN password (never log). |
 | `WEBRTC_PORT_RANGE` | *(none)* | Pin the agent's UDP media ports to a range, e.g. `40000-41000`, to match host firewall/NAT rules. Empty = OS-assigned ephemeral ports. |
-| `WEBRTC_PUBLIC_IP` | *(none)* | Rewrite the host candidate IP in the SDP to this public/NAT address so srflx works behind 1:1 NAT. Empty = use the locally bound address. |
+| `WEBRTC_PUBLIC_IP` | *(none)* | Rewrite the host candidate IP in the SDP to this public/NAT address so srflx works behind 1:1 NAT. Empty = the agent auto-detects its public IP through outbound HTTPS lookups (ipify, ifconfig.me, ipinfo, icanhazip; cached). Set explicitly on egress-restricted hosts. |
 
 ### Timeouts and limits
 
@@ -459,8 +493,9 @@ Configuration: [`axonos_gate/webrtc/config.py`](../axonos_gate/webrtc/config.py)
 | `WEBRTC_MAX_RECONNECT_ATTEMPTS` | `5` | Client reconnect cap (0–50). |
 | `WEBRTC_ANSWER_WAIT_MS` | `180000` | Browser polls for SDP answer (90k–300k ms). |
 | `WEBRTC_AGENT_CLAIM_LEASE_SECONDS` | derived | Reclaims an abandoned scoped offer after 30–540 seconds; default is the larger of answer/display wait plus 30 seconds. |
-| `WEBRTC_SIGNAL_RATE_LIMIT_PER_MIN` | `60` | Signaling POST rate limit per IP+wallet; `0` = unlimited. |
-| `WEBRTC_DISPLAY_WAIT_SECONDS` | `120` | Agent waits for X11 `:0` before capture. |
+| `WEBRTC_SIGNAL_RATE_LIMIT_PER_MIN` | `60` | Signaling POST rate limit per IP+wallet; `0` (or negative) = unlimited; other values are clamped to 5–600. |
+| `WEBRTC_DISPLAY_WAIT_SECONDS` | `120` | Agent waits for X11 `:0` before capture (clamped 5–300). |
+| `WEBRTC_DESKTOP_READY_FILE` | `/tmp/axonos-desktop-ready` | Marker file the agent waits for before starting capture so the branded XFCE pass has finished. Enforced only when `AXGT_SESSION_ID` is set. |
 
 The public gate on `:8889` and websockify/noVNC on `:6080` do not accept agent
 poll/answer/ICE operations. Those routes are served only by the central internal
@@ -473,16 +508,16 @@ session before scoped signaling SQL is run.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `WEBRTC_CAPTURE_DISPLAY` | `:0` | X display to capture. |
-| `WEBRTC_CAPTURE_MAX_WIDTH` | `1920` | Scale bound for capture. |
-| `WEBRTC_CAPTURE_FPS` | `30` | Target capture frame rate. Use `15` for constrained TURN/mobile paths; watch `packetsLost` in webrtc-internals. |
+| `WEBRTC_CAPTURE_MAX_WIDTH` | `1920` | Scale bound for capture (clamped 320–3840). |
+| `WEBRTC_CAPTURE_FPS` | `30` | Target capture frame rate (not clamped — passed to the encoder as given). Use `15` for constrained TURN/mobile paths; watch `packetsLost` in webrtc-internals. |
 | `WEBRTC_CAPTURE_BACKEND` | `auto` | `auto` (NvFBC streamer when installed, else NVENC, else MSS), `nvfbc`, `nvenc`, or `mss`. |
 | `WEBRTC_CAPTURE_BITRATE` | `12000000` | NVENC H.264 target bitrate (1M–30M bps). 10-14 Mbps is the normal 1080p30 range; lower it when packet loss climbs. |
 | `WEBRTC_CAPTURE_LOW_LATENCY` | `true` | When `true`, uses a minimal encoder buffer. Set `false` for a little more quality cushion at the cost of latency. |
 | `WEBRTC_CAPTURE_NVENC_PRESET` | `p1` | FFmpeg `h264_nvenc` preset (`p1`–`p7`). `p1` is lowest latency; `p4` is cleaner but can lag. |
 | `WEBRTC_CAPTURE_NVENC_TUNE` | `ll` | NVENC tune (`ll`, `ull`, `hq`, `lossless`). Use `ull` only when latency matters more than motion quality. |
 | `WEBRTC_CAPTURE_NVFBC_BIN` | `/usr/local/bin/nvfbc_nvenc_streamer` | Native NvFBC→NVENC streamer path. Requires the NVIDIA Capture SDK-built helper. |
-| `WEBRTC_CAPTURE_NVFBC_PRESET` | `llhp` | Native streamer preset (`llhp`, `llhq`, `ll`, `hp`, `hq`, `default`). `llhp` is the lowest-latency starting point. |
-| `WEBRTC_CAPTURE_MAX_STALE_FRAMES` | `1` | NVENC live track: max extra frames to skip when the send queue runs ahead. `0` disables skip-ahead (may add latency). |
+| `WEBRTC_CAPTURE_NVFBC_PRESET` | derived (`llhp`) | Native streamer preset (`llhp`, `llhq`, `ll`, `hp`, `hq`, `default`). When unset it is derived from `WEBRTC_CAPTURE_NVENC_PRESET`: `p1`/`p2`/`hp` → `llhp` (the lowest-latency starting point), anything else → `llhq`. |
+| `WEBRTC_CAPTURE_MAX_STALE_FRAMES` | `1` | NVENC live track: max extra frames to skip when the send queue runs ahead (0–60). `0` disables skip-ahead (may add latency). |
 | `WEBRTC_LOCAL_CURSOR` | `auto` | Browser overlay cursor: `auto` (off for H.264 capture, on for MSS), `true`, or `false`. H.264 capture embeds the host cursor. |
 | `WEBRTC_AUDIO_ENABLED` | `true` | Attach a desktop audio (Opus) track to WebRTC sessions. Requires the in-container PulseAudio daemon; degrades to video-only with a warning when capture is unavailable. |
 | `WEBRTC_AUDIO_SOURCE` | `axonos_out.monitor` | PulseAudio source ffmpeg records (the null sink monitor from `pulse-default.pa`). Change only with a custom Pulse layout. |
@@ -509,6 +544,63 @@ Browser upload/download over `/api/files/*` and CPU/RAM/storage telemetry over `
 | `AXGT_FILES_KEY_FILE` | `/tmp/.axgt_files_key` | File the agent reads the per-session key from. |
 | `AXGT_FILES_MIN_FREE_BYTES` | `1073741824` | Reject uploads that would leave less than this free (default 1 GiB). |
 | `AXGT_FILES_MAX_FILE_BYTES` | `0` | Hard per-file upload cap; `0` = unlimited (storage is billed per GB-hour). |
+| `AXGT_FILES_PUBLIC_BASE` | *(empty = proxy through the gate)* | Public HTTPS base of the direct TLS file plane (the `files-tls` compose sidecar on `:443`, demuxed from TURN-TCP). When set, bulk uploads/downloads bypass the landing-page proxy. Stays HTTP/1.1 by design. |
+| `FILES_TLS_SERVER_NAME` | `axonconsole.io` (compose) | Certificate hostname the `files-tls` sidecar waits for under `/etc/letsencrypt/live/<name>/fullchain.pem` ([`docker/files-tls/40-wait-for-cert.sh`](../docker/files-tls/40-wait-for-cert.sh)). Set to your own domain. |
+
+`AXGT_FILES_MIN_FREE_BYTES` and `AXGT_FILES_MAX_FILE_BYTES` have no compose `environment:` default; they reach the gate only through `.env` (`env_file: .env`).
+
+---
+
+## Web terminal
+
+Browser terminal over `/api/terminal/*`, proxied by the gate to an in-container agent. Read by [`axonos_gate/terminal_gateway.py`](../axonos_gate/terminal_gateway.py) (gate side) and [`axonos_gate/terminal_agent.py`](../axonos_gate/terminal_agent.py) (in-container).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AXGT_TERMINAL_ENABLED` | `true` | Enable the web terminal rail. Falsy (`0/false/no/off`) disables it. |
+| `AXGT_TERMINAL_TICKET_TTL_SECONDS` | `30` | One-shot WebSocket ticket lifetime (5–60). |
+| `AXGT_TERMINAL_REVALIDATE_SECONDS` | `5` | Session/auth revalidation cadence while connected (1–30). |
+| `AXGT_TERMINAL_PRESENCE_SECONDS` | `10` | Presence heartbeat interval (2–30). |
+| `AXGT_TERMINAL_CONNECT_TIMEOUT_SECONDS` | `5` | Gate → agent connect timeout (1–15). |
+| `AXGT_TERMINAL_MAX_CLIENTS` | `1` | Concurrent terminal clients per session accepted by the agent (1–4). |
+
+---
+
+## Persistent storage (per-wallet volumes)
+
+Loop-backed ext4 volumes mounted over the session home. Read by [`axonos_gate/session_launcher_service.py`](../axonos_gate/session_launcher_service.py), [`axonos_gate/session_launcher.py`](../axonos_gate/session_launcher.py), and exposed via `GET /api/config`. See [`docs/VOLUME_RETENTION_POLICY.md`](VOLUME_RETENTION_POLICY.md) for the billing/pruning policy.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AXGT_PERSISTENT_STORAGE_ENABLED` | `true` | Master switch for per-wallet persistent home volumes and the launcher's billing/prune sweep. |
+| `AXGT_PERSISTENT_STORAGE_DIR` | `/var/lib/docker/axonos_storage` | Host directory holding the sparse `.ext4` images (launcher free-space preflight). No compose default; set via `.env`. Must match the bind mount in `docker-compose.yml`. |
+| `AXGT_PERSISTENT_STORAGE_MOUNT_PATH` | `/home/aXonian` | In-container mount point; must be absolute and free of shell metacharacters or the default is used. |
+| `AXGT_PERSISTENT_STORAGE_VOLUME_PREFIX` | `axgt-user-storage-` | Docker volume name prefix (sanitized to `[A-Za-z0-9_-]`). |
+| `AXGT_PERSISTENT_STORAGE_GB_HOUR_COST_MINUTES` | `0.05` | Credit-minutes charged per GB-hour of retained storage. |
+| `AXGT_PERSISTENT_STORAGE_CLEANUP_INTERVAL_SECONDS` | `3600` | Billing/prune sweep period inside the launcher (minimum 60 s). |
+| `AXGT_PERSISTENT_STORAGE_MIN_BALANCE_LIMIT_MINUTES` | `-1440.0` | Balance floor (negative = permitted overdraft in minutes) below which a wallet's volume is pruned. |
+
+Requested capacity is 10–500 GB (default 100) and volumes are growth-only. Demo/guest sessions and launches flagged `ephemeral_storage` receive no persistent volume.
+
+---
+
+## Guest demo mode (wallet-free invites)
+
+Sponsored, time-boxed sessions without a wallet. Read by [`axonos_gate/guest_mode.py`](../axonos_gate/guest_mode.py) and [`scripts/guest_invite.py`](../scripts/guest_invite.py). None of these has a compose `environment:` default; they reach the gate through `.env` (`env_file: .env`).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AXONOS_GUEST_MODE_ENABLED` | `false` | Fail-closed switch for guest invites and guest sessions. |
+| `AXONOS_GUEST_INVITE_MINTERS` | falls back to `AXONOS_TEST_CREDIT_WALLETS`, then `AXONOS_WHITELISTED_WALLETS` | Comma-separated wallets allowed to mint invites. Guests can never mint. |
+| `AXONOS_GUEST_SESSION_MINUTES` | `30` | Guest session length (1–240). Guests are never preserved past this hard cap. |
+| `AXONOS_GUEST_WARN_MINUTES` | `5` | Minutes before the cap at which the UI warns the guest. |
+| `AXONOS_GUEST_CREDIT_BUFFER_MINUTES` | `5` | Credit headroom funded beyond the session length (max 120). |
+| `AXONOS_GUEST_ALLOWED_PROFILES` | `small` | Comma-separated GPU profiles a guest may launch; invalid names are dropped. |
+| `AXONOS_GUEST_ALLOWED_TEMPLATES` | *(empty = any)* | Comma-separated science templates guests may select. |
+| `AXONOS_GUEST_MAX_LIVE_PER_SPONSOR` | `2` | Concurrent live guest sessions per sponsoring wallet. |
+| `AXONOS_GUEST_MAX_INVITES_PER_DAY` | `20` | Invite mint rate limit per sponsor. |
+| `AXONOS_GUEST_INVITE_TTL_HOURS` | `168` | Invite validity. |
+| `AXONOS_GUEST_DATA_RETENTION_DAYS` | `30` | Retention of guest identity rows. |
 
 ---
 
@@ -629,7 +721,7 @@ signaling, and file operations can reach it.
 together; set `AXGT_DESKTOP_ENABLED=true`. Code also forces multi-session
 scheduling off whenever user containers are disabled.
 
-**Public-beta compose default:** `AXGT_USER_CONTAINER_ENABLED=true`, base is gate-only, desktops in `axgt-session-*`.
+**Compose default:** `AXGT_USER_CONTAINER_ENABLED=true`, base is gate-only, desktops in `axgt-session-*`.
 
 ---
 
@@ -646,4 +738,6 @@ scheduling off whenever user containers are disabled.
 
 ---
 
-*Generated from codebase audit. When adding a new `os.getenv` call, update this document and `env.example`.*
+**`env.example` vs compose:** the `axonos` and `axonos-launcher` services load `env_file: .env`, so every `.env` line reaches both containers. Variables that appear in `env.example` but in no compose `environment:` block (`AXGT_PERSISTENT_STORAGE_DIR`, `AXGT_FILES_MIN_FREE_BYTES`, `AXGT_FILES_MAX_FILE_BYTES`, all `AXONOS_GUEST_*`) therefore work from `.env` but have no compose-level default — the code default applies when the `.env` line is absent or commented out. Services without `env_file` (`postgres`, `coturn`, `files-tls`) see only their explicit `environment:` entries.
+
+*Generated from codebase audit (last reconciled 2026-09-06). When adding a new `os.getenv` call, update this document, `env.example`, and the relevant compose `environment:` block.*
