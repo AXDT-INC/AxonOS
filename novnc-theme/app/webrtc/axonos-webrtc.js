@@ -786,6 +786,15 @@ export async function connectAxonOSWebRTC(opts) {
     video.addEventListener('loadeddata', syncInputScale, { signal: inputSignal });
     video.addEventListener('loadeddata', ensureVideoPlaying, { signal: inputSignal });
     window.addEventListener('resize', syncInputScale, { signal: inputSignal });
+    // The viewer surface also changes size without a window resize (telemetry
+    // rail collapse/expand shrinks or widens #noVNC_container via CSS). If the
+    // pointer scale is not re-derived then, the mouse stays mapped to the old
+    // video box and cannot reach the newly exposed right/bottom strip.
+    if (typeof ResizeObserver !== 'undefined') {
+        const videoResizeObserver = new ResizeObserver(() => syncInputScale());
+        videoResizeObserver.observe(video);
+        inputSignal.addEventListener('abort', () => videoResizeObserver.disconnect(), { once: true });
+    }
 
     // Autoplay policy requires the element to start muted; lift the mute on the
     // first real gesture so desktop audio becomes audible without extra UI.

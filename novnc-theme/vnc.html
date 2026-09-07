@@ -178,7 +178,7 @@ Copyright (C) 2019 The noVNC Authors
     </script>
     <script src="app/error-handler.js"></script>
     <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
-    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260827extend1"></script>
+    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260907rail1"></script>
 </head>
 
 <body>
@@ -12832,6 +12832,17 @@ Copyright (C) 2019 The noVNC Authors
                 const isCollapsed = sidebar.classList.contains('collapsed');
                 sidebar.classList.toggle('collapsed', !isCollapsed);
                 sidebarToggle.classList.toggle('collapsed', !isCollapsed);
+                // The viewer container animates its width (0.3s); the RFB and
+                // WebRTC input layers only re-measure on window resize, so
+                // emit one at the end of the transition (plus a fallback in
+                // case transitionend never fires) to keep pointer mapping and
+                // remote resize in sync with the new viewer size.
+                const viewer = document.getElementById('noVNC_container');
+                const fireResize = () => window.dispatchEvent(new Event('resize'));
+                if (viewer) {
+                    viewer.addEventListener('transitionend', fireResize, { once: true });
+                }
+                setTimeout(fireResize, 400);
             });
         }
 
