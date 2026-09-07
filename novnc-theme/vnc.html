@@ -4936,6 +4936,20 @@ Copyright (C) 2019 The noVNC Authors
         }
         window.axonosStatusWithRow = axonosStatusWithRow;
 
+        /** True while the status payload still lists this session (active or paused). */
+        function axonosSessionPresentInStatus(st, sessionId) {
+            var target = String(sessionId == null ? '' : sessionId);
+            if (!target) return false;
+            var rows = axonosOwnedRowsFromStatus(st);
+            for (var i = 0; i < rows.length; i++) {
+                if (rows[i] && String(rows[i].session_id) === target) return true;
+            }
+            if (st && String(st.owner_session_id || '') === target) return true;
+            if (st && axonosCreditGraceActive(st) &&
+                String(st.credit_grace_session_id || st.paused_session_id || '') === target) return true;
+            return false;
+        }
+
         /** Credit-grace resume marker for ONE paused row (not the newest). */
         function axonosSetPausedResumeFromRow(row, st, wallet) {
             var ctx = axonosSessionContextFromRow(row);
@@ -9618,6 +9632,17 @@ Copyright (C) 2019 The noVNC Authors
                 if (!axonosSessionStatusIsAuthoritative(status)) {
                     return { confirmed: false, authoritative: false, status: status };
                 }
+                // A wallet may hold several sessions: ending ONE is confirmed when
+                // THAT id is gone, whatever its siblings are doing. Only a release
+                // with no target id falls back to "no allocation at all".
+                var targetId = source.sessionId != null ? String(source.sessionId) : null;
+                if (targetId) {
+                    var stillListed = axonosSessionPresentInStatus(status, targetId);
+                    return stillListed
+                        ? { confirmed: false, authoritative: true, sessionMismatch: false,
+                            activeSessionId: targetId, status: status }
+                        : { confirmed: true, authoritative: true, billingEnded: true, status: status };
+                }
                 var active = axonosOwnedActiveSessionFromStatus(status, wallet);
                 var grace = axonosCreditGraceActive(status);
                 if (active || grace) {
@@ -11776,6 +11801,15 @@ Copyright (C) 2019 The noVNC Authors
                 console.log('[AxonOS] Dashboard status fetch:', status);
 
                 axonosSyncDashboardPausedResume(status || {}, wallet);
+                // An "end not confirmed" banner for a session this authoritative
+                // read no longer lists is stale: the end did happen.
+                var staleFailure = window.axonosSessionReleaseFailure;
+                if (staleFailure && staleFailure.sessionId &&
+                    !axonosSessionPresentInStatus(status, staleFailure.sessionId) &&
+                    typeof window.axonosClearSessionReleaseFailure === 'function') {
+                    window.axonosCurrentSessionReleaseOperation = null;
+                    window.axonosClearSessionReleaseFailure();
+                }
                 let dashboardSessions = axonosOwnedDashboardSessions(status || {}, wallet);
                 dashboardSessions = axonosWithoutEndingDashboardSessions(dashboardSessions);
                 const activeOwnedSessions = dashboardSessions.filter(function (session) {
@@ -12188,10 +12222,34 @@ Copyright (C) 2019 The noVNC Authors
             releaseOperation.operationId = window.axonosBeginSessionReleaseOperation(
                 releaseOperation
             );
+            // The release endpoint stops the container before answering, and
+            // sibling releases queue behind one another; the generic 20 s fetch
+            // deadline produced a false "could not reach the server" while the
+            // server was still finishing. Use the release budget, and when the
+            // request still fails, reconcile against status before blaming it.
+            var releaseTimeoutMs = (typeof UI !== 'undefined' &&
+                typeof UI._axonosSessionReleaseTimeoutMs === 'function')
+                ? UI._axonosSessionReleaseTimeoutMs() : 105000;
+            var reconcileThenReport = function (failureContext) {
+                return window.axonosConfirmSessionReleaseState({
+                    wallet: wallet,
+                    sessionId: sessionKey || null
+                }).then(function (state) {
+                    if (state && state.confirmed === true) {
+                        console.log('[AxonOS] Session end confirmed by status after an unconfirmed reply');
+                        return true;
+                    }
+                    if (sessionKey) axonosDashboardEndingSessions.delete(sessionKey);
+                    window.axonosHandleSessionReleaseFailure(failureContext);
+                    return false;
+                });
+            };
             return axonosFetch({
                 method: 'POST',
                 url: new URL('/api/session/release', window.location.origin).toString(),
-                body: JSON.stringify(releaseBody)
+                body: JSON.stringify(releaseBody),
+                timeoutMs: releaseTimeoutMs,
+                timeoutMessage: 'The session-end request timed out.'
             }).then(function (result) {
                 if (!result || result.released !== true) {
                     if (sessionKey) axonosDashboardEndingSessions.delete(sessionKey);
@@ -12245,24 +12303,43 @@ Copyright (C) 2019 The noVNC Authors
                 }
                 return axonosLoadDashboard().then(function () { return true; });
             }).catch(function (err) {
-                if (sessionKey) axonosDashboardEndingSessions.delete(sessionKey);
                 console.error('[AxonOS] Failed to release session:', err);
-                var failureAccepted = window.axonosHandleSessionReleaseFailure(Object.assign({}, releaseOperation, {
-                    failure: 'network',
-                    reason: 'The session-end request could not reach the server.'
-                }));
-                if (!failureAccepted &&
-                    !window.axonosSessionReleaseResultIsCurrent(releaseOperation)) {
-                    return false;
-                }
-                if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
-                    UI.showStatus('Could not end the session. It is still available to retry.', 'error', 5000);
-                }
-                if (axonosNormalizeWalletAddress(axonosCurrentVerifiedWallet()) ===
-                    axonosNormalizeWalletAddress(wallet)) {
+                var timedOut = /timed out/i.test(String((err && err.message) || err || ''));
+                return reconcileThenReport(Object.assign({}, releaseOperation, {
+                    failure: timedOut ? 'timeout' : 'network',
+                    reason: timedOut
+                        ? 'The session-end request timed out before the server confirmed it.'
+                        : 'The session-end request could not reach the server.'
+                })).then(function (confirmed) {
+                    if (confirmed) {
+                        var lateSuccess = window.axonosHandleSessionReleaseSuccess(Object.assign({}, releaseOperation, {
+                            released: true
+                        }));
+                        if (!lateSuccess) return true;
+                        if (axonosNormalizeWalletAddress(axonosCurrentVerifiedWallet()) !==
+                            axonosNormalizeWalletAddress(wallet)) {
+                            return true;
+                        }
+                        var currentId = axonosCurrentSessionId();
+                        if (!sessionKey || currentId === null || String(currentId) === sessionKey) {
+                            window.axonosSessionDetached = false;
+                            if (typeof window.axonosClearDetachedSession === 'function') {
+                                window.axonosClearDetachedSession();
+                            }
+                            if (typeof UI !== 'undefined' && typeof UI.hideAxonosSshCard === 'function') {
+                                UI.hideAxonosSshCard();
+                            }
+                        }
+                        return axonosLoadDashboard().then(function () { return true; });
+                    }
+                    if (!window.axonosSessionReleaseResultIsCurrent(releaseOperation)) {
+                        return false;
+                    }
+                    if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                        UI.showStatus('Could not end the session. It is still available to retry.', 'error', 5000);
+                    }
                     return axonosLoadDashboard().then(function () { return false; });
-                }
-                return false;
+                });
             });
         }
         window.axonosEndSession = axonosEndSession;
