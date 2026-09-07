@@ -2506,6 +2506,7 @@ input#noVNC_setting_path:-webkit-autofill:focus {
 
 /* Position icons directly below the logo */
 #noVNC_fullscreen_button,
+#noVNC_sidebar_button,
 #noVNC_settings_button {
   order: 2 !important;
   margin: 3px 0 !important;
@@ -8358,21 +8359,24 @@ html.noVNC_connected .axonos-sidebar-toggle {
 }
 
 /* The fullscreen control in the left noVNC deck expands the document element.
- * Keep the remote desktop completely unobstructed in that mode; the telemetry
- * sidebar itself retains its state and this handle returns on fullscreen exit. */
-html.noVNC_connected:fullscreen .axonos-sidebar-toggle {
-  display: none !important;
-}
-
-html.noVNC_connected:-webkit-full-screen .axonos-sidebar-toggle {
-  display: none !important;
-}
-
-html.noVNC_connected:-moz-full-screen .axonos-sidebar-toggle {
-  display: none !important;
-}
-
+ * Keep the remote desktop completely unobstructed in that mode: while the rail
+ * is open, tuck this handle inside the rail's own column (never over the
+ * desktop) so it can still be collapsed; once collapsed, hide it entirely and
+ * let the control-bar button (#noVNC_sidebar_button) bring the rail back. The
+ * rail retains its state and the handle returns to its normal spot on exit. */
+html.noVNC_connected:fullscreen .axonos-sidebar-toggle,
+html.noVNC_connected:-webkit-full-screen .axonos-sidebar-toggle,
+html.noVNC_connected:-moz-full-screen .axonos-sidebar-toggle,
 html.noVNC_connected:-ms-fullscreen .axonos-sidebar-toggle {
+  right: 12px !important;
+  z-index: 60;
+  transition: none;
+}
+
+html.noVNC_connected:fullscreen .axonos-sidebar-toggle.collapsed,
+html.noVNC_connected:-webkit-full-screen .axonos-sidebar-toggle.collapsed,
+html.noVNC_connected:-moz-full-screen .axonos-sidebar-toggle.collapsed,
+html.noVNC_connected:-ms-fullscreen .axonos-sidebar-toggle.collapsed {
   display: none !important;
 }
 

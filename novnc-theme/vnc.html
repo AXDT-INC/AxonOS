@@ -121,7 +121,7 @@ Copyright (C) 2019 The noVNC Authors
     <!-- Stylesheets -->
     <link rel="stylesheet" href="app/styles/base.css">
     <link rel="stylesheet" href="app/vendor/xterm/xterm.css?v=6.0.0">
-    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.3&t=20260907multi1">
+    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.3&t=20260907deck1">
 
     <!-- Images that will later appear via CSS -->
     <link rel="preload" as="image" href="app/images/info.svg">
@@ -357,6 +357,11 @@ Copyright (C) 2019 The noVNC Authors
                 <!-- Toggle fullscreen -->
                 <input type="image" alt="Fullscreen" src="app/images/fullscreen.svg" id="noVNC_fullscreen_button"
                     class="noVNC_button noVNC_hidden" title="Fullscreen">
+
+                <!-- Telemetry deck (right rail) show/hide. Lives beside Fullscreen so
+                     the deck stays reachable while the document is fullscreen. -->
+                <input type="image" alt="Telemetry deck" src="app/images/icons/sidebar.svg"
+                    id="noVNC_sidebar_button" class="noVNC_button" title="Show/hide telemetry deck">
 
                 <!-- Settings -->
                 <input type="image" alt="Settings" src="app/images/settings.svg" id="noVNC_settings_button"
@@ -13444,11 +13449,22 @@ Copyright (C) 2019 The noVNC Authors
         // Telemetry Sidebar Collapse Toggle
         const sidebar = document.getElementById('axonos_session_sidebar');
         const sidebarToggle = document.getElementById('axonos_sidebar_toggle');
+        // Second entry point in the left noVNC control bar: the in-desktop
+        // handle is tucked inside the rail while fullscreen (so it never sits
+        // over the remote desktop) and disappears once the rail collapses, so
+        // the bar button is what brings the rail back in fullscreen.
+        const sidebarBarButton = document.getElementById('noVNC_sidebar_button');
         if (sidebar && sidebarToggle) {
-            sidebarToggle.addEventListener('click', () => {
+            const syncSidebarBarButton = () => {
+                if (!sidebarBarButton) return;
+                sidebarBarButton.classList.toggle('noVNC_selected', !sidebar.classList.contains('collapsed'));
+            };
+            syncSidebarBarButton();
+            const toggleSidebar = () => {
                 const isCollapsed = sidebar.classList.contains('collapsed');
                 sidebar.classList.toggle('collapsed', !isCollapsed);
                 sidebarToggle.classList.toggle('collapsed', !isCollapsed);
+                syncSidebarBarButton();
                 // The viewer container animates its width (0.3s); the RFB and
                 // WebRTC input layers only re-measure on window resize, so
                 // emit one at the end of the transition (plus a fallback in
@@ -13460,7 +13476,11 @@ Copyright (C) 2019 The noVNC Authors
                     viewer.addEventListener('transitionend', fireResize, { once: true });
                 }
                 setTimeout(fireResize, 400);
-            });
+            };
+            sidebarToggle.addEventListener('click', toggleSidebar);
+            if (sidebarBarButton) {
+                sidebarBarButton.addEventListener('click', toggleSidebar);
+            }
         }
 
         // Wire Sidebar controls
