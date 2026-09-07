@@ -311,8 +311,12 @@ def launch_session(
     webrtc_agent_token: Optional[str] = None,
     requested_storage_gb: Optional[int] = None,
     ephemeral_storage: bool = False,
+    ssh_port: Optional[int] = None,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     """Launch user session runtime; returns (ok, container_id, error).
+
+    ``ssh_port`` is the host port the gate allocated from its pool for this
+    SSH session; None falls back to the legacy id-derived port.
 
     ``ephemeral_storage`` skips the per-wallet persistent volume entirely (demo
     sessions): the container runs on the image's own home instead of provisioning
@@ -338,6 +342,7 @@ def launch_session(
             webrtc_agent_token,
             requested_storage_gb,
             ephemeral_storage,
+            ssh_port,
         )
     if mode == "noop":
         # Useful when validating scheduler/queue logic without runtime orchestration.
@@ -358,6 +363,7 @@ def launch_session(
             webrtc_agent_token,
             requested_storage_gb,
             ephemeral_storage,
+            ssh_port,
         )
 
 
@@ -983,9 +989,12 @@ def _ssh_port(session_id: int) -> int:
     return _SSH_BASE_PORT + (session_id % _MAX_SESSIONS)
 
 
-def _publish_args_for_session(session_id: int, ssh_enabled: bool) -> List[str]:
+def _publish_args_for_session(
+    session_id: int, ssh_enabled: bool, ssh_port: Optional[int] = None
+) -> List[str]:
     if ssh_enabled:
-        return ["-p", f"{_ssh_port(session_id)}:22/tcp"]
+        port = int(ssh_port) if ssh_port else _ssh_port(session_id)
+        return ["-p", f"{port}:22/tcp"]
     port_range = _webrtc_port_range(session_id)
     return ["-p", f"{port_range}:{port_range}/udp"]
 
@@ -1025,6 +1034,7 @@ def _launch_via_docker_cli(
     webrtc_agent_token: Optional[str] = None,
     requested_storage_gb: Optional[int] = None,
     ephemeral_storage: bool = False,
+    ssh_port: Optional[int] = None,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     image = (os.getenv("AXGT_SESSION_CONTAINER_IMAGE") or "").strip()
     if not image:
@@ -1113,7 +1123,7 @@ def _launch_via_docker_cli(
         "--label", f"com.axonos.session-config-sha256={runtime_digest}",
         "--cap-drop", "NET_RAW",
     ]
-    cmd.extend(_publish_args_for_session(session_id, ssh_enabled))
+    cmd.extend(_publish_args_for_session(session_id, ssh_enabled, ssh_port))
     if network:
         cmd.extend(["--network", network])
     if _persistent_storage_enabled() and not ephemeral_storage:
@@ -1256,6 +1266,7 @@ def _launch_via_http(
     webrtc_agent_token: Optional[str] = None,
     requested_storage_gb: Optional[int] = None,
     ephemeral_storage: bool = False,
+    ssh_port: Optional[int] = None,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     base_url = (os.getenv("AXGT_SESSION_LAUNCHER_URL") or "").strip().rstrip("/")
     if not base_url:
@@ -1273,6 +1284,8 @@ def _launch_via_http(
         "requested_storage_gb": requested_storage_gb,
         "ephemeral_storage": bool(ephemeral_storage),
     }
+    if ssh_port:
+        payload["ssh_port"] = int(ssh_port)
     status, data, err = _http_json("POST", f"{base_url}/launch", payload)
     launch_ok = (not err) and status < 400 and isinstance(data, dict) and bool(data.get("ok"))
     if launch_ok:

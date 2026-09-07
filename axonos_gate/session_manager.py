@@ -83,6 +83,17 @@ def _truthy(name: str, default: bool = False) -> bool:
     return raw in ("1", "true", "yes", "on")
 
 
+def _coerce_session_id(value: Any) -> Optional[int]:
+    """Positive-int session id from an untrusted value, else None."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
 def _multi_session_enabled() -> bool:
     # Multiple wallet owners are safe only when each claim receives its own
     # runtime. Treat a shared-desktop deployment as single-session even if the
@@ -205,7 +216,7 @@ def billing_context_for_wallet(wallet_address: str) -> Dict[str, Any]:
         return ctx
     try:
         with conn.cursor() as cur:
-            owned = _active_session_for_wallet(cur, wallet) if enabled else None
+            owned_rows = _active_sessions_for_wallet(cur, wallet) if enabled else []
             cur.execute(
                 f"""
                 SELECT
@@ -237,12 +248,18 @@ def billing_context_for_wallet(wallet_address: str) -> Dict[str, Any]:
                 # request from local defaults — that is how a 200 GB wallet
                 # once received a 100 GB request and a growth-only rejection.
                 ctx["minimum_storage_gb"] = 10
-        if owned:
-            gpu_ids = owned.get("gpu_ids") or []
-            profile = owned.get("requested_profile")
-            count = _billing_gpu_count(gpu_ids, profile)
-            ctx["billing_gpu_count"] = count
-            ctx["requested_profile"] = profile or "small"
+        if owned_rows:
+            # The wallet's credit drains at the SUM of its concurrent sessions'
+            # GPU rates, so the "time left" estimate must use the combined count;
+            # the profile reported is the newest session's.
+            total = 0
+            for owned in owned_rows:
+                total += _billing_gpu_count(
+                    owned.get("gpu_ids") or [], owned.get("requested_profile")
+                )
+            ctx["billing_gpu_count"] = max(1, total)
+            ctx["requested_profile"] = owned_rows[0].get("requested_profile") or "small"
+            ctx["active_session_count"] = len(owned_rows)
     except Exception as exc:
         logger.debug("billing_context_for_wallet failed: %s", exc)
     finally:
@@ -892,6 +909,17 @@ def _ensure_tables(conn) -> None:
             # live while this timestamp anchors the bounded top-up grace period.
             ("credit_grace_started_at", "DOUBLE PRECISION"),
             ("requested_storage_gb", "INTEGER DEFAULT 100"),
+            # Host port published to the container's sshd. Allocated from the
+            # free pool at claim time (the old id-modulo scheme collided once a
+            # wallet could hold several sessions); NULL = legacy derived port.
+            ("ssh_port", "INTEGER"),
+            # The environment this session was launched with, so the dashboard
+            # can label each of a wallet's concurrent sessions correctly.
+            ("requested_template", "TEXT"),
+            # User annotations so a wallet can tell its concurrent sessions
+            # apart on the dashboard (inline-editable title, expandable notes).
+            ("title", "TEXT"),
+            ("notes", "TEXT"),
         ):
             cur.execute(
                 """
@@ -1254,6 +1282,10 @@ def _session_row_to_dict(row) -> Dict[str, Any]:
         "hard_expires_at": row[11] if len(row) > 11 else None,
         "ssh_enabled": bool(row[12]) if len(row) > 12 else False,
         "credit_grace_started_at": row[13] if len(row) > 13 else None,
+        "ssh_port": row[14] if len(row) > 14 else None,
+        "requested_template": row[15] if len(row) > 15 else None,
+        "title": row[16] if len(row) > 16 else None,
+        "notes": row[17] if len(row) > 17 else None,
     }
 
 
@@ -1261,7 +1293,7 @@ def _get_active_rows(cur) -> List[Dict[str, Any]]:
     cur.execute(
         f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
                    started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at,
-                   ssh_enabled, credit_grace_started_at
+                   ssh_enabled, credit_grace_started_at, ssh_port, requested_template, title, notes
             FROM {_SESSION_TABLE}
             WHERE status = 'active'
             ORDER BY started_at ASC""",
@@ -1276,7 +1308,7 @@ def _get_credit_grace_rows(cur, now: float) -> List[Dict[str, Any]]:
     cur.execute(
         f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
                    started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at,
-                   ssh_enabled, credit_grace_started_at
+                   ssh_enabled, credit_grace_started_at, ssh_port, requested_template, title, notes
             FROM {_SESSION_TABLE}
             WHERE status = 'credit_grace'
               AND COALESCE(credit_grace_started_at, last_heartbeat) >= %s
@@ -1296,20 +1328,43 @@ def _credit_grace_session_for_wallet(
     cur,
     wallet: str,
     now: float,
+    session_id: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
+    id_clause = ""
+    params: Tuple[Any, ...] = (wallet, now - _session_credit_grace_max_seconds())
+    if session_id is not None:
+        id_clause = " AND id = %s"
+        params = params + (int(session_id),)
     cur.execute(
         f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
                    started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at,
-                   ssh_enabled, credit_grace_started_at
+                   ssh_enabled, credit_grace_started_at, ssh_port, requested_template, title, notes
             FROM {_SESSION_TABLE}
             WHERE status = 'credit_grace' AND wallet_address = %s
-              AND COALESCE(credit_grace_started_at, last_heartbeat) >= %s
+              AND COALESCE(credit_grace_started_at, last_heartbeat) >= %s{id_clause}
             ORDER BY started_at DESC
             LIMIT 1""",
-        (wallet, now - _session_credit_grace_max_seconds()),
+        params,
     )
     row = cur.fetchone()
     return _session_row_to_dict(row) if row else None
+
+
+def _credit_grace_sessions_for_wallet(
+    cur, wallet: str, now: float
+) -> List[Dict[str, Any]]:
+    """Every unexpired credit-grace session the wallet holds, newest first."""
+    cur.execute(
+        f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
+                   started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at,
+                   ssh_enabled, credit_grace_started_at, ssh_port, requested_template, title, notes
+            FROM {_SESSION_TABLE}
+            WHERE status = 'credit_grace' AND wallet_address = %s
+              AND COALESCE(credit_grace_started_at, last_heartbeat) >= %s
+            ORDER BY started_at DESC""",
+        (wallet, now - _session_credit_grace_max_seconds()),
+    )
+    return [_session_row_to_dict(row) for row in cur.fetchall() or []]
 
 
 def _get_active_row(cur) -> Optional[Dict[str, Any]]:
@@ -1319,19 +1374,47 @@ def _get_active_row(cur) -> Optional[Dict[str, Any]]:
     return rows[-1]
 
 
-def _active_session_for_wallet(cur, wallet: str) -> Optional[Dict[str, Any]]:
+def _active_session_for_wallet(
+    cur, wallet: str, session_id: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
+    """The wallet's newest active session, or its exact ``session_id`` row.
+
+    A wallet may hold several concurrent sessions. Callers that act on one of
+    them (heartbeat, reattach, file plane, terminal) pass the id the client is
+    bound to; the newest-row default only serves legacy clients that never
+    learned a session id.
+    """
+    id_clause = ""
+    params: Tuple[Any, ...] = (wallet,)
+    if session_id is not None:
+        id_clause = " AND id = %s"
+        params = (wallet, int(session_id))
     cur.execute(
         f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
                    started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at,
-                   ssh_enabled, credit_grace_started_at
+                   ssh_enabled, credit_grace_started_at, ssh_port, requested_template, title, notes
             FROM {_SESSION_TABLE}
-            WHERE status = 'active' AND wallet_address = %s
+            WHERE status = 'active' AND wallet_address = %s{id_clause}
             ORDER BY started_at DESC
             LIMIT 1""",
-        (wallet,),
+        params,
     )
     row = cur.fetchone()
     return _session_row_to_dict(row) if row else None
+
+
+def _active_sessions_for_wallet(cur, wallet: str) -> List[Dict[str, Any]]:
+    """Every active session the wallet holds, newest first."""
+    cur.execute(
+        f"""SELECT id, wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
+                   started_at, last_heartbeat, last_billed_at, expires_at, files_key, hard_expires_at,
+                   ssh_enabled, credit_grace_started_at, ssh_port, requested_template, title, notes
+            FROM {_SESSION_TABLE}
+            WHERE status = 'active' AND wallet_address = %s
+            ORDER BY started_at DESC""",
+        (wallet,),
+    )
+    return [_session_row_to_dict(row) for row in cur.fetchall() or []]
 
 
 def _allocated_gpu_ids(rows: List[Dict[str, Any]]) -> Set[int]:
@@ -1630,7 +1713,7 @@ def _resume_credit_grace_session(
                 )
                 hard_expires_at = now + cap_secs
             resp["hard_cap_remaining_seconds"] = int(max(0, hard_expires_at - now))
-        resp.update(_ssh_connection_fields(session_id))
+        resp.update(_ssh_connection_fields(session_id, credit_grace.get("ssh_port")))
     return resp
 
 
@@ -1660,14 +1743,48 @@ def _ssh_user() -> str:
     return (os.getenv("AXGT_SSH_USER") or "aXonian").strip() or "aXonian"
 
 
-def _ssh_connection_fields(session_id: int) -> Dict[str, Any]:
-    """Connection details the landing page renders into the SSH connect-string."""
+def _ssh_connection_fields(session_id: int, ssh_port: Optional[int] = None) -> Dict[str, Any]:
+    """Connection details the landing page renders into the SSH connect-string.
+
+    ``ssh_port`` is the port stored on the session row; rows that predate
+    pool allocation fall back to the historical id-derived port.
+    """
+    port = _coerce_session_id(ssh_port)
     return {
         "ssh_enabled": True,
         "ssh_host": _ssh_public_host(),
-        "ssh_port": _ssh_port_for_session(session_id),
+        "ssh_port": int(port) if port else _ssh_port_for_session(session_id),
         "ssh_user": _ssh_user(),
     }
+
+
+def _allocate_ssh_port(cur, now: float) -> Optional[int]:
+    """Lowest host SSH port not held by any live SSH session, or None.
+
+    Must run under the allocation scheduler lock. Legacy rows without a stored
+    port still occupy their id-derived port until they end.
+    """
+    grace_cutoff = now - _session_credit_grace_max_seconds()
+    cur.execute(
+        f"""SELECT id, ssh_port FROM {_SESSION_TABLE}
+            WHERE ssh_enabled = TRUE
+              AND (
+                  status = 'active'
+                  OR (
+                      status = 'credit_grace'
+                      AND COALESCE(credit_grace_started_at, last_heartbeat) >= %s
+                  )
+              )""",
+        (grace_cutoff,),
+    )
+    used: Set[int] = set()
+    for row in cur.fetchall() or []:
+        stored = _coerce_session_id(row[1]) if len(row) > 1 else None
+        used.add(int(stored) if stored else _ssh_port_for_session(int(row[0])))
+    for port in range(_SSH_BASE_PORT, _SSH_BASE_PORT + _SSH_MAX_SESSIONS):
+        if port not in used:
+            return port
+    return None
 
 
 def _spawn_session_container(
@@ -1682,8 +1799,23 @@ def _spawn_session_container(
     webrtc_agent_token: Optional[str] = None,
     requested_storage_gb: Optional[int] = None,
     ephemeral_storage: bool = False,
+    ssh_port: Optional[int] = None,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     launcher = _import_session_launcher()
+    if ssh_port is None:
+        return launcher.launch_session(
+            session_id=session_id,
+            wallet=wallet,
+            profile=profile,
+            gpu_ids=gpu_ids,
+            template=template,
+            files_key=files_key,
+            ssh_enabled=ssh_enabled,
+            ssh_pubkey=ssh_pubkey,
+            webrtc_agent_token=webrtc_agent_token,
+            requested_storage_gb=requested_storage_gb,
+            ephemeral_storage=ephemeral_storage,
+        )
     return launcher.launch_session(
         session_id=session_id,
         wallet=wallet,
@@ -1696,6 +1828,7 @@ def _spawn_session_container(
         webrtc_agent_token=webrtc_agent_token,
         requested_storage_gb=requested_storage_gb,
         ephemeral_storage=ephemeral_storage,
+        ssh_port=ssh_port,
     )
 
 
@@ -1762,23 +1895,32 @@ def get_active_session() -> Optional[Dict[str, Any]]:
         conn.close()
 
 
-def get_session_for_wallet(wallet_address: str) -> Optional[Dict[str, Any]]:
+def get_session_for_wallet(
+    wallet_address: str, session_id: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
     """Active or credit-grace session row for *wallet_address*, or None.
 
     Credit-grace sessions are included so wallets can still retrieve files
-    while their running container survives the top-up TTL.
+    while their running container survives the top-up TTL. ``session_id``
+    selects one of the wallet's concurrent sessions; without it the newest
+    wins (legacy single-session clients).
     """
     wallet = (wallet_address or "").strip().lower()
     if not wallet or not _init_once():
+        return None
+    sid = _coerce_session_id(session_id)
+    if session_id is not None and sid is None:
         return None
     conn = _get_connection()
     if not conn:
         return None
     try:
         with conn.cursor() as cur:
-            session = _active_session_for_wallet(cur, wallet)
+            session = _active_session_for_wallet(cur, wallet, session_id=sid)
             if session is None:
-                session = _credit_grace_session_for_wallet(cur, wallet, time.time())
+                session = _credit_grace_session_for_wallet(
+                    cur, wallet, time.time(), session_id=sid
+                )
             return session
     except Exception as exc:
         logger.warning("get_session_for_wallet failed: %s", exc)
@@ -1796,6 +1938,7 @@ def try_claim_session(
     resume_only: bool = False,
     expected_session_id: Optional[int] = None,
     requested_storage_gb: Optional[int] = None,
+    new_session: bool = False,
 ) -> Dict[str, Any]:
     """Attempt to claim the desktop session for *wallet_address*.
 
@@ -1806,6 +1949,18 @@ def try_claim_session(
     return the wallet's matching active session or reactivate its matching
     credit-grace session; it never falls through to a new allocation. This
     closes the race where grace expires after a status read but before claim.
+
+    A wallet may hold several concurrent sessions (each in its own container
+    on its own GPUs, billed at the sum of their rates). The three claim shapes:
+
+    * ``expected_session_id`` without ``resume_only`` — reattach to exactly
+      that active session; never spawns (a viewer reconnecting to one of its
+      sessions, a browser reload, the viewer-level re-claim that follows a
+      page-level launch).
+    * ``new_session=True`` — allocate an additional session even though the
+      wallet already owns one; the ordinary credit and GPU capacity checks
+      apply. Ignored for demo identities, which stay single-session.
+    * neither — legacy: reattach to the newest owned session, else allocate.
     """
     wallet = wallet_address.lower()
     try:
@@ -1832,6 +1987,16 @@ def try_claim_session(
             "invalid_resume_request": True,
             "resume_expired": False,
             "session_mismatch": False,
+        }
+    if not resume_only and expected_session_id is not None and (
+        isinstance(expected_session_id, bool)
+        or not isinstance(expected_session_id, int)
+        or expected_session_id <= 0
+    ):
+        return {
+            "granted": False,
+            "reason": "expected_session_id must be a positive integer",
+            "invalid_resume_request": True,
         }
     profile_name, requested_gpus = _resolve_profile(requested_profile)
 
@@ -1957,6 +2122,42 @@ def try_claim_session(
             owned_at_resume_check = _active_session_for_wallet(cur, wallet)
             is_owner = owned_at_resume_check is not None
             credit_grace = _credit_grace_session_for_wallet(cur, wallet, now)
+            if resume_only:
+                # A strict resume names ONE of the wallet's sessions; with
+                # several paused siblings the newest-row default would report
+                # a mismatch for every older one.
+                owned_at_resume_check = _active_session_for_wallet(
+                    cur, wallet, session_id=expected_session_id
+                )
+                credit_grace = _credit_grace_session_for_wallet(
+                    cur, wallet, now, session_id=expected_session_id
+                )
+
+            # Additional-session launch: only meaningful when each claim gets
+            # its own container. A demo identity is always single-session.
+            spawn_additional = bool(new_session) and not is_guest and _multi_session_enabled()
+
+            # Exact reattach (non-resume): the caller is bound to one of the
+            # wallet's sessions. It must get THAT row or a clean mismatch —
+            # never the newest sibling, and never a fresh allocation.
+            reattach_target = None
+            if not resume_only and expected_session_id is not None:
+                reattach_target = _active_session_for_wallet(
+                    cur, wallet, session_id=expected_session_id
+                )
+                if reattach_target is None:
+                    conn.commit()
+                    return {
+                        "granted": False,
+                        "reason": "The requested session is no longer active",
+                        "expected_session_id": expected_session_id,
+                        "current_session_id": (
+                            owned_at_resume_check["id"] if owned_at_resume_check else None
+                        ),
+                        "resume_expired": True,
+                        "session_mismatch": True,
+                    }
+                spawn_additional = False
 
             if resume_only:
                 # This check is deliberately inside the same-wallet advisory
@@ -2025,6 +2226,7 @@ def try_claim_session(
             if (
                 not is_owner
                 and credit_grace
+                and not spawn_additional
                 and _preserve_for_wallet(wallet)
             ):
                 stored_profile = (
@@ -2044,7 +2246,7 @@ def try_claim_session(
                 conn.commit()
                 return resume
 
-            if not is_owner:
+            if not is_owner or spawn_additional:
                 ok_credit, credit_reason = _prepaid_credit_allows_profile(
                     wallet, requested_gpus, profile_name
                 )
@@ -2054,12 +2256,17 @@ def try_claim_session(
 
             # Preserve the historical second owner read for ordinary claims.
             # A strict resume reuses the state checked above so it cannot fall
-            # through to allocation if its expected session disappears.
-            owned = (
-                owned_at_resume_check
-                if resume_only
-                else _active_session_for_wallet(cur, wallet)
-            )
+            # through to allocation if its expected session disappears. An
+            # additional-session launch deliberately ignores the rows it
+            # already owns and proceeds to allocation.
+            if resume_only:
+                owned = owned_at_resume_check
+            elif reattach_target is not None:
+                owned = reattach_target
+            elif spawn_additional:
+                owned = None
+            else:
+                owned = _active_session_for_wallet(cur, wallet)
 
             # Already owner in multi-session mode
             if owned:
@@ -2109,7 +2316,7 @@ def try_claim_session(
                 # toggle must not present an ssh connect-string for a desktop container,
                 # and a reload that lost the toggle must still recover the SSH card.
                 if owned.get("ssh_enabled"):
-                    owned_resp.update(_ssh_connection_fields(owned["id"]))
+                    owned_resp.update(_ssh_connection_fields(owned["id"], owned.get("ssh_port")))
                 if is_guest:
                     owned_resp.update(_guest_claim_fields(guest_ctx, now))
                 return owned_resp
@@ -2212,10 +2419,27 @@ def try_claim_session(
                 # signal). expires_at slides on heartbeat (idle timeout); hard_expires_at
                 # does NOT, bounding an abandoned session to min(affordable, ceiling).
                 hard_expires_at = None
+                allocated_ssh_port: Optional[int] = None
                 if requested_ssh:
                     cap_secs = _ssh_hard_cap_seconds(_remaining_minutes_for(wallet))
                     if cap_secs is not None:
                         hard_expires_at = now + cap_secs
+                    allocated_ssh_port = _allocate_ssh_port(cur, now)
+                    if allocated_ssh_port is None:
+                        conn.commit()
+                        logger.warning(
+                            "Claim rejected for %s: SSH port pool exhausted", _mask(wallet)
+                        )
+                        return {
+                            "granted": False,
+                            "allocation_status": "unavailable",
+                            "error_code": "ssh_ports_exhausted",
+                            "requested_profile": profile_name,
+                            "reason": (
+                                "No SSH ports are available right now. End a session "
+                                "or try again later."
+                            ),
+                        }
                 elif is_guest:
                     # The demo deadline, written to BOTH expiry columns. The
                     # sliding TTL is compared without a grace allowance, so it
@@ -2248,8 +2472,8 @@ def try_claim_session(
                     f"""INSERT INTO {_SESSION_TABLE}
                         (wallet_address, requested_profile, gpu_ids, container_id, allocation_status,
                          started_at, last_heartbeat, last_billed_at, expires_at, status, files_key, hard_expires_at,
-                         ssh_enabled, requested_storage_gb)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s, %s, %s, %s)
+                         ssh_enabled, ssh_port, requested_template, requested_storage_gb)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s, %s, %s, %s, %s, %s)
                         RETURNING id""",
                     (
                         wallet,
@@ -2264,6 +2488,8 @@ def try_claim_session(
                         files_key,
                         hard_expires_at,
                         bool(requested_ssh),
+                        allocated_ssh_port,
+                        requested_template,
                         storage_gb_val,
                     ),
                 )
@@ -2326,6 +2552,7 @@ def try_claim_session(
                         webrtc_agent_token=webrtc_agent_token,
                         requested_storage_gb=storage_gb_val,
                         ephemeral_storage=ephemeral_storage,
+                        ssh_port=allocated_ssh_port,
                     )
                 except Exception as exc:
                     spawn_error = str(exc)
@@ -2448,7 +2675,7 @@ def try_claim_session(
                 if is_guest:
                     granted.update(_guest_claim_fields(guest_ctx, now))
                 if requested_ssh:
-                    granted.update(_ssh_connection_fields(session_id))
+                    granted.update(_ssh_connection_fields(session_id, allocated_ssh_port))
                 return granted
 
             # Legacy single-session mode (explicitly disabled multi-session)
@@ -2486,8 +2713,17 @@ def try_claim_session(
         conn.close()
 
 
-def heartbeat(wallet_address: str, ssh_active: bool = False) -> Dict[str, Any]:
+def heartbeat(
+    wallet_address: str,
+    ssh_active: bool = False,
+    session_id: Optional[int] = None,
+) -> Dict[str, Any]:
     """Update heartbeat for the active session owner; bill elapsed time from last_billed_at.
+
+    ``session_id`` binds the heartbeat to one of the wallet's concurrent
+    sessions (browser viewers send the session they are attached to; the
+    in-container daemon is resolved from its files_key). Without it the newest
+    active row is billed, which is only correct for single-session clients.
 
     ``ssh_active`` is reported by the in-container heartbeat daemon when at
     least one ESTABLISHED connection to the container's sshd exists. A present
@@ -2497,6 +2733,9 @@ def heartbeat(wallet_address: str, ssh_active: bool = False) -> Dict[str, Any]:
     and abandoned ones still do.
     """
     wallet = wallet_address.lower()
+    bound_session_id = _coerce_session_id(session_id)
+    if session_id is not None and bound_session_id is None:
+        return {"ok": False, "reason": "session_id must be a positive integer"}
     if not _init_once():
         return {"ok": False, "reason": "Session DB unavailable"}
     conn = _get_connection()
@@ -2522,17 +2761,26 @@ def heartbeat(wallet_address: str, ssh_active: bool = False) -> Dict[str, Any]:
                 # Connection close releases it after any required teardown.
                 _acquire_allocation_scheduler_lock(cur)
             now = time.time()
+            hb_id_clause = ""
+            hb_params: Tuple[Any, ...] = (wallet,)
+            if bound_session_id is not None:
+                hb_id_clause = " AND id = %s"
+                hb_params = (wallet, bound_session_id)
             cur.execute(
                 f"""SELECT id, last_billed_at, expires_at, started_at, requested_profile, gpu_ids, container_id,
                            hard_expires_at, ssh_enabled
                     FROM {_SESSION_TABLE}
-                    WHERE status = 'active' AND wallet_address = %s
+                    WHERE status = 'active' AND wallet_address = %s{hb_id_clause}
+                    ORDER BY started_at DESC
+                    LIMIT 1
                     FOR UPDATE""",
-                (wallet,),
+                hb_params,
             )
             row = cur.fetchone()
             if not row:
-                credit_grace = _credit_grace_session_for_wallet(cur, wallet, now)
+                credit_grace = _credit_grace_session_for_wallet(
+                    cur, wallet, now, session_id=bound_session_id
+                )
                 conn.commit()
                 if credit_grace and _preserve_for_wallet(wallet):
                     grace_started_at = (
@@ -2840,6 +3088,14 @@ def release_session(
                 update_params,
             )
             row = cur.fetchone()
+            released_rows: List[Tuple[Any, ...]] = []
+            if row:
+                released_rows.append(row)
+                # Unscoped release: RETURNING carries one row per ended
+                # session; drain the rest so every sibling is torn down.
+                for extra in cur.fetchall() or []:
+                    if extra:
+                        released_rows.append(extra)
             active_mismatch = None
             exact_row_status = None
             if not row and expected_session_id is not None:
@@ -2899,11 +3155,20 @@ def release_session(
                 "released": False,
                 "reason": "No active or credit-grace session for this wallet",
             }
-        session_id = row[0]
-        _on_session_ended(wallet, session_id)
-        logger.info("session_manager: session released by %s", _mask(wallet))
+        # An unscoped release ends EVERY session the wallet holds; each one
+        # needs its own container teardown or the siblings' runtimes leak.
+        released_ids: List[int] = []
+        for released in released_rows:
+            _on_session_ended(wallet, released[0])
+            released_ids.append(int(released[0]))
+        logger.info(
+            "session_manager: %d session(s) released by %s",
+            len(released_ids), _mask(wallet),
+        )
         return {
             "released": True,
+            "session_id": int(row[0]),
+            "released_session_ids": released_ids,
             "requested_profile": row[1] or "small",
             "released_gpu_ids": _parse_gpu_ids(row[2]),
             "container_id": row[3],
@@ -2944,6 +3209,115 @@ def restart_desktop_session(wallet_address: str) -> Dict[str, Any]:
         conn.close()
 
 
+def _owned_session_summary(row: Dict[str, Any], now: float) -> Dict[str, Any]:
+    """Per-session fields a wallet may see for one of its own sessions."""
+    profile = (row.get("requested_profile") or "small").strip().lower()
+    gpu_ids = row.get("gpu_ids", []) or []
+    entry: Dict[str, Any] = {
+        "session_id": row["id"],
+        "requested_profile": profile,
+        "assigned_gpu_ids": gpu_ids,
+        "gpu_count": len(gpu_ids) if gpu_ids else _billing_gpu_count(gpu_ids, profile),
+        "container_id": row.get("container_id"),
+        "allocation_status": row.get("allocation_status") or "allocated",
+        "started_at": row.get("started_at"),
+        "expires_at": row.get("expires_at"),
+        "remaining_seconds": int(max(0, (row.get("expires_at") or now) - now)),
+        "ssh_enabled": bool(row.get("ssh_enabled")),
+    }
+    if row.get("hard_expires_at") is not None:
+        entry["hard_cap_remaining_seconds"] = int(max(0, row["hard_expires_at"] - now))
+    if row.get("ssh_enabled"):
+        entry.update(_ssh_connection_fields(row["id"], row.get("ssh_port")))
+    if row.get("requested_template"):
+        entry["requested_template"] = row["requested_template"]
+    entry["title"] = row.get("title") or ""
+    entry["notes"] = row.get("notes") or ""
+    return entry
+
+
+_SESSION_TITLE_MAX = 80
+_SESSION_NOTES_MAX = 2000
+
+
+def _clean_annotation(value: Any, limit: int, multiline: bool) -> Optional[str]:
+    """Trimmed, control-character-free annotation text, or None when absent."""
+    if value is None:
+        return None
+    text = str(value).replace("\r\n", "\n")
+    if not multiline:
+        text = text.replace("\n", " ")
+    text = "".join(ch for ch in text if ch == "\n" or ch == "\t" or ord(ch) >= 32)
+    return text.strip()[:limit]
+
+
+def annotate_session(
+    wallet_address: str,
+    session_id: Any,
+    title: Any = None,
+    notes: Any = None,
+) -> Dict[str, Any]:
+    """Set the owner-visible title and/or notes on one of the wallet's sessions.
+
+    A field that is omitted (None) is left unchanged; an empty string clears
+    it. Only the owning wallet may annotate, and only live rows (active or in
+    credit grace) accept edits.
+    """
+    wallet = (wallet_address or "").strip().lower()
+    sid = _coerce_session_id(session_id)
+    if not wallet or sid is None:
+        return {"ok": False, "reason": "A valid session_id is required"}
+    clean_title = _clean_annotation(title, _SESSION_TITLE_MAX, multiline=False)
+    clean_notes = _clean_annotation(notes, _SESSION_NOTES_MAX, multiline=True)
+    if clean_title is None and clean_notes is None:
+        return {"ok": False, "reason": "Nothing to update"}
+    if not _init_once():
+        return {"ok": False, "reason": "Session DB unavailable"}
+    conn = _get_connection()
+    if not conn:
+        return {"ok": False, "reason": "Session DB unavailable"}
+    try:
+        assignments = []
+        params: List[Any] = []
+        if clean_title is not None:
+            assignments.append("title = %s")
+            params.append(clean_title or None)
+        if clean_notes is not None:
+            assignments.append("notes = %s")
+            params.append(clean_notes or None)
+        params.extend([wallet, sid])
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""UPDATE {_SESSION_TABLE}
+                    SET {", ".join(assignments)}
+                    WHERE wallet_address = %s AND id = %s
+                      AND status IN ('active', 'credit_grace')
+                    RETURNING id, title, notes""",
+                tuple(params),
+            )
+            row = cur.fetchone()
+        conn.commit()
+        if not row:
+            return {"ok": False, "reason": "No live session with that id for this wallet"}
+        return {
+            "ok": True,
+            "session_id": int(row[0]),
+            "title": row[1] or "",
+            "notes": row[2] or "",
+        }
+    except Exception as exc:
+        conn.rollback()
+        logger.warning("annotate_session failed: %s", exc)
+        return {"ok": False, "reason": "Internal error"}
+    finally:
+        conn.close()
+
+
+def _host_region() -> str:
+    """Operator-declared region label shown on session cards (e.g. US-East)."""
+    return (os.getenv("AXONOS_HOST_REGION") or "").strip()[:40]
+
+
 def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
     """Return current session state visible to *wallet_address*."""
     wallet = wallet_address.lower() if wallet_address else None
@@ -2967,7 +3341,13 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
                 "gpu_profiles_enabled": _gpu_profiles_enabled(),
                 "total_gpus": len(_gpu_device_ids()),
                 "free_gpus": free_gpu_ids,
+                # Scalar mirrors: the wizard gates its GPU tiers on how many
+                # GPUs are free RIGHT NOW (a wallet with one 1-GPU session on an
+                # 8-GPU host may still launch 1x/2x/4x, never 8x).
+                "free_gpu_count": len(free_gpu_ids),
+                "total_gpu_count": len(_gpu_device_ids()),
                 "active_sessions_count": len(active_rows),
+                "host_region": _host_region(),
             }
 
             if active:
@@ -2980,10 +3360,12 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
                     result["is_owner"] = True
 
             if _multi_session_enabled():
-                result["active_sessions"] = [
-                    {
+                fleet_rows = []
+                for row in active_rows:
+                    own_row = bool(wallet and wallet.lower() == row["wallet_address"].lower())
+                    entry = {
                         "session_id": row["id"],
-                        "wallet_address": row["wallet_address"] if wallet and wallet.lower() == row["wallet_address"].lower() else _mask(row["wallet_address"]),
+                        "wallet_address": row["wallet_address"] if own_row else _mask(row["wallet_address"]),
                         "requested_profile": row.get("requested_profile") or "small",
                         "assigned_gpu_ids": row.get("gpu_ids", []),
                         "container_id": row.get("container_id"),
@@ -2993,11 +3375,49 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
                         "last_heartbeat": row.get("last_heartbeat"),
                         "ssh_enabled": bool(row.get("ssh_enabled")),
                     }
-                    for row in active_rows
-                ]
+                    if own_row:
+                        # The dashboard renders one card per owned session and
+                        # must act on THAT row (open / terminal / end), not on
+                        # the wallet-wide owner_* scalars of the newest one.
+                        entry.update(_owned_session_summary(row, now))
+                    fleet_rows.append(entry)
+                result["active_sessions"] = fleet_rows
 
             if wallet:
+                owned_rows = _active_sessions_for_wallet(cur, wallet)
+                grace_rows = (
+                    _credit_grace_sessions_for_wallet(cur, wallet, now)
+                    if _preserve_for_wallet(wallet) else []
+                )
+                owned_sessions = [
+                    dict(_owned_session_summary(row, now), state="active")
+                    for row in owned_rows
+                ]
+                for row in grace_rows:
+                    grace_entry = _owned_session_summary(row, now)
+                    grace_started = row.get("credit_grace_started_at") or row["last_heartbeat"]
+                    grace_entry["state"] = "credit_grace"
+                    grace_entry["allocation_status"] = "credit_grace"
+                    grace_entry["credit_grace_remaining_seconds"] = int(
+                        max(0, grace_started + _session_credit_grace_max_seconds() - now)
+                    )
+                    grace_entry["resume_minutes_required"] = (
+                        _billing_gpu_count(row.get("gpu_ids", []), row.get("requested_profile"))
+                        if _gpu_billing_enabled() else 1
+                    )
+                    owned_sessions.append(grace_entry)
+                result["owned_sessions"] = owned_sessions
+                result["owned_session_ids"] = [row["id"] for row in owned_rows]
+                result["owned_gpu_count"] = sum(
+                    int(entry["gpu_count"]) for entry in owned_sessions
+                    if entry["state"] == "active"
+                )
                 owned = _active_session_for_wallet(cur, wallet)
+                if owned and not any(row["id"] == owned["id"] for row in owned_rows):
+                    owned_rows.insert(0, owned)
+                    owned_sessions.insert(0, dict(_owned_session_summary(owned, now), state="active"))
+                    result["owned_sessions"] = owned_sessions
+                    result["owned_session_ids"] = [row["id"] for row in owned_rows]
                 if owned:
                     result["is_owner"] = True
                     owner_profile = (owned.get("requested_profile") or "small").strip().lower()
@@ -3022,7 +3442,7 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
                     # container cannot serve.
                     result["owner_ssh_enabled"] = bool(owned.get("ssh_enabled"))
                     if owned.get("ssh_enabled"):
-                        result.update(_ssh_connection_fields(owned["id"]))
+                        result.update(_ssh_connection_fields(owned["id"], owned.get("ssh_port")))
                 # Demo countdown, so a reload recovers the deadline from the server
                 # instead of trusting a client-side timer.
                 result.update(_guest_fields_for_wallet(wallet, now))
@@ -3117,22 +3537,33 @@ def is_session_owner(wallet_address: str) -> bool:
         conn.close()
 
 
-def get_active_desktop_session_for_wallet(wallet_address: str) -> Optional[Dict[str, Any]]:
+def get_active_desktop_session_for_wallet(
+    wallet_address: str, session_id: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
     """Resolve the wallet's exact active WebRTC-capable compute session.
 
     The returned identity is intentionally minimal and never includes the
     per-session ``files_key``.  Only fully allocated, unexpired desktop rows are
     eligible; SSH, credit-grace, allocating, failed, ended, and stale sessions must
-    not receive browser WebRTC signaling.
+    not receive browser WebRTC signaling. ``session_id`` selects one of the
+    wallet's concurrent desktops; without it the newest is returned.
     """
     wallet = (wallet_address or "").strip().lower()
     if not wallet or not _init_once():
+        return None
+    sid = _coerce_session_id(session_id)
+    if session_id is not None and sid is None:
         return None
     conn = _get_connection()
     if not conn:
         return None
     try:
         now = time.time()
+        id_clause = ""
+        params: Tuple[Any, ...] = (wallet, now)
+        if sid is not None:
+            id_clause = " AND id = %s"
+            params = (wallet, now, sid)
         with conn.cursor() as cur:
             cur.execute(
                 f"""SELECT id, wallet_address
@@ -3141,10 +3572,10 @@ def get_active_desktop_session_for_wallet(wallet_address: str) -> Optional[Dict[
                       AND status = 'active'
                       AND allocation_status = 'allocated'
                       AND ssh_enabled = FALSE
-                      AND expires_at > %s
+                      AND expires_at > %s{id_clause}
                     ORDER BY started_at DESC
                     LIMIT 1""",
-                (wallet, now),
+                params,
             )
             row = cur.fetchone()
         if not row:
@@ -3418,28 +3849,30 @@ def refresh_webrtc_agent_capability(
         conn.close()
 
 
-def validate_session_files_key(wallet_address: str, files_key: str) -> bool:
-    """True if *files_key* matches the retained runtime secret for *wallet*.
+def session_id_for_files_key(wallet_address: str, files_key: str) -> Optional[int]:
+    """The wallet's live session whose runtime secret is *files_key*, else None.
 
-    Lets every tenant session container authenticate its runtime heartbeat (no
-    browser wallet token). The files_key is minted at claim, stored on the session
-    row, and injected into the container env as AXGT_SESSION_FILES_KEY.
+    Lets every tenant session container authenticate its runtime heartbeat and
+    self-release (no browser wallet token) AND tells the caller WHICH of the
+    wallet's concurrent sessions is speaking, so the heartbeat bills that row.
+    The files_key is minted per session at claim, stored on the row, and
+    injected into the container env as AXGT_SESSION_FILES_KEY.
     """
     wallet = (wallet_address or "").lower()
     key = (files_key or "").strip()
     if not wallet or not key:
-        return False
+        return None
     if not _init_once():
-        return False
+        return None
     conn = _get_connection()
     if not conn:
-        return False
+        return None
     try:
         now = time.time()
         grace_cutoff = now - _session_credit_grace_max_seconds()
         with conn.cursor() as cur:
             cur.execute(
-                f"""SELECT files_key FROM {_SESSION_TABLE}
+                f"""SELECT id, files_key FROM {_SESSION_TABLE}
                     WHERE wallet_address = %s
                       AND (
                           status = 'active'
@@ -3450,17 +3883,28 @@ def validate_session_files_key(wallet_address: str, files_key: str) -> bool:
                               ) >= %s
                           )
                       )
-                    ORDER BY started_at DESC LIMIT 1""",
+                    ORDER BY started_at DESC""",
                 (wallet, grace_cutoff),
             )
-            row = cur.fetchone()
-        stored = (row[0] if row else None) or ""
-        return bool(stored) and secrets.compare_digest(stored, key)
+            rows = cur.fetchall() or []
+        matched: Optional[int] = None
+        for row in rows:
+            stored = (row[1] or "") if row else ""
+            # Constant-time compare on every row: no early exit leaks which
+            # sibling matched.
+            if stored and secrets.compare_digest(stored, key) and matched is None:
+                matched = int(row[0])
+        return matched
     except Exception as exc:
-        logger.warning("validate_session_files_key failed: %s", exc)
-        return False
+        logger.warning("session_id_for_files_key failed: %s", exc)
+        return None
     finally:
         conn.close()
+
+
+def validate_session_files_key(wallet_address: str, files_key: str) -> bool:
+    """True if *files_key* matches any of the wallet's live sessions."""
+    return session_id_for_files_key(wallet_address, files_key) is not None
 
 
 def _reconcile_containers(cur, now: float) -> Tuple[List[int], List[Tuple[str, int]]]:

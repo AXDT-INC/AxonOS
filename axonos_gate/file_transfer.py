@@ -95,11 +95,15 @@ def _import_session_manager():
                 return None
 
 
-def resolve_target_for_wallet(wallet: str) -> Tuple[Optional[dict], Optional[str]]:
+def resolve_target_for_wallet(
+    wallet: str, session_id: Optional[int] = None
+) -> Tuple[Optional[dict], Optional[str]]:
     """Returns ({host, port, key}, None) or (None, error message).
 
     Credit-grace sessions still resolve while their container is alive so users
-    can retrieve their data during the top-up window.
+    can retrieve their data during the top-up window. ``session_id`` picks one
+    of the wallet's concurrent sessions (the one the browser is attached to);
+    without it the newest resolves.
     """
     if not files_enabled():
         return None, "File transfer is disabled on this deployment"
@@ -107,7 +111,10 @@ def resolve_target_for_wallet(wallet: str) -> Tuple[Optional[dict], Optional[str
     session = None
     if sm is not None:
         try:
-            session = sm.get_session_for_wallet(wallet)
+            if session_id is not None:
+                session = sm.get_session_for_wallet(wallet, session_id=session_id)
+            else:
+                session = sm.get_session_for_wallet(wallet)
         except Exception as exc:
             logger.warning("file_transfer: session lookup failed: %s", exc)
             return None, "Session lookup failed"

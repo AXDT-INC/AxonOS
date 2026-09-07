@@ -1343,8 +1343,12 @@ const UI = {
             if (window.verifiedWalletAuthToken) {
                 headers['X-AXGT-Auth-Token'] = window.verifiedWalletAuthToken;
             }
+            const statsUrl = new URL('/api/files/stats', window.location.origin);
+            const statsSessionId = typeof window.axonosCurrentSessionId === 'function'
+                ? window.axonosCurrentSessionId() : null;
+            if (statsSessionId !== null) statsUrl.searchParams.set('session_id', String(statsSessionId));
             const response = await UI._axonosFetchJsonWithTimeout(
-                new URL('/api/files/stats', window.location.origin).toString(),
+                statsUrl.toString(),
                 { credentials: 'include', headers },
                 2500
             );
@@ -1630,11 +1634,14 @@ const UI = {
         }
 
         try {
-            const terminalModule = await import('./terminal/axonos-terminal.js?v=20260729d');
+            const terminalModule = await import('./terminal/axonos-terminal.js?v=20260907multi1');
             const client = await terminalModule.openAxonosTerminal({
                 container: document.getElementById('noVNC_container'),
                 wallet,
                 authToken,
+                // A wallet may hold several SSH sessions; the ticket must name
+                // the one this card belongs to.
+                sessionId: Number(claim.session_id) || null,
                 ...(openAbort ? { signal: openAbort.signal } : {}),
                 onExit: (detail) => {
                     const code = detail && Number.isInteger(detail.code) ? detail.code : null;
@@ -3311,6 +3318,20 @@ const UI = {
             ? claimOptions.expectedSessionId
             : (resumeMarker ? resumeMarker.sessionId : null);
         const expectedSessionId = Number(expectedRaw);
+        // Exact reattach: a wallet may hold several concurrent sessions and this
+        // viewer is bound to one (the page-level launch that just ran, a detached
+        // desktop, a reload, a dashboard pick). Name it so this claim returns
+        // THAT row instead of the newest sibling — and never spawns a second
+        // container behind the page-level claim it races.
+        let reattachSessionId = null;
+        if (!resumeRequested) {
+            const boundRaw = claimOptions.expectedSessionId != null
+                ? claimOptions.expectedSessionId
+                : (typeof window.axonosCurrentSessionId === 'function'
+                    ? window.axonosCurrentSessionId() : null);
+            const boundId = Number(boundRaw);
+            if (Number.isSafeInteger(boundId) && boundId > 0) reattachSessionId = boundId;
+        }
         if (resumeRequested) {
             if (!Number.isSafeInteger(expectedSessionId) || expectedSessionId <= 0) {
                 return Promise.resolve({
@@ -3322,6 +3343,8 @@ const UI = {
             }
             payload.resume_only = true;
             payload.expected_session_id = expectedSessionId;
+        } else if (reattachSessionId !== null) {
+            payload.expected_session_id = reattachSessionId;
         } else if (!window.axonosDetachedSession) {
             payload.requested_profile = (typeof window.axonosGetRequestedProfile === 'function')
                 ? window.axonosGetRequestedProfile()
@@ -3360,7 +3383,18 @@ const UI = {
             credentials: 'include',
             headers,
             body: JSON.stringify(payload),
-        }, timeoutMs).then((result) => result.data || {});
+        }, timeoutMs).then((result) => {
+            const claim = result.data || {};
+            // The bound session is gone (ended elsewhere): drop the stale binding
+            // so the next Launch is a clean claim. The denial is surfaced as-is;
+            // it is never retried into a silent new allocation.
+            if (claim.granted !== true && claim.session_mismatch === true &&
+                reattachSessionId !== null &&
+                typeof window.axonosForgetStaleSessionBinding === 'function') {
+                window.axonosForgetStaleSessionBinding(reattachSessionId);
+            }
+            return claim;
+        });
     },
 
     /** Reconcile an ambiguous claim without ever releasing its server-side session. */
@@ -4305,7 +4339,7 @@ const UI = {
                         try {
                             // A stable module URL keeps negotiation generation/cancellation
                             // state shared across retries and rapid user reconnects.
-                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260907rail1');
+                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260907multi1');
                             if (!connectAttemptIsCurrent()) {
                                 return;
                             }
@@ -4744,11 +4778,15 @@ const UI = {
         if (token) {
             headers['X-AXGT-Auth-Token'] = token;
         }
+        const exhaustedBody = { wallet_address: wallet };
+        const exhaustedSessionId = typeof window.axonosCurrentSessionId === 'function'
+            ? window.axonosCurrentSessionId() : null;
+        if (exhaustedSessionId !== null) exhaustedBody.session_id = exhaustedSessionId;
         fetch(new URL('/api/session/heartbeat', window.location.origin).toString(), {
             method: 'POST',
             credentials: 'include',
             headers,
-            body: JSON.stringify({ wallet_address: wallet }),
+            body: JSON.stringify(exhaustedBody),
         })
             .then((r) => (r.ok ? r.json() : null))
             .then((hb) => {
@@ -5180,12 +5218,18 @@ const UI = {
         const headers = { 'X-Wallet-Address': wallet };
         if (token) headers['X-AXGT-Auth-Token'] = token;
 
-        // Session heartbeat so the desktop session is not auto-released due to timeout
+        // Session heartbeat so the desktop session is not auto-released due to timeout.
+        // It names the session this tab is bound to: a wallet may hold several,
+        // and each one's container daemon keeps its own row alive.
+        const heartbeatBody = { wallet_address: wallet };
+        const heartbeatSessionId = typeof window.axonosCurrentSessionId === 'function'
+            ? window.axonosCurrentSessionId() : null;
+        if (heartbeatSessionId !== null) heartbeatBody.session_id = heartbeatSessionId;
         fetch(new URL('/api/session/heartbeat', window.location.origin).toString(), {
             method: 'POST',
             credentials: 'include',
             headers: { ...headers, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ wallet_address: wallet })
+            body: JSON.stringify(heartbeatBody)
         })
             .then((r) => (r.ok ? r.json() : null))
             .then((hb) => {

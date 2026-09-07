@@ -41,7 +41,12 @@ class StartupFastPathSourceTests(unittest.TestCase):
         self.assertNotIn("ipfs daemon", startup)
         self.assertIn("[program:ipfs]", supervisor)
         ipfs_block = supervisor.split("[program:ipfs]", 1)[1].split("[program:", 1)[0]
-        self.assertIn("command=/usr/local/bin/ipfs daemon --enable-gc --routing=dht", ipfs_block)
+        # supervisord still owns the daemon; the command only probes repo.lock
+        # first so a sibling session of the same wallet idles instead of
+        # crash-looping against the shared ~/.ipfs.
+        self.assertIn("exec /usr/local/bin/ipfs daemon --enable-gc --routing=dht", ipfs_block)
+        self.assertIn("repo.lock", ipfs_block)
+        self.assertIn("exec sleep infinity", ipfs_block)
         self.assertIn("user=aXonian", ipfs_block)
         self.assertIn('IPFS_PATH="/home/aXonian/.ipfs"', ipfs_block)
         self.assertNotIn("su - aXonian", ipfs_block)

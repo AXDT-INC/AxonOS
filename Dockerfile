@@ -511,6 +511,12 @@ RUN rm -f /etc/update-motd.d/* /etc/legal
 # no sshd/PAM, so pam_motd never runs there. This profile.d snippet prints the
 # banner for interactive non-SSH login shells only.
 COPY scripts/axonos-motd-profile.sh /etc/profile.d/99-axonos-motd.sh
+# Concurrent sessions of one wallet share the home volume; this wrapper falls
+# back to a per-session Firefox profile when the shared one is locked by a
+# sibling session (see scripts/axonos-firefox-wrapper.sh). /usr/local/bin
+# precedes /usr/bin on PATH, so desktop entries that Exec=firefox pick it up.
+COPY scripts/axonos-firefox-wrapper.sh /usr/local/bin/firefox
+RUN chmod 0755 /usr/local/bin/firefox
 
 # Switch to aXonian user
 USER $USER

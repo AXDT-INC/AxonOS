@@ -7677,6 +7677,122 @@ html.noVNC_connected .axonos-landing-bg {
   font-family: var(--font-mono);
 }
 
+.axonos-session-card__sep {
+  color: rgba(255, 255, 255, 0.22);
+  margin: 0 2px;
+}
+
+.axonos-session-card__stats {
+  margin-top: 4px;
+  font-size: 0.74rem;
+  color: #a4a9c2;
+}
+
+/* Inline-editable title */
+.axonos-session-card__name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.axonos-session-card__title-input {
+  flex: 1 1 160px;
+  min-width: 120px;
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #f1f2f8;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(123, 108, 255, 0.45);
+  border-radius: 8px;
+  padding: 3px 8px;
+  outline: none;
+}
+
+.axonos-session-card__edit-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 0.8rem;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 6px;
+  opacity: 0.55;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.axonos-session-card:hover .axonos-session-card__edit-btn,
+.axonos-session-card__edit-btn:focus-visible {
+  opacity: 1;
+}
+
+.axonos-session-card__edit-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Expandable notes */
+.axonos-session-card__note {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.axonos-session-card__note-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  color: #9097b0;
+  font: inherit;
+  font-size: 0.76rem;
+  padding: 7px 10px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.axonos-session-card__note-toggle:hover,
+.axonos-session-card--note-open .axonos-session-card__note-toggle {
+  border-color: rgba(123, 108, 255, 0.45);
+  color: #cfc9ff;
+}
+
+.axonos-session-card__note-toggle .note-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.axonos-session-card__note-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 64px;
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: #e6e8f2;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 8px 10px;
+  outline: none;
+}
+
+.axonos-session-card__note-input:focus {
+  border-color: rgba(123, 108, 255, 0.5);
+}
+
+.axonos-session-card__note-input[readonly] {
+  opacity: 0.7;
+}
+
 .axonos-session-card__bottom {
   display: flex;
   align-items: center;

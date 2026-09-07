@@ -96,6 +96,10 @@ function _demoteFilesBase() {
 function _apiUrl(route, params) {
     const qs = new URLSearchParams(params || {});
     qs.set('wallet', _wallet());
+    // A wallet may hold several sessions; browse the one this tab is attached to.
+    const sessionId = typeof window.axonosCurrentSessionId === 'function'
+        ? window.axonosCurrentSessionId() : null;
+    if (sessionId !== null) qs.set('session_id', String(sessionId));
     const prefix = _filesBase ? `${_filesBase}/api/files/` : './api/files/';
     return `${prefix}${route}?${qs.toString()}`;
 }

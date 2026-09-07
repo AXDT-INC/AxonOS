@@ -121,6 +121,42 @@ function _waitForDecodedVideoFrame(video, pc, timeoutMs) {
     });
 }
 
+/** "relay path, 0 packets, 0 frames" style summary for a failed video wait. */
+async function _describeInboundVideoPath(pc) {
+    try {
+        const stats = await pc.getStats();
+        const byId = {};
+        stats.forEach((r) => { byId[r.id] = r; });
+        let pair = null;
+        stats.forEach((r) => {
+            if (r.type === 'transport' && r.selectedCandidatePairId && byId[r.selectedCandidatePairId]) {
+                pair = byId[r.selectedCandidatePairId];
+            }
+        });
+        if (!pair) {
+            stats.forEach((r) => {
+                if (r.type === 'candidate-pair' && (r.selected || r.nominated) && r.state === 'succeeded') pair = r;
+            });
+        }
+        const parts = [];
+        if (pair) {
+            const local = byId[pair.localCandidateId] || {};
+            const remote = byId[pair.remoteCandidateId] || {};
+            const kind = (remote.candidateType === 'relay' || local.candidateType === 'relay') ? 'relay' : 'direct';
+            parts.push(kind + ' path ' + (local.candidateType || '?') + '→' + (remote.candidateType || '?'));
+        }
+        stats.forEach((r) => {
+            if (r.type === 'inbound-rtp' && (r.kind === 'video' || r.mediaType === 'video')) {
+                parts.push((r.packetsReceived || 0) + ' packets, ' + (r.framesReceived || 0) + ' frames received, ' +
+                    (r.framesDecoded || 0) + ' decoded' + (r.pliCount ? ', ' + r.pliCount + ' PLI' : ''));
+            }
+        });
+        return parts.join('; ');
+    } catch (err) {
+        return '';
+    }
+}
+
 function _setBanner(text, state) {
     let el = document.getElementById('axonos_webrtc_banner');
     if (!el) {
@@ -1727,8 +1763,12 @@ export async function connectAxonOSWebRTC(opts) {
         const chromiumCodecHint = /Chromium/i.test(navigator.userAgent || '')
             ? ' This Chromium build may lack a working H.264 decoder; use Google Chrome or install Chromium H.264 codec support.'
             : '';
-        const videoFailureDetail = 'WebRTC received the stream but decoded no desktop video.' +
-            chromiumCodecHint;
+        // Say WHICH path carried nothing: "relay, 0 packets" and "direct, 400
+        // packets, 0 frames" are different bugs (a 2026-09-07 failure decoded
+        // nothing on a relay-to-relay pair while the direct retry worked).
+        const pathDetail = await _describeInboundVideoPath(pc);
+        const videoFailureDetail = 'WebRTC received the stream but decoded no desktop video' +
+            (pathDetail ? ' (' + pathDetail + ')' : '') + '.' + chromiumCodecHint;
         _lastConnectFailure = Object.freeze({
             code: 'desktop_video_not_decoded',
             detail: videoFailureDetail,

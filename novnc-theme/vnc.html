@@ -121,7 +121,7 @@ Copyright (C) 2019 The noVNC Authors
     <!-- Stylesheets -->
     <link rel="stylesheet" href="app/styles/base.css">
     <link rel="stylesheet" href="app/vendor/xterm/xterm.css?v=6.0.0">
-    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.3&t=20260827b">
+    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.3&t=20260907multi1">
 
     <!-- Images that will later appear via CSS -->
     <link rel="preload" as="image" href="app/images/info.svg">
@@ -178,7 +178,7 @@ Copyright (C) 2019 The noVNC Authors
     </script>
     <script src="app/error-handler.js"></script>
     <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
-    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260907rail1"></script>
+    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260907multi1"></script>
 </head>
 
 <body>
@@ -1422,6 +1422,11 @@ Copyright (C) 2019 The noVNC Authors
                                     <span>Burn rate</span>
                                     <span class="axonos-rail-footer__val" id="axonos_wizard_rail_rate">1 <span
                                             class="axonos-rail-footer__val-sub">cr/min</span></span>
+                                </div>
+                                <div class="axonos-rail-footer__row" id="axonos_wizard_rail_burn_row"
+                                    style="display: none;" title="Your running sessions keep billing while this one runs">
+                                    <span id="axonos_wizard_rail_burn_label">Total with running sessions</span>
+                                    <span class="axonos-rail-footer__val" id="axonos_wizard_rail_burn_total">—</span>
                                 </div>
                                 <div class="axonos-rail-footer__row" id="axonos_wizard_rail_balance_row"
                                     style="display: none;">
@@ -2785,6 +2790,10 @@ Copyright (C) 2019 The noVNC Authors
         let loaderCurrentStepKey = null;
 
         function axonosIsReconnectLaunch() {
+            // A wizard launch that ADDS a session beside running ones is a fresh
+            // start even though the wallet already holds detached sessions; the
+            // "Restarting desktop video" wording belongs only to true reattaches.
+            if (window.axonosNewSessionLaunchPending) return false;
             if (window.axonosPausedResume) return true;
             if (window.axonosSessionDetached && window.axonosDetachedSession) return true;
             return false;
@@ -3002,6 +3011,7 @@ Copyright (C) 2019 The noVNC Authors
         }
 
         function hideConnectionLoader() {
+            window.axonosNewSessionLaunchPending = false;
             const loader = document.getElementById('axonos-loader');
             if (loader && loader.classList.contains('active')) {
                 loader.classList.remove('active');
@@ -4061,7 +4071,11 @@ Copyright (C) 2019 The noVNC Authors
             }
             const payload = { wallet_address: wallet };
             var resumeMarker = window.axonosPausedResume;
-            var resumeRequested = claimOptions.resumeOnly === true || !!resumeMarker;
+            // A wizard launch is an ADDITIONAL session: it must never collapse
+            // into a resume of a paused sibling or a reattach to a running one.
+            var newSessionRequested = claimOptions.newSession === true;
+            var resumeRequested = !newSessionRequested &&
+                (claimOptions.resumeOnly === true || !!resumeMarker);
             var expectedRaw = claimOptions.expectedSessionId != null
                 ? claimOptions.expectedSessionId
                 : (resumeMarker ? resumeMarker.sessionId : null);
@@ -4074,14 +4088,29 @@ Copyright (C) 2019 The noVNC Authors
                     reason: 'Retained session identity is unavailable. Refresh the workspace before reconnecting.'
                 });
             }
+            // Exact reattach: this tab is bound to one of the wallet's concurrent
+            // sessions (detached, reloaded, or picked on the dashboard). Name it
+            // so the server returns THAT row — never the newest sibling and
+            // never a fresh allocation.
+            var reattachSessionId = null;
+            if (!resumeRequested && !newSessionRequested) {
+                var boundRaw = claimOptions.expectedSessionId != null
+                    ? claimOptions.expectedSessionId
+                    : axonosCurrentSessionId();
+                var boundId = Number(boundRaw);
+                if (Number.isSafeInteger(boundId) && boundId > 0) reattachSessionId = boundId;
+            }
             if (resumeRequested) {
                 // A reconnect promise must never turn into a brand-new container
                 // if the two-hour grace expires between the status read and this
                 // claim.  The server accepts only this exact retained session.
                 payload.resume_only = true;
                 payload.expected_session_id = expectedSessionId;
-            } else if (!window.axonosDetachedSession) {
-                payload.requested_profile = getRequestedProfile();
+            } else if (reattachSessionId !== null) {
+                payload.expected_session_id = reattachSessionId;
+            } else {
+                if (newSessionRequested) payload.new_session = true;
+                payload.requested_profile = getRequestedProfile({ ignorePinned: newSessionRequested });
                 // This claim can be the one that SPAWNS the session (it races the
                 // claim in ui.js), and templates only apply at spawn — so it must
                 // carry the selected template too.
@@ -4115,6 +4144,16 @@ Copyright (C) 2019 The noVNC Authors
                 timeoutMessage: resumeRequested
                     ? 'Resume request timed out. The retained session was left unchanged; retry safely.'
                     : 'Session launch timed out. The server may still have created a running session; checking the workspace now.'
+            }).then(function (claim) {
+                // The session this tab was bound to is gone (ended elsewhere).
+                // Drop the stale binding so the next Launch is a clean claim;
+                // the denial reason is surfaced by the caller, never retried
+                // into a silent new allocation.
+                if (claim && claim.granted !== true && claim.session_mismatch === true &&
+                    reattachSessionId !== null) {
+                    axonosForgetStaleSessionBinding(reattachSessionId);
+                }
+                return claim;
             });
         }
 
@@ -4140,6 +4179,7 @@ Copyright (C) 2019 The noVNC Authors
                         if (typeof window.axonosGuestSyncFromPayload === 'function') {
                             window.axonosGuestSyncFromPayload(data);
                         }
+                        axonosRememberGpuCapacity(data);
                         return data;
                     });
                 }),
@@ -4810,6 +4850,161 @@ Copyright (C) 2019 The noVNC Authors
             return window.axonosDetachedSession || window.axonosOwnedSession;
         }
 
+        /** The session id this tab is bound to (connected, detached, or picked
+         *  on the dashboard), or null. A wallet may hold several sessions; every
+         *  session-scoped request (claim reattach, heartbeat, files, terminal)
+         *  names this one. */
+        function axonosCurrentSessionId() {
+            var owned = axonosEffectiveOwnedSession();
+            var raw = owned && (owned.sessionId || owned.session_id || owned.id);
+            var id = Number(raw);
+            return (Number.isSafeInteger(id) && id > 0) ? id : null;
+        }
+        window.axonosCurrentSessionId = axonosCurrentSessionId;
+
+        /** Drop a binding to a session the server reports as gone. */
+        function axonosForgetStaleSessionBinding(sessionId) {
+            var stale = Number(sessionId);
+            ['axonosDetachedSession', 'axonosOwnedSession'].forEach(function (key) {
+                var ctx = window[key];
+                if (ctx && Number(ctx.sessionId) === stale) window[key] = null;
+            });
+            if (!axonosEffectiveOwnedSession()) {
+                window.axonosSessionDetached = false;
+                axonosApplyDetachedSessionUi(false);
+            }
+        }
+        window.axonosForgetStaleSessionBinding = axonosForgetStaleSessionBinding;
+
+        /** Session context from one owned_sessions / active_sessions row. */
+        function axonosSessionContextFromRow(row) {
+            var profile = axonosNormalizeProfileName((row && row.requested_profile) || 'small');
+            var gpuIds = (row && row.assigned_gpu_ids) || [];
+            var gpuCount = (row && typeof row.gpu_count === 'number' && row.gpu_count > 0)
+                ? row.gpu_count
+                : (gpuIds.length || axonosGpuCountForProfile(profile));
+            return {
+                profile: profile,
+                gpuCount: gpuCount,
+                gpuIds: gpuIds,
+                sessionId: row ? (row.session_id || null) : null,
+                sshEnabled: !!(row && row.ssh_enabled)
+            };
+        }
+
+        /** The wallet's own rows in a status payload (multi-session servers
+         *  list them in owned_sessions; older ones only in active_sessions). */
+        function axonosOwnedRowsFromStatus(st) {
+            if (!st) return [];
+            if (Array.isArray(st.owned_sessions)) return st.owned_sessions;
+            var wallet = axonosNormalizeWalletAddress(window.verifiedWalletAddress || '');
+            return (Array.isArray(st.active_sessions) ? st.active_sessions : []).filter(function (row) {
+                return wallet && axonosNormalizeWalletAddress(row && row.wallet_address) === wallet;
+            });
+        }
+
+        /** The status row for the session THIS tab is bound to, else null. The
+         *  wallet-wide owner_* scalars describe only the newest session. */
+        function axonosStatusRowForCurrentSession(st) {
+            var current = axonosCurrentSessionId();
+            if (current === null) return null;
+            var rows = axonosOwnedRowsFromStatus(st);
+            for (var i = 0; i < rows.length; i++) {
+                if (Number(rows[i] && rows[i].session_id) === current) return rows[i];
+            }
+            return null;
+        }
+
+        /** A status payload whose owner_* / ssh_* fields describe ONE row. */
+        function axonosStatusWithRow(st, row) {
+            if (!row) return st;
+            return Object.assign({}, st || {}, {
+                is_owner: true,
+                owner_session_id: row.session_id,
+                owner_requested_profile: row.requested_profile || 'small',
+                owner_assigned_gpu_ids: row.assigned_gpu_ids || [],
+                owner_gpu_count: row.gpu_count,
+                owner_allocation_status: row.allocation_status || 'allocated',
+                owner_started_at: row.started_at,
+                owner_ssh_enabled: !!row.ssh_enabled,
+                owner_remaining_seconds: row.remaining_seconds,
+                owner_hard_cap_remaining_seconds: row.hard_cap_remaining_seconds,
+                ssh_host: row.ssh_host,
+                ssh_port: row.ssh_port,
+                ssh_user: row.ssh_user
+            });
+        }
+        window.axonosStatusWithRow = axonosStatusWithRow;
+
+        /** Credit-grace resume marker for ONE paused row (not the newest). */
+        function axonosSetPausedResumeFromRow(row, st, wallet) {
+            var ctx = axonosSessionContextFromRow(row);
+            var required = typeof row.resume_minutes_required === 'number'
+                ? row.resume_minutes_required
+                : ctx.gpuCount;
+            var remaining = st && typeof st.remaining_minutes === 'number' ? st.remaining_minutes : null;
+            var ttl = typeof row.resume_seconds === 'number'
+                ? row.resume_seconds
+                : (typeof row.credit_grace_remaining_seconds === 'number'
+                    ? row.credit_grace_remaining_seconds : null);
+            window.axonosPausedResume = {
+                profile: ctx.profile,
+                gpuIds: ctx.gpuIds,
+                gpuCount: ctx.gpuCount,
+                minutesRequired: required,
+                resumeSeconds: ttl,
+                sessionId: row.session_id,
+                walletHint: (wallet || window.verifiedWalletAddress || '').trim().toLowerCase(),
+                remainingMinutes: remaining,
+                canResumeWithCredit: remaining !== null ? remaining >= required : undefined
+            };
+            axonosApplyResumeConnectUi(true);
+        }
+
+        /** Bind this tab to one of the wallet's sessions (dashboard "Open"). */
+        function axonosBindCurrentSessionToRow(row) {
+            var ctx = axonosSessionContextFromRow(row);
+            window.axonosOwnedSession = ctx;
+            window.axonosDetachedSession = ctx;
+            window.axonosSessionDetached = true;
+            // A paused sibling must not turn this reconnect into its resume.
+            window.axonosPausedResume = null;
+            window.axonosPendingResumeClaim = null;
+            axonosApplyResumeConnectUi(false);
+            axonosApplyDetachedSessionUi(true);
+        }
+
+        /** Host GPU capacity from the last status read: the wizard gates its
+         *  tiers on it (one 1-GPU session on an 8-GPU host leaves 1x/2x/4x
+         *  launchable and only 8x greyed out). */
+        window.axonosGpuCapacity = null;
+        function axonosRememberGpuCapacity(st) {
+            if (!st || typeof st !== 'object' || st._axonosHttpOk === false) return;
+            var free = typeof st.free_gpu_count === 'number'
+                ? st.free_gpu_count
+                : (Array.isArray(st.free_gpus) ? st.free_gpus.length : null);
+            var total = typeof st.total_gpu_count === 'number'
+                ? st.total_gpu_count
+                : (typeof st.total_gpus === 'number' ? st.total_gpus : null);
+            if (free === null || total === null) return;
+            var ownedGpus = typeof st.owned_gpu_count === 'number'
+                ? st.owned_gpu_count
+                : axonosOwnedRowsFromStatus(st).reduce(function (sum, row) {
+                    if (row && row.state === 'credit_grace') return sum;
+                    return sum + axonosSessionContextFromRow(row).gpuCount;
+                }, 0);
+            window.axonosGpuCapacity = {
+                free: free,
+                total: total,
+                ownedGpus: ownedGpus,
+                ownedSessions: axonosOwnedRowsFromStatus(st).filter(function (row) {
+                    return !row || row.state !== 'credit_grace';
+                }).length,
+                at: Date.now()
+            };
+        }
+        window.axonosRememberGpuCapacity = axonosRememberGpuCapacity;
+
         /** Lock GPU picker synchronously when Detach is confirmed (before WebRTC teardown). */
         window.axonosSyncDetachedProfileUiImmediate = function () {
             if (!window.axonosSessionDetached || window.axonosPausedResume) {
@@ -4932,7 +5127,10 @@ Copyright (C) 2019 The noVNC Authors
                     return;
                 }
                 if (st && st.is_owner && st.owner_requested_profile) {
-                    window.axonosOwnedSession = axonosSessionProfileContextFromPayload(st);
+                    var homeRow = axonosStatusRowForCurrentSession(st);
+                    window.axonosOwnedSession = homeRow
+                        ? axonosSessionContextFromRow(homeRow)
+                        : axonosSessionProfileContextFromPayload(st);
                     window.axonosDetachedSession = window.axonosOwnedSession;
                 }
                 axonosApplyDetachedSessionUi(window.axonosSessionDetached && !!axonosEffectiveOwnedSession());
@@ -4957,8 +5155,11 @@ Copyright (C) 2019 The noVNC Authors
             return null;
         }
 
-        function getRequestedProfile() {
-            var pinned = axonosPinnedClaimProfile();
+        function getRequestedProfile(options) {
+            // ignorePinned: an additional-session launch honors the picker even
+            // though a sibling session is running (the pin exists to stop a
+            // REATTACH from advertising a choice the server would ignore).
+            var pinned = (options && options.ignorePinned) ? null : axonosPinnedClaimProfile();
             if (pinned) {
                 return pinned;
             }
@@ -4986,7 +5187,12 @@ Copyright (C) 2019 The noVNC Authors
             var cards = document.querySelectorAll('.axonos-gpu-card');
             var hintEl = document.getElementById('axonos_wizard_gpu_pinned_hint');
             if (!cards.length) return;
-            var pinned = axonosPinnedClaimProfile();
+            // Only a credit-grace RESUME pins the wizard (its launch reactivates
+            // that exact session). A running/detached sibling does not: the
+            // wizard launches an ADDITIONAL session on whatever GPUs are free.
+            var pinned = (window.axonosPausedResume && window.axonosPausedResume.profile)
+                ? axonosNormalizeProfileName(window.axonosPausedResume.profile)
+                : null;
             var guestAllowed = (
                 window.axonosGuestSession &&
                 Array.isArray(window.axonosGuestSession.allowedProfiles)
@@ -5014,10 +5220,11 @@ Copyright (C) 2019 The noVNC Authors
                 return;
             }
             if (!pinned) {
-                cards.forEach(function (card) { card.disabled = false; });
-                if (hintEl) hintEl.hidden = true;
+                axonosApplyWizardGpuCapacityState(cards, hintEl);
+                axonosApplyWizardStorageSiblingLock();
                 return;
             }
+            axonosApplyWizardStorageSiblingLock();
             axonosSelectedGpuProfile = pinned;
             cards.forEach(function (card) {
                 var isPinned = (card.getAttribute('data-gpu') || '') === pinned;
@@ -5041,6 +5248,95 @@ Copyright (C) 2019 The noVNC Authors
         function axonosProfileLabel(profile) {
             var labels = { small: 'Single', medium: 'Dual', large: 'Quad', max: 'Octa' };
             return labels[profile] || profile;
+        }
+
+        /**
+         * Grey out only the tiers the host cannot serve RIGHT NOW. With seven
+         * of eight GPUs free (one 1-GPU session running) 1x/2x/4x stay
+         * choosable and only 8x is unavailable. Unknown capacity (no status
+         * read yet) leaves every tier enabled; the server still enforces it.
+         */
+        /**
+         * Sibling sessions share the wallet's one home volume, and Docker
+         * refuses to grow it while any container mounts it. Lock the slider
+         * at the provisioned floor so the launch cannot fail at spawn with
+         * "Cannot expand volume while a container is using it".
+         */
+        function axonosApplyWizardStorageSiblingLock() {
+            var slider = document.getElementById('axonos_wizard_storage_slider');
+            var desc = document.getElementById('axonos_wizard_storage_desc');
+            if (!slider) return;
+            var cap = window.axonosGpuCapacity;
+            var siblings = cap && typeof cap.ownedSessions === 'number' ? cap.ownedSessions : 0;
+            var locked = siblings > 0 && !window.axonosPausedResume;
+            if (!locked) {
+                if (slider.dataset.axonosSiblingLocked === '1') {
+                    slider.disabled = false;
+                    delete slider.dataset.axonosSiblingLocked;
+                    axonosUpdateStorageSelectionCopy(axonosNormalizeStorageGb(slider.value));
+                }
+                return;
+            }
+            slider.dataset.axonosSiblingLocked = '1';
+            slider.disabled = true;
+            axonosApplyStorageSelection(axonosWizardStorageFloorGb);
+            if (desc) {
+                desc.textContent = 'Your ' + siblings + ' running session' + (siblings === 1 ? '' : 's') +
+                    ' share' + (siblings === 1 ? 's' : '') + ' this wallet\'s ' + axonosWizardStorageFloorGb +
+                    ' GB home volume. New sessions mount the same volume; it can be resized only after every session ends.';
+            }
+            axonosUpdateWizardSummaryRail();
+        }
+
+        function axonosApplyWizardGpuCapacityState(cards, hintEl) {
+            var cap = window.axonosGpuCapacity;
+            var free = cap && typeof cap.free === 'number' ? cap.free : null;
+            var total = cap && typeof cap.total === 'number' ? cap.total : null;
+            var anyUnavailable = false;
+            var largestAllowed = null;
+            cards.forEach(function (card) {
+                var profile = card.getAttribute('data-gpu') || '';
+                var need = axonosGpuCountForProfile(profile);
+                var allowed = free === null || need <= free;
+                card.disabled = !allowed;
+                card.classList.toggle('axonos-gpu-card--unavailable', !allowed);
+                if (!allowed) {
+                    anyUnavailable = true;
+                    card.classList.remove('selected');
+                } else if (largestAllowed === null ||
+                    need > axonosGpuCountForProfile(largestAllowed)) {
+                    largestAllowed = profile;
+                }
+            });
+            if (free !== null && largestAllowed &&
+                axonosGpuCountForProfile(axonosSelectedGpuProfile) > free) {
+                // The remembered choice no longer fits: fall back to the largest
+                // tier that does, and keep the hidden select in step.
+                axonosSelectedGpuProfile = largestAllowed;
+                cards.forEach(function (card) {
+                    card.classList.toggle('selected',
+                        (card.getAttribute('data-gpu') || '') === largestAllowed);
+                });
+                var selectEl = document.getElementById('axonos_profile_select');
+                if (selectEl) selectEl.value = largestAllowed;
+                axonosUpdateWizardSummaryRail();
+                axonosUpdatePayCalculator();
+            }
+            if (!hintEl) return;
+            if (!anyUnavailable) {
+                hintEl.hidden = true;
+                return;
+            }
+            var held = cap && cap.ownedSessions > 0
+                ? ' Your ' + cap.ownedSessions + ' running session' +
+                    (cap.ownedSessions === 1 ? '' : 's') + ' hold' +
+                    (cap.ownedSessions === 1 ? 's' : '') + ' ' + cap.ownedGpus +
+                    ' GPU' + (cap.ownedGpus === 1 ? '' : 's') + '.'
+                : '';
+            hintEl.textContent = free + ' of ' + total + ' GPU' + (total === 1 ? '' : 's') +
+                ' free right now.' + held +
+                ' Tiers needing more are unavailable until a session ends.';
+            hintEl.hidden = false;
         }
 
         function axonosFormatResumeTtl(seconds) {
@@ -5178,15 +5474,25 @@ Copyright (C) 2019 The noVNC Authors
 
         function axonosApplySessionStatusToResumeUi(st, walletHint) {
             var wallet = (walletHint || window.verifiedWalletAddress || '').trim().toLowerCase();
-            var inCreditGrace = axonosCreditGraceActive(st);
+            // A wallet may hold several sessions. Reduce against the row this
+            // tab is bound to; the wallet-wide owner_*/credit_grace_* scalars
+            // describe the newest/paused sibling and must not hijack it (a
+            // paused sibling would otherwise turn every reconnect into ITS
+            // resume).
+            var currentRow = axonosStatusRowForCurrentSession(st);
+            var boundToActive = !!(currentRow && currentRow.state !== 'credit_grace' &&
+                currentRow.allocation_status !== 'credit_grace');
+            var inCreditGrace = axonosCreditGraceActive(st) && !boundToActive;
+            var rowStatus = currentRow ? axonosStatusWithRow(st, currentRow) : st;
+            var ownerSshEnabled = currentRow ? !!currentRow.ssh_enabled : !!(st && st.owner_ssh_enabled);
             // Owned ACTIVE SSH-only session: restore its browser terminal (or the
             // external SSH fallback card), never a desktop stream. Skip while either
             // view is already active so periodic status cannot yank screens around.
-            if (st && st.is_owner && st.owner_ssh_enabled && !inCreditGrace) {
+            if (st && st.is_owner && ownerSshEnabled && !inCreditGrace) {
                 var sshCard = document.getElementById('axonos_ssh_connect_card');
                 var sshCardVisible = !!(sshCard && !sshCard.classList.contains('axonos-ssh-card--hidden'));
                 if (!sshCardVisible && !axonosDesktopSessionLive()) {
-                    axonosRestoreSshSessionUi(st);
+                    axonosRestoreSshSessionUi(rowStatus);
                 } else if (sshCardVisible && typeof UI !== 'undefined' &&
                     window.verifiedWalletAddress && !UI._axgtStatusPollId &&
                     typeof UI._axgtStartSessionBillingPoll === 'function') {
@@ -5197,7 +5503,9 @@ Copyright (C) 2019 The noVNC Authors
                 return true;
             }
             if (st && st.is_owner && st.owner_requested_profile && !inCreditGrace) {
-                window.axonosOwnedSession = axonosSessionProfileContextFromPayload(st);
+                window.axonosOwnedSession = currentRow
+                    ? axonosSessionContextFromRow(currentRow)
+                    : axonosSessionProfileContextFromPayload(st);
                 if (window.axonosSessionDetached) {
                     window.axonosDetachedSession = window.axonosOwnedSession;
                     axonosApplyDetachedSessionUi(true);
@@ -5214,6 +5522,17 @@ Copyright (C) 2019 The noVNC Authors
             var graceSeconds = st && typeof st.credit_grace_remaining_seconds === 'number'
                 ? st.credit_grace_remaining_seconds
                 : (st ? st.paused_resume_seconds : null);
+            var currentPausedRow = (currentRow && (currentRow.state === 'credit_grace' ||
+                currentRow.allocation_status === 'credit_grace')) ? currentRow : null;
+            if (currentPausedRow && st && st.is_owner &&
+                (typeof currentPausedRow.credit_grace_remaining_seconds !== 'number' ||
+                    currentPausedRow.credit_grace_remaining_seconds > 0)) {
+                // This tab is bound to a paused sibling that is NOT the newest
+                // one: keep its own resume marker instead of the wallet-wide scalars.
+                window.axonosDetachedSession = null;
+                axonosSetPausedResumeFromRow(currentPausedRow, st, wallet);
+                return true;
+            }
             if (st && st.can_resume && inCreditGrace &&
                 (typeof graceSeconds !== 'number' || graceSeconds > 0)) {
                 window.axonosDetachedSession = null;
@@ -11098,6 +11417,32 @@ Copyright (C) 2019 The noVNC Authors
         }
         window.axonosReturnToWorkspace = axonosReturnToWorkspace;
 
+        function axonosEscapeHtml(value) {
+            return String(value == null ? '' : value)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        /** Persist an owner-editable title/notes on one of the wallet's sessions. */
+        function axonosAnnotateSession(sessionId, fields) {
+            const wallet = axonosCurrentVerifiedWallet();
+            const id = Number(sessionId);
+            if (!wallet || !Number.isSafeInteger(id) || id <= 0) {
+                return Promise.resolve({ ok: false, reason: 'Session identity is unavailable.' });
+            }
+            const body = { wallet_address: wallet, session_id: id };
+            if (fields && typeof fields.title === 'string') body.title = fields.title;
+            if (fields && typeof fields.notes === 'string') body.notes = fields.notes;
+            return axonosFetch({
+                method: 'POST',
+                url: new URL('/api/session/annotate', window.location.origin).toString(),
+                body: JSON.stringify(body),
+                timeoutMs: 10000
+            }).catch(function () {
+                return { ok: false, reason: 'The annotation could not reach the server.' };
+            });
+        }
+
         function axonosDashboardSessionKey(session) {
             if (!session || session.session_id === undefined || session.session_id === null) return '';
             return String(session.session_id);
@@ -11133,10 +11478,41 @@ Copyright (C) 2019 The noVNC Authors
                 });
             }
 
+            // Multi-session gates list EVERY paused session in owned_sessions;
+            // the credit_grace_* scalars below describe only the newest one.
+            const ownedRows = Array.isArray(status && status.owned_sessions) ? status.owned_sessions : [];
+            let graceRowsListed = false;
+            ownedRows.forEach(function (row) {
+                if (!row || row.state !== 'credit_grace') return;
+                if (row.session_id === undefined || row.session_id === null) return;
+                const ttl = Number(row.credit_grace_remaining_seconds);
+                if (Number.isFinite(ttl) && ttl <= 0) return;
+                const key = String(row.session_id);
+                if (sessions.some(function (existing) { return axonosDashboardSessionKey(existing) === key; })) return;
+                graceRowsListed = true;
+                sessions.push({
+                    session_id: row.session_id,
+                    wallet_address: wallet,
+                    requested_profile: row.requested_profile || 'small',
+                    requested_template: row.requested_template,
+                    assigned_gpu_ids: row.assigned_gpu_ids || [],
+                    gpu_count: row.gpu_count,
+                    allocation_status: 'credit_grace',
+                    ssh_enabled: row.ssh_enabled === true,
+                    ssh_host: row.ssh_host,
+                    ssh_port: row.ssh_port,
+                    ssh_user: row.ssh_user,
+                    resume_seconds: Number.isFinite(ttl) ? ttl : null,
+                    resume_minutes_required: row.resume_minutes_required,
+                    grace_reason: 'credit_exhausted',
+                    dashboard_state: 'credit_grace'
+                });
+            });
+
             // Credit-grace fields are scoped to the requested wallet and are not
             // included in active_sessions. paused* is a rolling-upgrade fallback.
             const graceSessionId = status && (status.credit_grace_session_id || status.paused_session_id);
-            if (status && axonosCreditGraceActive(status) && status.can_resume === true &&
+            if (!graceRowsListed && status && axonosCreditGraceActive(status) && status.can_resume === true &&
                 graceSessionId !== undefined && graceSessionId !== null) {
                 const pausedId = String(graceSessionId);
                 const duplicate = sessions.some(function (session) {
@@ -11445,8 +11821,13 @@ Copyright (C) 2019 The noVNC Authors
                             // Environment icon/name lookup
                             let envTitle = 'AxonOS Desktop';
                             let envIcon = '🧬';
-                            const lastTemplate = window.axonosSelectedTemplateId || window.sessionStorage.getItem('axonosSelectedTemplateId');
-                            const template = (window.AXONOS_TEMPLATES || []).find(t => t.id === lastTemplate);
+                            // Each session remembers the environment it launched with;
+                            // only rows that predate that column fall back to the last
+                            // wizard pick.
+                            const rowTemplate = session.requested_template ||
+                                window.axonosSelectedTemplateId ||
+                                window.sessionStorage.getItem('axonosSelectedTemplateId');
+                            const template = (window.AXONOS_TEMPLATES || []).find(t => t.id === rowTemplate);
                             if (template) {
                                 envTitle = template.title;
                                 envIcon = template.icon;
@@ -11470,10 +11851,11 @@ Copyright (C) 2019 The noVNC Authors
                             }
 
                             let sshCmdRow = '';
-                            if (!isCreditGrace && session.ssh_enabled && status.ssh_port) {
-                                const sshUser = status.ssh_user || 'aXonian';
-                                const sshHost = status.ssh_host || window.location.hostname;
-                                const sshPort = status.ssh_port;
+                            const sshSource = session.ssh_port ? session : status;
+                            if (!isCreditGrace && session.ssh_enabled && sshSource.ssh_port) {
+                                const sshUser = sshSource.ssh_user || 'aXonian';
+                                const sshHost = sshSource.ssh_host || window.location.hostname;
+                                const sshPort = sshSource.ssh_port;
                                 const sshCmd = `ssh -p ${sshPort} ${sshUser}@${sshHost}`;
                                 sshCmdRow = `
                                     <div class="axonos-session-card__ssh-cmd-row" style="margin-top: 10px; display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 6px 10px; width: 100%; box-sizing: border-box;">
@@ -11487,26 +11869,46 @@ Copyright (C) 2019 The noVNC Authors
                                 ? 'Credit exhausted · 2h top-up grace'
                                 : (session.allocation_status === 'allocating' ? 'Allocating' : 'Running');
                             const graceTtl = isCreditGrace ? axonosFormatResumeTtl(session.resume_seconds) : '';
-                            const specsSuffix = isCreditGrace
-                                ? (' · ' + (graceTtl || 'Top up within 2h'))
-                                : (' · up ' + uptimeStr);
                             const actionText = isCreditGrace ? 'Top up / Reconnect' : (isOwnSsh ? 'Open terminal' : 'Open desktop');
 
+                            // Header: an owner-editable title (falls back to the environment
+                            // name) so concurrent sessions can be told apart at a glance.
+                            const customTitle = String(session.title || '').trim();
+                            const displayTitle = customTitle || envTitle;
+                            const region = String((status && status.host_region) || '').trim();
+                            const specParts = [];
+                            if (region) specParts.push(axonosEscapeHtml(region));
+                            specParts.push(`${axonosEscapeHtml(axonosProfileLabel(profile))} · ${gpuCount} GPU${gpuCount > 1 ? 's' : ''}`);
+                            specParts.push(axonosEscapeHtml(envTitle));
+                            const statsText = isCreditGrace
+                                ? `${graceTtl || 'Top up within 2h'} · billing paused`
+                                : `Up ${uptimeStr} · ${rate} cr/min`;
+                            const noteText = String(session.notes || '');
+                            const canAnnotate = sessionKey !== '' && !isCreditGrace;
                             card.innerHTML = `
                                 <div class="axonos-session-card__top">
                                     <div class="axonos-session-card__icon-wrap">${envIcon}</div>
                                     <div class="axonos-session-card__details" style="flex: 1; min-width: 0;">
                                         <div class="axonos-session-card__name-row">
-                                            <span class="axonos-session-card__name">${envTitle}</span>
+                                            <span class="axonos-session-card__name" title="${axonosEscapeHtml(displayTitle)}">${axonosEscapeHtml(displayTitle)}</span>
+                                            <input type="text" class="axonos-session-card__title-input" maxlength="80"
+                                                aria-label="Session title" value="${axonosEscapeHtml(customTitle)}" placeholder="${axonosEscapeHtml(envTitle)}" hidden>
+                                            ${canAnnotate ? '<button type="button" class="axonos-session-card__edit-btn rename-btn" title="Rename session" aria-label="Rename session">✏️</button>' : ''}
                                             <span class="axonos-session-card__status${isCreditGrace ? ' axonos-session-card__status--paused' : ''}">
                                                 <span class="axonos-session-card__status-dot"></span>${statusText}
                                             </span>
                                         </div>
-                                        <div class="axonos-session-card__specs">
-                                            ${axonosProfileLabel(profile)} (${gpuCount} GPU${gpuCount > 1 ? 's' : ''})${specsSuffix}
-                                        </div>
+                                        <div class="axonos-session-card__specs">${specParts.join(' <span class="axonos-session-card__sep">/</span> ')}</div>
+                                        <div class="axonos-session-card__stats">${statsText}</div>
                                         ${sshCmdRow}
                                     </div>
+                                </div>
+                                <div class="axonos-session-card__note">
+                                    <button type="button" class="axonos-session-card__note-toggle note-toggle" aria-expanded="false">
+                                        📝 <span class="note-summary">${noteText ? axonosEscapeHtml(noteText.split('\n')[0]).slice(0, 90) : 'Add note…'}</span>
+                                    </button>
+                                    <textarea class="axonos-session-card__note-input note-input" rows="3" maxlength="2000"
+                                        placeholder="What is this session for? Datasets, run names, reminders…" hidden${canAnnotate ? '' : ' readonly'}>${axonosEscapeHtml(noteText)}</textarea>
                                 </div>
                                 <div class="axonos-session-card__bottom">
                                     <div class="axonos-session-card__rate-desc">${isCreditGrace ? 'Jobs still running · compute billing and viewer access stopped' : `Burning <b>${rate}</b> cr/min`}</div>
@@ -11519,6 +11921,91 @@ Copyright (C) 2019 The noVNC Authors
                                     </div>
                                 </div>
                             `;
+
+                            // Inline title edit: pencil (or double-click) swaps the label for
+                            // an input; Enter/blur saves, Escape cancels. Saved server-side so
+                            // every device and reload sees the same name.
+                            const nameEl = card.querySelector('.axonos-session-card__name');
+                            const titleInput = card.querySelector('.axonos-session-card__title-input');
+                            const renameBtn = card.querySelector('.rename-btn');
+                            if (canAnnotate && nameEl && titleInput) {
+                                const openTitleEditor = function () {
+                                    nameEl.hidden = true;
+                                    if (renameBtn) renameBtn.hidden = true;
+                                    titleInput.hidden = false;
+                                    titleInput.focus();
+                                    titleInput.select();
+                                };
+                                const closeTitleEditor = function () {
+                                    titleInput.hidden = true;
+                                    nameEl.hidden = false;
+                                    if (renameBtn) renameBtn.hidden = false;
+                                };
+                                const commitTitle = function () {
+                                    const next = titleInput.value.trim();
+                                    const previous = String(session.title || '').trim();
+                                    closeTitleEditor();
+                                    if (next === previous) return;
+                                    nameEl.textContent = next || envTitle;
+                                    nameEl.title = next || envTitle;
+                                    axonosAnnotateSession(session.session_id, { title: next }).then(function (res) {
+                                        if (res && res.ok) {
+                                            session.title = res.title || '';
+                                            return;
+                                        }
+                                        nameEl.textContent = previous || envTitle;
+                                        titleInput.value = previous;
+                                        if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                                            UI.showStatus((res && res.reason) || 'Could not rename the session.', 'error', 4000);
+                                        }
+                                    });
+                                };
+                                if (renameBtn) renameBtn.addEventListener('click', openTitleEditor);
+                                nameEl.addEventListener('dblclick', openTitleEditor);
+                                titleInput.addEventListener('keydown', function (e) {
+                                    if (e.key === 'Enter') { e.preventDefault(); commitTitle(); }
+                                    else if (e.key === 'Escape') { titleInput.value = String(session.title || ''); closeTitleEditor(); }
+                                });
+                                titleInput.addEventListener('blur', function () {
+                                    if (!titleInput.hidden) commitTitle();
+                                });
+                            }
+
+                            // Expandable notes: the toggle shows the first line; the textarea
+                            // saves on blur when its content changed.
+                            const noteToggle = card.querySelector('.note-toggle');
+                            const noteInput = card.querySelector('.note-input');
+                            const noteSummary = card.querySelector('.note-summary');
+                            if (noteToggle && noteInput) {
+                                noteToggle.addEventListener('click', function () {
+                                    const open = noteInput.hidden;
+                                    noteInput.hidden = !open;
+                                    noteToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+                                    card.classList.toggle('axonos-session-card--note-open', open);
+                                    if (open) noteInput.focus();
+                                });
+                                noteInput.addEventListener('blur', function () {
+                                    if (!canAnnotate) return;
+                                    const next = noteInput.value.replace(/\s+$/, '');
+                                    const previous = String(session.notes || '');
+                                    if (next === previous) return;
+                                    axonosAnnotateSession(session.session_id, { notes: next }).then(function (res) {
+                                        if (res && res.ok) {
+                                            session.notes = res.notes || '';
+                                            if (noteSummary) {
+                                                noteSummary.textContent = session.notes
+                                                    ? session.notes.split('\n')[0].slice(0, 90)
+                                                    : 'Add note…';
+                                            }
+                                            return;
+                                        }
+                                        noteInput.value = previous;
+                                        if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
+                                            UI.showStatus((res && res.reason) || 'Could not save the note.', 'error', 4000);
+                                        }
+                                    });
+                                });
+                            }
 
                             // Bind events
                             card.querySelector('.end-btn').addEventListener('click', function () {
@@ -11541,14 +12028,21 @@ Copyright (C) 2019 The noVNC Authors
 
                             card.querySelector('.reconnect-btn').addEventListener('click', function () {
                                 if (isCreditGrace) {
-                                    // Re-apply the status snapshot immediately so the resume
-                                    // claim cannot inherit stale profile/credit requirements.
-                                    axonosApplySessionStatusToResumeUi(status, wallet);
-                                    axonosTryResumeDesktopAfterCredit();
+                                    // Resume THIS card's paused session. With several paused
+                                    // siblings the wallet-wide credit_grace_* scalars name only
+                                    // the newest; bind the marker to this row and pass its id
+                                    // so the strict resume claim targets exactly it.
+                                    axonosBindCurrentSessionToRow(session);
+                                    axonosSetPausedResumeFromRow(session, status, wallet);
+                                    axonosTryResumeDesktopAfterCredit(null, session.session_id);
                                     return;
                                 }
+                                // Bind this tab to THIS card's session before connecting:
+                                // the claim reattaches by exact id, so opening an older
+                                // session never lands on the newest sibling.
+                                axonosBindCurrentSessionToRow(session);
                                 if (isOwnSsh && typeof window.axonosRestoreSshSessionUi === 'function' &&
-                                    window.axonosRestoreSshSessionUi(status)) {
+                                    window.axonosRestoreSshSessionUi(axonosStatusWithRow(status, session))) {
                                     return;
                                 }
                                 tryConnectAfterClaim();
@@ -11735,13 +12229,19 @@ Copyright (C) 2019 The noVNC Authors
                 }
 
                 // The released session may have been a detached desktop or headless
-                // SSH one — clear that client state only after the server confirms.
-                window.axonosSessionDetached = false;
-                if (typeof window.axonosClearDetachedSession === 'function') {
-                    window.axonosClearDetachedSession();
-                }
-                if (typeof UI !== 'undefined' && typeof UI.hideAxonosSshCard === 'function') {
-                    UI.hideAxonosSshCard();
+                // SSH one — clear that client state only after the server confirms,
+                // and only if it was the session THIS tab is bound to: ending a
+                // sibling from the dashboard must leave the current one attached.
+                var currentId = axonosCurrentSessionId();
+                var endedCurrent = !sessionKey || currentId === null || String(currentId) === sessionKey;
+                if (endedCurrent) {
+                    window.axonosSessionDetached = false;
+                    if (typeof window.axonosClearDetachedSession === 'function') {
+                        window.axonosClearDetachedSession();
+                    }
+                    if (typeof UI !== 'undefined' && typeof UI.hideAxonosSshCard === 'function') {
+                        UI.hideAxonosSshCard();
+                    }
                 }
                 return axonosLoadDashboard().then(function () { return true; });
             }).catch(function (err) {
@@ -11906,6 +12406,9 @@ Copyright (C) 2019 The noVNC Authors
             // Always reapply after resolving the authoritative floor so the
             // slider, value label, warning copy, and summary move together.
             axonosApplyStorageSelection(effectiveSelectionGb);
+            if (slider && slider.dataset.axonosSiblingLocked === '1') {
+                axonosApplyWizardStorageSiblingLock();
+            }
             if (adjusted) {
                 axonosWriteStoragePreference(wallet, axonosWizardStorageFloorGb);
             }
@@ -12001,6 +12504,14 @@ Copyright (C) 2019 The noVNC Authors
             const wizardWallet = window.verifiedWalletAddress || verifiedWalletAddress;
             axonosResetStorageFloor(wizardWallet);
             axonosRestoreStoragePreference(wizardWallet);
+            if (wizardWallet && !(typeof axonosGuestActive === 'function' && axonosGuestActive())) {
+                // Fresh GPU capacity for the hardware step: a sibling session
+                // launched (or ended) since the last read changes which tiers fit.
+                sessionStatusForWallet(wizardWallet).then(function () {
+                    if (!axonosPaymentIdentityIsCurrent(wizardWallet)) return;
+                    if (axonosCurrentWizardStep === 2) axonosApplyWizardGpuPinState();
+                }).catch(function () { /* capacity stays as last known */ });
+            }
             if (wizardWallet) {
                 axonosFetchWalletAccessStatus(wizardWallet).then(function (res) {
                     if (!res || res.stale || res.unavailable || res.ok === false ||
@@ -12409,6 +12920,31 @@ Copyright (C) 2019 The noVNC Authors
             }
             if (railRateEl) railRateEl.innerHTML = `${rate} <span class="axonos-rail-footer__val-sub">cr/min</span>`;
 
+            // Credits drain at the SUM of the wallet's sessions. Say so before
+            // launch: a 4x beside a running 1x cuts remaining time by five, and
+            // "credits disappeared" reports start exactly here.
+            const burnRow = document.getElementById('axonos_wizard_rail_burn_row');
+            const burnLabel = document.getElementById('axonos_wizard_rail_burn_label');
+            const burnTotal = document.getElementById('axonos_wizard_rail_burn_total');
+            const cap = window.axonosGpuCapacity;
+            const runningGpus = (cap && typeof cap.ownedGpus === 'number' && !window.axonosPausedResume)
+                ? cap.ownedGpus : 0;
+            if (burnRow) {
+                if (runningGpus > 0) {
+                    const runningSessions = cap && cap.ownedSessions ? cap.ownedSessions : 1;
+                    if (burnLabel) {
+                        burnLabel.textContent = 'Total with ' + runningSessions + ' running session' +
+                            (runningSessions === 1 ? '' : 's') + ' (' + runningGpus + ' cr/min)';
+                    }
+                    if (burnTotal) {
+                        burnTotal.innerHTML = `${rate + runningGpus} <span class="axonos-rail-footer__val-sub">cr/min</span>`;
+                    }
+                    burnRow.style.display = '';
+                } else {
+                    burnRow.style.display = 'none';
+                }
+            }
+
             // Selected storage
             const slider = document.getElementById('axonos_wizard_storage_slider');
             const railStorageEl = document.getElementById('axonos_wizard_rail_storage');
@@ -12657,8 +13193,12 @@ Copyright (C) 2019 The noVNC Authors
 
                 if (remaining >= required) {
                     console.log('[AxonOS] Sufficient credits already available, bypassing deposit');
-                    // Claim directly
-                    claimSession().then(function (claim) {
+                    // Claim directly. A credit-grace top-up resumes that paused
+                    // session; otherwise the wizard launches an ADDITIONAL
+                    // session alongside whatever the wallet already runs.
+                    window.axonosNewSessionLaunchPending = !window.axonosPausedResume;
+                    axonosSetConnectionLoaderPhase('preparing');
+                    claimSession(window.axonosPausedResume ? {} : { newSession: true }).then(function (claim) {
                         if (!axonosPaymentIdentityIsCurrent(wallet)) {
                             if (claim && (claim.granted === true || claim.granted === 'true')) {
                                 axonosReconcileUncertainSessionClaim({
@@ -13104,8 +13644,11 @@ Copyright (C) 2019 The noVNC Authors
             // Container CPU / RAM + home-volume storage from the in-container agent.
             if (!axonosContainerTelemetryPending) {
                 axonosContainerTelemetryPending = true;
+                const statsUrl = new URL('/api/files/stats', window.location.origin);
+                const statsSessionId = axonosCurrentSessionId();
+                if (statsSessionId !== null) statsUrl.searchParams.set('session_id', String(statsSessionId));
                 axonosFetch({
-                    url: new URL('/api/files/stats', window.location.origin).toString(),
+                    url: statsUrl.toString(),
                     timeoutMs: 4000
                 })
                 .then(st => {

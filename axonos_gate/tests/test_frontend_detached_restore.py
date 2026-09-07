@@ -484,7 +484,7 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         self.assertIn("axonosApplyWizardStorageContext(", launch)
         self.assertLess(
             launch.index("axonosApplyWizardStorageContext("),
-            launch.index("claimSession().then"),
+            launch.index("claimSession(window.axonosPausedResume"),
         )
 
         not_applied = launch.split("if (!storageContext.applied)", 1)[1].split(

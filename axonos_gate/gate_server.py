@@ -162,6 +162,8 @@ try:
         refresh_webrtc_agent_capability,
         restart_desktop_session,
         session_status,
+        session_id_for_files_key,
+        annotate_session,
         try_claim_session,
         validate_session_files_key,
         validate_webrtc_agent_identity,
@@ -179,6 +181,8 @@ except ImportError:
             refresh_webrtc_agent_capability,
             restart_desktop_session,
             session_status,
+            session_id_for_files_key,
+            annotate_session,
             try_claim_session,
             validate_session_files_key,
             validate_webrtc_agent_identity,
@@ -187,6 +191,7 @@ except ImportError:
     except ImportError:
         _session_mgr_available = False
         get_active_desktop_session_for_wallet = None
+        session_id_for_files_key = None
         get_single_active_desktop_session = None
         refresh_webrtc_agent_capability = None
         validate_webrtc_agent_identity = None
@@ -2266,7 +2271,14 @@ def api_terminal_ticket():
         )
         return auth_err
     try:
-        payload = _terminal_gateway.issue_terminal_ticket(wallet_address, origin)
+        ticket_session_id = _optional_session_id(data.get("session_id"))
+        payload = (
+            _terminal_gateway.issue_terminal_ticket(
+                wallet_address, origin, session_id=ticket_session_id
+            )
+            if ticket_session_id is not None
+            else _terminal_gateway.issue_terminal_ticket(wallet_address, origin)
+        )
     except _terminal_gateway.TerminalGatewayError as exc:
         logger.warning(
             "terminal_ticket outcome=issue_failed wallet=%s code=%s status=%s",
@@ -2353,6 +2365,26 @@ def api_session_claim():
             "granted": False,
             "error": "A positive integer expected_session_id is required when resume_only is true",
         }), 400
+    # Non-resume exact reattach: the viewer names one of the wallet's
+    # concurrent sessions and must get that row or a clean mismatch.
+    if expected_session_id is not None and (
+        isinstance(expected_session_id, bool)
+        or not isinstance(expected_session_id, int)
+        or expected_session_id <= 0
+    ):
+        return jsonify({
+            "granted": False,
+            "error": "expected_session_id must be a positive integer",
+        }), 400
+    # Additional concurrent session for a wallet that already owns one. Only an
+    # explicit JSON true opts in; legacy clients keep reattach semantics.
+    new_session_raw = data.get('new_session', False)
+    if not isinstance(new_session_raw, bool):
+        return jsonify({
+            "granted": False,
+            "error": "new_session must be a JSON boolean",
+        }), 400
+    new_session = new_session_raw is True
     # Fail closed: only an explicit JSON boolean true opts into a headless SSH
     # session. In particular, bool("false") is True in Python.
     requested_ssh = data.get('requested_ssh') is True
@@ -2375,6 +2407,7 @@ def api_session_claim():
         resume_only=resume_only,
         expected_session_id=expected_session_id,
         requested_storage_gb=requested_storage_gb,
+        new_session=new_session,
     ))
 
 
@@ -2392,9 +2425,21 @@ def api_session_heartbeat():
     # (durable in-container runtime heartbeat, no browser sign-in).
     # ssh_active: daemon-reported live sshd connection -> renews the SSH hard cap.
     ssh_active = bool(data.get('ssh_active'))
+    # session_id: which of the wallet's concurrent sessions this heartbeat
+    # keeps alive and bills. Browser viewers send the session they are attached
+    # to; the container daemon is resolved from its per-session files_key.
+    session_id = data.get('session_id')
+    if session_id is not None and (
+        isinstance(session_id, bool) or not isinstance(session_id, int) or session_id <= 0
+    ):
+        return jsonify({"ok": False, "error": "session_id must be a positive integer"}), 400
     session_key = (request.headers.get('X-AXGT-Session-Key') or data.get('session_key') or '').strip()
-    if session_key and validate_session_files_key(wallet_address, session_key):
-        return jsonify(session_heartbeat(wallet_address, ssh_active=ssh_active))
+    if session_key and session_id_for_files_key is not None:
+        key_session_id = session_id_for_files_key(wallet_address, session_key)
+        if key_session_id is not None:
+            return jsonify(session_heartbeat(
+                wallet_address, ssh_active=ssh_active, session_id=key_session_id
+            ))
     auth_err = _require_auth_token(wallet_address)
     if auth_err:
         logger.warning(
@@ -2402,7 +2447,7 @@ def api_session_heartbeat():
             mask_wallet_address(wallet_address),
         )
         return auth_err
-    return jsonify(session_heartbeat(wallet_address, ssh_active=ssh_active))
+    return jsonify(session_heartbeat(wallet_address, ssh_active=ssh_active, session_id=session_id))
 
 
 @app.route('/api/session/release', methods=['POST', 'OPTIONS'])
@@ -2428,7 +2473,16 @@ def api_session_release():
     # Auth: wallet token OR per-session files_key (headless/SSH self-release —
     # explicit "stop" for sessions with no browser End-session UI).
     session_key = (request.headers.get('X-AXGT-Session-Key') or data.get('session_key') or '').strip()
-    if not (session_key and validate_session_files_key(wallet_address, session_key)):
+    key_session_id = (
+        session_id_for_files_key(wallet_address, session_key)
+        if session_key and session_id_for_files_key is not None else None
+    )
+    if key_session_id is not None:
+        # A container's self-release ends ITS session only, never the wallet's
+        # other concurrent sessions.
+        if expected_session_id is None:
+            expected_session_id = key_session_id
+    else:
         # pagehide's sendBeacon cannot attach X-AXGT-Auth-Token. Guest auth is
         # tab-scoped (not cookie-scoped), so release alone accepts its bearer in
         # the JSON body. Paid-wallet body bearers are deliberately ignored.
@@ -2447,6 +2501,33 @@ def api_session_release():
         wallet_address,
         expected_session_id=expected_session_id,
     ))
+
+
+@app.route('/api/session/annotate', methods=['POST', 'OPTIONS'])
+def api_session_annotate():
+    """Owner-editable title/notes so concurrent sessions can be told apart."""
+    if request.method == 'OPTIONS':
+        return '', 200
+    if not _session_mgr_available:
+        return jsonify({"ok": False, "error": "Session manager unavailable"}), 503
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        data = {}
+    wallet_address = (data.get('wallet_address') or '').strip()
+    if not wallet_address or not validate_wallet_address(wallet_address):
+        return jsonify({"ok": False, "error": "Valid wallet_address required"}), 400
+    session_id = data.get('session_id')
+    if isinstance(session_id, bool) or not isinstance(session_id, int) or session_id <= 0:
+        return jsonify({"ok": False, "error": "session_id must be a positive integer"}), 400
+    title = data.get('title')
+    notes = data.get('notes')
+    if (title is not None and not isinstance(title, str)) or (notes is not None and not isinstance(notes, str)):
+        return jsonify({"ok": False, "error": "title and notes must be strings"}), 400
+    auth_err = _require_auth_token(wallet_address)
+    if auth_err:
+        return auth_err
+    result = annotate_session(wallet_address, session_id, title=title, notes=notes)
+    return jsonify(result), (200 if result.get("ok") else 409)
 
 
 @app.route('/api/session/restart', methods=['POST', 'OPTIONS'])
@@ -2479,10 +2560,32 @@ def _webrtc_sig_allow(wallet_key: str) -> bool:
     return _webrtc_sig_limiter.allow(f"{ip}|{wallet_key or '_'}")
 
 
-def _active_webrtc_compute_id(wallet_norm: str):
+def _optional_session_id(raw):
+    """Positive int from an untrusted query/header/body value, else None."""
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        parsed = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _active_webrtc_compute_id(wallet_norm: str, requested_compute_id=None):
+    """The wallet's active desktop session the signaling request is bound to.
+
+    A wallet may hold several desktops; when the request names one, resolve
+    exactly that row so signaling never silently binds to the newest sibling.
+    Falls back to the newest desktop for legacy callers.
+    """
     if not _session_mgr_available or get_active_desktop_session_for_wallet is None:
         return None
-    identity = get_active_desktop_session_for_wallet(wallet_norm)
+    requested = _optional_session_id(requested_compute_id)
+    identity = None
+    if requested is not None:
+        identity = get_active_desktop_session_for_wallet(wallet_norm, session_id=requested)
+    if not isinstance(identity, dict):
+        identity = get_active_desktop_session_for_wallet(wallet_norm)
     return identity.get("id") if isinstance(identity, dict) else None
 
 
@@ -2546,7 +2649,7 @@ def api_webrtc_session():
     wn = wallet.lower()
     if not _webrtc_sig_allow(wn):
         return jsonify({"ok": False, "error": "Rate limit exceeded"}), 429
-    active_compute_id = _active_webrtc_compute_id(wn)
+    active_compute_id = _active_webrtc_compute_id(wn, data.get("compute_session_id"))
     st, payload = webrtc_service.handle_create_session(
         wn,
         True,
@@ -2573,7 +2676,7 @@ def api_webrtc_offer():
     wn = wallet.lower()
     if not _webrtc_sig_allow(wn):
         return jsonify({"ok": False, "error": "Rate limit exceeded"}), 429
-    active_compute_id = _active_webrtc_compute_id(wn)
+    active_compute_id = _active_webrtc_compute_id(wn, data.get("compute_session_id"))
     st, payload = webrtc_service.handle_post_offer(
         sid,
         wn,
@@ -2598,7 +2701,7 @@ def api_webrtc_status():
     if auth_err:
         return auth_err
     wn = wallet.lower()
-    active_compute_id = _active_webrtc_compute_id(wn)
+    active_compute_id = _active_webrtc_compute_id(wn, request.args.get("compute_session_id"))
     st, payload = webrtc_service.handle_get_status(
         sid,
         wn,
@@ -2632,7 +2735,7 @@ def api_webrtc_ice():
     wn = wallet.lower()
     if not _webrtc_sig_allow(wn):
         return jsonify({"ok": False, "error": "Rate limit exceeded"}), 429
-    active_compute_id = _active_webrtc_compute_id(wn)
+    active_compute_id = _active_webrtc_compute_id(wn, data.get("compute_session_id"))
     st, payload = webrtc_service.handle_post_client_ice(
         sid,
         wn,
@@ -2784,7 +2887,12 @@ def api_files(route_suffix):
     if not status.get("verified"):
         return jsonify({"ok": False, "error": status.get("reason") or "Access denied"}), 403
 
-    target, err = _file_transfer.resolve_target_for_wallet(wallet_norm)
+    files_session_id = _optional_session_id(
+        request.args.get('session_id') or request.headers.get('X-AXGT-Session-ID')
+    )
+    target, err = _file_transfer.resolve_target_for_wallet(
+        wallet_norm, session_id=files_session_id
+    )
     if err:
         return jsonify({"ok": False, "error": err}), 409
 

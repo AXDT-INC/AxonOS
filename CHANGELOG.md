@@ -12,6 +12,21 @@ First production release, self-hosted by AxonDAO. Covers the `frontend-revamp`
 branch work from 2026-06-20 to 2026-09-04 on top of the 0.9 stack.
 
 ### Added
+- **Multiple concurrent sessions per wallet**: the launch wizard opens an
+  additional session (`new_session`) on whatever GPUs are free, greying out only
+  the tiers that no longer fit; viewers, heartbeats, the file plane, the web
+  terminal and WebRTC signaling bind to an exact session id; the dashboard lists
+  and acts on every owned session (`owned_sessions`, `free_gpu_count`), including
+  per-row credit-grace resume and per-session environment labels
+  (`requested_template` on the session row). SSH host ports are allocated from
+  a pool (`ssh_port` column) instead of derived from the session id, the wizard
+  locks the shared home-volume size while a sibling session runs and shows the
+  combined burn rate, and the session image guards the shared home against
+  sibling desktops (per-session Firefox profile fallback, IPFS repo-lock probe,
+  container-local ICE authority). Session cards carry an inline-editable title,
+  a region / GPU / environment specs line, uptime and burn stats, and an
+  expandable notes field persisted on the session (`POST /api/session/annotate`,
+  `AXONOS_HOST_REGION`).
 - **Guest demo mode**: invite-code redemption for wallet-free sessions
   (`axonos_gate/guest_mode.py`, `/api/auth/guest`, `/api/auth/guest-invite`,
   admin `/api/admin/guest-invite*`, `scripts/guest_invite.py`, `AXONOS_GUEST_*`).

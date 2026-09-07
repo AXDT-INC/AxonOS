@@ -180,6 +180,8 @@ try:
         release_session,
         restart_desktop_session,
         session_status,
+        session_id_for_files_key,
+        annotate_session,
         try_claim_session,
         validate_session_files_key,
     )
@@ -197,6 +199,8 @@ except ImportError:
             release_session,
             restart_desktop_session,
             session_status,
+            session_id_for_files_key,
+            annotate_session,
             try_claim_session,
             validate_session_files_key,
         )
@@ -205,6 +209,7 @@ except ImportError:
         _session_mgr_available = False
         get_active_desktop_session_for_wallet = None
         validate_session_files_key = None
+        session_id_for_files_key = None
 
 try:
     from webrtc import config as webrtc_config
@@ -260,10 +265,32 @@ def _webrtc_ws_rate_allow(wallet_key: str, headers, client_ip: str) -> bool:
     return _webrtc_sig_ws.allow(f"{ip}|{wallet_key or '_'}")
 
 
-def _active_webrtc_compute_id(wallet_norm: str):
+def _optional_session_id(raw):
+    """Positive int from an untrusted query/header/body value, else None."""
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        parsed = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _active_webrtc_compute_id(wallet_norm: str, requested_compute_id=None):
+    """The wallet's active desktop session the signaling request is bound to.
+
+    A wallet may hold several desktops; when the request names one, resolve
+    exactly that row so signaling never silently binds to the newest sibling.
+    Falls back to the newest desktop for legacy callers.
+    """
     if not _session_mgr_available or get_active_desktop_session_for_wallet is None:
         return None
-    identity = get_active_desktop_session_for_wallet(wallet_norm)
+    requested = _optional_session_id(requested_compute_id)
+    identity = None
+    if requested is not None:
+        identity = get_active_desktop_session_for_wallet(wallet_norm, session_id=requested)
+    if not isinstance(identity, dict):
+        identity = get_active_desktop_session_for_wallet(wallet_norm)
     return identity.get("id") if isinstance(identity, dict) else None
 
 
@@ -1565,7 +1592,9 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             if not auth_token or not _is_auth_token_valid(auth_token, wallet):
                 return self._send_json(401, {'ok': False, 'error': 'Valid auth token required'})
             wn = wallet.lower()
-            active_compute_id = _active_webrtc_compute_id(wn)
+            active_compute_id = _active_webrtc_compute_id(
+                wn, (qs.get('compute_session_id') or [''])[0].strip()
+            )
             st, pl = webrtc_service.handle_get_status(
                 sid,
                 wn,
@@ -1820,7 +1849,13 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             self.close_connection = True
             return self._send_json(403, {'ok': False, 'error': status.get('reason') or 'Access denied'})
 
-        target, err = _file_transfer.resolve_target_for_wallet(wallet.strip().lower())
+        files_session_id = _optional_session_id(
+            (parse_qs(pu.query).get('session_id') or [None])[0]
+            or self.headers.get('X-AXGT-Session-ID')
+        )
+        target, err = _file_transfer.resolve_target_for_wallet(
+            wallet.strip().lower(), session_id=files_session_id
+        )
         if err:
             self.close_connection = True
             return self._send_json(409, {'ok': False, 'error': err})
@@ -1967,7 +2002,14 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                     no_cache=True,
                 )
             try:
-                payload = _terminal_gateway.issue_terminal_ticket(wallet, origin)
+                ticket_session_id = _optional_session_id(data.get("session_id"))
+                payload = (
+                    _terminal_gateway.issue_terminal_ticket(
+                        wallet, origin, session_id=ticket_session_id
+                    )
+                    if ticket_session_id is not None
+                    else _terminal_gateway.issue_terminal_ticket(wallet, origin)
+                )
             except _terminal_gateway.TerminalGatewayError as exc:
                 logger.warning(
                     "terminal_ticket outcome=issue_failed wallet=%s code=%s status=%s",
@@ -2021,7 +2063,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 wn = wallet.lower()
                 if not _webrtc_ws_rate_allow(wn, self.headers, client_ip):
                     return self._send_json(429, {"ok": False, "error": "Rate limit exceeded"})
-                active_compute_id = _active_webrtc_compute_id(wn)
+                active_compute_id = _active_webrtc_compute_id(wn, data.get("compute_session_id"))
                 st, pl = webrtc_service.handle_create_session(
                     wn,
                     True,
@@ -2041,7 +2083,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 wn = wallet.lower()
                 if not _webrtc_ws_rate_allow(wn, self.headers, client_ip):
                     return self._send_json(429, {"ok": False, "error": "Rate limit exceeded"})
-                active_compute_id = _active_webrtc_compute_id(wn)
+                active_compute_id = _active_webrtc_compute_id(wn, data.get("compute_session_id"))
                 st, pl = webrtc_service.handle_post_offer(
                     sid,
                     wn,
@@ -2062,7 +2104,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 wn = wallet.lower()
                 if not _webrtc_ws_rate_allow(wn, self.headers, client_ip):
                     return self._send_json(429, {"ok": False, "error": "Rate limit exceeded"})
-                active_compute_id = _active_webrtc_compute_id(wn)
+                active_compute_id = _active_webrtc_compute_id(wn, data.get("compute_session_id"))
                 st, pl = webrtc_service.handle_post_client_ice(
                     sid,
                     wn,
@@ -2132,6 +2174,26 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                     'granted': False,
                     'error': 'A positive integer expected_session_id is required when resume_only is true',
                 })
+            # Non-resume exact reattach: the viewer names one of the wallet's
+            # concurrent sessions and must get that row or a clean mismatch.
+            if expected_session_id is not None and (
+                isinstance(expected_session_id, bool)
+                or not isinstance(expected_session_id, int)
+                or expected_session_id <= 0
+            ):
+                return self._send_json(400, {
+                    'granted': False,
+                    'error': 'expected_session_id must be a positive integer',
+                })
+            # Additional concurrent session for a wallet that already owns one.
+            # Only an explicit JSON true opts in; legacy clients keep reattach.
+            new_session_raw = data.get('new_session', False)
+            if not isinstance(new_session_raw, bool):
+                return self._send_json(400, {
+                    'granted': False,
+                    'error': 'new_session must be a JSON boolean',
+                })
+            new_session = new_session_raw is True
             # Fail closed: only an explicit JSON boolean true opts into a
             # headless SSH session (the string "false" must remain false).
             requested_ssh = data.get('requested_ssh') is True
@@ -2154,6 +2216,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 resume_only=resume_only,
                 expected_session_id=expected_session_id,
                 requested_storage_gb=requested_storage_gb,
+                new_session=new_session,
             )
             return self._send_json(200, result)
 
@@ -2165,6 +2228,15 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             # Auth: wallet token (browser) OR per-session files_key (runtime daemon).
             # ssh_active: daemon-reported live sshd connection -> renews the SSH hard cap.
             ssh_active = bool(data.get('ssh_active'))
+            # session_id: which of the wallet's concurrent sessions this
+            # heartbeat keeps alive and bills. Browser viewers send the session
+            # they are attached to; the container daemon is resolved from its
+            # per-session files_key.
+            session_id = data.get('session_id')
+            if session_id is not None and (
+                isinstance(session_id, bool) or not isinstance(session_id, int) or session_id <= 0
+            ):
+                return self._send_json(400, {'ok': False, 'error': 'session_id must be a positive integer'})
             # Record that THIS process is serving before session_heartbeat runs
             # the stale sweep. The in-container daemons post here, so this is
             # the process that decides liveness; without a presence stamp a
@@ -2177,12 +2249,16 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             except Exception:  # noqa: BLE001 - presence is best-effort
                 pass
             session_key = (self.headers.get('X-AXGT-Session-Key') or data.get('session_key') or '').strip()
-            if session_key and validate_session_files_key and validate_session_files_key(wallet_address, session_key):
-                return self._send_json(200, session_heartbeat(wallet_address, ssh_active=ssh_active))
+            if session_key and session_id_for_files_key:
+                key_session_id = session_id_for_files_key(wallet_address, session_key)
+                if key_session_id is not None:
+                    return self._send_json(200, session_heartbeat(
+                        wallet_address, ssh_active=ssh_active, session_id=key_session_id
+                    ))
             auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
             if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
                 return self._send_json(401, {'ok': False, 'error': 'Valid auth token required'})
-            result = session_heartbeat(wallet_address, ssh_active=ssh_active)
+            result = session_heartbeat(wallet_address, ssh_active=ssh_active, session_id=session_id)
             return self._send_json(200, result)
 
         if _session_mgr_available and self.path.startswith('/api/session/release'):
@@ -2202,7 +2278,16 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 })
             # Auth: wallet token OR per-session files_key (headless/SSH self-release).
             session_key = (self.headers.get('X-AXGT-Session-Key') or data.get('session_key') or '').strip()
-            if not (session_key and validate_session_files_key and validate_session_files_key(wallet_address, session_key)):
+            key_session_id = (
+                session_id_for_files_key(wallet_address, session_key)
+                if session_key and session_id_for_files_key else None
+            )
+            if key_session_id is not None:
+                # A container's self-release ends ITS session only, never the
+                # wallet's other concurrent sessions.
+                if expected_session_id is None:
+                    expected_session_id = key_session_id
+            else:
                 # A pagehide sendBeacon cannot attach the tab-scoped guest
                 # header. Release alone accepts that guest bearer in JSON; an
                 # ordinary wallet can never authenticate through the body.
@@ -2222,6 +2307,25 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 expected_session_id=expected_session_id,
             )
             return self._send_json(200, result)
+
+        if _session_mgr_available and self.path.startswith('/api/session/annotate'):
+            # Owner-editable title/notes so concurrent sessions can be told apart.
+            data = self._read_json_body()
+            wallet_address = (data.get('wallet_address') or '').strip()
+            if not wallet_address or not validate_wallet_address(wallet_address):
+                return self._send_json(400, {'ok': False, 'error': 'Valid wallet_address required'})
+            session_id = data.get('session_id')
+            if isinstance(session_id, bool) or not isinstance(session_id, int) or session_id <= 0:
+                return self._send_json(400, {'ok': False, 'error': 'session_id must be a positive integer'})
+            title = data.get('title')
+            notes = data.get('notes')
+            if (title is not None and not isinstance(title, str)) or (notes is not None and not isinstance(notes, str)):
+                return self._send_json(400, {'ok': False, 'error': 'title and notes must be strings'})
+            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+            if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
+                return self._send_json(401, {'ok': False, 'error': 'Valid auth token required'})
+            result = annotate_session(wallet_address, session_id, title=title, notes=notes)
+            return self._send_json(200 if result.get('ok') else 409, result)
 
         if _session_mgr_available and self.path.startswith('/api/session/restart'):
             data = self._read_json_body()

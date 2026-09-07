@@ -1336,6 +1336,28 @@ def _rewrite_sdp_candidates(sdp: str, public_ip: str) -> str:
     return "\r\n".join(new_lines)
 
 
+async def _log_outbound_video_stats(pc: Any, session_id: str) -> None:
+    """Log video sender counters shortly after connect (3 s and 10 s)."""
+    for delay in (3.0, 7.0):
+        try:
+            await asyncio.sleep(delay)
+            if pc.connectionState != "connected":
+                return
+            report = await pc.getStats()
+            for stat in report.values():
+                if getattr(stat, "type", "") != "outbound-rtp" or getattr(stat, "kind", "") != "video":
+                    continue
+                logger.info(
+                    "WebRTC video sender session=%s packets=%s bytes=%s",
+                    session_id,
+                    getattr(stat, "packetsSent", None),
+                    getattr(stat, "bytesSent", None),
+                )
+        except Exception as exc:  # noqa: BLE001 - diagnostics only
+            logger.debug("outbound video stats unavailable: %s", exc)
+            return
+
+
 async def _run_session(job: dict[str, Any]) -> None:
     try:
         from aiortc import RTCPeerConnection, RTCSessionDescription
@@ -1374,6 +1396,19 @@ async def _run_session(job: dict[str, Any]) -> None:
     pc = RTCPeerConnection(_build_rtc_configuration())
     capture_handle = None
     audio_handle = None
+    _stats_session_id = str(job.get("session_id", ""))[:16]
+
+    @pc.on("connectionstatechange")
+    async def _on_connection_state() -> None:
+        # Diagnosable "stream but no video": log the state transitions and,
+        # once connected, what the video sender actually pushed in the first
+        # seconds. A relay-path connect that sends packets but the browser
+        # never decodes is a different bug from a sender that sent nothing.
+        logger.info(
+            "WebRTC connection state=%s session=%s", pc.connectionState, _stats_session_id
+        )
+        if pc.connectionState == "connected":
+            asyncio.ensure_future(_log_outbound_video_stats(pc, _stats_session_id))
 
     def _cleanup_captures() -> None:
         if mic_task is not None and not mic_task.done():

@@ -719,9 +719,23 @@ def _ssh_port(session_id: int) -> int:
     return _SSH_BASE_PORT + (session_id % _MAX_SESSIONS)
 
 
-def _publish_args_for_session(session_id: int, ssh_enabled: bool) -> List[str]:
+def _coerce_ssh_port(raw: object) -> Optional[int]:
+    """Gate-allocated host SSH port from the launch payload, else None."""
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        port = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return port if 1024 < port < 65536 else None
+
+
+def _publish_args_for_session(
+    session_id: int, ssh_enabled: bool, ssh_port: Optional[int] = None
+) -> List[str]:
     if ssh_enabled:
-        return ["-p", f"{_ssh_port(session_id)}:22/tcp"]
+        port = ssh_port if ssh_port else _ssh_port(session_id)
+        return ["-p", f"{port}:22/tcp"]
     port_range = _webrtc_port_range(session_id)
     return ["-p", f"{port_range}:{port_range}/udp"]
 
@@ -1421,7 +1435,9 @@ def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], 
         "--cap-drop",
         "NET_RAW",
     ]
-    cmd.extend(_publish_args_for_session(session_id, ssh_enabled))
+    cmd.extend(_publish_args_for_session(
+        session_id, ssh_enabled, _coerce_ssh_port(payload.get("ssh_port"))
+    ))
     if _persistent_storage_enabled() and not _ephemeral_storage_for_payload(payload):
         safe_wallet = "".join(c for c in wallet if c.isalnum() or c in ("-", "_")).lower()
         volume_name = f"{_persistent_storage_volume_prefix()}{safe_wallet}"

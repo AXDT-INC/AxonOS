@@ -42,7 +42,7 @@ class FrontendTerminalContractTests(unittest.TestCase):
     def test_ticket_exchange_never_puts_wallet_or_auth_token_on_websocket(self) -> None:
         request = self._between(
             self.terminal,
-            "async function requestTerminalTicket(wallet, authToken, externalSignal)",
+            "async function requestTerminalTicket(wallet, authToken, externalSignal, sessionId)",
             "function terminalWebSocketUrl(ticketResponse)",
         )
         endpoint = self._between(
@@ -54,7 +54,10 @@ class FrontendTerminalContractTests(unittest.TestCase):
         self.assertIn("'/api/terminal/ticket'", request)
         self.assertIn("credentials: 'include'", request)
         self.assertIn("'X-AXGT-Auth-Token'", self.terminal)
-        self.assertIn("JSON.stringify({ wallet_address: wallet })", request)
+        # The wallet (and the exact session the ticket must bind to) travel in
+        # the JSON body, never on the URL.
+        self.assertIn("{ wallet_address: wallet, session_id: sessionId }", request)
+        self.assertIn("{ wallet_address: wallet }", request)
         self.assertIn("url.host !== window.location.host", endpoint)
         self.assertIn("keys.length !== 1", endpoint)
         self.assertIn("keys[0] !== 'ticket'", endpoint)
@@ -194,10 +197,10 @@ class FrontendTerminalContractTests(unittest.TestCase):
         self.assertIn("showDetach = viewerAttached", controls)
 
     def test_frontend_module_cache_tokens_stay_in_lockstep(self) -> None:
-        self.assertIn("axonos-theme.css?v=20.3&t=20260827b", self.page)
-        self.assertIn("app/ui.js?v=20260827extend1", self.page)
-        self.assertIn("./webrtc/axonos-webrtc.js?v=20260827extend1", self.ui)
-        self.assertIn("./terminal/axonos-terminal.js?v=20260729d", self.ui)
+        self.assertIn("axonos-theme.css?v=20.3&t=20260907multi1", self.page)
+        self.assertIn("app/ui.js?v=20260907multi1", self.page)
+        self.assertIn("./webrtc/axonos-webrtc.js?v=20260907multi1", self.ui)
+        self.assertIn("./terminal/axonos-terminal.js?v=20260907multi1", self.ui)
 
     def test_ssh_extension_reports_actual_deadline_change(self) -> None:
         handler = self._between(

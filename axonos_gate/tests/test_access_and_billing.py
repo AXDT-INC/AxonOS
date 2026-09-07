@@ -1293,7 +1293,9 @@ class TestBillingAndSession(unittest.TestCase):
         cur = MagicMock()
         cur.__enter__.return_value = cur
         conn.cursor.return_value = cur
-        cur.fetchone.return_value = ("runtime-secret",)
+        # A wallet may hold several live sessions, each with its own key; the
+        # lookup scans all of them and reports WHICH session the key belongs to.
+        cur.fetchall.return_value = [(9, "other-secret"), (7, "runtime-secret")]
 
         with patch.object(session_manager, "_init_once", return_value=True), \
              patch.object(session_manager, "_get_connection", return_value=conn), \
@@ -1303,13 +1305,18 @@ class TestBillingAndSession(unittest.TestCase):
                 wallet,
                 "runtime-secret",
             )
+            matched = session_manager.session_id_for_files_key(
+                wallet,
+                "runtime-secret",
+            )
 
         self.assertTrue(valid)
+        self.assertEqual(matched, 7)
         sql, params = cur.execute.call_args.args
         self.assertIn("status = 'credit_grace'", sql)
         self.assertIn("credit_grace_started_at", sql)
         self.assertEqual(params, (wallet, 2800.0))
-        conn.close.assert_called_once()
+        self.assertEqual(conn.close.call_count, 2)
 
     def test_credit_grace_reactivation_keeps_allocation_and_resets_billing_atomically(self):
         from axonos_gate import session_manager

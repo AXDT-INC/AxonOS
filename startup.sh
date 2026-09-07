@@ -119,6 +119,11 @@ if [ -d /home/aXonian ] && [ "$(stat -c %u /home/aXonian)" != "1000" ]; then
         chown -R 1000:1000 /home/aXonian/.config
     fi
 fi
+# Concurrent sessions of one wallet share the home volume. Keep the desktop's
+# volatile per-container state (ICE authority, the fallback Firefox profile)
+# on the container's own disk so two desktops on one home cannot fight over it.
+install -d -m 0700 -o aXonian -g aXonian /var/lib/axonos-desktop
+
 for skel_file in /etc/skel/.bashrc /etc/skel/.profile /etc/skel/.bash_logout; do
     dest="/home/aXonian/$(basename "$skel_file")"
     if [ -f "$skel_file" ] && [ ! -e "$dest" ]; then

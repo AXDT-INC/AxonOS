@@ -89,7 +89,7 @@ function authenticatedHeaders(wallet, authToken) {
     return headers;
 }
 
-async function requestTerminalTicket(wallet, authToken, externalSignal) {
+async function requestTerminalTicket(wallet, authToken, externalSignal, sessionId) {
     const controller = typeof AbortController !== 'undefined'
         ? new AbortController()
         : null;
@@ -111,7 +111,11 @@ async function requestTerminalTicket(wallet, authToken, externalSignal) {
                 credentials: 'include',
                 cache: 'no-store',
                 headers: authenticatedHeaders(wallet, authToken),
-                body: JSON.stringify({ wallet_address: wallet }),
+                body: JSON.stringify(
+                    Number.isSafeInteger(sessionId) && sessionId > 0
+                        ? { wallet_address: wallet, session_id: sessionId }
+                        : { wallet_address: wallet }
+                ),
                 ...((controller || externalSignal)
                     ? { signal: controller ? controller.signal : externalSignal }
                     : {}),
@@ -435,7 +439,8 @@ export class AxonosTerminalClient {
         const ticket = await requestTerminalTicket(
             wallet,
             this.options.authToken || null,
-            signal
+            signal,
+            Number(this.options.sessionId)
         );
         this.options.authToken = null;
         if (this.disposed || (signal && signal.aborted)) {

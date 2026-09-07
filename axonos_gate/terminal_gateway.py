@@ -533,7 +533,12 @@ def resolve_active_terminal_session(
     get_access, get_session, get_status = _import_dependencies()
     try:
         status = get_status(wallet)
-        session = get_session(wallet)
+        # Bind to the exact session the ticket names; a wallet may hold several.
+        session = (
+            get_session(wallet, session_id=int(expected_session_id))
+            if expected_session_id is not None
+            else get_session(wallet)
+        )
         access = get_access(wallet, consume_usage=False)
     except Exception as exc:
         raise TerminalGatewayError(
@@ -567,9 +572,18 @@ def resolve_active_terminal_session(
             409,
             "no_active_session",
         )
-    if session_id <= 0 or owner_session_id != session_id:
-        # get_session_for_wallet also includes credit-grace rows; the owner ID is
-        # emitted only for an active row, so this comparison excludes grace.
+    # The wallet may hold several active sessions; owner_session_id names only
+    # the newest. Accept any id the status lists as an ACTIVE owned row.
+    owned_ids = set()
+    for raw in status.get("owned_session_ids") or []:
+        try:
+            owned_ids.add(int(raw))
+        except (TypeError, ValueError):
+            continue
+    owned_ids.add(owner_session_id)
+    if session_id <= 0 or session_id not in owned_ids:
+        # get_session_for_wallet also includes credit-grace rows; the owned ids
+        # are emitted only for active rows, so this comparison excludes grace.
         raise TerminalGatewayError(
             "No active SSH session is available for this wallet",
             409,
@@ -650,10 +664,14 @@ def resolve_active_terminal_session(
     )
 
 
-def issue_terminal_ticket(wallet_address: str, origin: str) -> dict:
+def issue_terminal_ticket(
+    wallet_address: str, origin: str, session_id: Optional[int] = None
+) -> dict:
     if not terminal_enabled():
         raise TerminalGatewayError("Web terminal is disabled", 503, "disabled")
-    context = resolve_active_terminal_session(wallet_address)
+    context = resolve_active_terminal_session(
+        wallet_address, expected_session_id=session_id
+    )
     ttl = ticket_ttl_seconds()
     ticket = _ticket_store.issue(
         context.wallet_address,
