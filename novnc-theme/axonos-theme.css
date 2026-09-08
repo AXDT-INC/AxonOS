@@ -2551,6 +2551,23 @@ input#noVNC_setting_path:-webkit-autofill:focus {
   display: inline !important;
 }
 
+/* Telemetry deck toggle: ui.js marks it .noVNC_selected while the rail is
+ * open, and base.css paints that state with a near-black border/background
+ * (rgba(0,0,0,0.8)/0.5). On the dark deck that erases the rounded 6px chrome
+ * every other button shows. Keep the deck border and just tint it with the
+ * accent so the "rail open" state stays legible without breaking alignment. */
+#noVNC_control_bar #noVNC_sidebar_button.noVNC_selected {
+  border: 1px solid rgba(123, 108, 255, 0.55) !important;
+  border-radius: 6px !important;
+  background: rgba(123, 108, 255, 0.16) !important;
+}
+
+:root:not(.noVNC_touch) #noVNC_control_bar #noVNC_sidebar_button.noVNC_selected:hover,
+#noVNC_control_bar #noVNC_sidebar_button.noVNC_selected:focus {
+  border-color: rgba(123, 108, 255, 0.8) !important;
+  background: rgba(123, 108, 255, 0.28) !important;
+}
+
 /* Specific positioning for fullscreen and settings */
 #noVNC_fullscreen_button {
   margin-top: 5px !important;
