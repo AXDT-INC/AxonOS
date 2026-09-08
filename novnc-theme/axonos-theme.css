@@ -7947,7 +7947,12 @@ html.noVNC_connected #noVNC_container {
   height: 100% !important;
   position: relative !important;
   background: #0c0d15 !important;
-  overflow: auto !important;
+  /* Never let the viewer itself scroll. The default resize mode is "scale", so
+   * the canvas/video always fits, and the WebRTC local-cursor overlay is moved
+   * with a transform that counts toward scrollable overflow: with `auto`, the
+   * sprite poking past the right/bottom edge made Chrome flash a horizontal
+   * scrollbar on every pointer move near the edge. */
+  overflow: hidden !important;
   transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
