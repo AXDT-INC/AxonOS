@@ -8227,16 +8227,23 @@ html.noVNC_connected:has(.axonos-session-sidebar.collapsed) .axonos-session-hud 
   color: #b58783;
 }
 
-/* Sidebar collapse/expand toggle button */
+/* Sidebar collapse/expand toggle button.
+ * Mirrors the left deck's .noVNC_button chrome (base.css): a 32px content box
+ * with 4px padding, 1px rgba(255,255,255,0.2) border and 6px radius, so the
+ * handle reads as a sibling of the fullscreen/settings/clipboard buttons. */
 .axonos-sidebar-toggle {
   position: absolute;
   top: 12px;
   right: 332px;
   z-index: 100;
+  -webkit-appearance: none;
+  appearance: none;
+  box-sizing: content-box;
   width: 32px;
   height: 32px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 4px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
   background: rgba(8, 10, 18, 0.85);
   backdrop-filter: blur(4px);
   color: #a6acc2;
@@ -8244,11 +8251,12 @@ html.noVNC_connected:has(.axonos-session-sidebar.collapsed) .axonos-session-hud 
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: right 0.3s cubic-bezier(0.16, 1, 0.3, 1), color 0.2s, background-color 0.2s;
+  transition: right 0.3s cubic-bezier(0.16, 1, 0.3, 1), color 0.2s, background-color 0.2s, border-color 0.2s;
 }
 
 .axonos-sidebar-toggle:hover {
-  background-color: rgba(255, 255, 255, 0.05);
+  background-color: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.35);
   color: #fff;
 }
 
@@ -8257,6 +8265,9 @@ html.noVNC_connected:has(.axonos-session-sidebar.collapsed) .axonos-session-hud 
 }
 
 .axonos-sidebar-toggle svg {
+  width: 22px;
+  height: 22px;
+  display: block;
   transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
