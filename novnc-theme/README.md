@@ -56,6 +56,7 @@ Only the desktop layout is supported for launching sessions; breakpoints are at
 | `app/terminal/axonos-terminal.js` | Web terminal client. |
 | `app/vendor/xterm/` | Vendored xterm.js 6.0.0 + addon-fit 0.11.0 (see its README). |
 | `app/fonts/` | BrutalType (5 weights) + Orbitron woff2. |
+| `audio/` | UX chimes (WAV): login D5→A5→E6→F♯6, detach A5→E5→D5, end session F♯5→E5→D5→D4. Served at `app/sounds/`; muted with `?bell=off`. |
 | `icons/` | 13 PNG sizes (16–192 px), `files.svg`, `novnc-icon*.svg`, `Makefile`. |
 | `icon.png`, `axon-x.png`, `images/linux.svg` | Page icon and UI images. |
 | `axonos_assistant.png`, `talk_to_k.png` | Desktop pixmaps for the in-session assistants. |
@@ -107,6 +108,7 @@ COPY novnc-theme/icons/* /usr/share/novnc/app/images/icons/
 COPY novnc-theme/icon.png /usr/share/novnc/icon.png
 COPY novnc-theme/images/linux.svg /usr/share/novnc/app/images/linux.svg
 COPY novnc-theme/telemetry.html /usr/share/novnc/
+COPY novnc-theme/audio/ /usr/share/novnc/app/sounds/
 COPY novnc-theme/axon-x.png /usr/share/novnc/axon-x.png
 ```
 

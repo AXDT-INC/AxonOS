@@ -9606,6 +9606,13 @@ Copyright (C) 2019 The noVNC Authors
             window.axonosCurrentSessionReleaseOperation = null;
             window.axonosWalletUnavailableSessionPreserved = false;
             window.axonosClearSessionReleaseFailure();
+            // Definitive shutdown confirmed by the server: play the End chime
+            // for releases that did not pass through UI.disconnect (dashboard
+            // End, late confirmations); the viewer path already played it.
+            if (context && context.source === 'dashboard-end' &&
+                typeof UI !== 'undefined' && typeof UI.playAxonosChime === 'function') {
+                UI.playAxonosChime('end');
+            }
             if (typeof axonosLoadDashboard === 'function' &&
                 window.verifiedWalletAddress &&
                 document.getElementById('noVNC_connect_dlg') &&

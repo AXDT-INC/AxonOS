@@ -270,6 +270,8 @@ const UI = {
     inhibitReconnect: true,
     reconnectCallback: null,
     reconnectPassword: null,
+    /** Set by the automatic RFB reconnect so connectFinished skips the login chime. */
+    _axonosSilentReconnect: false,
     /** Monotonic identity for the active Launch/Resume connection pipeline. */
     _axonosConnectGeneration: 0,
     clipboardAutoSyncEnabled: false,
@@ -568,6 +570,7 @@ const UI = {
             restartButton.addEventListener('click', UI.restartDesktopSession);
         }
         const endSessionButton = document.getElementById("noVNC_power_button");
+        UI.preloadAxonosChimes();
         if (endSessionButton) {
             endSessionButton.addEventListener('click', UI.endSession);
         }
@@ -1690,6 +1693,7 @@ const UI = {
             UI.hideAxonosSshCard();
             UI.closeConnectPanel();
             UI.updateVisualState('connected');
+            UI.playAxonosChime('login');
             if (typeof window.axonosHideConnectionLoader === 'function') {
                 window.axonosHideConnectionLoader(true);
             }
@@ -2826,6 +2830,7 @@ const UI = {
         if (!confirmed) {
             return;
         }
+        UI.playAxonosChime('detach');
         UI.disconnect({ skipRelease: true, detach: true });
     },
 
@@ -3479,6 +3484,7 @@ const UI = {
         }
         const released = context && context.released === true;
         UI._axonosSessionReleaseFailureContext = released ? null : context;
+        if (released) UI.playAxonosChime('end');
         const hookName = released
             ? 'axonosHandleSessionReleaseSuccess'
             : 'axonosHandleSessionReleaseFailure';
@@ -4853,6 +4859,7 @@ const UI = {
             return;
         }
 
+        UI._axonosSilentReconnect = true;
         UI.connect(null, UI.reconnectPassword);
     },
 
@@ -4892,6 +4899,10 @@ const UI = {
         }
         UI.showStatus(msg);
         UI.updateVisualState('connected');
+        // Automatic recoveries after a network blip stay silent; only a
+        // user-initiated entry (launch, reattach) announces "system ready".
+        if (!UI._axonosSilentReconnect) UI.playAxonosChime('login');
+        UI._axonosSilentReconnect = false;
         UI.startClipboardAutoSync();
 
         UI._axgtStartSessionBillingPoll();
@@ -5959,6 +5970,68 @@ const UI = {
         UI.desktopName = e.detail.name;
         // Display the desktop name in the document title
         document.title = e.detail.name + " - " + PAGE_TITLE;
+    },
+
+    /** AxonOS UX chimes (see audio/ in the theme source):
+     *    login   D5 → A5 → E6 → F♯6 ↑   system ready / entering a session
+     *    detach  A5 → E5 → D5 ↓         leaving the interface; session persists
+     *    end     F♯5 → E5 → D5 → D4 ↓↓  definitive shutdown; session terminated
+     *  Every chime follows a user gesture, so autoplay policy allows it; a
+     *  refused play is ignored like the bell. Honors the same `bell` config. */
+    _AXONOS_CHIMES: {
+        login: 'app/sounds/axonos_login_chime.wav',
+        detach: 'app/sounds/axonos_detach_desktop_chime.wav',
+        end: 'app/sounds/axonos_end_session_chime.wav',
+    },
+    _axonosChimeCache: {},
+
+    _axonosChimeElement(name) {
+        const src = UI._AXONOS_CHIMES[name];
+        if (!src || typeof Audio !== 'function') return null;
+        let audio = UI._axonosChimeCache[name];
+        if (!audio) {
+            audio = new Audio(src);
+            audio.preload = 'auto';
+            UI._axonosChimeCache[name] = audio;
+        }
+        return audio;
+    },
+
+    preloadAxonosChimes() {
+        Object.keys(UI._AXONOS_CHIMES).forEach((name) => {
+            const audio = UI._axonosChimeElement(name);
+            if (audio) {
+                try { audio.load(); } catch (err) { /* ignore */ }
+            }
+        });
+    },
+
+    playAxonosChime(name) {
+        if (WebUtil.getConfigVar('bell', 'on') !== 'on') return false;
+        const audio = UI._axonosChimeElement(name);
+        if (!audio) return false;
+        // The End chime supersedes an in-flight Detach chime and vice versa.
+        Object.keys(UI._axonosChimeCache).forEach((other) => {
+            const el = UI._axonosChimeCache[other];
+            if (el && el !== audio && !el.paused) {
+                try { el.pause(); } catch (err) { /* ignore */ }
+            }
+        });
+        try {
+            audio.currentTime = 0;
+            const promise = audio.play();
+            if (promise && typeof promise.catch === 'function') {
+                promise.catch((e) => {
+                    if (e.name !== 'NotAllowedError') {
+                        Log.Error('Unable to play AxonOS ' + name + ' chime: ' + e);
+                    }
+                });
+            }
+        } catch (err) {
+            Log.Warn('Unable to play AxonOS ' + name + ' chime: ' + err);
+            return false;
+        }
+        return true;
     },
 
     bell(e) {
