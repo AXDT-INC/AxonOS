@@ -1130,6 +1130,7 @@ export async function connectAxonOSWebRTC(opts) {
                 if (typeof UI.connect === 'function') {
                     // UI.connect owns wallet preflight, claim, the one bounded
                     // negotiation retry, fallback, and final workspace routing.
+                    UI._axonosSilentReconnect = true;
                     UI.connect();
                 } else {
                     returnToWorkspaceAfterRecoveryFailure();
@@ -1809,6 +1810,12 @@ export async function connectAxonOSWebRTC(opts) {
         window.axonosHideConnectionLoader(true);
     }
     UI.updateVisualState('connected');
+    // "System ready" chime on a user-initiated entry; an automatic recovery
+    // after a network blip (flagged below before UI.connect) stays silent.
+    if (typeof UI.playAxonosChime === 'function') {
+        if (!UI._axonosSilentReconnect) UI.playAxonosChime('login');
+        UI._axonosSilentReconnect = false;
+    }
     UI.showStatus('Connected (WebRTC)');
     _setBanner('WebRTC: Connected', 'connected');
     setTimeout(_hideBanner, 2000);

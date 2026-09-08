@@ -270,7 +270,7 @@ const UI = {
     inhibitReconnect: true,
     reconnectCallback: null,
     reconnectPassword: null,
-    /** Set by the automatic RFB reconnect so connectFinished skips the login chime. */
+    /** Set by automatic RFB and WebRTC reconnects so the connected handlers skip the login chime. */
     _axonosSilentReconnect: false,
     /** Monotonic identity for the active Launch/Resume connection pipeline. */
     _axonosConnectGeneration: 0,
@@ -4345,7 +4345,7 @@ const UI = {
                         try {
                             // A stable module URL keeps negotiation generation/cancellation
                             // state shared across retries and rapid user reconnects.
-                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260907multi1');
+                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260908chime1');
                             if (!connectAttemptIsCurrent()) {
                                 return;
                             }
