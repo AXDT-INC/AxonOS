@@ -178,7 +178,7 @@ Copyright (C) 2019 The noVNC Authors
     </script>
     <script src="app/error-handler.js"></script>
     <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
-    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260908chime1"></script>
+    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260908nvpin1"></script>
 </head>
 
 <body>
@@ -12242,6 +12242,75 @@ Copyright (C) 2019 The noVNC Authors
             var releaseTimeoutMs = (typeof UI !== 'undefined' &&
                 typeof UI._axonosSessionReleaseTimeoutMs === 'function')
                 ? UI._axonosSessionReleaseTimeoutMs() : 105000;
+            // The status endpoint reports the row as ended the moment the
+            // release commits, while the POST itself stays open until the
+            // container and its network are torn down (several seconds). Race
+            // the two exactly as the viewer's End does, so the card, the
+            // dashboard and the End chime follow the real end of billing
+            // instead of the end of infrastructure cleanup.
+            var settled = false;
+            var reconcileTimer = null;
+            var reconcileAttempt = 0;
+            var reconcileDelays = [750, 1500, 3000, 5000];
+            var stopReconcile = function () {
+                settled = true;
+                if (reconcileTimer) {
+                    clearTimeout(reconcileTimer);
+                    reconcileTimer = null;
+                }
+            };
+            var applyReleaseSuccess = function () {
+                stopReconcile();
+                var successAccepted = window.axonosHandleSessionReleaseSuccess(Object.assign({}, releaseOperation, {
+                    released: true
+                }));
+                if (!successAccepted) return Promise.resolve(true);
+                if (axonosNormalizeWalletAddress(axonosCurrentVerifiedWallet()) !==
+                    axonosNormalizeWalletAddress(wallet)) {
+                    return Promise.resolve(true);
+                }
+
+                // The released session may have been a detached desktop or headless
+                // SSH one — clear that client state only after the server confirms,
+                // and only if it was the session THIS tab is bound to: ending a
+                // sibling from the dashboard must leave the current one attached.
+                var currentId = axonosCurrentSessionId();
+                var endedCurrent = !sessionKey || currentId === null || String(currentId) === sessionKey;
+                if (endedCurrent) {
+                    window.axonosSessionDetached = false;
+                    if (typeof window.axonosClearDetachedSession === 'function') {
+                        window.axonosClearDetachedSession();
+                    }
+                    if (typeof UI !== 'undefined' && typeof UI.hideAxonosSshCard === 'function') {
+                        UI.hideAxonosSshCard();
+                    }
+                }
+                return axonosLoadDashboard().then(function () { return true; });
+            };
+            var scheduleReconcile = function () {
+                if (settled || reconcileAttempt >= reconcileDelays.length) return;
+                reconcileTimer = setTimeout(reconcileReleaseState, reconcileDelays[reconcileAttempt++]);
+            };
+            var reconcileReleaseState = function () {
+                reconcileTimer = null;
+                if (settled || typeof window.axonosConfirmSessionReleaseState !== 'function') return;
+                Promise.resolve(window.axonosConfirmSessionReleaseState({
+                    wallet: wallet,
+                    sessionId: sessionKey || null
+                })).then(function (state) {
+                    if (settled) return;
+                    if (state && state.confirmed === true) {
+                        console.log('[AxonOS] Session end confirmed by status while the release request is still in flight');
+                        applyReleaseSuccess();
+                        return;
+                    }
+                    scheduleReconcile();
+                }).catch(function () {
+                    scheduleReconcile();
+                });
+            };
+            scheduleReconcile();
+
             var reconcileThenReport = function (failureContext) {
                 return window.axonosConfirmSessionReleaseState({
                     wallet: wallet,
@@ -12263,7 +12332,11 @@ Copyright (C) 2019 The noVNC Authors
                 timeoutMs: releaseTimeoutMs,
                 timeoutMessage: 'The session-end request timed out.'
             }).then(function (result) {
+                // Status already confirmed the end and the UI moved on; the late
+                // reply carries nothing the user still needs.
+                if (settled) return true;
                 if (!result || result.released !== true) {
+                    stopReconcile();
                     if (sessionKey) axonosDashboardEndingSessions.delete(sessionKey);
                     const reason = (result && result.reason) || 'The session could not be ended.';
                     var failureAccepted = window.axonosHandleSessionReleaseFailure(Object.assign({}, releaseOperation, {
@@ -12289,32 +12362,10 @@ Copyright (C) 2019 The noVNC Authors
                     return false;
                 }
                 console.log('[AxonOS] Session released successfully');
-                var successAccepted = window.axonosHandleSessionReleaseSuccess(Object.assign({}, releaseOperation, {
-                    released: true
-                }));
-                if (!successAccepted) return true;
-                if (axonosNormalizeWalletAddress(axonosCurrentVerifiedWallet()) !==
-                    axonosNormalizeWalletAddress(wallet)) {
-                    return true;
-                }
-
-                // The released session may have been a detached desktop or headless
-                // SSH one — clear that client state only after the server confirms,
-                // and only if it was the session THIS tab is bound to: ending a
-                // sibling from the dashboard must leave the current one attached.
-                var currentId = axonosCurrentSessionId();
-                var endedCurrent = !sessionKey || currentId === null || String(currentId) === sessionKey;
-                if (endedCurrent) {
-                    window.axonosSessionDetached = false;
-                    if (typeof window.axonosClearDetachedSession === 'function') {
-                        window.axonosClearDetachedSession();
-                    }
-                    if (typeof UI !== 'undefined' && typeof UI.hideAxonosSshCard === 'function') {
-                        UI.hideAxonosSshCard();
-                    }
-                }
-                return axonosLoadDashboard().then(function () { return true; });
+                return applyReleaseSuccess();
             }).catch(function (err) {
+                if (settled) return true;
+                stopReconcile();
                 console.error('[AxonOS] Failed to release session:', err);
                 var timedOut = /timed out/i.test(String((err && err.message) || err || ''));
                 return reconcileThenReport(Object.assign({}, releaseOperation, {
@@ -12324,25 +12375,8 @@ Copyright (C) 2019 The noVNC Authors
                         : 'The session-end request could not reach the server.'
                 })).then(function (confirmed) {
                     if (confirmed) {
-                        var lateSuccess = window.axonosHandleSessionReleaseSuccess(Object.assign({}, releaseOperation, {
-                            released: true
-                        }));
-                        if (!lateSuccess) return true;
-                        if (axonosNormalizeWalletAddress(axonosCurrentVerifiedWallet()) !==
-                            axonosNormalizeWalletAddress(wallet)) {
-                            return true;
-                        }
-                        var currentId = axonosCurrentSessionId();
-                        if (!sessionKey || currentId === null || String(currentId) === sessionKey) {
-                            window.axonosSessionDetached = false;
-                            if (typeof window.axonosClearDetachedSession === 'function') {
-                                window.axonosClearDetachedSession();
-                            }
-                            if (typeof UI !== 'undefined' && typeof UI.hideAxonosSshCard === 'function') {
-                                UI.hideAxonosSshCard();
-                            }
-                        }
-                        return axonosLoadDashboard().then(function () { return true; });
+                        settled = false;
+                        return applyReleaseSuccess();
                     }
                     if (!window.axonosSessionReleaseResultIsCurrent(releaseOperation)) {
                         return false;

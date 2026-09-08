@@ -192,7 +192,12 @@ let _negotiationGeneration = 0;
 let _inFlightNegotiation = null;
 /** Structured reason for the most recently completed, unsuccessful connect attempt. */
 let _lastConnectFailure = null;
-const _terminalSignalingFailures = new Set(['display_not_ready']);
+const _terminalSignalingFailures = new Set([
+    'display_not_ready',
+    // Xorg was never started in the session container; retrying cannot help.
+    'display_driver_mismatch',
+    'display_gpu_missing',
+]);
 
 function _normalizeFailureCode(value, fallback = 'signaling_failed') {
     const text = String(value || '').trim().toLowerCase();

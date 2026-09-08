@@ -4345,7 +4345,7 @@ const UI = {
                         try {
                             // A stable module URL keeps negotiation generation/cancellation
                             // state shared across retries and rapid user reconnects.
-                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260908chime1');
+                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260908nvpin1');
                             if (!connectAttemptIsCurrent()) {
                                 return;
                             }
@@ -4419,6 +4419,18 @@ const UI = {
                                     'Desktop display failed to start (display_not_ready). ' +
                                     'The session is still running; end it from the workspace and launch again. ' +
                                     'If this repeats, contact support.'
+                                );
+                            } else if (failureCode === 'display_driver_mismatch') {
+                                failureMessage = _(
+                                    'Desktop display cannot start: the session image does not match the ' +
+                                    'host GPU driver (display_driver_mismatch). This is a server-side ' +
+                                    'issue; end the session from the workspace and contact support.'
+                                );
+                            } else if (failureCode === 'display_gpu_missing') {
+                                failureMessage = _(
+                                    'Desktop display cannot start: no GPU was visible to the session ' +
+                                    '(display_gpu_missing). End the session from the workspace and ' +
+                                    'launch again; if this repeats, contact support.'
                                 );
                             } else {
                                 const detailSuffix = failureDetail ? `: ${failureDetail}` : '';

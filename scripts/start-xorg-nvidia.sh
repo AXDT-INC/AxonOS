@@ -2,8 +2,25 @@
 # Start Xorg :0 with NVIDIA driver for VirtualGL when GPU is present.
 # If no NVIDIA GPU, sleep forever so supervisord does not keep retrying.
 set -e
-if ! nvidia-smi &>/dev/null; then
-  echo "No NVIDIA GPU detected; skipping X :0 (VirtualGL will not be used)."
+# The WebRTC agent reads this marker to fail a connect immediately with the real
+# reason instead of waiting out its display timeout as a generic display_not_ready.
+XORG_MARKER_DIR=/run/axonos
+XORG_MARKER="$XORG_MARKER_DIR/xorg-unavailable"
+mkdir -p "$XORG_MARKER_DIR" 2>/dev/null || true
+rm -f "$XORG_MARKER" 2>/dev/null || true
+if ! _smi_out="$(nvidia-smi 2>&1)"; then
+  _kmod="$(sed -n 's/^NVRM version: NVIDIA UNIX [^ ]* Kernel Module  *\([0-9.]*\).*/\1/p' /proc/driver/nvidia/version 2>/dev/null | head -n 1)"
+  _usr="$(dpkg-query -W -f='${Version}\n' 'xserver-xorg-video-nvidia-*' 2>/dev/null | head -n 1 | cut -d- -f1)"
+  if echo "$_smi_out" | grep -qi "version mismatch" || { [ -n "$_kmod" ] && [ -n "$_usr" ] && [ "$_kmod" != "$_usr" ]; }; then
+    echo "start-xorg-nvidia: ERROR NVIDIA driver mismatch: host kernel module ${_kmod:-unknown} vs image userspace ${_usr:-unknown}."
+    echo "start-xorg-nvidia: nvidia-smi said: ${_smi_out}"
+    echo "start-xorg-nvidia: rebuild the image with NVIDIA_DRIVER_PKG_VERSION pinned to the host driver (see env.example)."
+    echo "display_driver_mismatch" > "$XORG_MARKER" 2>/dev/null || true
+  else
+    echo "No NVIDIA GPU detected; skipping X :0 (VirtualGL will not be used)."
+    echo "start-xorg-nvidia: nvidia-smi said: ${_smi_out}"
+    echo "display_gpu_missing" > "$XORG_MARKER" 2>/dev/null || true
+  fi
   exec sleep infinity
 fi
 # Helpful when debugging SIGSEGV: host driver vs container userspace must agree (see Dockerfile / env.example).

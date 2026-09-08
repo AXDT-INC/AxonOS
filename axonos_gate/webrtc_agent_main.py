@@ -479,6 +479,20 @@ def _desktop_presentation_ready() -> bool:
     return bool(marker) and os.path.isfile(marker)
 
 
+_XORG_UNAVAILABLE_MARKER = "/run/axonos/xorg-unavailable"
+_XORG_UNAVAILABLE_REASONS = frozenset({"display_driver_mismatch", "display_gpu_missing"})
+
+
+def _xorg_unavailable_reason() -> str | None:
+    """Reason start-xorg-nvidia.sh gave for never starting X, or None when it did/will."""
+    try:
+        with open(_XORG_UNAVAILABLE_MARKER, encoding="utf-8") as fh:
+            reason = fh.read().strip()
+    except OSError:
+        return None
+    return reason if reason in _XORG_UNAVAILABLE_REASONS else "display_not_ready"
+
+
 def _wait_for_display_ready() -> bool:
     """Block until X11 on WEBRTC_CAPTURE_DISPLAY accepts connections (session containers need this)."""
     env = _display_env()
@@ -488,6 +502,13 @@ def _wait_for_display_ready() -> bool:
     attempt = 0
     while time.monotonic() < deadline:
         attempt += 1
+        skipped = _xorg_unavailable_reason()
+        if skipped:
+            # Xorg was never started (driver mismatch / no GPU): waiting cannot help.
+            logger.error(
+                "WebRTC display %s unavailable: Xorg start was skipped (%s)", _display(), skipped
+            )
+            return False
         try:
             probe = subprocess.run(
                 ["xset", "q"],
@@ -1384,7 +1405,7 @@ async def _run_session(job: dict[str, Any]) -> None:
 
     session_id = job["session_id"]
     if not _ensure_display_ready():
-        _agent_fail(session_id, "display_not_ready")
+        _agent_fail(session_id, _xorg_unavailable_reason() or "display_not_ready")
         return
 
     # Each WebRTC session gets a clean X mouse-button mask (agent process is long-lived).

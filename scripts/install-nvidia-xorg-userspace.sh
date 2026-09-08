@@ -35,11 +35,30 @@ else
 fi
 
 apt-get update
+
+# Newer Ubuntu packaging makes every libnvidia-* depend on the versioned virtual
+# package nvidia-kernel-common-<major>-<triplet>, provided only by the exact
+# nvidia-kernel-common-<major> build, and libnvidia-gl pulls libnvidia-compute
+# (NVML: the library nvidia-smi and the container hook's ldconfig resolve). apt
+# never picks an older build of an unlisted dependency on its own, so pin those
+# too when the archive carries the resolved version; otherwise an older pin
+# fails with "unmet dependencies" and an unpinned one silently drifts past the
+# host kernel module (NVML "Driver/library version mismatch", Xorg skipped).
+extra_pins=()
+for extra in "nvidia-kernel-common-${ver_major}" "libnvidia-compute-${ver_major}"; do
+  if apt-cache madison "${extra}" 2>/dev/null | awk '{print $3}' | grep -Fxq "${NVIDIA_PKG_RESOLVED}"; then
+    extra_pins+=("${extra}=${NVIDIA_PKG_RESOLVED}")
+  else
+    echo "axonos: ${extra} has no ${NVIDIA_PKG_RESOLVED} build; leaving it to apt"
+  fi
+done
+
 apt-get -o Dpkg::Options::=--force-unsafe-io install -y --no-install-recommends --allow-downgrades \
   "xserver-xorg-video-nvidia-${ver_major}=${NVIDIA_PKG_RESOLVED}" \
   "libnvidia-gl-${ver_major}=${NVIDIA_PKG_RESOLVED}" \
   "libnvidia-cfg1-${ver_major}=${NVIDIA_PKG_RESOLVED}" \
   "libnvidia-common-${ver_major}=${NVIDIA_PKG_RESOLVED}" \
+  "${extra_pins[@]}" \
   libglvnd0 libglx0 libegl1
 
 if apt-cache madison "libnvidia-egl-${ver_major}" 2>/dev/null | awk '{print $3}' | grep -Fxq "${NVIDIA_PKG_RESOLVED}"; then
@@ -62,7 +81,8 @@ for pkg in \
   "xserver-xorg-video-nvidia-${ver_major}" \
   "libnvidia-gl-${ver_major}" \
   "libnvidia-cfg1-${ver_major}" \
-  "libnvidia-common-${ver_major}"; do
+  "libnvidia-common-${ver_major}" \
+  "libnvidia-compute-${ver_major}"; do
   inst="$(dpkg-query -W -f='${Version}' "${pkg}" 2>/dev/null || true)"
   echo "axonos: ${pkg}=${inst}"
   [ "${inst}" = "${NVIDIA_PKG_RESOLVED}" ] || {
