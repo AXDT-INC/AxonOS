@@ -1,0 +1,184 @@
+#!/usr/bin/python3
+"""AxonOS in-session GPU process view: `nvidia-smi` wrapper + `axon-gpu-ps`.
+
+Installed as /usr/local/bin/nvidia-smi (ahead of the driver's /usr/bin copy
+on PATH) and as /usr/local/bin/axon-gpu-ps.
+
+Why: NVML reports GPU compute processes by *host* PID. Inside a session
+container those PIDs do not exist in /proc, so the stock nvidia-smi prints
+"No running processes found" while the session's own job is running. The
+wrapper keeps everything the real tool prints and only replaces that line
+with the session's processes, resolved through the gate:
+
+  nvidia-smi --query-compute-apps  -> host PID + used memory per GPU (works
+                                      in-container, NVML does not touch /proc)
+  GET gate /api/session/gpu-processes -> host PID -> container PID + command
+                                      (per-session key; own container only)
+
+Any argument other than a bare invocation is passed straight to the real
+binary, so scripts and `--query-*` callers see the exact upstream behaviour.
+`axon-gpu-ps` prints just the joined table (or `--json`).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import urllib.parse
+import urllib.request
+
+REAL_NVIDIA_SMI = "/usr/bin/nvidia-smi"
+NO_PROCS_MARKER = "No running processes found"
+GATE = (os.getenv("AXGT_GATE_HEARTBEAT_URL") or "http://127.0.0.1:8889").rstrip("/")
+WALLET = (os.getenv("AXGT_WALLET_ADDRESS") or "").strip()
+FILES_KEY = (os.getenv("AXGT_SESSION_FILES_KEY") or "").strip()
+TIMEOUT_S = 5
+
+
+def _run(args):
+    return subprocess.run(
+        [REAL_NVIDIA_SMI, *args],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+
+
+def _gpu_index_by_uuid() -> dict:
+    out = _run(["--query-gpu=index,uuid", "--format=csv,noheader"])
+    table = {}
+    for line in out.stdout.splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) == 2 and parts[0].isdigit():
+            table[parts[1]] = int(parts[0])
+    return table
+
+
+def _compute_apps() -> list:
+    """[{gpu, host_pid, used_mib}] from NVML, host PIDs as-is."""
+    out = _run(["--query-compute-apps=gpu_uuid,pid,used_memory", "--format=csv,noheader,nounits"])
+    by_uuid = _gpu_index_by_uuid()
+    apps = []
+    for line in out.stdout.splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 3:
+            continue
+        try:
+            host_pid = int(parts[1])
+        except ValueError:
+            continue
+        try:
+            used = int(float(parts[2]))
+        except ValueError:
+            used = None
+        apps.append({"gpu": by_uuid.get(parts[0], "?"), "host_pid": host_pid, "used_mib": used})
+    return apps
+
+
+def _process_map() -> dict:
+    """host_pid(str) -> {pid, comm, args} from the gate; {} when unavailable."""
+    if not WALLET or not FILES_KEY:
+        return {}
+    url = f"{GATE}/api/session/gpu-processes?" + urllib.parse.urlencode({"wallet_address": WALLET})
+    req = urllib.request.Request(url, headers={"X-AXGT-Session-Key": FILES_KEY})
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT_S) as r:
+            data = json.loads(r.read() or b"{}")
+    except Exception:  # noqa: BLE001 — display is best-effort, never break nvidia-smi
+        return {}
+    procs = data.get("processes") if isinstance(data, dict) else None
+    return procs if isinstance(procs, dict) else {}
+
+
+def joined_processes() -> list:
+    apps = _compute_apps()
+    if not apps:
+        return []
+    pmap = _process_map()
+    rows = []
+    for app in apps:
+        info = pmap.get(str(app["host_pid"])) or {}
+        rows.append({
+            "gpu": app["gpu"],
+            "pid": info.get("pid"),
+            "host_pid": app["host_pid"],
+            "name": info.get("args") or info.get("comm") or "",
+            "used_mib": app["used_mib"],
+        })
+    rows.sort(key=lambda r: (str(r["gpu"]), r["host_pid"]))
+    return rows
+
+
+def _fmt_rows(rows, width: int) -> list:
+    """Rows shaped like nvidia-smi's own process table, sized to its box."""
+    inner = max(width - 2, 60)
+    lines = []
+    for r in rows:
+        pid = str(r["pid"]) if r["pid"] is not None else f"h{r['host_pid']}"
+        mem = f"{r['used_mib']}MiB" if r["used_mib"] is not None else "N/A"
+        # "|  GPU   GI   CI        PID   Type   Process name   GPU Memory |"
+        prefix = f"  {str(r['gpu']):>3}   N/A  N/A  {pid:>9}      C   "
+        suffix = f" {mem:>10} "
+        name_width = max(inner - len(prefix) - len(suffix), 8)
+        name = r["name"]
+        if len(name) > name_width:
+            name = name[: name_width - 1] + "…"
+        lines.append("|" + (prefix + name.ljust(name_width) + suffix)[:inner].ljust(inner) + "|")
+    return lines
+
+
+def _wrap_plain_output() -> int:
+    """Bare `nvidia-smi`: reprint the real output with our rows spliced in."""
+    out = _run([])
+    sys.stderr.write(out.stderr)
+    text = out.stdout
+    if out.returncode != 0 or NO_PROCS_MARKER not in text:
+        sys.stdout.write(text)
+        return out.returncode
+    rows = joined_processes()
+    if not rows:
+        sys.stdout.write(text)
+        return out.returncode
+    new_lines = []
+    for line in text.splitlines():
+        if NO_PROCS_MARKER in line:
+            new_lines.extend(_fmt_rows(rows, len(line)))
+        else:
+            new_lines.append(line)
+    sys.stdout.write("\n".join(new_lines) + "\n")
+    return out.returncode
+
+
+def _print_table(rows) -> None:
+    if not rows:
+        print("No GPU compute processes in this session.")
+        return
+    print(f"{'GPU':>3}  {'PID':>8}  {'HOST_PID':>8}  {'MEM':>9}  COMMAND")
+    for r in rows:
+        pid = str(r["pid"]) if r["pid"] is not None else "?"
+        mem = f"{r['used_mib']}MiB" if r["used_mib"] is not None else "N/A"
+        print(f"{str(r['gpu']):>3}  {pid:>8}  {r['host_pid']:>8}  {mem:>9}  {r['name']}")
+
+
+def main(argv) -> int:
+    invoked_as = os.path.basename(argv[0])
+    args = argv[1:]
+    if invoked_as == "nvidia-smi":
+        if not os.path.exists(REAL_NVIDIA_SMI):
+            sys.stderr.write("nvidia-smi: driver binary not present in this container\n")
+            return 127
+        if args:
+            os.execv(REAL_NVIDIA_SMI, [REAL_NVIDIA_SMI, *args])
+        return _wrap_plain_output()
+    if "--json" in args:
+        print(json.dumps(joined_processes(), indent=2))
+    else:
+        _print_table(joined_processes())
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

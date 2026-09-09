@@ -589,6 +589,14 @@ COPY scripts/axonos-motd-profile.sh /etc/profile.d/99-axonos-motd.sh
 COPY scripts/axonos-firefox-wrapper.sh /usr/local/bin/firefox
 RUN chmod 0755 /usr/local/bin/firefox
 
+# nvidia-smi wrapper: NVML reports GPU processes by host PID, which the
+# session's PID namespace cannot resolve, so the driver's binary prints "No
+# running processes found". The wrapper (ahead of /usr/bin on PATH) splices the
+# session's own processes in via the gate; any argument passes straight
+# through to /usr/bin/nvidia-smi. `axon-gpu-ps` prints just the table.
+COPY scripts/axonos-gpu-ps /usr/local/bin/axon-gpu-ps
+RUN chmod 0755 /usr/local/bin/axon-gpu-ps && ln -sf axon-gpu-ps /usr/local/bin/nvidia-smi
+
 # Switch to aXonian user
 USER $USER
 WORKDIR /home/$USER

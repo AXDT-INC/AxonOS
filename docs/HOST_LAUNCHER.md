@@ -61,6 +61,7 @@ Set on host:
   [Security boundary](#security-boundary))
 - optional `AXGT_HOST_SESSION_CONTAINER_SHM_SIZE=32g` (default when unset; matches main `axonos` `shm_size` intent for GLX)
 - optional `AXGT_HOST_SESSION_LXCFS_DIR=/var/lib/lxcfs`: with `lxcfs` installed and running on the host (`apt install lxcfs`), its procfs views are mounted read-only into every session so `uptime`/`loadavg` reflect the container rather than the host
+- `/proc` is bind-mounted read-only at `/host/proc` (`AXGT_HOST_PROC_DIR`) so the launcher can answer `GET /session-process-map?session_id=N` with the session container's host-PID → container-PID table. The gate exposes it to the container as `GET /api/session/gpu-processes` (per-session key auth), and the image's `nvidia-smi` wrapper uses it to show the session's own GPU processes instead of "No running processes found"
 - optional `AXGT_HOST_SESSION_ENV_PASSTHROUGH=WEBRTC_STUN_URLS,...`
   (media tuning only)
 - optional bind:

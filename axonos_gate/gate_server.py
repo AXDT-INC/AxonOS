@@ -2462,6 +2462,34 @@ def api_session_heartbeat():
     return jsonify(session_heartbeat(wallet_address, ssh_active=ssh_active, session_id=session_id))
 
 
+@app.route('/api/session/gpu-processes', methods=['GET'])
+def api_session_gpu_processes():
+    """Host-PID -> container-PID map for the calling session container.
+
+    Consumed by the in-session `nvidia-smi` wrapper (scripts/axonos-gpu-ps):
+    NVML lists GPU compute processes by host PID, which the session's own PID
+    namespace cannot resolve. Auth is the per-session files_key only, so a
+    container can ever see its own process table and nothing else's.
+    """
+    if not _session_mgr_available or session_id_for_files_key is None:
+        return jsonify({"ok": False, "error": "Session manager unavailable"}), 503
+    wallet_address = (request.args.get('wallet_address') or '').strip()
+    if not wallet_address or not validate_wallet_address(wallet_address):
+        return jsonify({"ok": False, "error": "Valid wallet_address required"}), 400
+    session_key = (request.headers.get('X-AXGT-Session-Key') or '').strip()
+    session_id = session_id_for_files_key(wallet_address, session_key) if session_key else None
+    if session_id is None:
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+    try:
+        from axonos_gate import session_launcher as _launcher
+    except ImportError:
+        import session_launcher as _launcher
+    processes = _launcher.session_process_map(session_id)
+    if processes is None:
+        return jsonify({"ok": False, "error": "process map unavailable"}), 503
+    return jsonify({"ok": True, "session_id": session_id, "processes": processes})
+
+
 @app.route('/api/session/release', methods=['POST', 'OPTIONS'])
 def api_session_release():
     if request.method == 'OPTIONS':

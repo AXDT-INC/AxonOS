@@ -38,6 +38,9 @@ services:
       AXGT_HOST_SESSION_CONTAINER_EXTRA_ARGS: ${AXGT_HOST_SESSION_CONTAINER_EXTRA_ARGS:-}
       AXGT_HOST_SESSION_CONTAINER_SHM_SIZE: ${AXGT_HOST_SESSION_CONTAINER_SHM_SIZE:-32g}
       AXGT_HOST_SESSION_LXCFS_DIR: ${AXGT_HOST_SESSION_LXCFS_DIR:-}
+      # Read-only host procfs; lets the launcher translate NVML host PIDs to a
+      # session's own PIDs for the in-session nvidia-smi wrapper.
+      AXGT_HOST_PROC_DIR: /host/proc
       AXGT_PERSISTENT_STORAGE_ENABLED: ${AXGT_PERSISTENT_STORAGE_ENABLED:-true}
       AXGT_PERSISTENT_STORAGE_VOLUME_PREFIX: ${AXGT_PERSISTENT_STORAGE_VOLUME_PREFIX:-axgt-user-storage-}
       AXGT_PERSISTENT_STORAGE_MOUNT_PATH: ${AXGT_PERSISTENT_STORAGE_MOUNT_PATH:-/home/aXonian}
@@ -56,6 +59,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/docker/axonos_storage:/var/lib/docker/axonos_storage
       - /dev:/dev
+      - /proc:/host/proc:ro
     networks:
       - axonos_control
     depends_on:

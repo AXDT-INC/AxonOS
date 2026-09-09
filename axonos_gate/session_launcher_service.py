@@ -69,6 +69,14 @@ except ImportError:
             strip_unsafe_session_run_flags,
         )
 
+try:
+    from .gpu_process_map import container_process_map
+except ImportError:
+    try:
+        from axonos_gate.gpu_process_map import container_process_map
+    except ImportError:
+        from gpu_process_map import container_process_map
+
 
 try:
     from .guest_mode import is_guest_identity as _is_guest_identity
@@ -1869,6 +1877,35 @@ def stop():
     stopped = target if removed else None
     logger.info("launcher: stopped managed session=%s target=%s", session_id, stopped or "absent")
     return jsonify({"ok": True, "stopped": stopped})
+
+
+@app.route("/session-process-map", methods=["GET"])
+def session_process_map():
+    """Host-PID -> container-PID map for one managed session container.
+
+    Backs the in-session `nvidia-smi` wrapper: NVML names GPU processes by
+    host PID, which the session's own PID namespace cannot resolve. Only the
+    exactly-labelled running container for *session_id* is inspected, so a
+    session can never learn about another tenant's processes.
+    """
+    auth_err = _require_token()
+    if auth_err:
+        return auth_err
+    raw = (request.args.get("session_id") or "").strip()
+    try:
+        session_id = int(raw)
+    except ValueError:
+        return jsonify({"ok": False, "error": "session_id must be an integer"}), 400
+    if session_id <= 0:
+        return jsonify({"ok": False, "error": "session_id must be positive"}), 400
+    container_id = _managed_container_id(session_id, require_running=True)
+    if not container_id:
+        return jsonify({"ok": False, "error": "no running managed container"}), 404
+    processes = container_process_map(
+        container_id,
+        docker_env=subprocess_env_for_nested_docker(),
+    )
+    return jsonify({"ok": True, "session_id": session_id, "processes": processes})
 
 
 @app.route("/list-containers", methods=["GET"])

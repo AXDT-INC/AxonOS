@@ -54,6 +54,14 @@ except ImportError:
             strip_unsafe_session_run_flags,
         )
 
+try:
+    from .gpu_process_map import container_process_map
+except ImportError:
+    try:
+        from axonos_gate.gpu_process_map import container_process_map
+    except ImportError:
+        from gpu_process_map import container_process_map
+
 logger = logging.getLogger(__name__)
 _session_operation_locks: dict[int, threading.RLock] = {}
 _session_operation_locks_guard = threading.Lock()
@@ -378,6 +386,38 @@ def stop_session(session_id: int, container_id: Optional[str]) -> bool:
         return True
     with _session_operation_lock(session_id):
         return _stop_via_docker_cli(session_id, container_id)
+
+
+def session_process_map(session_id: int) -> Optional[dict]:
+    """{host_pid: {pid, comm, args}} for the session's container, or None.
+
+    http mode asks the launcher service (which holds the host procfs mount);
+    docker_cli mode inspects the container directly. None means the map is
+    unavailable (launcher down, container gone), not an empty container.
+    """
+    if not _container_mode_enabled():
+        return None
+    mode = _launcher_mode()
+    if mode == "noop":
+        return None
+    if mode == "http":
+        base_url = (os.getenv("AXGT_SESSION_LAUNCHER_URL") or "").strip().rstrip("/")
+        if not base_url:
+            return None
+        status, data, err = _http_json(
+            "GET",
+            f"{base_url}/session-process-map?session_id={int(session_id)}",
+            None,
+            timeout_s=20.0,
+        )
+        if err or status >= 400 or not isinstance(data, dict) or not data.get("ok"):
+            return None
+        processes = data.get("processes")
+        return processes if isinstance(processes, dict) else None
+    container_id = _managed_container_id_direct(session_id, require_running=True)
+    if not container_id:
+        return None
+    return container_process_map(container_id, docker_env=subprocess_env_for_nested_docker())
 
 
 def list_running_sessions() -> List[int]:

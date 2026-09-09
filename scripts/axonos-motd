@@ -15,6 +15,7 @@
 
   GPU & HPC System Commands:
    • nvidia-smi     monitor allocated GPU(s), VRAM & CUDA utilization
+   • axon-gpu-ps    list this session's GPU processes (PID, VRAM, command)
    • nvcc           NVIDIA CUDA C/C++ compiler driver
    • mpirun         OpenMPI parallel execution launcher for multi-GPU tasks
 
