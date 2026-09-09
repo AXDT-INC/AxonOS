@@ -2948,7 +2948,7 @@ Please try asking for help with a specific tool or task, and I'll provide detail
                         'ugene': ['ugene', '-ui'],  # UGENE needs -ui flag for GUI
                         'fiji': ['bash', '-c', 'cd /opt/Fiji && ./fiji'],  # Fiji needs to run from its directory
                         'imagej': ['bash', '-c', 'cd /opt/Fiji && ./fiji'],  # ImageJ is the same as Fiji
-                        'cellmodeller': ['bash', '-c', 'cd /opt && /usr/bin/python3 CellModeller/Scripts/CellModellerGUI.py'],  # CellModeller uses system Python (conda would break it)
+                        'cellmodeller': ['terminator', '--title', 'CellModeller — Simulation Output', '-x', '/usr/local/bin/cellmodeller-gui', '--hold'],  # same launcher as the template and XFCE menu entry
                         'firefox': ['firefox'],
                         'thunar': ['thunar'],
                         'terminal': ['terminator'],

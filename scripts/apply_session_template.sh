@@ -168,8 +168,10 @@ case "$template" in
         ;;
     cellmodeller)
         log "launching cellmodeller in visible terminal"
+        # Same launcher as the XFCE menu entry (PYTHONPATH, VirtualGL, CMPATH,
+        # visible output); launch_terminal keeps the shell open afterwards.
         launch_terminal "CellModeller — Simulation Output" \
-            "export PYTHONPATH=/opt/CellModeller; echo 'CellModeller simulation output will remain visible in this terminal.'; echo 'Closing the GUI returns here without closing the terminal.'; echo; if command -v vglrun >/dev/null 2>&1; then vglrun /usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py; else /usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py; fi; rc=\$?; echo; echo \"CellModeller exited with status \$rc. The terminal will remain open.\""
+            "/usr/local/bin/cellmodeller-gui"
         ;;
     ipfs-desktop)
         log "launching ipfs-desktop"

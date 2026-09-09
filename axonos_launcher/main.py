@@ -329,11 +329,13 @@ RUN apt update && apt install -y \\
 
 # Clone and install CellModeller
 WORKDIR /opt
+COPY scripts/cellmodeller-gui.sh /usr/local/bin/cellmodeller-gui
+RUN chmod +x /usr/local/bin/cellmodeller-gui
 RUN git clone https://github.com/cellmodeller/CellModeller.git && \\
     cd /opt/CellModeller && pip install -e . && \\
     mkdir /opt/data && \\
     chown -R $USER:$USER /opt/data && \\
-    echo '[Desktop Entry]\\nName=CellModeller\\nExec=bash -c "/usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py"\\nIcon=applications-science\\nType=Application\\nTerminal=true\\nCategories=Science;' \\
+    echo '[Desktop Entry]\\nName=CellModeller\\nExec=terminator --title "CellModeller — Simulation Output" -x /usr/local/bin/cellmodeller-gui --hold\\nIcon=applications-science\\nType=Application\\nTerminal=false\\nCategories=Science;' \\
     > /usr/share/applications/cellmodeller.desktop && \\
     chmod 644 /usr/share/applications/cellmodeller.desktop && \\
     update-desktop-database /usr/share/applications''',
@@ -1484,11 +1486,13 @@ docker start axonos
 ''' + self.get_qt_dependencies() + '''
 # Clone and install CellModeller
 WORKDIR /opt
+COPY scripts/cellmodeller-gui.sh /usr/local/bin/cellmodeller-gui
+RUN chmod +x /usr/local/bin/cellmodeller-gui
 RUN git clone https://github.com/cellmodeller/CellModeller.git && \\
     cd /opt/CellModeller && pip install -e . && \\
     mkdir /opt/data && \\
     chown -R $USER:$USER /opt/data && \\
-    echo '[Desktop Entry]\\nName=CellModeller\\nExec=bash -c "/usr/bin/python3 /opt/CellModeller/Scripts/CellModellerGUI.py"\\nIcon=applications-science\\nType=Application\\nTerminal=true\\nCategories=Science;' \\
+    echo '[Desktop Entry]\\nName=CellModeller\\nExec=terminator --title "CellModeller — Simulation Output" -x /usr/local/bin/cellmodeller-gui --hold\\nIcon=applications-science\\nType=Application\\nTerminal=false\\nCategories=Science;' \\
     > /usr/share/applications/cellmodeller.desktop && \\
     chmod 644 /usr/share/applications/cellmodeller.desktop && \\
     update-desktop-database /usr/share/applications''')
