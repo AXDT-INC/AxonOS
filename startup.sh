@@ -146,6 +146,13 @@ for rc in /home/aXonian/.bashrc /home/aXonian/.profile; do
     fi
 done
 
+# The Jupyter runtime dir persists on the home volume, so server records from
+# earlier containers pile up and `jupyter server list` reports dead servers whose
+# PIDs may now belong to unrelated processes. Nothing from a previous container
+# can still be running here, so clear them before supervisord starts a fresh one.
+rm -f /home/aXonian/.local/share/jupyter/runtime/jpserver-*.json \
+      /home/aXonian/.local/share/jupyter/runtime/jpserver-*-open.html 2>/dev/null || true
+
 # Persist the selected environment template so the desktop session can align its
 # hero app with the user's choice. XFCE is started by supervisord with a fixed
 # environment= subset and does NOT inherit Docker ENV (see supervisord.conf), so
