@@ -349,8 +349,8 @@ async function loadAll() {
       get('/api/public/telemetry/events?limit=120'),
     ]);
     renderStats(sum);
-    if (sess.sessions) { renderTimeline(sess.sessions); renderDur(sess.sessions); renderSessions(sess.sessions); }
     if (wallets.wallets) renderWallets(wallets.wallets);
+    if (sess.sessions) { renderTimeline(sess.sessions); renderDur(sess.sessions); renderSessions(sess.sessions); }
     if (events.events)  renderEvents(events.events);
     setRefresh();
   } catch(e) { setError(); }
@@ -436,7 +436,13 @@ function renderLiveSessions(sessions, containers) {
     const age = s.heartbeat_age_seconds;
     const hbClass = age == null ? 'hb-warn' : age < 30 ? 'hb-ok' : age < 90 ? 'hb-warn' : 'hb-dead';
     const hbLabel = age == null ? '?' : age < 60 ? Math.round(age) + 's ago' : Math.floor(age/60) + 'm ago';
-    const expiresIn = s.expires_in_seconds != null ? (s.expires_in_seconds > 0 ? Math.round(s.expires_in_seconds/60) + 'm left' : 'expired') : '—';
+    // Match the workspace card: "Up" is wall-clock since start (not last
+    // heartbeat minus start) and "Remaining" is wallet credits ÷ burn rate
+    // (not the heartbeat lease, which is always ~60 min for a live session).
+    const rate = burnRate(s);
+    const balance = walletBalances[String(s.wallet_address || '').toLowerCase()];
+    const uptime = fmtUptime(liveUptimeSeconds(s));
+    const remaining = fmtRemaining(balance, rate);
     const gpuList = s.gpu_ids || '—';
     const c = cMap[String(s.id)];
     const cStatus = c ? c.status : '—';
@@ -447,9 +453,9 @@ function renderLiveSessions(sessions, containers) {
       </div>
       <div class="live-card-body">
         <span><b>#${s.id} · ${pl(s.requested_profile)}</b>profile</span>
-        <span><b>${s.duration_minutes} min</b>duration</span>
+        <span><b>${uptime}</b>up</span>
         <span><b>${gpuList}</b>GPUs</span>
-        <span><b>${expiresIn}</b>expires</span>
+        <span><b>≈ ${remaining}</b>remaining · ${rate} cr/min</span>
         <span style="grid-column:1/-1"><b style="font-size:11px;color:var(--muted)">${cStatus}</b></span>
       </div>
     </div>`;
@@ -533,7 +539,7 @@ function renderSessions(sessions) {
       <td class="mono">${sw(s.wallet_address)}</td>
       <td><span class="badge b${s.requested_profile}">${pl(s.requested_profile)}</span></td>
       <td class="muted" style="font-size:10px">${ft(s.started_at)}</td>
-      <td class="num muted">${s.duration_minutes}m</td>
+      <td class="num muted">${s.status === 'active' ? fmtUptime(liveUptimeSeconds(s)) : s.duration_minutes + 'm'}</td>
       <td><span class="badge b${st}">${st}</span></td>
     </tr>`;
   }).join('');
@@ -544,6 +550,7 @@ function renderSessions(sessions) {
 function renderWallets(wallets) {
   const el = document.getElementById('tbl-wallets');
   if (!wallets.length) { el.innerHTML = '<div class="loading muted">No wallets yet</div>'; return; }
+  wallets.forEach(w => { if (w.wallet_address) walletBalances[String(w.wallet_address).toLowerCase()] = Number(w.remaining_minutes); });
   const rows = wallets.map(w => `<tr>
     <td class="mono">${sw(w.wallet_address)}</td>
     <td class="num">${w.total_sessions}</td>
@@ -575,6 +582,33 @@ function renderEvents(events) {
 
 // ── Helpers ──
 function sw(w) { return w ? w.slice(0,6)+'…'+w.slice(-4) : '—'; }
+// Wallet balances (credits = prepaid minutes) from the last /wallets load, keyed
+// by lowercase address, so live cards can show the same "Remaining" clock as
+// the workspace session card and the desktop sidebar.
+const walletBalances = {};
+const PROFILE_GPUS = { small: 1, medium: 2, large: 4, max: 8 };
+// Burn rate in credits/min — one credit per GPU per minute, exactly as the
+// workspace card computes it. Prefer the GPUs actually allocated.
+function burnRate(s) {
+  const ids = String(s.gpu_ids || '').split(',').map(x => x.trim()).filter(Boolean);
+  if (ids.length) return ids.length;
+  return PROFILE_GPUS[s.requested_profile] || 1;
+}
+// Same formatter as the workspace "Up …" counter (wall-clock since start).
+function fmtUptime(seconds) {
+  if (typeof seconds !== 'number' || !isFinite(seconds) || seconds < 0) return '—';
+  const total = Math.floor(seconds), h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60);
+  if (h > 0) return h + 'h ' + (m < 10 ? '0' : '') + m + 'm';
+  return m > 0 ? m + 'm' : '<1m';
+}
+// Same "credits ÷ burn rate" clock as the workspace card / sidebar "Remaining".
+function fmtRemaining(credits, rate) {
+  if (typeof credits !== 'number' || !isFinite(credits)) return '—';
+  const minutesLeft = Math.max(0, credits) / Math.max(1, Number(rate) || 1);
+  const h = Math.floor(minutesLeft / 60), m = Math.floor(minutesLeft % 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+function liveUptimeSeconds(s) { return s.started_at ? Date.now() / 1000 - Number(s.started_at) : NaN; }
 // Friendly profile name for display; the raw key still drives the badge CSS class.
 const PROFILE_LABELS = { small: 'Single', medium: 'Dual', large: 'Quad', max: 'Octa' };
 function pl(p) { return PROFILE_LABELS[p] || (p || '—'); }
@@ -587,8 +621,8 @@ function evlabel(t) {
 }
 
 // Initial load, then fast live tick (10s) + full reload (60s)
-loadAll();
-loadLive();
+// Wallet balances feed the live cards' "Remaining" clock, so load them first.
+loadAll().then(loadLive);
 setInterval(loadLive, 10000);
 setInterval(loadAll, 60000);
 </script>
