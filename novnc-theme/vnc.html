@@ -11698,6 +11698,29 @@ Copyright (C) 2019 The noVNC Authors
             return axonosFormatSidebarDuration(Date.now() / 1000 - Number(startedAt));
         }
 
+        /** Same "credits ÷ burn rate" clock as the sidebar "Remaining" hint
+         *  ("1h 05m", "12m") so the workspace card and the deck never disagree.
+         *  Returns "—" until a balance is known — never a fabricated zero. */
+        function axonosFormatSessionCardRemaining(credits, rate) {
+            if (typeof credits !== 'number' || !isFinite(credits)) return '—';
+            const minutesLeft = Math.max(0, credits) / Math.max(1, Number(rate) || 1);
+            const h = Math.floor(minutesLeft / 60);
+            const m = Math.floor(minutesLeft % 60);
+            return h > 0 ? `${h}h ${m}m` : `${m}m`;
+        }
+
+        /** Cards render before the balance read lands; repaint their "Remaining"
+         *  spans from every wallet-status refresh (dashboard load, verify reply,
+         *  sidebar telemetry loop) so they track the deck. */
+        function axonosPaintSessionCardRemaining(credits) {
+            if (typeof credits !== 'number' || !isFinite(credits)) return;
+            window.axonosLastKnownCredits = credits;
+            const nodes = document.querySelectorAll('.axonos-session-card__remaining[data-rate]');
+            for (let i = 0; i < nodes.length; i++) {
+                nodes[i].textContent = axonosFormatSessionCardRemaining(credits, nodes[i].getAttribute('data-rate'));
+            }
+        }
+
         // Session cards render once; keep their "Up …" counters moving while
         // the workspace stays open (e.g. after detaching) without a re-render.
         // Same 5 s cadence as the sidebar so both flip minutes together.
@@ -11852,6 +11875,7 @@ Copyright (C) 2019 The noVNC Authors
                 var headerCredits = document.querySelector('.axonos-header-credits-val');
                 if (dashboardCredits) dashboardCredits.textContent = String(credits);
                 if (headerCredits) headerCredits.textContent = String(credits);
+                axonosPaintSessionCardRemaining(data.remaining_minutes);
             }
 
             // Preserve the existing post-top-up auto-reconnect behavior, but only
@@ -12045,7 +12069,7 @@ Copyright (C) 2019 The noVNC Authors
                             specParts.push(axonosEscapeHtml(envTitle));
                             const statsText = isCreditGrace
                                 ? `${graceTtl || 'Top up within 2h'} · billing paused`
-                                : `Up <span class="axonos-session-card__uptime" data-started-at="${Number(session.started_at) || ''}">${uptimeStr}</span> · ${rate} cr/min`;
+                                : `Up <span class="axonos-session-card__uptime" data-started-at="${Number(session.started_at) || ''}">${uptimeStr}</span> · Remaining ≈ <span class="axonos-session-card__remaining" data-rate="${rate}">${axonosFormatSessionCardRemaining(window.axonosLastKnownCredits, rate)}</span> · ${rate} cr/min`;
                             const noteText = String(session.notes || '');
                             const canAnnotate = sessionKey !== '' && !isCreditGrace;
                             card.innerHTML = `
@@ -12270,6 +12294,7 @@ Copyright (C) 2019 The noVNC Authors
                     if (typeof data.remaining_minutes !== 'number') return status;
                     const creditsStr = String(Math.round(data.remaining_minutes));
                     if (creditsValEl) creditsValEl.textContent = creditsStr;
+                    axonosPaintSessionCardRemaining(data.remaining_minutes);
 
                     // Update global headers and topbar widget as well
                     var headerCredits = document.querySelector('.axonos-header-credits-val');
@@ -14005,6 +14030,7 @@ Copyright (C) 2019 The noVNC Authors
                 const timeLeftEl = document.getElementById('axonos_sidebar_time_left');
 
                 if (creditsValEl) creditsValEl.textContent = Math.round(credits);
+                axonosPaintSessionCardRemaining(credits);
 
                 // Calc time remaining: credits / (profile gpus)
                 const requestedGpuCount = axonosGpuCountForProfile(window.axonosOwnedSession ? window.axonosOwnedSession.profile : 'small');
