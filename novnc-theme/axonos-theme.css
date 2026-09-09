@@ -8268,51 +8268,57 @@ html.noVNC_connected:has(.axonos-session-sidebar.collapsed) .axonos-session-hud 
 }
 
 /* Sidebar collapse/expand toggle button.
- * Mirrors the left deck's .noVNC_button chrome (base.css): a 32px content box
- * with 4px padding, 1px rgba(255,255,255,0.2) border and 6px radius, so the
- * handle reads as a sibling of the fullscreen/settings/clipboard buttons. */
+ * A mirror image of the left deck's #noVNC_control_bar_handle (base.css): a
+ * 50px-tall tab that pokes 15px out of the rail's left edge, with the same
+ * gradient/border/shadow chrome from the deck handle override above and the
+ * same tiny 5x6 triangle glyph. Its vertical position is kept in sync with the
+ * deck handle by script (the deck is user-draggable), so `top` is only a
+ * fallback here. */
 .axonos-sidebar-toggle {
   position: absolute;
-  top: 12px;
-  right: 332px;
+  top: 35px;
+  right: 320px;
   z-index: 100;
   -webkit-appearance: none;
   appearance: none;
-  box-sizing: content-box;
-  width: 32px;
-  height: 32px;
-  padding: 4px;
-  border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(8, 10, 18, 0.85);
-  backdrop-filter: blur(4px);
-  color: #a6acc2;
+  box-sizing: border-box;
+  width: 15px;
+  height: 50px;
+  padding: 0;
+  margin: 0;
+  border-radius: 5px 0 0 5px;
+  border: 1px solid var(--rule-strong);
+  border-right: none;
+  background: linear-gradient(180deg, rgba(18, 19, 31, 0.98) 0%, rgba(9, 18, 32, .98) 100%);
+  box-shadow: -3px 4px 14px rgba(0, 0, 0, 0.4);
+  color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: right 0.3s cubic-bezier(0.16, 1, 0.3, 1), color 0.2s, background-color 0.2s, border-color 0.2s;
+  transition: right 0.3s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s, border-color 0.2s;
 }
 
 .axonos-sidebar-toggle:hover {
-  background-color: rgba(255, 255, 255, 0.2);
-  border-color: rgba(255, 255, 255, 0.35);
-  color: #fff;
+  background: linear-gradient(180deg, rgba(20, 38, 64, .98) 0%, rgba(14, 26, 48, .98) 100%);
+  border-color: var(--hair-mint);
 }
 
 .axonos-sidebar-toggle.collapsed {
-  right: 12px !important;
+  right: 0 !important;
 }
 
 .axonos-sidebar-toggle svg {
-  width: 22px;
-  height: 22px;
+  width: 5px;
+  height: 6px;
   display: block;
-  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform 0.5s ease-in-out;
 }
 
+/* Rail open: glyph points at the rail (hide). Collapsed: points back at the
+ * desktop (show) — the exact inverse of the deck handle's arrow. */
 .axonos-sidebar-toggle.collapsed svg {
-  transform: rotate(180deg);
+  transform: translateX(-1px) rotate(180deg);
 }
 
 /* Adjust control bar hints in full-screen */
@@ -8419,7 +8425,10 @@ html.noVNC_connected:fullscreen .axonos-sidebar-toggle,
 html.noVNC_connected:-webkit-full-screen .axonos-sidebar-toggle,
 html.noVNC_connected:-moz-full-screen .axonos-sidebar-toggle,
 html.noVNC_connected:-ms-fullscreen .axonos-sidebar-toggle {
-  right: 12px !important;
+  right: 305px !important;
+  border-radius: 0 5px 5px 0;
+  border-right: 1px solid var(--rule-strong);
+  border-left: none;
   z-index: 60;
   transition: none;
 }

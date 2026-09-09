@@ -121,7 +121,7 @@ Copyright (C) 2019 The noVNC Authors
     <!-- Stylesheets -->
     <link rel="stylesheet" href="app/styles/base.css">
     <link rel="stylesheet" href="app/vendor/xterm/xterm.css?v=6.0.0">
-    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.3&t=20260909elapsed2">
+    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.3&t=20260909railtab">
 
     <!-- Images that will later appear via CSS -->
     <link rel="preload" as="image" href="app/images/info.svg">
@@ -2004,10 +2004,10 @@ Copyright (C) 2019 The noVNC Authors
     </div>
 
     <!-- Sidebar Collapse Toggle Button -->
-    <button type="button" id="axonos_sidebar_toggle" class="axonos-sidebar-toggle" title="Toggle Telemetry Sidebar">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="9 18 15 12 9 6" />
+    <button type="button" id="axonos_sidebar_toggle" class="axonos-sidebar-toggle" title="Hide/Show the telemetry sidebar">
+        <svg width="5" height="6" viewBox="0 0 5 6" aria-hidden="true">
+            <path d="M4 3 L1 1 L1 5 Z" fill="currentColor" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round" />
         </svg>
     </button>
 
@@ -13638,6 +13638,34 @@ Copyright (C) 2019 The noVNC Authors
             sidebarToggle.addEventListener('click', toggleSidebar);
             if (sidebarBarButton) {
                 sidebarBarButton.addEventListener('click', toggleSidebar);
+            }
+            // Keep the rail handle at the same height as the left deck handle
+            // so the two read as mirror images. The deck anchor is draggable
+            // (ui.js writes anchor.style.top), so re-sync on those style
+            // mutations, on resize, and once the anchor's move transition ends.
+            const deckHandle = document.getElementById('noVNC_control_bar_handle');
+            const deckAnchor = document.getElementById('noVNC_control_bar_anchor');
+            if (deckHandle && deckAnchor) {
+                let syncQueued = false;
+                const syncToggleTop = () => {
+                    syncQueued = false;
+                    const rect = deckHandle.getBoundingClientRect();
+                    if (rect.height > 0) {
+                        sidebarToggle.style.top = Math.round(rect.top) + 'px';
+                    }
+                };
+                const queueSync = () => {
+                    if (syncQueued) return;
+                    syncQueued = true;
+                    requestAnimationFrame(syncToggleTop);
+                };
+                new MutationObserver(queueSync).observe(deckAnchor, { attributes: true, attributeFilter: ['style', 'class'] });
+                deckAnchor.addEventListener('transitionend', queueSync);
+                window.addEventListener('resize', queueSync);
+                document.addEventListener('mouseup', queueSync, true);
+                document.addEventListener('touchend', queueSync, true);
+                document.documentElement.addEventListener('transitionend', queueSync);
+                queueSync();
             }
         }
 
