@@ -463,7 +463,7 @@ docker run -d --gpus all --env-file .env -p 6080:6080 \
 * 🔧 `http://localhost:5001` → IPFS API
 * 📁 `http://localhost:5001/webui` → IPFS Web UI
 
-> **Security Note**: For production use, always set a custom password during build using `--build-arg PASSWORD="$AXONOS_VNC_PASSWORD"`. The default password `axonpassword` is for development purposes only.
+> **Security Note**: For production use, always set a custom password during build using `--build-arg PASSWORD="$AXONOS_VNC_PASSWORD"`. The default password `axonpassword` is for development purposes only. Inside a session, `sudo` never prompts for it: the `aXonian` user has passwordless sudo (`/etc/sudoers.d/90-axonos-aXonian`), since each session is a single-user container.
 
 ### Self-Hosting Disclaimer
 

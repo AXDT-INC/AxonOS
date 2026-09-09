@@ -47,7 +47,7 @@ With repo `docker-compose.yml`, `AXGT_CHALLENGE_DB_URL` is **auto-set** on the `
 
 | Variable | Default (compose) | Purpose |
 |----------|-------------------|---------|
-| `AXONOS_VNC_PASSWORD` | *(required in `.env`)* | Build arg `PASSWORD` — VNC + in-container sudo |
+| `AXONOS_VNC_PASSWORD` | *(required in `.env`)* | Build arg `PASSWORD` — VNC/account password (sudo is passwordless in sessions) |
 | `POSTGRES_USER` | `axonos_gate` | Bundled Postgres user |
 | `POSTGRES_PASSWORD` | `axonos_gate_secret` | Bundled Postgres password |
 | `POSTGRES_DB` | `axonos_gate` | Bundled Postgres database name |
@@ -63,7 +63,7 @@ With repo `docker-compose.yml`, `AXGT_CHALLENGE_DB_URL` is **auto-set** on the `
 
 - **When:** Docker build (`--build-arg PASSWORD=…`)
 - **Used by:** [`Dockerfile`](../Dockerfile), [`docker-compose.yml`](../docker-compose.yml), [`scripts/build_axonos.sh`](../scripts/build_axonos.sh)
-- **Purpose:** Sets the `aXonian` user password, VNC passwd file, and sudo access inside the desktop image.
+- **Purpose:** Sets the `aXonian` user password and VNC passwd file inside the desktop image. `sudo` inside sessions (desktop terminals and direct-SSH) is passwordless via `/etc/sudoers.d/90-axonos-aXonian`, so this password is never needed for privilege escalation.
 - **Default in Dockerfile:** `axonpassword` (development only — always override in production).
 
 ### `PASSWORD`

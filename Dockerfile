@@ -103,8 +103,17 @@ RUN curl --proto '=https' --tlsv1.2 -fsSL https://ollama.com/install.sh \
      wait "$OLLAMA_PID" 2>/dev/null || true; \
      exit "$PULL_STATUS")
 
-# Create user and set password
-RUN useradd -ms /bin/bash $USER && echo "$USER:$PASSWORD" | chpasswd && adduser $USER sudo
+# Create user and set password. The password still backs the account/VNC
+# login, but sudo is passwordless: sessions are single-tenant containers whose
+# only user is $USER, and the default `axonpassword` prompt on every sudo in
+# desktop terminals and direct-SSH sessions is pure friction. /etc/sudoers.d is
+# image-level (not masked by the per-wallet home volume) so it applies to every
+# session, and visudo -c fails the build if the drop-in is ever malformed.
+RUN useradd -ms /bin/bash $USER && echo "$USER:$PASSWORD" | chpasswd && adduser $USER sudo && \
+    printf '%s\n' "$USER ALL=(ALL:ALL) NOPASSWD: ALL" "Defaults:$USER !lecture" \
+      > /etc/sudoers.d/90-axonos-$USER && \
+    chmod 0440 /etc/sudoers.d/90-axonos-$USER && \
+    visudo -cf /etc/sudoers.d/90-axonos-$USER
 
 # Configure bash prompt and hostname for the user
 RUN echo 'export PS1="\[\033[01;32m\]$USER@AxonOS\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ "\n\
