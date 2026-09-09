@@ -121,7 +121,7 @@ Copyright (C) 2019 The noVNC Authors
     <!-- Stylesheets -->
     <link rel="stylesheet" href="app/styles/base.css">
     <link rel="stylesheet" href="app/vendor/xterm/xterm.css?v=6.0.0">
-    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.3&t=20260909railtab">
+    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.3&t=20260909close1">
 
     <!-- Images that will later appear via CSS -->
     <link rel="preload" as="image" href="app/images/info.svg">
@@ -178,7 +178,7 @@ Copyright (C) 2019 The noVNC Authors
     </script>
     <script src="app/error-handler.js"></script>
     <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
-    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260909elapsed2"></script>
+    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260909close1"></script>
 </head>
 
 <body>
@@ -1985,6 +1985,7 @@ Copyright (C) 2019 The noVNC Authors
                 <span class="axonos-sidebar-ctrl-btn__details">
                     <span class="axonos-sidebar-ctrl-btn__title">Detach session</span>
                     <span class="axonos-sidebar-ctrl-btn__desc">Return to home screen (desktop keeps running)</span>
+                    <span class="axonos-sidebar-ctrl-btn__hint">Closing the tab ends the session. Detach to keep it running.</span>
                 </span>
             </button>
             <button type="button" id="axonos_sidebar_end_btn"

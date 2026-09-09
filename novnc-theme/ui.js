@@ -592,12 +592,24 @@ const UI = {
             }
         }, true);
 
-        window.addEventListener('beforeunload', () => {
+        window.addEventListener('beforeunload', (e) => {
+            let nav = null;
             try {
-                if (!sessionStorage.getItem('axonos_nav')) {
+                nav = sessionStorage.getItem('axonos_nav');
+                if (!nav) {
                     sessionStorage.setItem('axonos_nav', 'close');
                 }
             } catch (err) { /* ignore */ }
+            // Closing the tab ENDS a connected desktop (pagehide below releases
+            // the slot), which silently destroys running work. Ask first, via
+            // the browser's native leave-page dialog; cancelling keeps the
+            // session exactly as it was. Reloads and detached/terminal
+            // sessions are unaffected. An unattended crash never reaches this
+            // handler, so it cannot strand a session.
+            if (nav !== 'reload' && UI._axonosSessionOwnsServerSlot()) {
+                e.preventDefault();
+                e.returnValue = '';
+            }
         });
 
         window.addEventListener('pagehide', (e) => {

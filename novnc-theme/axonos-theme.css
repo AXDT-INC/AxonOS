@@ -8246,6 +8246,15 @@ html.noVNC_connected:has(.axonos-session-sidebar.collapsed) .axonos-session-hud 
   margin-top: 1px;
 }
 
+.axonos-sidebar-ctrl-btn__hint {
+  display: block;
+  font-size: 0.66rem;
+  line-height: 1.3;
+  color: #a9b0c9;
+  font-weight: 400;
+  margin-top: 4px;
+}
+
 .axonos-sidebar-ctrl-btn--danger {
   border-color: rgba(255, 95, 87, 0.22);
   background: rgba(255, 95, 87, 0.06);
