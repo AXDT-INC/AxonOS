@@ -11688,6 +11688,25 @@ Copyright (C) 2019 The noVNC Authors
             axonosApplyResumeConnectUi(false);
         }
 
+        /** Same clock as the sidebar "Elapsed" hint ("1h 05m", "12m", "<1m")
+         *  so the workspace card and the deck never disagree. */
+        function axonosFormatDashboardUptime(startedAt) {
+            return axonosFormatSidebarDuration(Date.now() / 1000 - Number(startedAt));
+        }
+
+        // Session cards render once; keep their "Up …" counters moving while
+        // the workspace stays open (e.g. after detaching) without a re-render.
+        // Same 5 s cadence as the sidebar so both flip minutes together.
+        setInterval(function () {
+            const nodes = document.querySelectorAll('.axonos-session-card__uptime[data-started-at]');
+            for (let i = 0; i < nodes.length; i++) {
+                const start = Number(nodes[i].getAttribute('data-started-at'));
+                if (isFinite(start) && start > 0) {
+                    nodes[i].textContent = axonosFormatDashboardUptime(start);
+                }
+            }
+        }, 5000);
+
         function axonosScheduleDashboardRefresh(delayMs) {
             if (axonosDashboardRefreshTimer) return;
             axonosDashboardRefreshTimer = setTimeout(function () {
@@ -11987,10 +12006,7 @@ Copyright (C) 2019 The noVNC Authors
                             // Compute simple uptime
                             let uptimeStr = 'Just launched';
                             if (session.started_at) {
-                                const uptimeSecs = Math.max(0, Math.floor(Date.now() / 1000 - session.started_at));
-                                const hours = Math.floor(uptimeSecs / 3600);
-                                const mins = Math.floor((uptimeSecs % 3600) / 60);
-                                uptimeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+                                uptimeStr = axonosFormatDashboardUptime(session.started_at);
                             }
 
                             let sshCmdRow = '';
@@ -12025,7 +12041,7 @@ Copyright (C) 2019 The noVNC Authors
                             specParts.push(axonosEscapeHtml(envTitle));
                             const statsText = isCreditGrace
                                 ? `${graceTtl || 'Top up within 2h'} · billing paused`
-                                : `Up ${uptimeStr} · ${rate} cr/min`;
+                                : `Up <span class="axonos-session-card__uptime" data-started-at="${Number(session.started_at) || ''}">${uptimeStr}</span> · ${rate} cr/min`;
                             const noteText = String(session.notes || '');
                             const canAnnotate = sessionKey !== '' && !isCreditGrace;
                             card.innerHTML = `
