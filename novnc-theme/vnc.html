@@ -121,7 +121,7 @@ Copyright (C) 2019 The noVNC Authors
     <!-- Stylesheets -->
     <link rel="stylesheet" href="app/styles/base.css">
     <link rel="stylesheet" href="app/vendor/xterm/xterm.css?v=6.0.0">
-    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.3&t=20260908deck4">
+    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.3&t=20260909elapsed2">
 
     <!-- Images that will later appear via CSS -->
     <link rel="preload" as="image" href="app/images/info.svg">
@@ -1876,7 +1876,11 @@ Copyright (C) 2019 The noVNC Authors
                 <span id="axonos_sidebar_credits" class="axonos-session-sidebar__sec-value">—</span>
                 <span id="axonos_sidebar_balance_unit" class="axonos-session-sidebar__sec-value-unit">credits</span>
             </div>
-            <p class="axonos-session-sidebar__sec-hint">Remaining time: ≈ <b id="axonos_sidebar_time_left">—</b></p>
+            <p class="axonos-session-sidebar__sec-hint axonos-session-sidebar__sec-hint--times">
+                <span class="axonos-session-sidebar__sec-hint-item">Elapsed: <b id="axonos_sidebar_time_elapsed">—</b></span>
+                <span class="axonos-session-sidebar__sec-hint-sep" aria-hidden="true">·</span>
+                <span class="axonos-session-sidebar__sec-hint-item">Remaining: ≈ <b id="axonos_sidebar_time_left">—</b></span>
+            </p>
             <div class="axonos-sidebar-progress-track">
                 <div id="axonos_sidebar_credits_progress" class="axonos-sidebar-progress-bar" style="width: 100%;">
                 </div>
@@ -3649,6 +3653,31 @@ Copyright (C) 2019 The noVNC Authors
             return mins + ':' + (secs < 10 ? '0' : '') + secs;
         }
 
+        /** "1h 05m" style clock for the sidebar time hints; "—" when unknown. */
+        function axonosFormatSidebarDuration(seconds) {
+            if (typeof seconds !== 'number' || !isFinite(seconds) || seconds < 0) return '—';
+            var total = Math.floor(seconds);
+            var h = Math.floor(total / 3600);
+            var m = Math.floor((total % 3600) / 60);
+            if (h > 0) return h + 'h ' + (m < 10 ? '0' : '') + m + 'm';
+            if (m > 0) return m + 'm';
+            return '<1m';
+        }
+
+        /** Elapsed session time beside the remaining-time hint. `startedAt` is
+         *  the server's epoch-seconds session start (never rewritten on resume,
+         *  so it is the age of the session, pauses included). */
+        function axonosRenderSidebarElapsed(startedAt) {
+            var el = document.getElementById('axonos_sidebar_time_elapsed');
+            if (!el) return;
+            var start = Number(startedAt);
+            if (!isFinite(start) || start <= 0) {
+                el.textContent = '—';
+                return;
+            }
+            el.textContent = axonosFormatSidebarDuration(Date.now() / 1000 - start);
+        }
+
         function axonosRenderGuestSidebarTime(remaining) {
             if (!axonosGuestActive()) return;
             var seconds = Math.max(0, Number(remaining) || 0);
@@ -3657,6 +3686,13 @@ Copyright (C) 2019 The noVNC Authors
             var progress = document.getElementById('axonos_sidebar_credits_progress');
             if (value) value.textContent = String(Math.ceil(seconds / 60));
             if (time) time.textContent = axonosFormatGuestClock(Math.round(seconds));
+            var elapsedEl = document.getElementById('axonos_sidebar_time_elapsed');
+            var allotted = Number(window.axonosGuestSession.sessionMinutes) * 60;
+            if (elapsedEl) {
+                elapsedEl.textContent = (isFinite(allotted) && allotted > 0)
+                    ? axonosFormatSidebarDuration(allotted - seconds)
+                    : '—';
+            }
             if (progress) {
                 var total = Math.max(1, Number(window.axonosGuestSession.sessionMinutes) * 60 || seconds);
                 progress.style.width = Math.min(100, (seconds / total) * 100) + '%';
@@ -4174,6 +4210,13 @@ Copyright (C) 2019 The noVNC Authors
                     reattachSessionId !== null) {
                     axonosForgetStaleSessionBinding(reattachSessionId);
                 }
+                if (claim && claim.granted === true) {
+                    // Only a fresh allocation started "now"; reattach/resume
+                    // replies carry already_active / resumed / reactivated.
+                    var claimIsNewAllocation = claim.already_active !== true &&
+                        claim.resumed !== true && claim.credit_grace_reactivated !== true;
+                    axonosSeedSessionStartTime(claim.session_id, claimIsNewAllocation);
+                }
                 return claim;
             });
         }
@@ -4201,6 +4244,7 @@ Copyright (C) 2019 The noVNC Authors
                             window.axonosGuestSyncFromPayload(data);
                         }
                         axonosRememberGpuCapacity(data);
+                        axonosRememberSessionStartTimes(data);
                         return data;
                     });
                 }),
@@ -4922,6 +4966,43 @@ Copyright (C) 2019 The noVNC Authors
             return (Array.isArray(st.active_sessions) ? st.active_sessions : []).filter(function (row) {
                 return wallet && axonosNormalizeWalletAddress(row && row.wallet_address) === wallet;
             });
+        }
+
+        /** session_id -> server started_at (epoch seconds). Filled from every
+         *  /api/session/status response; a claim seeds an approximate anchor
+         *  for a brand-new session until the exact server value arrives. */
+        var axonosSessionStartTimes = {};
+        var axonosSidebarStartLookupFor = null;
+        function axonosRememberSessionStartTimes(st) {
+            if (!st || typeof st !== 'object') return;
+            var rows = [];
+            if (Array.isArray(st.owned_sessions)) rows = rows.concat(st.owned_sessions);
+            if (Array.isArray(st.active_sessions)) rows = rows.concat(st.active_sessions);
+            rows.forEach(function (row) {
+                var id = Number(row && row.session_id);
+                var start = Number(row && row.started_at);
+                if (Number.isSafeInteger(id) && id > 0 && isFinite(start) && start > 0) {
+                    axonosSessionStartTimes[id] = start;
+                }
+            });
+            var ownerId = Number(st.owner_session_id);
+            var ownerStart = Number(st.owner_started_at);
+            if (Number.isSafeInteger(ownerId) && ownerId > 0 && isFinite(ownerStart) && ownerStart > 0) {
+                axonosSessionStartTimes[ownerId] = ownerStart;
+            }
+        }
+        function axonosSeedSessionStartTime(sessionId, isNew) {
+            var id = Number(sessionId);
+            if (!Number.isSafeInteger(id) || id <= 0) return;
+            // A fresh allocation started moments ago; a reattach/resume keeps
+            // whatever status already recorded (or waits for the next status).
+            if (isNew && !axonosSessionStartTimes[id]) {
+                axonosSessionStartTimes[id] = Date.now() / 1000;
+            }
+        }
+        function axonosCurrentSessionStartTime() {
+            var id = axonosCurrentSessionId();
+            return id !== null && axonosSessionStartTimes[id] ? axonosSessionStartTimes[id] : null;
         }
 
         /** The status row for the session THIS tab is bound to, else null. The
@@ -13831,6 +13912,23 @@ Copyright (C) 2019 The noVNC Authors
                 .finally(() => {
                     if (tickIsCurrent()) axonosContainerTelemetryPending = false;
                 });
+            }
+
+            // Elapsed time for THIS tab's session, from the cached server
+            // started_at (wallet-status carries no session rows).
+            if (!axonosGuestActive()) {
+                var sidebarStart = axonosCurrentSessionStartTime();
+                axonosRenderSidebarElapsed(sidebarStart);
+                // Unknown start (e.g. reload restored a binding before any
+                // status read): fetch status once per session to fill the cache.
+                var sidebarSessionId = axonosCurrentSessionId();
+                if (sidebarStart === null && sidebarSessionId !== null &&
+                    axonosSidebarStartLookupFor !== sidebarSessionId) {
+                    axonosSidebarStartLookupFor = sidebarSessionId;
+                    sessionStatusForWallet(wallet).catch(function () {
+                        axonosSidebarStartLookupFor = null;
+                    });
+                }
             }
 
             // Sync credits balance and remaining time.

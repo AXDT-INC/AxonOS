@@ -8099,6 +8099,24 @@ html.noVNC_connected:has(.axonos-session-sidebar.collapsed) .axonos-session-hud 
   font-weight: 600;
 }
 
+/* Elapsed · Remaining: each item stays on one line; if the pair ever
+   outgrows the sidebar it wraps between items, never inside one. */
+.axonos-session-sidebar__sec-hint--times {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 6px;
+  row-gap: 2px;
+}
+
+.axonos-session-sidebar__sec-hint-item {
+  white-space: nowrap;
+}
+
+.axonos-session-sidebar__sec-hint-sep {
+  color: #5d637c;
+}
+
 /* Progress bar inside sidebar */
 .axonos-sidebar-progress-track {
   margin-top: 14px;
