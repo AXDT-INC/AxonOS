@@ -95,6 +95,7 @@ class DesktopUiContractTests(unittest.TestCase):
             return decision
 
         for command in ("ps aux --sort=-%mem", "head -30", "nvidia-smi", "ls -la /home/aXonian",
+                        "command -v nvidia-smi >/dev/null 2>&1", "echo \"NO_GPU\"", "pgrep -a Xorg",
                         "cat notes.txt", "df -h", "git status", "grep -r TODO src"):
             self.assertEqual(decide(command), "allow", command)
         for command in ("rm -rf /", "sudo apt install x", "git push origin main", "cat ~/.ssh/id_rsa",
