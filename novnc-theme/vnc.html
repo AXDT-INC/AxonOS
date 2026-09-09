@@ -6046,7 +6046,11 @@ Copyright (C) 2019 The noVNC Authors
 
         /** Append launcher/docker error when spawn fails (API field container_error). */
         function axonosFormatClaimDeniedMessage(claim, fallbackReason) {
-            var main = (claim && claim.reason) ? claim.reason : (fallbackReason || 'Session claim denied.');
+            // Gate replies carry the human reason as `reason`; input/auth
+            // rejections carry `error`. Show either before the generic text.
+            var main = (claim && (claim.reason || claim.error))
+                ? String(claim.reason || claim.error)
+                : (fallbackReason || 'Session claim denied.');
             var err = claim && claim.container_error ? String(claim.container_error).trim() : '';
             if (err && main.indexOf(err) === -1) {
                 return main + '\n\n' + err;

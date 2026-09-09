@@ -632,3 +632,23 @@ Context: a demo from a far region over a screen-share call saw the viewer reconn
 - [ ] `webrtc/capture.py:94,410-414,507`: the encoder runs at a fixed `WEBRTC_CAPTURE_BITRATE` (12 Mbps, maxrate 1.5×) with `gop = fps` (a full keyframe every second), and nothing on the agent side reacts to receiver feedback. Every PLI-triggered or periodic 1080p keyframe is a burst the far user's link must absorb, so a lossy path turns into a PLI → keyframe → more loss cycle. Fix: drive the encoder target bitrate from receiver feedback (REMB/TWCC `availableOutgoingBitrate`, or the RTCP loss fraction) with a floor/ceiling, and lengthen the periodic GOP to a few seconds while keeping PLI-driven keyframes for recovery.
 - [ ] Quick mitigation until then: allow a per-session or per-region bitrate override (e.g. the client passes a hint at negotiation, or a `?bitrate=` query on the offer) so far users can start at ~6 Mbps instead of the global default.
 - [ ] Viewer: expose the candidate-pair RTT and inbound `packetsLost`/`pliCount` deltas in the existing WebRTC banner or a debug overlay so a user can tell "my path is lossy" from "the server is down" without opening `chrome://webrtc-internals`.
+
+## Gate worker lifetime and DB connection hygiene
+- Context: websockify forks one worker per TCP connection. An upstream proxy can hold
+  that connection open indefinitely, so a worker honouring keep-alive parks in recv()
+  and keeps whatever its last request left open. Postgres now has a server-side
+  `idle_session_timeout` as a safety net.
+- [x] API responses send `Connection: close` and set `close_connection`, so a worker
+      exits after each request and the kernel releases everything it held.
+- [x] Worker pipe descriptors: not a leak. They are multiprocessing sentinel pipes for
+      live workers; the count now tracks the (small) number of active workers.
+- [x] Claim path answers 503 with a "Session DB unavailable" reason when the token DB is
+      unreachable, and the dialog shows `reason` or `error` before the generic text.
+- [ ] Find why some funded-session requests leave two psycopg2 connections open in a
+      worker (one never queried, one after COMMIT, ~20 ms apart) although every open
+      site closes in `finally`. A flag-gated probe (`/run/axonos/db-leak-probe`) logs
+      open connections and their referrers after each API response; read
+      `docker logs axonos | grep db-leak-probe`, then remove the flag file.
+- [x] Mirror the DB-unreachable claim reason in gate_server.py (the :8889 API).
+- [x] WebRTC store: pooled connections are liveness-checked before use so a server-side
+      idle timeout never surfaces as a 500 on the agent poll.

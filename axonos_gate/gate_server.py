@@ -428,7 +428,9 @@ def _issue_gate_auth_token(wallet_address: str, custom_ttl=None) -> tuple[str, i
 
 
 
-def _is_gate_auth_token_valid(token: str, wallet_address: str) -> bool:
+def _is_gate_auth_token_valid(token: str, wallet_address: str) -> bool | None:
+    """True/False for a checked token; None when the token DB is unreachable
+    (falsy, so plain truthiness callers still fail closed)."""
     if not token:
         return False
     now_ts = time.time()
@@ -441,10 +443,10 @@ def _is_gate_auth_token_valid(token: str, wallet_address: str) -> bool:
         if guest_deadline is None or now_ts >= guest_deadline:
             return False
     if not _gate_pg_init_once():
-        return False
+        return None
     conn = _gate_pg_get_connection()
     if not conn:
-        return False
+        return None
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -489,13 +491,19 @@ def _gate_auth_token_candidates() -> list[str]:
     return candidates
 
 
-def _resolve_gate_auth_token(wallet_address: str) -> str | None:
-    """Return the first candidate valid for this exact wallet."""
+def _resolve_gate_auth_token(wallet_address: str) -> str | None | bool:
+    """Return the first candidate valid for this exact wallet; None when no
+    candidate is valid; False when validity could not be checked because the
+    token DB is unreachable (both falsy)."""
     wallet_norm = (wallet_address or "").strip().lower()
+    db_unreachable = False
     for token in _gate_auth_token_candidates():
-        if _is_gate_auth_token_valid(token, wallet_norm):
+        verdict = _is_gate_auth_token_valid(token, wallet_norm)
+        if verdict:
             return token
-    return None
+        if verdict is None:
+            db_unreachable = True
+    return False if db_unreachable else None
 
 
 def _gate_current_wallet_token_and_remaining(
@@ -2194,6 +2202,10 @@ def _require_auth_token(wallet_address: str):
     # lets a guest header replace an old wallet cookie, while a newer valid
     # cookie can recover from a stale JS header after concurrent rotation.
     token = _resolve_gate_auth_token(wallet_norm)
+    if token is False:
+        # Not a credential problem: say so instead of a misleading 401.
+        msg = "Session DB unavailable. Nothing was changed; retry in a moment."
+        return jsonify({"error": msg, "reason": msg, "retryable": True}), 503
     if not token:
         return jsonify({"error": "Valid auth token required"}), 401
     return None

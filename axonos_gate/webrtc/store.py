@@ -49,14 +49,39 @@ def _get_pool():
             return None
 
 
+def _pooled_conn_alive(conn) -> bool:
+    """A pooled connection may have been closed underneath us (server-side
+    idle timeout, restart, network reset). Probe it before handing it out so
+    a caller never sees 'server closed the connection unexpectedly'."""
+    if conn is None or conn.closed:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+            cur.fetchone()
+        if conn.status != 1:  # STATUS_READY: leave no transaction open
+            conn.rollback()
+        return True
+    except Exception:
+        return False
+
+
 def _conn():
     pool = _get_pool()
     if pool:
         try:
-            conn = pool.getconn()
-            with _pool_lock:
-                _active_pool_conns.add(id(conn))
-            return conn
+            # Discard dead pooled connections; the pool opens a fresh one.
+            for _attempt in range(3):
+                conn = pool.getconn()
+                if _pooled_conn_alive(conn):
+                    with _pool_lock:
+                        _active_pool_conns.add(id(conn))
+                    return conn
+                logger.info("webrtc store: discarding stale pooled connection")
+                try:
+                    pool.putconn(conn, close=True)
+                except Exception:
+                    pass
         except Exception as e:
             logger.warning("webrtc store: getconn failed: %s", e)
     # Fallback to direct connection if pool couldn't be created

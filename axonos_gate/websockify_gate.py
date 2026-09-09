@@ -398,6 +398,56 @@ def _shared_gpu_cache():
             os.close(descriptor)
 
 
+_DB_LEAK_PROBE_FLAG = "/run/axonos/db-leak-probe"
+
+
+def _probe_open_db_connections(path: str) -> None:
+    """Diagnostic: after an API response, log every psycopg2 connection still
+    open in this worker and what keeps it alive. Enabled only while the flag
+    file exists (touch/rm at runtime, no restart), so the normal path costs
+    one os.path.exists()."""
+    try:
+        if not os.path.exists(_DB_LEAK_PROBE_FLAG):
+            return
+        import gc
+        import psycopg2.extensions as _ext
+        open_conns = [
+            o for o in gc.get_objects()
+            if isinstance(o, _ext.connection) and not o.closed
+        ]
+        if not open_conns:
+            return
+        details = []
+        for conn in open_conns:
+            holders = []
+            for ref in gc.get_referrers(conn):
+                if isinstance(ref, list) and ref is open_conns:
+                    continue
+                kind = type(ref).__name__
+                if hasattr(ref, "f_code"):
+                    kind = "frame:%s:%s" % (ref.f_code.co_name, ref.f_lineno)
+                elif isinstance(ref, dict):
+                    keys = [k for k, v in ref.items() if v is conn]
+                    kind = "dict:%s" % ",".join(map(str, keys))
+                elif isinstance(ref, _ext.cursor):
+                    kind = "cursor"
+                holders.append(kind)
+            details.append("%s(status=%s) held_by=%s" % (id(conn), conn.status, holders))
+        before = len(open_conns)
+        del open_conns
+        gc.collect()
+        after = sum(
+            1 for o in gc.get_objects()
+            if isinstance(o, _ext.connection) and not o.closed
+        )
+        logger.warning(
+            "db-leak-probe path=%s open_before_gc=%d open_after_gc=%d %s",
+            path.split("?")[0], before, after, "; ".join(details),
+        )
+    except Exception as exc:  # never let diagnostics break a response
+        logger.warning("db-leak-probe failed: %s", exc)
+
+
 def _telemetry_query(query, params=None):
     conn = _auth_pg_get_connection()
     if not conn:
@@ -838,7 +888,13 @@ def _auth_token_remaining_seconds(token: str, wallet_address: str) -> int | None
     return None
 
 
-def _is_auth_token_valid(token: str, wallet_address: str) -> bool:
+def _is_auth_token_valid(token: str, wallet_address: str) -> bool | None:
+    """True/False for a checked token; None when the token DB is unreachable.
+
+    None is falsy, so every ``if not _is_auth_token_valid(...)`` caller still
+    fails closed. Callers that want to tell the user the real reason (the
+    claim path) test ``is None`` and answer 503 instead of 401.
+    """
     if not token:
         return False
     now_ts = time.time()
@@ -848,10 +904,10 @@ def _is_auth_token_valid(token: str, wallet_address: str) -> bool:
         if guest_deadline is None or now_ts >= guest_deadline:
             return False
     if not _auth_pg_init_once():
-        return False
+        return None
     conn = _auth_pg_get_connection()
     if not conn:
-        return False
+        return None
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -1150,8 +1206,17 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         if extra_headers:
             for hk, hv in extra_headers.items():
                 self.send_header(hk, hv)
+        # One API request per forked worker. websockify forks a worker per
+        # TCP connection, and an upstream proxy may keep that connection
+        # alive indefinitely, leaving the worker parked in recv() with
+        # whatever its last request left open (descriptors, DB connections).
+        # Closing after the response lets the worker exit so the kernel
+        # releases everything it held.
+        self.send_header('Connection', 'close')
+        self.close_connection = True
         self.end_headers()
         self.wfile.write(body)
+        _probe_open_db_connections(self.path)
 
     def do_OPTIONS(self):
         if (
@@ -2205,7 +2270,16 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             if not wallet_address or not validate_wallet_address(wallet_address):
                 return self._send_json(400, {'granted': False, 'error': 'Valid wallet_address required'})
             auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
-            if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
+            token_ok = _is_auth_token_valid(auth_token, wallet_address) if auth_token else False
+            if token_ok is None:
+                # Not a credential problem: the session DB is unreachable. Say
+                # so instead of a generic denial.
+                return self._send_json(503, {
+                    'granted': False,
+                    'retryable': True,
+                    'reason': 'Session DB unavailable. Nothing was changed; retry in a moment.',
+                })
+            if not token_ok:
                 return self._send_json(401, {'granted': False, 'error': 'Valid auth token required'})
             result = try_claim_session(
                 wallet_address,
