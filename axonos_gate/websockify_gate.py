@@ -1964,13 +1964,18 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             self.send_header(
                 'Access-Control-Expose-Headers',
                 'Content-Length, Content-Range, Accept-Ranges, ETag')
+        # Same one-request-per-worker rule as _send_json: the relay must not
+        # leave this forked worker parked on a proxy keep-alive.
+        self.send_header('Connection', 'close')
+        self.close_connection = True
         self.end_headers()
         try:
             for chunk in body_iter:
                 self.wfile.write(chunk)
         except (BrokenPipeError, ConnectionResetError):
             # Browser paused/aborted; Range requests let it resume on a new connection.
-            self.close_connection = True
+            pass
+        _probe_open_db_connections(self.path)
 
     def do_PUT(self):
         if urlparse(self.path).path.startswith('/api/files/'):

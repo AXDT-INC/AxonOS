@@ -28,10 +28,26 @@ _pool_lock = threading.Lock()
 _active_pool_conns = set()
 
 
+def _pooling_allowed() -> bool:
+    """A pool only pays off in a long-lived, threaded process. In a forked
+    per-connection worker (websockify) it opens ``minconn`` connections for a
+    single request and, being module-global, never closes them; a worker that
+    then lingers keeps them idle on the server."""
+    try:
+        import multiprocessing
+        if multiprocessing.parent_process() is not None:
+            return False
+    except Exception:
+        pass
+    return (os.getenv("AXONOS_WEBRTC_STORE_POOL") or "auto").strip().lower() not in ("0", "false", "off")
+
+
 def _get_pool():
     global _pool
     if _pool is not None:
         return _pool
+    if not _pooling_allowed():
+        return None
     with _pool_lock:
         if _pool is not None:
             return _pool

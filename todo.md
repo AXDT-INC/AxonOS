@@ -644,11 +644,14 @@ Context: a demo from a far region over a screen-share call saw the viewer reconn
       live workers; the count now tracks the (small) number of active workers.
 - [x] Claim path answers 503 with a "Session DB unavailable" reason when the token DB is
       unreachable, and the dialog shows `reason` or `error` before the generic text.
-- [ ] Find why some funded-session requests leave two psycopg2 connections open in a
-      worker (one never queried, one after COMMIT, ~20 ms apart) although every open
-      site closes in `finally`. A flag-gated probe (`/run/axonos/db-leak-probe`) logs
-      open connections and their referrers after each API response; read
-      `docker logs axonos | grep db-leak-probe`, then remove the flag file.
+- [x] Found: the WebRTC signaling store built a module-global ThreadedConnectionPool
+      (minconn=2) on first use. In a forked per-request worker that opened two
+      connections for one signaling call (one used, one never queried), and the
+      module-global pool was never closed, so a lingering worker kept both idle. The
+      store now skips pooling inside a multiprocessing child (direct connect + close)
+      and keeps the pool only in long-lived threaded processes. Reproduced and verified
+      with a forked-child test: 2 open connections before, 0 after. The flag-gated
+      probe (`/run/axonos/db-leak-probe`) stays available for future checks.
 - [x] Mirror the DB-unreachable claim reason in gate_server.py (the :8889 API).
 - [x] WebRTC store: pooled connections are liveness-checked before use so a server-side
       idle timeout never surfaces as a 500 on the agent poll.
