@@ -11,8 +11,8 @@ env:
   BUILDKIT_HOST: tcp://buildkitd.buildkit:1234
   BUILDKIT_VERSION: v0.21.1
 
-# Even the slim variant (AXONOS_SKIP_HEAVY=1, ~85 GB) needs tens of GB of
-# scratch space on the shared buildkitd. Two concurrent builds guarantee that both run out of
+# The builder has under 50 GB of disk in total and even the minimal variant
+# (AXONOS_SKIP_HEAVY=1) needs a good share of it as scratch space. Two concurrent builds guarantee that both run out of
 # disk, so serialise them; a newer push simply waits for the current build.
 concurrency:
   group: build-push-${{ github.ref }}
@@ -54,14 +54,31 @@ jobs:
           buildctl build --frontend dockerfile.v0 --local context="$d" --local dockerfile="$d" \
             --no-cache --progress plain 2>&1 | grep -E 'Filesystem|overlay|/$|/tmp$' || true
 
+      # AXONOS_SKIP_HEAVY=1 builds the minimal platform-core variant; the full
+      # image (~135 GB) can never fit on this builder. See the Dockerfile header.
+      #
+      # --import-cache is fatal when the cache tag does not exist yet (first run
+      # after a prune, or a fresh registry), so probe it with a no-op build and
+      # only pass the flag when the importer configures successfully.
       - name: Build and push
         run: |
+          set -o pipefail
           CACHE_REF="${REGISTRY}/${IMAGE}:buildcache"
+          IMPORT_CACHE=()
+          probe="$(mktemp -d)"
+          printf 'FROM busybox:1.36\nRUN true\n' > "$probe/Dockerfile"
+          if buildctl build --frontend dockerfile.v0 --local context="$probe" --local dockerfile="$probe" \
+               --import-cache type=registry,ref="${CACHE_REF}" >/dev/null 2>&1; then
+            IMPORT_CACHE=(--import-cache "type=registry,ref=${CACHE_REF}")
+            echo "layer cache found at ${CACHE_REF}; importing"
+          else
+            echo "no layer cache at ${CACHE_REF}; building without import"
+          fi
           buildctl build \
             --frontend dockerfile.v0 \
             --local context=. \
             --local dockerfile=. \
             --opt build-arg:AXONOS_SKIP_HEAVY=1 \
-            --import-cache type=registry,ref="${CACHE_REF}" \
+            "${IMPORT_CACHE[@]}" \
             --export-cache type=registry,ref="${CACHE_REF}",mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true \
             --output type=image,\"name=${REGISTRY}/${IMAGE}:sha-${GITHUB_SHA::7},${REGISTRY}/${IMAGE}:latest\",push=true

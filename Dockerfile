@@ -84,10 +84,13 @@ BUG_REPORT_URL="https://github.com/AxonDAO-AXGT/AxonOS/issues"' > /etc/os-releas
     echo '#!/bin/sh\nif [ "$1" = "-a" ]; then\n  echo -n "AxonOS " && /bin/uname.real -a\nelse\n  /bin/uname.real "$@"\nfi' > /bin/uname && \
     chmod +x /bin/uname
 
-# AXONOS_SKIP_HEAVY=1 builds a slim variant for hosted CI, whose build backend
-# cannot hold the two largest layers: the ~17 GB Ollama model (pulled on first
-# use instead) and the ~33 GB NVIDIA HPC SDK (GROMACS is then built without
-# cuFFTMp). The default keeps the full image; do not change it for production.
+# AXONOS_SKIP_HEAVY=1 builds a minimal variant for hosted CI, whose build
+# backend has under 50 GB of disk in total: every science application, the
+# Ollama runtime and model, MPI, the NVIDIA HPC SDK and GROMACS are skipped.
+# What remains is the platform core: CUDA base, desktop stack, NVIDIA Xorg
+# userspace, JupyterLab, OpenCode, Syncthing, the gate and its agents. Each
+# skipped step is marked "SKIPPED when AXONOS_SKIP_HEAVY=1" with its runtime
+# effect. The default keeps the full image; do not change it for production.
 ARG AXONOS_SKIP_HEAVY=0
 
 # Install Ollama and pull qwen3.8:latest (optional install-script SHA256 verification).
@@ -97,7 +100,9 @@ ARG AXONOS_SKIP_HEAVY=0
 # an empty model store, so the first `ollama run qwen3.8` in a session downloads
 # the model at that point instead of finding it baked in.
 ARG OLLAMA_INSTALL_SHA256=""
-RUN curl --proto '=https' --tlsv1.2 -fsSL https://ollama.com/install.sh \
+# SKIPPED when AXONOS_SKIP_HEAVY=1: the whole Ollama step (~2 GB runtime + ~17 GB model); the ollama supervisor program then exits FATAL and the assistant has no local model.
+RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping Ollama runtime and model"; exit 0; fi && \
+    curl --proto '=https' --tlsv1.2 -fsSL https://ollama.com/install.sh \
       -o /tmp/ollama_install.sh && \
     if [ -n "$OLLAMA_INSTALL_SHA256" ]; then \
       echo "$OLLAMA_INSTALL_SHA256  /tmp/ollama_install.sh" | sha256sum -c -; \
@@ -145,7 +150,9 @@ RUN pip install --no-cache-dir jupyterlab
 
 
 # Install R for Ubuntu 22.04 (jammy)
-RUN apt update -qq && \
+# SKIPPED when AXONOS_SKIP_HEAVY=1: R (r-base) and its apt repo.
+RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping R"; exit 0; fi && \
+    apt update -qq && \
     apt install --no-install-recommends -y ca-certificates curl gnupg && \
     install -d -m 0755 /etc/apt/keyrings && \
     curl -fsSL https://cloud.r-project.org/bin/linux/ubuntu/marutter_pubkey.asc \
@@ -156,7 +163,9 @@ RUN apt update -qq && \
     apt install --no-install-recommends -y r-base
 
 # Install RStudio Desktop (Open Source)
-RUN apt update && apt install -y gdebi-core && \
+# SKIPPED when AXONOS_SKIP_HEAVY=1: RStudio Desktop (~1.6 GB).
+RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping RStudio Desktop"; exit 0; fi && \
+    apt update && apt install -y gdebi-core && \
     wget https://download1.rstudio.org/electron/jammy/amd64/rstudio-2025.05.0-496-amd64.deb && \
     gdebi -n rstudio-2025.05.0-496-amd64.deb && \
     rm rstudio-2025.05.0-496-amd64.deb && \
@@ -165,10 +174,14 @@ RUN apt update && apt install -y gdebi-core && \
 
 # Install Spyder (Scientific Python IDE)
 # Ubuntu apt matplotlib is built against NumPy 1.x; pip NumPy 2.x breaks Spyder kernels (_ARRAY_API).
-RUN pip install --no-cache-dir 'numpy>=1.24.0,<2' matplotlib spyder
+# SKIPPED when AXONOS_SKIP_HEAVY=1: Spyder, matplotlib and the pinned NumPy (~0.8 GB).
+RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping Spyder"; exit 0; fi && \
+    pip install --no-cache-dir 'numpy>=1.24.0,<2' matplotlib spyder
 
 # Install UGENE (Bioinformatics suite)
-RUN wget https://github.com/ugeneunipro/ugene/releases/download/52.1/ugene-52.1-linux-x86-64.tar.gz && \
+# SKIPPED when AXONOS_SKIP_HEAVY=1: UGENE (~1.5 GB); the ugenecl symlink step below is already conditional.
+RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping UGENE"; exit 0; fi && \
+    wget https://github.com/ugeneunipro/ugene/releases/download/52.1/ugene-52.1-linux-x86-64.tar.gz && \
     tar -xzf ugene-52.1-linux-x86-64.tar.gz -C /opt && \
     rm ugene-52.1-linux-x86-64.tar.gz && \
     ln -s /opt/ugene-52.1/ugene /usr/local/bin/ugene && \
@@ -176,10 +189,14 @@ RUN wget https://github.com/ugeneunipro/ugene/releases/download/52.1/ugene-52.1-
     > /usr/share/applications/ugene.desktop
 
 # Install GNU Octave (Matlab-like)
-RUN apt update && apt install -y octave
+# SKIPPED when AXONOS_SKIP_HEAVY=1: GNU Octave (~0.5 GB).
+RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping GNU Octave"; exit 0; fi && \
+    apt update && apt install -y octave
 
 # Install Fiji (ImageJ) with bundled JDK
-RUN apt update && apt install -y unzip && \
+# SKIPPED when AXONOS_SKIP_HEAVY=1: Fiji/ImageJ (~0.8 GB).
+RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping Fiji"; exit 0; fi && \
+    apt update && apt install -y unzip && \
     wget https://mirrors.pasteur.fr/fiji/downloads/stable/fiji-stable-linux64-jdk.zip && \
     unzip fiji-stable-linux64-jdk.zip -d /opt && \
     rm fiji-stable-linux64-jdk.zip && \
@@ -191,7 +208,9 @@ RUN apt update && apt install -y unzip && \
     > /usr/share/applications/fiji.desktop
 
 # Install Nextflow
-RUN apt-get update && apt-get install -y openjdk-17-jre-headless && \
+# SKIPPED when AXONOS_SKIP_HEAVY=1: Nextflow and its JRE (~0.25 GB).
+RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping Nextflow"; exit 0; fi && \
+    apt-get update && apt-get install -y openjdk-17-jre-headless && \
     apt-get clean && rm -rf /var/lib/apt/lists/* && \
     curl -s https://get.nextflow.io | bash && \
     mv /nextflow /usr/bin/nextflow && \
@@ -199,7 +218,9 @@ RUN apt-get update && apt-get install -y openjdk-17-jre-headless && \
     chown $USER:$USER /usr/bin/nextflow
 
 # Install QGIS and GRASS GIS 8
-RUN apt update && apt install -y qgis qgis-plugin-grass grass && \
+# SKIPPED when AXONOS_SKIP_HEAVY=1: QGIS and GRASS (~1.5 GB).
+RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping QGIS"; exit 0; fi && \
+    apt update && apt install -y qgis qgis-plugin-grass grass && \
     if [ -f /usr/share/applications/grass.desktop ]; then \
       sed -i 's|^Exec=grass$|Exec=bash -c "export GRASS_PYTHON=/usr/bin/python3; grass"|' /usr/share/applications/grass.desktop; \
     elif [ -f /usr/share/applications/grass82.desktop ]; then \
@@ -210,7 +231,9 @@ RUN apt update && apt install -y qgis qgis-plugin-grass grass && \
     update-desktop-database /usr/share/applications
 
 # Install IPFS CLI
-RUN wget https://dist.ipfs.tech/kubo/v0.24.0/kubo_v0.24.0_linux-amd64.tar.gz && \
+# SKIPPED when AXONOS_SKIP_HEAVY=1: the IPFS CLI (kubo); the ipfs supervisor program and startup.sh init then log failures and continue.
+RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping IPFS CLI"; exit 0; fi && \
+    wget https://dist.ipfs.tech/kubo/v0.24.0/kubo_v0.24.0_linux-amd64.tar.gz && \
     tar -xzf kubo_v0.24.0_linux-amd64.tar.gz && \
     cd kubo && \
     bash install.sh && \
@@ -218,7 +241,9 @@ RUN wget https://dist.ipfs.tech/kubo/v0.24.0/kubo_v0.24.0_linux-amd64.tar.gz && 
     rm -rf kubo kubo_v0.24.0_linux-amd64.tar.gz
 
 # Install IPFS Desktop (GUI)
-RUN wget https://github.com/ipfs/ipfs-desktop/releases/download/v0.30.2/ipfs-desktop-0.30.2-linux-amd64.deb && \
+# SKIPPED when AXONOS_SKIP_HEAVY=1: IPFS Desktop (~0.35 GB).
+RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping IPFS Desktop"; exit 0; fi && \
+    wget https://github.com/ipfs/ipfs-desktop/releases/download/v0.30.2/ipfs-desktop-0.30.2-linux-amd64.deb && \
     apt install -y ./ipfs-desktop-0.30.2-linux-amd64.deb && \
     rm ipfs-desktop-0.30.2-linux-amd64.deb
 
@@ -243,7 +268,9 @@ RUN apt update && apt install -y syncthing
 RUN echo '[Desktop Entry]\nName=EtherCalc\nExec=firefox https://calc.domainepublic.net\nIcon=applications-office\nType=Application\nCategories=Office;' \
     > /usr/share/applications/ethercalc.desktop
 # BeakerX for JupyterLab (multi-language kernel extension)
-RUN pip install --no-cache-dir beakerx && \
+# SKIPPED when AXONOS_SKIP_HEAVY=1: BeakerX kernels (~0.65 GB).
+RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping BeakerX"; exit 0; fi && \
+    pip install --no-cache-dir beakerx && \
     beakerx install
     
 # NGL Viewer (via Browser)
@@ -260,7 +287,9 @@ RUN echo '[Desktop Entry]\nName=Nault\nExec=firefox https://nault.cc\nIcon=appli
 
 # Clone and install CellModeller
 WORKDIR /opt
-RUN git clone https://github.com/cellmodeller/CellModeller.git && \
+# SKIPPED when AXONOS_SKIP_HEAVY=1: the CellModeller checkout and its deps; /usr/local/bin/cellmodeller-gui is still installed but has nothing to launch.
+RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping CellModeller"; exit 0; fi && \
+    git clone https://github.com/cellmodeller/CellModeller.git && \
     cd /opt/CellModeller && pip install -e . && \
     mkdir /opt/data && \
     chown -R $USER:$USER /opt/data && \
@@ -280,7 +309,9 @@ RUN apt-get remove -y cmake && \
 ARG GMX_CUDA_ARCHS="70;75;86;89"
 
 # Install CUDA-aware UCX + OpenMPI
-RUN apt update && apt install -y \
+# SKIPPED when AXONOS_SKIP_HEAVY=1: the CUDA-aware UCX + OpenMPI build and its deps (/opt/ucx, /opt/openmpi); the ENV/profile.d entries below then point at empty paths.
+RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping UCX and OpenMPI"; exit 0; fi && \
+    apt update && apt install -y \
     autoconf \
     automake \
     libevent-dev \
@@ -316,7 +347,9 @@ RUN apt update && apt install -y \
     rm -rf /opt/ucx-src /opt/ompi-src
 
 # Install NVIDIA HPC SDK (cuFFTMp + NVSHMEM) — repo + small deps first
-RUN curl -fsSL https://developer.download.nvidia.com/hpc-sdk/ubuntu/DEB-GPG-KEY-NVIDIA-HPC-SDK | \
+# SKIPPED when AXONOS_SKIP_HEAVY=1: the HPC SDK apt repo and gfortran.
+RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping NVHPC repo and gfortran"; exit 0; fi && \
+    curl -fsSL https://developer.download.nvidia.com/hpc-sdk/ubuntu/DEB-GPG-KEY-NVIDIA-HPC-SDK | \
     gpg --dearmor -o /usr/share/keyrings/nvidia-hpcsdk-archive-keyring.gpg && \
     echo "deb [signed-by=/usr/share/keyrings/nvidia-hpcsdk-archive-keyring.gpg] https://developer.download.nvidia.com/hpc-sdk/ubuntu/amd64 /" \
     > /etc/apt/sources.list.d/nvhpc.list && \
@@ -381,7 +414,9 @@ RUN echo 'export PATH="/usr/local/cuda/bin:$PATH"' > /etc/profile.d/cuda.sh && \
 # GROMACS is configured with -DGMX_USE_CUFFTMP=OFF. CUDA, OpenMP and OpenMPI
 # stay on; only multi-GPU PME decomposition (GMX_USE_CUFFTMP) is unavailable.
 # A missing cuFFTMp is still a hard build error in the full (default) build.
-RUN apt update && apt install -y \
+# SKIPPED when AXONOS_SKIP_HEAVY=1: GROMACS entirely (no MPI, no cuFFTMp in the slim image); the cuFFTMp-off fallback inside only matters if the SDK alone is missing.
+RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping GROMACS"; exit 0; fi && \
+    apt update && apt install -y \
     && apt clean && \
     git clone --branch release-2026 --depth 1 https://github.com/gromacs/gromacs.git /opt/gromacs-src && \
     CUFFTMP_INCLUDE="$(find /opt/nvidia/hpc_sdk /usr/local/cuda -type f -iname 'cufft*mp*.h' 2>/dev/null | head -n 1)" && \
@@ -423,7 +458,9 @@ RUN apt update && apt install -y \
 
 # Install PyMOL (open-source from conda-forge; commercial use permitted under its license)
 # See docs/PYMOL_LICENSE.md and LEGAL.md for notice and trademark.
-RUN apt update && apt install -y wget && \
+# SKIPPED when AXONOS_SKIP_HEAVY=1: Miniconda + PyMOL (~3 GB); the pymol.desktop sed below is guarded.
+RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping Miniconda and PyMOL"; exit 0; fi && \
+    apt update && apt install -y wget && \
     wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh && \
     bash /tmp/miniconda.sh -b -p /opt/conda && \
     rm /tmp/miniconda.sh && \
@@ -508,7 +545,8 @@ RUN chmod +x /usr/local/bin/start-xorg-nvidia.sh /usr/local/bin/resolve-nvidia-d
     echo 'export LIBGL_DRI3_DISABLE=1' >> /home/$USER/.bashrc
 
 # PyMOL desktop: use vglrun so OpenGL runs on GPU (X :0) when container is run with --gpus all
-RUN sed -i 's#^Exec=pymol$#Exec=bash -c "vglrun pymol 2>/dev/null || pymol"#' /usr/share/applications/pymol.desktop
+# pymol.desktop does not exist when AXONOS_SKIP_HEAVY=1 skipped PyMOL.
+RUN if [ -f /usr/share/applications/pymol.desktop ]; then sed -i 's#^Exec=pymol$#Exec=bash -c "vglrun pymol 2>/dev/null || pymol"#' /usr/share/applications/pymol.desktop; fi
 
 # Keep the conda prefix OFF the interactive PATH: shell python/python3 must be
 # /usr/bin/python3 (torch + CUDA + the image's pip packages). PyMOL is the only
@@ -765,7 +803,9 @@ RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu12
 
 # Quantum ESPRESSO: DFT electronic-structure suite (provides pw.x), plus the
 # XCrySDen visualizer and gnuplot referenced by the template card.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# SKIPPED when AXONOS_SKIP_HEAVY=1: Quantum ESPRESSO, XCrySDen and gnuplot (~1 GB).
+RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping Quantum ESPRESSO"; exit 0; fi && \
+    apt-get update && apt-get install -y --no-install-recommends \
         quantum-espresso xcrysden gnuplot && \
     apt-get clean && rm -rf /var/lib/apt/lists/* && \
     printf '%s\n' \
