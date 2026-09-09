@@ -32,7 +32,7 @@
   },
   "permission": {
     "*": "ask",
-    "external_directory": "deny",
+    "external_directory": "allow",
     "read": {
       "*": "allow",
       "*.env": "deny",

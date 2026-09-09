@@ -85,7 +85,11 @@ class DesktopUiContractTests(unittest.TestCase):
     def test_opencode_policy_allows_readonly_shell_without_prompts(self):
         import json
         from fnmatch import fnmatchcase
-        bash = json.loads((ROOT / "axonos_assistant" / "opencode.json").read_text())["permission"]["bash"]
+        policy = json.loads((ROOT / "axonos_assistant" / "opencode.json").read_text())["permission"]
+        # The container is the tenant sandbox: reads of /etc, /proc, /usr must not
+        # trip the out-of-workspace rule (it denied `cat /etc/os-release`).
+        self.assertEqual(policy["external_directory"], "allow")
+        bash = policy["bash"]
 
         def decide(command):
             decision = "ask"
