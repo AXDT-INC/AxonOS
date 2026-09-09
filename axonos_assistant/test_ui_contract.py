@@ -66,8 +66,13 @@ class DesktopUiContractTests(unittest.TestCase):
     def test_axonai_uses_shared_theme_tokens_and_responsive_messages(self):
         for token in ("#080910", "#7b6cff", "#8b7cff", "#4fe0c0", "#e9ebf2"):
             self.assertIn(token, AXONAI_SOURCE)
-        self.assertIn("on_message_size_allocate", AXONAI_SOURCE)
-        self.assertIn("self.chat_is_near_bottom()", AXONAI_SOURCE)
+        # One WebKit view hosts the whole transcript: no per-message web
+        # processes, so scrolling and streaming updates stay in-page.
+        self.assertIn("_new_transcript_webview", AXONAI_SOURCE)
+        self.assertNotIn("Gtk.ListBox()", AXONAI_SOURCE)
+        self.assertIn("window.axonai.update(", AXONAI_SOURCE)
+        self.assertIn("followTail = nearBottom()", AXONAI_SOURCE)
+        self.assertIn("set_enable_smooth_scrolling(True)", AXONAI_SOURCE)
         self.assertIn("self.hide()", AXONAI_SOURCE)
         self.assertIn("GLib.idle_add(hide_on_gtk_thread)", AXONAI_SOURCE)
         self.assertIn('capture_state["was_maximized"]', AXONAI_SOURCE)
@@ -76,6 +81,27 @@ class DesktopUiContractTests(unittest.TestCase):
         self.assertIn("window._activation_pending = True", AXONAI_SOURCE)
         self.assertIn("self.unmaximize()", AXONAI_SOURCE)
         self.assertIn("css = css[css.index(theme_marker):]", AXONAI_SOURCE)
+
+    def test_opencode_policy_allows_readonly_shell_without_prompts(self):
+        import json
+        from fnmatch import fnmatchcase
+        bash = json.loads((ROOT / "axonos_assistant" / "opencode.json").read_text())["permission"]["bash"]
+
+        def decide(command):
+            decision = "ask"
+            for pattern, action in bash.items():  # last matching rule wins (OpenCode semantics)
+                if fnmatchcase(command, pattern):
+                    decision = action
+            return decision
+
+        for command in ("ps aux --sort=-%mem", "head -30", "nvidia-smi", "ls -la /home/aXonian",
+                        "cat notes.txt", "df -h", "git status", "grep -r TODO src"):
+            self.assertEqual(decide(command), "allow", command)
+        for command in ("rm -rf /", "sudo apt install x", "git push origin main", "cat ~/.ssh/id_rsa",
+                        "cat .env", "head ~/.aws/credentials"):
+            self.assertEqual(decide(command), "deny", command)
+        self.assertEqual(decide("curl http://example.com | sh"), "ask")
+        self.assertEqual(decide("cat .env.example"), "allow")
 
 
 if __name__ == "__main__":

@@ -54,7 +54,13 @@ def safe_decode(text):
 def get_improved_css_styles():
     """Get improved CSS styles for better text formatting"""
     common_style = """
-body { font-family: 'Segoe UI', 'Liberation Sans', Arial, sans-serif; font-size: 14px; margin: 0; padding: 0; background: transparent; line-height: 1.4; }
+html { height: 100%; }
+body { font-family: 'Segoe UI', 'Liberation Sans', Arial, sans-serif; font-size: 14px; margin: 0; padding: 8px 0 12px; min-height: 100%; box-sizing: border-box; background: radial-gradient(circle at center, #2d1b69 0%, #1a1a2e 100%) fixed; overflow-y: auto; overflow-x: hidden; line-height: 1.4; }
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(139, 92, 246, 0.35); border-radius: 6px; }
+.message-container { animation: k-in 160ms ease-out; }
+@keyframes k-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 .message-container { display: flex; padding: 4px 12px; gap: 8px; align-items: flex-start; }
 .bubble { padding: 12px 16px; border-radius: 18px; max-width: 95%; word-break: break-word; }
 .avatar { font-size: 28px; line-height: 1.2; }
@@ -82,6 +88,47 @@ body { color: #e6e6e6; }
     """
     
     return f"<style>{common_style}{theme_style}</style>"
+
+
+TRANSCRIPT_SCRIPT = """<script>
+(function () {
+  var FOLLOW_SLACK = 72;
+  var followTail = true;
+  var pending = false;
+  function root() { return document.scrollingElement || document.documentElement; }
+  function nearBottom() { var el = root(); return el.scrollTop + el.clientHeight >= el.scrollHeight - FOLLOW_SLACK; }
+  function scrollToBottom() { var el = root(); el.scrollTop = el.scrollHeight; }
+  function keepTail() {
+    if (!followTail || pending) { return; }
+    pending = true;
+    requestAnimationFrame(function () { pending = false; scrollToBottom(); });
+  }
+  window.addEventListener('scroll', function () { followTail = nearBottom(); }, { passive: true });
+  window.addEventListener('resize', keepTail);
+  window.talkToK = {
+    append: function (id, sender, html) {
+      var wrap = document.createElement('div');
+      wrap.className = 'message-container ' + sender;
+      wrap.id = 'msg-' + id;
+      if (sender === 'user') {
+        wrap.innerHTML = '<div class="bubble bubble-user"><div class="text">' + html +
+          '</div></div><div class="avatar">👤</div>';
+      } else {
+        wrap.innerHTML = '<div class="bubble bubble-assistant"><div class="avatar">🧘</div>' +
+          '<div class="text">' + html + '</div></div>';
+      }
+      document.body.appendChild(wrap);
+      followTail = true;
+      scrollToBottom();
+    },
+    update: function (id, html) {
+      var node = document.querySelector('#msg-' + id + ' .text');
+      if (node) { node.innerHTML = html; keepTail(); }
+    },
+    clear: function () { document.body.innerHTML = ''; followTail = true; }
+  };
+})();
+</script>"""
 
 class TalkToKChatWidget(Gtk.ApplicationWindow):
     def __init__(self, application):
@@ -130,23 +177,24 @@ class TalkToKChatWidget(Gtk.ApplicationWindow):
         header.set_name("headerbar")
         self.set_titlebar(header)
 
-        # Chat area (scrollable)
-        self.chat_listbox = Gtk.ListBox()
-        self.chat_listbox.set_name("chat_listbox")
-        self.chat_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
-        self.chat_listbox.set_vexpand(True)
-        self.chat_listbox.set_hexpand(True)
-        self.chat_listbox.set_valign(Gtk.Align.FILL)
-        self.chat_listbox.set_halign(Gtk.Align.FILL)
-        
-        chat_scroll = Gtk.ScrolledWindow()
-        chat_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        chat_scroll.set_vexpand(True)
-        chat_scroll.set_hexpand(True)
-        chat_scroll.set_valign(Gtk.Align.FILL)
-        chat_scroll.set_halign(Gtk.Align.FILL)
-        chat_scroll.add(self.chat_listbox)
-        main_vbox.pack_start(chat_scroll, True, True, 0)
+        # Chat area: a single WebKit view hosts the whole transcript so the
+        # background is one uniform surface and scrolling stays in-page.
+        self.chat_view = WebKit2.WebView()
+        self.chat_view.set_background_color(Gdk.RGBA(0x1a / 255, 0x1a / 255, 0x2e / 255, 1))
+        self.chat_view.set_hexpand(True)
+        self.chat_view.set_vexpand(True)
+        self.chat_view.get_settings().set_enable_smooth_scrolling(True)
+        self.chat_view.connect("load-changed", self.on_transcript_load_changed)
+        self._transcript_ready = False
+        self._transcript_queue = []
+        self._message_seq = 0
+        self.streaming_message_id = None
+        self.chat_view.load_html(
+            '<html><head><meta charset="UTF-8">'
+            f"{get_improved_css_styles()}{TRANSCRIPT_SCRIPT}</head><body></body></html>",
+            "file:///",
+        )
+        main_vbox.pack_start(self.chat_view, True, True, 0)
 
         # Prompt suggestions area
         self.suggestions_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -286,11 +334,6 @@ class TalkToKChatWidget(Gtk.ApplicationWindow):
             border: none;
         }
         
-        #chat_listbox {
-            background: transparent;
-            border: none;
-        }
-        
         #input_textview {
             background: rgba(255, 255, 255, 0.1);
             color: #e2e8f0;
@@ -385,142 +428,43 @@ class TalkToKChatWidget(Gtk.ApplicationWindow):
         self.messages.append((sender, message))
         self._append_streaming_message_no_store(sender, message)
 
-    def _append_streaming_message_no_store(self, sender, message):
-        """Append a message with WebView that can be updated for streaming"""
-        print(f"_append_streaming_message_no_store called with sender={sender}, message={message}")
-        row = Gtk.ListBoxRow()
-        row.set_selectable(False)
-        hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        
-        webview = WebKit2.WebView()
-        webview.set_background_color(Gdk.RGBA(0, 0, 0, 0))
-        webview.set_size_request(-1, 1)  # Let it shrink to fit
-        
-        # Store reference for streaming updates
-        self.streaming_webview = webview
+    def on_transcript_load_changed(self, _webview, load_event):
+        if load_event != WebKit2.LoadEvent.FINISHED:
+            return
+        self._transcript_ready = True
+        queued, self._transcript_queue = self._transcript_queue, []
+        for js in queued:
+            self._run_transcript_js(js)
 
+    def _run_transcript_js(self, js):
+        """Run transcript JS now, or queue it until the document has loaded."""
+        if not self._transcript_ready:
+            self._transcript_queue.append(js)
+            return
+        try:
+            self.chat_view.run_javascript(js, None, None, None)
+        except Exception as exc:
+            print(f"Could not update transcript: {exc}")
+
+    def _append_row(self, sender, message):
+        self._message_seq += 1
+        message_id = self._message_seq
         html_content = markdown.markdown(safe_decode(message))
-        full_style = get_improved_css_styles()
+        self._run_transcript_js(
+            f"window.talkToK.append({message_id}, {json.dumps(sender)}, {json.dumps(html_content)});"
+        )
+        return message_id
 
-        if sender == 'user':
-            body_html = f"""
-              <div class="message-container user">
-                <div class="bubble bubble-user"><div class="text">{html_content}</div></div>
-                <div class="avatar">👤</div>
-              </div>
-            """
-        else: # assistant
-            body_html = f"""
-              <div class="message-container assistant">
-                <div class="bubble bubble-assistant">
-                  <div class="avatar">🧘</div>
-                  <div class="text">{html_content}</div>
-                </div>
-              </div>
-            """
-        
-        html = f'<html><head><meta charset="UTF-8">{full_style}</head><body>{body_html}</body></html>'
-        
-        print("HTML being loaded into WebView:")
-        print(html)
-        webview.load_html(html, "file:///")
-        webview.set_hexpand(True)
-        webview.set_vexpand(False)
-
-        def on_load_changed(webview, load_event):
-            if load_event == WebKit2.LoadEvent.FINISHED:
-                # This JS returns the height of the body content
-                webview.run_javascript(
-                    "document.body.scrollHeight;",
-                    None,
-                    lambda webview, result, user_data: set_webview_height(webview, result),
-                    None
-                )
-
-        def set_webview_height(webview, result):
-            try:
-                value = webview.run_javascript_finish(result)
-                js_result = value.get_js_value()
-                height = js_result.to_int32()
-                print(f"Setting WebView height to: {height}")
-                webview.set_size_request(-1, height)
-            except Exception as e:
-                print(f"Error setting height: {e}")
-
-        webview.connect("load-changed", on_load_changed)
-
-        hbox.pack_start(webview, True, True, 0)
-        
-        row.add(hbox)
-        self.chat_listbox.add(row)
-        self.chat_listbox.show_all()
-        adj = self.chat_listbox.get_parent().get_vadjustment()
-        GLib.idle_add(adj.set_value, adj.get_upper())
+    def _append_streaming_message_no_store(self, sender, message):
+        """Append a message row that can be updated while the reply streams."""
+        self.streaming_message_id = self._append_row(sender, message)
 
     def _append_message_no_store(self, sender, message):
-        print(f"_append_message_no_store called with sender={sender}, message={message}")
-        row = Gtk.ListBoxRow()
-        row.set_selectable(False)
-        hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        
-        webview = WebKit2.WebView()
-        webview.set_background_color(Gdk.RGBA(0, 0, 0, 0))
-        webview.set_size_request(-1, 1)  # Let it shrink to fit
+        self._append_row(sender, message)
 
-        html_content = markdown.markdown(safe_decode(message))
-        full_style = get_improved_css_styles()
-
-        if sender == 'user':
-            body_html = f"""
-              <div class="message-container user">
-                <div class="bubble bubble-user"><div class="text">{html_content}</div></div>
-                <div class="avatar">👤</div>
-              </div>
-            """
-        else: # assistant
-            body_html = f"""
-              <div class="message-container assistant">
-                <div class="bubble bubble-assistant">
-                  <div class="avatar">🧘</div>
-                  <div class="text">{html_content}</div>
-                </div>
-              </div>
-            """
-        
-        html = f'<html><head><meta charset="UTF-8">{full_style}</head><body>{body_html}</body></html>'
-        
-        print("HTML being loaded into WebView:")
-        print(html)
-        webview.load_html(html, "file:///")
-        webview.set_hexpand(True)
-        webview.set_vexpand(False)
-
-        def on_load_changed(webview, load_event):
-            if load_event == WebKit2.LoadEvent.FINISHED:
-                # This JS returns the height of the body content
-                webview.run_javascript(
-                    "document.body.scrollHeight;",
-                    None,
-                    lambda webview, result, user_data: set_webview_height(webview, result),
-                    None
-                )
-
-        def set_webview_height(webview, result):
-            value = webview.run_javascript_finish(result)
-            js_result = value.get_js_value()
-            height = js_result.to_int32()
-            print(f"Setting WebView height to: {height}")
-            webview.set_size_request(-1, height)
-
-        webview.connect("load-changed", on_load_changed)
-
-        hbox.pack_start(webview, True, True, 0)
-        
-        row.add(hbox)
-        self.chat_listbox.add(row)
-        self.chat_listbox.show_all()
-        adj = self.chat_listbox.get_parent().get_vadjustment()
-        GLib.idle_add(adj.set_value, adj.get_upper())
+    def _clear_transcript(self):
+        self.streaming_message_id = None
+        self._run_transcript_js("window.talkToK.clear();")
 
     def on_send_clicked(self, widget):
         text_buffer = self.input_textview.get_buffer()
@@ -546,7 +490,6 @@ class TalkToKChatWidget(Gtk.ApplicationWindow):
         self.append_streaming_message("assistant", "🤔 Reflecting...")
         
         # Store the last row (the thinking message) for updating
-        self.thinking_row = self.chat_listbox.get_row_at_index(len(self.chat_listbox.get_children()) - 1)
         
         threading.Thread(target=self.handle_user_query, args=(user_text,), daemon=True).start()
 
@@ -559,7 +502,7 @@ class TalkToKChatWidget(Gtk.ApplicationWindow):
         
         # Update UI immediately
         self.messages[-1] = ("assistant", "Generation stopped.")
-        self.update_message(self.thinking_row, "assistant", "Generation stopped.")
+        self.update_streaming_webview("Generation stopped.")
         
         self._restore_input_state()
 
@@ -593,7 +536,7 @@ class TalkToKChatWidget(Gtk.ApplicationWindow):
                 self.messages[-1] = ("assistant", response)
             # Only update if we haven't been streaming (for non-streaming responses)
             if not hasattr(self, 'streaming_response') or not self.streaming_response:
-                GLib.idle_add(self.update_message, self.thinking_row, "assistant", response)
+                GLib.idle_add(self.update_streaming_webview, response)
         
         GLib.idle_add(self._restore_input_state)
 
@@ -675,111 +618,15 @@ class TalkToKChatWidget(Gtk.ApplicationWindow):
             self.messages[-1] = ("assistant", self.streaming_response)
 
     def update_streaming_webview(self, full_text):
-        """Update the streaming WebView using JavaScript for better performance"""
-        if hasattr(self, 'streaming_webview') and self.streaming_webview:
-            try:
-                # Convert markdown to HTML
-                html_content = markdown.markdown(safe_decode(full_text))
-                # Properly escape for JavaScript string literal
-                escaped_html = html_content.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
-                # Update the content using JavaScript and then recalculate height
-                js_code = f'''
-                var textElement = document.querySelector(".text");
-                if (textElement) {{
-                    textElement.innerHTML = "{escaped_html}";
-                }}
-                document.body.scrollHeight;
-                '''
-                print(f"Executing JS: {js_code[:100]}...")  # Debug print
-                self.streaming_webview.run_javascript(
-                    js_code, 
-                    None, 
-                    lambda webview, result, user_data: self.update_streaming_height(webview, result),
-                    None
-                )
-            except Exception as e:
-                print(f"Error updating streaming webview: {e}")
-
-    def update_streaming_height(self, webview, result):
-        """Update the height of the streaming WebView after content change"""
-        try:
-            value = webview.run_javascript_finish(result)
-            js_result = value.get_js_value()
-            height = js_result.to_int32()
-            print(f"Updating streaming WebView height to: {height}")
-            webview.set_size_request(-1, height)
-            # Scroll to bottom to follow the streaming text
-            adj = self.chat_listbox.get_parent().get_vadjustment()
-            GLib.idle_add(adj.set_value, adj.get_upper())
-        except Exception as e:
-            print(f"Error updating streaming height: {e}")
-
-    def update_message(self, row, sender, message):
-        """Update an existing message row with new content"""
-        # Remove the old content
-        for child in row.get_children():
-            row.remove(child)
-        
-        # Add new content
-        hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        
-        webview = WebKit2.WebView()
-        webview.set_background_color(Gdk.RGBA(0, 0, 0, 0))
-        webview.set_size_request(-1, 1)  # Let it shrink to fit
-
-        html_content = markdown.markdown(safe_decode(message))
-        full_style = get_improved_css_styles()
-
-        if sender == 'user':
-            body_html = f"""
-              <div class="message-container user">
-                <div class="bubble bubble-user"><div class="text">{html_content}</div></div>
-                <div class="avatar">👤</div>
-              </div>
-            """
-        else: # assistant
-            body_html = f"""
-              <div class="message-container assistant">
-                <div class="bubble bubble-assistant">
-                  <div class="avatar">🧘</div>
-                  <div class="text">{html_content}</div>
-                </div>
-              </div>
-            """
-        
-        html = f'<html><head><meta charset="UTF-8">{full_style}</head><body>{body_html}</body></html>'
-        
-        print("HTML being loaded into WebView:")
-        print(html)
-        webview.load_html(html, "file:///")
-        webview.set_hexpand(True)
-        webview.set_vexpand(False)
-
-        def on_load_changed(webview, load_event):
-            if load_event == WebKit2.LoadEvent.FINISHED:
-                # This JS returns the height of the body content
-                webview.run_javascript(
-                    "document.body.scrollHeight;",
-                    None,
-                    lambda webview, result, user_data: set_webview_height(webview, result),
-                    None
-                )
-
-        def set_webview_height(webview, result):
-            value = webview.run_javascript_finish(result)
-            js_result = value.get_js_value()
-            height = js_result.to_int32()
-            print(f"Setting WebView height to: {height}")
-            webview.set_size_request(-1, height)
-
-        webview.connect("load-changed", on_load_changed)
-
-        hbox.pack_start(webview, True, True, 0)
-        
-        row.add(hbox)
-        row.show_all()
-        adj = self.chat_listbox.get_parent().get_vadjustment()
-        GLib.idle_add(adj.set_value, adj.get_upper())
+        """Replace the streaming row's content; the page follows the tail only
+        while the reader is already near the bottom."""
+        if self.streaming_message_id is None:
+            return False
+        html_content = markdown.markdown(safe_decode(full_text))
+        self._run_transcript_js(
+            f"window.talkToK.update({self.streaming_message_id}, {json.dumps(html_content)});"
+        )
+        return False
 
     def on_settings_clicked(self, widget):
         """Handle the settings button click event."""
@@ -843,7 +690,7 @@ class TalkToKChatWidget(Gtk.ApplicationWindow):
         if response == Gtk.ResponseType.YES:
             self.conversation_history.clear()
             self.messages.clear()
-            self.chat_listbox.foreach(lambda widget: self.chat_listbox.remove(widget))
+            self._clear_transcript()
             welcome_msg = ("We begin again, as if for the first time. "
                           "In this space of inquiry, what questions naturally arise about the nature of consciousness, "
                           "about freedom, about the very ground of existence itself?")

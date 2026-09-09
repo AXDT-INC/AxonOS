@@ -197,9 +197,16 @@ def get_improved_css_styles():
     """Return message CSS derived from the AxonOS v2 noVNC design tokens."""
     return """<style>
 :root { color-scheme: dark; }
-html, body { margin: 0; padding: 0; width: 100%; overflow: hidden; }
+html { height: 100%; scroll-behavior: smooth; }
 body {
   box-sizing: border-box;
+  margin: 0;
+  padding: 8px 0 12px;
+  min-height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(123, 108, 255, 0.35) transparent;
   background: #080910;
   color: #e9ebf2;
   font-family: 'Hanken Grotesk', 'Segoe UI', 'Liberation Sans', sans-serif;
@@ -309,11 +316,62 @@ body {
 .text table { width: 100%; margin: 10px 0; border-collapse: collapse; font-size: 0.94em; }
 .text th, .text td { padding: 8px 10px; border: 1px solid rgba(255, 255, 255, 0.09); text-align: left; }
 .text th { color: #ffffff; background: rgba(123, 108, 255, 0.14); }
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(123, 108, 255, 0.30); border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(123, 108, 255, 0.55); }
+.message-container { animation: axonai-in 160ms ease-out; }
+@keyframes axonai-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (max-width: 720px) {
   .message-container { padding: 6px 10px; }
   .bubble { max-width: 88%; }
 }
 </style>"""
+
+
+TRANSCRIPT_SCRIPT = """<script>
+(function () {
+  var FOLLOW_SLACK = 72;
+  var followTail = true;
+  var pending = false;
+  function nearBottom() {
+    var el = document.scrollingElement || document.documentElement;
+    return el.scrollTop + el.clientHeight >= el.scrollHeight - FOLLOW_SLACK;
+  }
+  function scrollToBottom(instant) {
+    var el = document.scrollingElement || document.documentElement;
+    if (instant) { el.style.scrollBehavior = 'auto'; }
+    el.scrollTop = el.scrollHeight;
+    if (instant) { el.style.scrollBehavior = ''; }
+  }
+  function keepTail() {
+    if (!followTail || pending) { return; }
+    pending = true;
+    requestAnimationFrame(function () { pending = false; scrollToBottom(true); });
+  }
+  window.addEventListener('scroll', function () { followTail = nearBottom(); }, { passive: true });
+  window.addEventListener('resize', keepTail);
+  window.axonai = {
+    append: function (id, sender, html) {
+      var wrap = document.createElement('div');
+      wrap.className = 'message-container ' + sender;
+      wrap.id = 'msg-' + id;
+      var avatar = '<div class="avatar" aria-hidden="true">' + (sender === 'user' ? 'YOU' : 'AX') + '</div>';
+      var bubble = '<div class="bubble bubble-' + sender + '"><div class="role">' +
+        (sender === 'user' ? 'You' : 'AxonAI') + '</div><div class="text">' + html + '</div></div>';
+      wrap.innerHTML = sender === 'user' ? bubble + avatar : avatar + bubble;
+      document.body.appendChild(wrap);
+      followTail = true;
+      scrollToBottom(true);
+    },
+    update: function (id, html) {
+      var node = document.querySelector('#msg-' + id + ' .text');
+      if (node) { node.innerHTML = html; keepTail(); }
+    },
+    clear: function () { document.body.innerHTML = ''; followTail = true; }
+  };
+})();
+</script>"""
 
 class AxonAIWindow(Gtk.ApplicationWindow):
     def __init__(self, application):
@@ -488,23 +546,14 @@ class AxonAIWindow(Gtk.ApplicationWindow):
         # Make this header the real window title-bar
         self.set_titlebar(header)
 
-        # Chat area (scrollable)
-        self.chat_listbox = Gtk.ListBox()
-        self.chat_listbox.set_name("chat_listbox")
-        self.chat_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
-        self.chat_listbox.set_vexpand(True)
-        self.chat_listbox.set_hexpand(True)
-        self.chat_listbox.set_valign(Gtk.Align.FILL)
-        self.chat_listbox.set_halign(Gtk.Align.FILL)
-        
-        self.chat_scroll = Gtk.ScrolledWindow()
+        # Chat area: one WebKit view hosts the whole transcript so scrolling,
+        # incremental updates, and repaints stay inside a single web process.
+        self.chat_view = self._new_transcript_webview()
+        self.chat_scroll = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.chat_scroll.set_name("chat_scroll")
-        self.chat_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.chat_scroll.set_vexpand(True)
         self.chat_scroll.set_hexpand(True)
-        self.chat_scroll.set_valign(Gtk.Align.FILL)
-        self.chat_scroll.set_halign(Gtk.Align.FILL)
-        self.chat_scroll.add(self.chat_listbox)
+        self.chat_scroll.pack_start(self.chat_view, True, True, 0)
         main_vbox.pack_start(self.chat_scroll, True, True, 0)
 
         # Prompt suggestions area
@@ -722,19 +771,6 @@ class AxonAIWindow(Gtk.ApplicationWindow):
 
 #main_vbox {
     border-radius: 12px;
-    background-color: #ffffff;
-}
-
-#chat_listbox, #chat_listbox row {
-    background-color: #ffffff;
-    border-radius: 12px;
-}
-
-#chat_listbox scrolledwindow {
-    background-color: #ffffff;
-}
-
-#chat_listbox scrolledwindow viewport {
     background-color: #ffffff;
 }
 
@@ -1014,8 +1050,7 @@ window {
 }
 
 #main_vbox, #main_vbox box,
-#chat_scroll, #chat_scroll viewport,
-#chat_listbox, #chat_listbox row,
+#chat_scroll,
 #suggestions_container, #suggestions_container box,
 #suggestions_grid, #suggestions_grid box,
 #composer_container, #inputbox {
@@ -1088,22 +1123,6 @@ window {
 #chat_scroll {
     margin: 12px 10px 4px 10px;
     border: none;
-}
-
-#chat_scroll scrollbar {
-    background-color: transparent;
-}
-
-#chat_scroll scrollbar slider {
-    min-width: 7px;
-    min-height: 36px;
-    background-color: rgba(123, 108, 255, 0.28);
-    border: none;
-    border-radius: 6px;
-}
-
-#chat_scroll scrollbar slider:hover {
-    background-color: rgba(123, 108, 255, 0.52);
 }
 
 #suggestions_container {
@@ -1370,47 +1389,28 @@ window {
         self._append_streaming_message_no_store(sender, message)
 
     @staticmethod
-    def _message_document(sender, message):
-        html_content = render_markdown(message)
-        if sender == "user":
-            body_html = f"""
-              <div class="message-container user">
-                <div class="bubble bubble-user">
-                  <div class="role">You</div>
-                  <div class="text">{html_content}</div>
-                </div>
-                <div class="avatar" aria-hidden="true">YOU</div>
-              </div>
-            """
-        else:
-            body_html = f"""
-              <div class="message-container assistant">
-                <div class="avatar" aria-hidden="true">AX</div>
-                <div class="bubble bubble-assistant">
-                  <div class="role">AxonAI</div>
-                  <div class="text">{html_content}</div>
-                </div>
-              </div>
-            """
+    def _transcript_document():
         return (
             '<html><head><meta charset="UTF-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
-            f"{get_improved_css_styles()}</head><body>{body_html}</body></html>"
+            f"{get_improved_css_styles()}{TRANSCRIPT_SCRIPT}</head><body></body></html>"
         )
 
-    def _new_message_webview(self, sender, message):
+    def _new_transcript_webview(self):
         webview = WebKit2.WebView()
         webview.set_background_color(Gdk.RGBA(8 / 255, 9 / 255, 16 / 255, 1))
-        webview.set_size_request(-1, 1)
         webview.set_hexpand(True)
-        webview.set_vexpand(False)
-        webview._axonai_last_width = 0
-        webview._axonai_resize_scheduled = False
-        webview._axonai_follow_tail = True
+        webview.set_vexpand(True)
+        settings = webview.get_settings()
+        settings.set_enable_smooth_scrolling(True)
+        settings.set_enable_write_console_messages_to_stdout(False)
         webview.connect("decide-policy", self.on_message_decide_policy)
-        webview.connect("load-changed", self.on_message_load_changed)
-        webview.connect("size-allocate", self.on_message_size_allocate)
-        webview.load_html(self._message_document(sender, message), "file:///")
+        webview.connect("load-changed", self.on_transcript_load_changed)
+        self._transcript_ready = False
+        self._transcript_queue = []
+        self._message_seq = 0
+        self.streaming_message_id = None
+        webview.load_html(self._transcript_document(), "file:///")
         return webview
 
     def on_message_decide_policy(self, _webview, decision, decision_type):
@@ -1434,87 +1434,43 @@ window {
         decision.ignore()
         return True
 
-    def on_message_load_changed(self, webview, load_event):
-        if load_event == WebKit2.LoadEvent.FINISHED:
-            self.schedule_message_resize(webview)
-
-    def on_message_size_allocate(self, webview, allocation):
-        """Re-measure HTML after maximize, restore, or manual window resizing."""
-        width = max(0, allocation.width)
-        if width and abs(width - webview._axonai_last_width) >= 2:
-            webview._axonai_last_width = width
-            webview._axonai_follow_tail = self.chat_is_near_bottom()
-            self.schedule_message_resize(webview)
-
-    def schedule_message_resize(self, webview):
-        if webview._axonai_resize_scheduled:
+    def on_transcript_load_changed(self, _webview, load_event):
+        if load_event != WebKit2.LoadEvent.FINISHED:
             return
-        webview._axonai_resize_scheduled = True
-        GLib.idle_add(self.resize_message_webview, webview)
+        self._transcript_ready = True
+        queued, self._transcript_queue = self._transcript_queue, []
+        for js in queued:
+            self._run_transcript_js(js)
 
-    def resize_message_webview(self, webview):
-        webview._axonai_resize_scheduled = False
-        if not webview.get_parent():
-            return False
+    def _run_transcript_js(self, js):
+        """Run transcript JS now, or queue it until the document has loaded."""
+        if not self._transcript_ready:
+            self._transcript_queue.append(js)
+            return
         try:
-            webview.run_javascript(
-                "Math.ceil(Math.max(document.body.scrollHeight, "
-                "document.documentElement.scrollHeight));",
-                None,
-                self.finish_message_resize,
-                None,
-            )
+            self.chat_view.run_javascript(js, None, None, None)
         except Exception as exc:
-            logging.debug("Could not measure AxonAI message: %s", exc)
-        return False
+            logging.debug("Could not update AxonAI transcript: %s", exc)
 
-    def finish_message_resize(self, webview, result, _user_data):
-        try:
-            value = webview.run_javascript_finish(result)
-            height = max(1, value.get_js_value().to_int32())
-            if webview.get_allocated_height() != height:
-                webview.set_size_request(-1, height)
-            if webview._axonai_follow_tail:
-                GLib.idle_add(self.scroll_chat_to_bottom)
-        except Exception as exc:
-            logging.debug("Could not resize AxonAI message: %s", exc)
-
-    def chat_is_near_bottom(self):
-        adjustment = self.chat_scroll.get_vadjustment()
-        return (
-            adjustment.get_value() + adjustment.get_page_size()
-            >= adjustment.get_upper() - 72
+    def _append_row(self, sender, message):
+        self._message_seq += 1
+        message_id = self._message_seq
+        self._run_transcript_js(
+            f"window.axonai.append({message_id}, {json.dumps(sender)}, "
+            f"{json.dumps(render_markdown(message))});"
         )
-
-    def scroll_chat_to_bottom(self):
-        adjustment = self.chat_scroll.get_vadjustment()
-        bottom = max(adjustment.get_lower(), adjustment.get_upper() - adjustment.get_page_size())
-        adjustment.set_value(bottom)
-        return False
-
-    def _populate_message_row(self, row, sender, message, streaming=False):
-        hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        webview = self._new_message_webview(sender, message)
-        if streaming:
-            self.streaming_webview = webview
-        hbox.pack_start(webview, True, True, 0)
-        row.add(hbox)
-        row.show_all()
-        GLib.idle_add(self.scroll_chat_to_bottom)
-        return webview
+        return message_id
 
     def _append_streaming_message_no_store(self, sender, message):
         """Append a response row that can be updated while the agent streams."""
-        row = Gtk.ListBoxRow()
-        row.set_selectable(False)
-        self.chat_listbox.add(row)
-        self._populate_message_row(row, sender, message, streaming=True)
+        self.streaming_message_id = self._append_row(sender, message)
 
     def _append_message_no_store(self, sender, message):
-        row = Gtk.ListBoxRow()
-        row.set_selectable(False)
-        self.chat_listbox.add(row)
-        self._populate_message_row(row, sender, message)
+        self._append_row(sender, message)
+
+    def _clear_transcript(self):
+        self.streaming_message_id = None
+        self._run_transcript_js("window.axonai.clear();")
 
     def on_send_clicked(self, widget):
         text_buffer = self.input_textview.get_buffer()
@@ -1577,9 +1533,6 @@ window {
         else:
             self.append_streaming_message("assistant", "🤔 Thinking...")
         
-        # Store the last row (the thinking message) for updating
-        self.thinking_row = self.chat_listbox.get_row_at_index(len(self.chat_listbox.get_children()) - 1)
-        
         threading.Thread(
             target=self.handle_user_query,
             args=(
@@ -1609,7 +1562,7 @@ window {
         
         # Update UI immediately
         self.messages[-1] = ("assistant", "Generation stopped.")
-        self.update_message(self.thinking_row, "assistant", "Generation stopped.")
+        self.update_streaming_webview("Generation stopped.")
         
         self._restore_input_state()
 
@@ -3170,31 +3123,14 @@ Please specify which application you'd like to launch, and I'll help you get sta
         return False
 
     def update_streaming_webview(self, full_text):
-        """Update a streaming row while preserving intentional scroll position."""
-        if hasattr(self, 'streaming_webview') and self.streaming_webview:
-            try:
-                html_content = render_markdown(full_text)
-                encoded_html = json.dumps(html_content)
-                self.streaming_webview._axonai_follow_tail = self.chat_is_near_bottom()
-                js_code = f'''
-                var textElement = document.querySelector(".text");
-                if (textElement) {{
-                    textElement.innerHTML = {encoded_html};
-                }}
-                Math.ceil(Math.max(document.body.scrollHeight,
-                                    document.documentElement.scrollHeight));
-                '''
-                self.streaming_webview.run_javascript(
-                    js_code, None, self.finish_message_resize, None,
-                )
-            except Exception as e:
-                print(f"Error updating streaming webview: {e}")
-
-    def update_message(self, row, sender, message):
-        """Update an existing message row with new content"""
-        for child in row.get_children():
-            row.remove(child)
-        self._populate_message_row(row, sender, message)
+        """Replace the streaming row's content; the page keeps the tail in view
+        only while the reader is already near the bottom."""
+        message_id = getattr(self, "streaming_message_id", None)
+        if message_id is None:
+            return
+        self._run_transcript_js(
+            f"window.axonai.update({message_id}, {json.dumps(render_markdown(full_text))});"
+        )
 
     def on_settings_clicked(self, widget):
         """Handle the settings button click event."""
@@ -3287,7 +3223,7 @@ Please specify which application you'd like to launch, and I'll help you get sta
             self.agent_history_cursor = 0
             self.active_turn_id = None
             self.active_history_entry = None
-            self.chat_listbox.foreach(lambda widget: self.chat_listbox.remove(widget))
+            self._clear_transcript()
             welcome_msg = (
                 "Welcome to **AxonAI** — your private, local research agent for AxonOS. "
                 "I can inspect the desktop, use approved scientific tools, and help carry work "
