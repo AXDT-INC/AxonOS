@@ -2963,6 +2963,16 @@ Copyright (C) 2019 The noVNC Authors
                     step: 4,
                     labels: launchSteps
                 },
+                // Reported by the WebRTC module once ICE is connected and it is
+                // waiting for the first decoded frame. Still step 4: an unknown
+                // phase used to fall back to step 1 and made the checklist look
+                // like it restarted right before the desktop appeared.
+                'webrtc-video': {
+                    title: 'Securing display connection',
+                    subtext: 'Encrypted connection established; waiting for the first desktop frame…',
+                    step: 4,
+                    labels: launchSteps
+                },
                 vnc: {
                     title: reconnect ? 'Reopening desktop display' : 'Opening desktop display',
                     subtext: 'WebRTC is unavailable; opening the classic remote desktop stream…',
@@ -2971,6 +2981,12 @@ Copyright (C) 2019 The noVNC Authors
                 }
             };
             var resolvedPhase = phases[phase] ? phase : 'preparing';
+            if (typeof phase === 'string' && !phases[phase]) {
+                // Never let a stray phase name restart the checklist mid-launch;
+                // keep the step the overlay is already on and just log it.
+                console.warn('[AxonOS] Unknown connection loader phase:', phase);
+                if (loaderCurrentStepKey) return;
+            }
             var msg = phases[resolvedPhase];
             if (titleEl) titleEl.textContent = msg.title;
             if (subEl) subEl.textContent = msg.subtext;
