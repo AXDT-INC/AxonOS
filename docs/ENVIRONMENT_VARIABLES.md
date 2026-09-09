@@ -390,6 +390,7 @@ container.
 | `AXGT_HOST_SESSION_CONTAINER_COMMAND` | *(empty; image `CMD`)* | Container entry command tokens. Compose sets `/startup.sh`. |
 | `AXGT_HOST_SESSION_CONTAINER_EXTRA_ARGS` | *(empty)* | Restricted extra `docker run` flags. Network, ports, mounts/devices, namespaces, capabilities, runtime/security settings, environment injection, conflicting GPUs, and privileged mode are stripped. |
 | `AXGT_HOST_SESSION_CONTAINER_SHM_SIZE` | `32g` | `--shm-size` for session containers. Empty string omits flag. |
+| `AXGT_HOST_SESSION_LXCFS_DIR` | _(empty)_ | Host lxcfs mountpoint (e.g. `/var/lib/lxcfs`). When set, its `proc/{cpuinfo,diskstats,loadavg,meminfo,stat,swaps,uptime}` views are bind-mounted read-only over the session's `/proc` so uptime and load average are container-scoped. Sessions carry no CPU/RAM ceilings, so memory and CPU totals still reflect the host. |
 | `AXGT_HOST_SESSION_NETWORK_ISOLATION` | `true` | Create a labeled bridge `axgt-session-net-<id>` for each tenant and remove it on stop. |
 | `AXGT_HOST_CENTRAL_GATE_CONTAINER` | `axonos` | Central gate attached to each isolated tenant network. |
 | `AXGT_HOST_SESSION_CONTAINER_NETWORK` | `axonos_stack` (compose) | Shared compatibility network used—and required—when per-session isolation is disabled. |

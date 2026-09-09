@@ -580,6 +580,44 @@ def _ensure_persistent_storage_volume(
         return False, f"Failed to create docker volume {volume_name}: {exc}"
 
 
+# lxcfs (https://linuxcontainers.org/lxcfs) serves cgroup-aware procfs views.
+# Session containers run without CPU/RAM ceilings by design (compute is shared
+# across tenants), so meminfo/cpuinfo still show host totals; the views that
+# do change are uptime (container age, not host boot) and loadavg (container
+# scoped), which keeps in-session tooling from reporting the host's lifetime.
+_LXCFS_PROC_FILES = (
+    "cpuinfo",
+    "diskstats",
+    "loadavg",
+    "meminfo",
+    "stat",
+    "swaps",
+    "uptime",
+)
+
+
+def _lxcfs_mount_args() -> List[str]:
+    """Bind lxcfs procfs views into the session when the host opts in.
+
+    ``AXGT_HOST_SESSION_LXCFS_DIR`` names the lxcfs mountpoint on the host
+    (typically ``/var/lib/lxcfs``); empty/unset disables the mounts. The path
+    is a host path used by dockerd, so it need not be visible inside the
+    launcher container. When it is visible, missing proc views are skipped so
+    a half-started lxcfs cannot break launches.
+    """
+    root = (os.getenv("AXGT_HOST_SESSION_LXCFS_DIR") or "").strip().rstrip("/")
+    if not root:
+        return []
+    args: List[str] = []
+    for name in _LXCFS_PROC_FILES:
+        host_path = f"{root}/proc/{name}"
+        if os.path.isdir(root) and not os.path.exists(host_path):
+            logger.warning("launcher: lxcfs view missing, skipping %s", host_path)
+            continue
+        args.extend(["-v", f"{host_path}:/proc/{name}:ro"])
+    return args
+
+
 def _default_command_tokens() -> List[str]:
     raw = (os.getenv("AXGT_HOST_SESSION_CONTAINER_COMMAND") or "").strip()
     if not raw:
@@ -1461,6 +1499,7 @@ def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], 
     shm = _shm_size_for_run()
     if shm:
         cmd.extend(["--shm-size", shm])
+    cmd.extend(_lxcfs_mount_args())
     cmd.extend(
         [
             "--gpus",

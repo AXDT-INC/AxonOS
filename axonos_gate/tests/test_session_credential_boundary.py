@@ -834,6 +834,40 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
                 )
             )
 
+    def test_lxcfs_proc_views_mount_only_when_host_opts_in(self) -> None:
+        import session_launcher_service as launcher
+
+        base = {
+            "AXGT_HOST_SESSION_CONTAINER_IMAGE": "axonos:latest",
+            "AXGT_PERSISTENT_STORAGE_ENABLED": "false",
+        }
+        payload = {
+            "session_id": 41,
+            "wallet_address": "0xAbC123",
+            "requested_profile": "small",
+            "assigned_gpu_ids": [0],
+            "webrtc_agent_token": "signed-session-capability",
+        }
+
+        with patch.dict(os.environ, base, clear=True):
+            command, error = launcher._build_launch_cmd(payload)
+        self.assertIsNone(error)
+        assert command is not None
+        self.assertFalse(any("/proc/uptime" in token for token in command))
+
+        with patch.dict(
+            os.environ, {**base, "AXGT_HOST_SESSION_LXCFS_DIR": "/var/lib/lxcfs/"}, clear=True
+        ):
+            command, error = launcher._build_launch_cmd(payload)
+        self.assertIsNone(error)
+        assert command is not None
+        mounts = [command[i + 1] for i, tok in enumerate(command) if tok == "-v"]
+        self.assertIn("/var/lib/lxcfs/proc/uptime:/proc/uptime:ro", mounts)
+        self.assertIn("/var/lib/lxcfs/proc/loadavg:/proc/loadavg:ro", mounts)
+        self.assertIn("/var/lib/lxcfs/proc/meminfo:/proc/meminfo:ro", mounts)
+        # Host-path mounts stay launcher-owned: the proc views are read-only.
+        self.assertTrue(all(m.endswith(":ro") for m in mounts if "/lxcfs/" in m))
+
     def test_service_command_injects_only_scoped_identity_and_central_urls(self) -> None:
         import session_launcher_service as launcher
 

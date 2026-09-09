@@ -60,6 +60,7 @@ Set on host:
 - optional `AXGT_HOST_SESSION_CONTAINER_EXTRA_ARGS=...` (restricted; see
   [Security boundary](#security-boundary))
 - optional `AXGT_HOST_SESSION_CONTAINER_SHM_SIZE=32g` (default when unset; matches main `axonos` `shm_size` intent for GLX)
+- optional `AXGT_HOST_SESSION_LXCFS_DIR=/var/lib/lxcfs`: with `lxcfs` installed and running on the host (`apt install lxcfs`), its procfs views are mounted read-only into every session so `uptime`/`loadavg` reflect the container rather than the host
 - optional `AXGT_HOST_SESSION_ENV_PASSTHROUGH=WEBRTC_STUN_URLS,...`
   (media tuning only)
 - optional bind:
