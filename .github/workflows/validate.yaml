@@ -1,0 +1,63 @@
+name: Validate
+
+# Fast checks that need neither the image nor the remote builder: the gate and
+# assistant unit tests, a Dockerfile lint/check, and shell syntax for the
+# scripts baked into the image. build-push.yaml still pushes the minimal image
+# variant for the registry's vulnerability scan; this job is what tells us a
+# push to main broke something, in minutes rather than after an hour.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same interpreter as the image (Ubuntu 22.04 python3).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: |
+            axonos_gate/requirements.txt
+            axonos_assistant/requirements.txt
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r axonos_gate/requirements.txt -r axonos_assistant/requirements.txt pytest
+
+      - name: Gate unit tests
+        run: python -m pytest axonos_gate/tests -q -p no:cacheprovider
+
+      - name: Assistant unit tests
+        # test_mcp_integration.py is a manual end-to-end script (async main, needs
+        # the MCP server running), not a unit test.
+        run: python -m pytest axonos_assistant --ignore=axonos_assistant/test_mcp_integration.py -q -p no:cacheprovider
+
+  dockerfile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # BuildKit's frontend check parses and lints the Dockerfile without
+      # running any stage. Both variants are checked.
+      - name: Dockerfile check (full)
+        run: docker buildx build --check .
+
+      - name: Dockerfile check (AXONOS_SKIP_HEAVY=1)
+        run: docker buildx build --check --build-arg AXONOS_SKIP_HEAVY=1 .
+
+      - name: Shell syntax of image scripts
+        run: |
+          status=0
+          for f in startup.sh apply_theme.sh check_ipfs.sh scripts/*.sh; do
+            bash -n "$f" || { echo "syntax error: $f"; status=1; }
+          done
+          exit $status

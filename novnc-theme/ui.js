@@ -1637,7 +1637,7 @@ const UI = {
         }
 
         try {
-            const terminalModule = await import('./terminal/axonos-terminal.js?v=20260907multi1');
+            const terminalModule = await import('./terminal/axonos-terminal.js?v=20260909elapsed2');
             const client = await terminalModule.openAxonosTerminal({
                 container: document.getElementById('noVNC_container'),
                 wallet,
@@ -4345,7 +4345,7 @@ const UI = {
                         try {
                             // A stable module URL keeps negotiation generation/cancellation
                             // state shared across retries and rapid user reconnects.
-                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260908nvpin1');
+                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260909elapsed2');
                             if (!connectAttemptIsCurrent()) {
                                 return;
                             }
