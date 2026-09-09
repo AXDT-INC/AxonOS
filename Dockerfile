@@ -84,8 +84,18 @@ BUG_REPORT_URL="https://github.com/AxonDAO-AXGT/AxonOS/issues"' > /etc/os-releas
     echo '#!/bin/sh\nif [ "$1" = "-a" ]; then\n  echo -n "AxonOS " && /bin/uname.real -a\nelse\n  /bin/uname.real "$@"\nfi' > /bin/uname && \
     chmod +x /bin/uname
 
+# AXONOS_SKIP_HEAVY=1 builds a slim variant for hosted CI, whose build backend
+# cannot hold the two largest layers: the ~17 GB Ollama model (pulled on first
+# use instead) and the ~33 GB NVIDIA HPC SDK (GROMACS is then built without
+# cuFFTMp). The default keeps the full image; do not change it for production.
+ARG AXONOS_SKIP_HEAVY=0
+
 # Install Ollama and pull qwen3.8:latest (optional install-script SHA256 verification).
 # Provide OLLAMA_INSTALL_SHA256 to verify the downloaded script before execution.
+# SKIPPED when AXONOS_SKIP_HEAVY=1: only the `ollama pull` (~17 GB model layer).
+# Ollama itself is still installed and supervised; the slim image starts with
+# an empty model store, so the first `ollama run qwen3.8` in a session downloads
+# the model at that point instead of finding it baked in.
 ARG OLLAMA_INSTALL_SHA256=""
 RUN curl --proto '=https' --tlsv1.2 -fsSL https://ollama.com/install.sh \
       -o /tmp/ollama_install.sh && \
@@ -94,6 +104,7 @@ RUN curl --proto '=https' --tlsv1.2 -fsSL https://ollama.com/install.sh \
     fi && \
     sh /tmp/ollama_install.sh && \
     rm -f /tmp/ollama_install.sh && \
+    if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: not baking qwen3.8 into the image"; exit 0; fi && \
     (ollama serve >/tmp/ollama-build.log 2>&1 & \
      OLLAMA_PID=$!; \
      sleep 5; \
@@ -314,7 +325,12 @@ RUN curl -fsSL https://developer.download.nvidia.com/hpc-sdk/ubuntu/DEB-GPG-KEY-
     apt clean && rm -rf /var/lib/apt/lists/*
 
 # Install NVHPC 26.1 + CUDA multi package (includes cuFFTMp)
-RUN apt-get update -y && \
+# SKIPPED when AXONOS_SKIP_HEAVY=1: the whole ~33 GB SDK is left out, so the slim
+# image has no cuFFTMp and no NVSHMEM under /opt/nvidia/hpc_sdk. The repo,
+# gfortran and OpenMPI/UCX layers above are kept (small). The NVSHMEM ldconfig
+# and profile.d step below then finds no lib dirs and only logs its warning.
+RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping NVIDIA HPC SDK (no cuFFTMp)"; exit 0; fi && \
+    apt-get update -y && \
     apt-get -o APT::Status-Fd=2 -o Debug::pkgAcquire::Progress=1 -o DPKG::Progress-Fancy=1 install -y --no-install-recommends nvhpc-26-1-cuda-multi && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -361,16 +377,27 @@ RUN echo 'export PATH="/usr/local/cuda/bin:$PATH"' > /etc/profile.d/cuda.sh && \
     echo 'export PATH="/usr/local/cuda/bin:$PATH"' >> /home/aXonian/.profile
 
 # Install GROMACS (release-2026, MPI-enabled)
+# DEGRADED when AXONOS_SKIP_HEAVY=1: with no HPC SDK there is no cuFFTMp, so
+# GROMACS is configured with -DGMX_USE_CUFFTMP=OFF. CUDA, OpenMP and OpenMPI
+# stay on; only multi-GPU PME decomposition (GMX_USE_CUFFTMP) is unavailable.
+# A missing cuFFTMp is still a hard build error in the full (default) build.
 RUN apt update && apt install -y \
     && apt clean && \
     git clone --branch release-2026 --depth 1 https://github.com/gromacs/gromacs.git /opt/gromacs-src && \
     CUFFTMP_INCLUDE="$(find /opt/nvidia/hpc_sdk /usr/local/cuda -type f -iname 'cufft*mp*.h' 2>/dev/null | head -n 1)" && \
     CUFFTMP_LIBRARY="$(find /opt/nvidia/hpc_sdk /usr/local/cuda -type f -iname 'libcufft*mp*.so*' 2>/dev/null | head -n 1)" && \
     CUFFTMP_ROOT="$(dirname "${CUFFTMP_INCLUDE}")/.." && \
-    if [ -z "$CUFFTMP_ROOT" ] || [ -z "$CUFFTMP_INCLUDE" ] || [ -z "$CUFFTMP_LIBRARY" ]; then \
-      echo "cuFFTMp not found under /opt/nvidia/hpc_sdk; check NVHPC install" >&2; \
-      find /opt/nvidia/hpc_sdk -maxdepth 4 -type d 2>/dev/null || true; \
-      exit 1; \
+    if [ -z "$CUFFTMP_INCLUDE" ] || [ -z "$CUFFTMP_LIBRARY" ]; then \
+      if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then \
+        echo "AXONOS_SKIP_HEAVY=1: building GROMACS without cuFFTMp (no GPU PME decomposition)"; \
+        CUFFTMP_FLAGS="-DGMX_USE_CUFFTMP=OFF"; \
+      else \
+        echo "cuFFTMp not found under /opt/nvidia/hpc_sdk; check NVHPC install" >&2; \
+        find /opt/nvidia/hpc_sdk -maxdepth 4 -type d 2>/dev/null || true; \
+        exit 1; \
+      fi; \
+    else \
+      CUFFTMP_FLAGS="-DGMX_USE_CUFFTMP=ON -DcuFFTMp_ROOT=${CUFFTMP_ROOT} -DcuFFTMp_INCLUDE_DIR=$(dirname "${CUFFTMP_INCLUDE}") -DcuFFTMp_LIBRARY=${CUFFTMP_LIBRARY}"; \
     fi && \
     cmake -S /opt/gromacs-src -B /opt/gromacs-build \
       -DGMX_BUILD_OWN_FFTW=ON \
@@ -379,10 +406,7 @@ RUN apt update && apt install -y \
       # Library MPI (OpenMPI): use mpirun / -gpu_id for multi-rank; mdrun -ntmpi is invalid.
       -DGMX_MPI=ON \
       -DGMX_OPENMP=ON \
-      -DGMX_USE_CUFFTMP=ON \
-      -DcuFFTMp_ROOT="${CUFFTMP_ROOT}" \
-      -DcuFFTMp_INCLUDE_DIR="$(dirname "${CUFFTMP_INCLUDE}")" \
-      -DcuFFTMp_LIBRARY="${CUFFTMP_LIBRARY}" \
+      ${CUFFTMP_FLAGS} \
       -DCUDAToolkit_ROOT=/usr/local/cuda \
       -DCMAKE_CUDA_ARCHITECTURES="${GMX_CUDA_ARCHS}" \
       -DCMAKE_INSTALL_PREFIX=/opt/gromacs && \

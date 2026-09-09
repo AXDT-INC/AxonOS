@@ -9,6 +9,14 @@ env:
   REGISTRY: harbor.internal.oci.axondao.io
   IMAGE: axondao/axonos
   BUILDKIT_HOST: tcp://buildkitd.buildkit:1234
+  BUILDKIT_VERSION: v0.21.1
+
+# Even the slim variant (AXONOS_SKIP_HEAVY=1, ~85 GB) needs tens of GB of
+# scratch space on the shared buildkitd. Two concurrent builds guarantee that both run out of
+# disk, so serialise them; a newer push simply waits for the current build.
+concurrency:
+  group: build-push-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build-push:
@@ -18,13 +26,42 @@ jobs:
 
       - name: Install buildctl
         run: |
-          curl -sSL https://github.com/moby/buildkit/releases/download/v0.21.1/buildkit-v0.21.1.linux-amd64.tar.gz | \
+          curl -sSL "https://github.com/moby/buildkit/releases/download/${BUILDKIT_VERSION}/buildkit-${BUILDKIT_VERSION}.linux-amd64.tar.gz" | \
             sudo tar -xz -C /usr/local
+
+      # Every build that failed since June died with "No space left on device"
+      # or apt's "not enough free space in /var/cache/apt/archives" inside the
+      # buildkitd sandbox: the daemon's cache disk fills up with layers from
+      # previous builds and nothing ever reclaims it. Drop the local cache
+      # before building; layer cache is re-imported lazily from the registry
+      # (see --import-cache below), so unchanged steps still hit.
+      - name: Reclaim buildkitd storage
+        run: |
+          echo "::group::buildkitd cache before prune"
+          buildctl du || true
+          echo "::endgroup::"
+          buildctl prune --all --verbose >/dev/null || true
+          echo "::group::buildkitd cache after prune"
+          buildctl du || true
+          echo "::endgroup::"
+
+      # The build sandbox shares the daemon's disk, so a throwaway build is the
+      # only way to see how much room the real build gets.
+      - name: Report buildkitd free space
+        run: |
+          d="$(mktemp -d)"
+          printf 'FROM busybox:1.36\nRUN df -h / && df -h /tmp\n' > "$d/Dockerfile"
+          buildctl build --frontend dockerfile.v0 --local context="$d" --local dockerfile="$d" \
+            --no-cache --progress plain 2>&1 | grep -E 'Filesystem|overlay|/$|/tmp$' || true
 
       - name: Build and push
         run: |
+          CACHE_REF="${REGISTRY}/${IMAGE}:buildcache"
           buildctl build \
             --frontend dockerfile.v0 \
             --local context=. \
             --local dockerfile=. \
-            --output type=image,\"name=${{ env.REGISTRY }}/${{ env.IMAGE }}:sha-${GITHUB_SHA::7},${{ env.REGISTRY }}/${{ env.IMAGE }}:latest\",push=true
+            --opt build-arg:AXONOS_SKIP_HEAVY=1 \
+            --import-cache type=registry,ref="${CACHE_REF}" \
+            --export-cache type=registry,ref="${CACHE_REF}",mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true \
+            --output type=image,\"name=${REGISTRY}/${IMAGE}:sha-${GITHUB_SHA::7},${REGISTRY}/${IMAGE}:latest\",push=true
