@@ -130,7 +130,7 @@
 <rect x="50" y="240" width="1100" height="446" rx="16" fill="url(#lgGate)" stroke="rgba(140,200,220,0.16)" stroke-width="1.5"/>
 <rect x="50" y="240" width="1100" height="3" rx="1.5" fill="url(#lgTitle)" opacity="0.52"/>
 <rect x="51" y="241" width="1098" height="1" fill="rgba(255,255,255,0.04)" rx="1"/>
-<text x="72" y="263" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(78,195,212,0.60)" font-family="'SF Mono',Menlo,Consolas,monospace">GATE CONTAINER  /  container: axonos  /  image: axonos:public-beta</text>
+<text x="72" y="263" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(78,195,212,0.60)" font-family="'SF Mono',Menlo,Consolas,monospace">GATE CONTAINER  /  container: axonos  /  image: axonos:latest</text>
 <rect x="972" y="250" width="72" height="20" rx="10" fill="rgba(78,195,212,0.12)" stroke="rgba(78,195,212,0.30)" stroke-width="1"/>
 <text x="1008" y="264" text-anchor="middle" font-size="9" font-weight="700" fill="#4ec3d4" font-family="'SF Mono',Menlo,Consolas,monospace">:6080</text>
 <rect x="1055" y="250" width="72" height="20" rx="10" fill="rgba(78,195,212,0.12)" stroke="rgba(78,195,212,0.30)" stroke-width="1"/>
@@ -273,7 +273,7 @@
 <text x="1202" y="397" font-size="9" fill="rgba(242,96,122,0.58)" font-family="'SF Mono',Menlo,Consolas,monospace">$ docker run -d --rm --gpus device=0,1 \</text>
 <text x="1202" y="413" font-size="9" fill="rgba(170,210,225,0.40)" font-family="'SF Mono',Menlo,Consolas,monospace">    --name axgt-session-{id}  --network axgt-session-net-{id} \</text>
 <text x="1202" y="429" font-size="9" fill="rgba(170,210,225,0.40)" font-family="'SF Mono',Menlo,Consolas,monospace">    -e AXGT_SESSION_ID=N  -e AXGT_WALLET_ADDRESS=0x... \</text>
-<text x="1202" y="445" font-size="9" fill="rgba(170,210,225,0.40)" font-family="'SF Mono',Menlo,Consolas,monospace">    --shm-size 32g  axonos:public-beta  /startup.sh</text>
+<text x="1202" y="445" font-size="9" fill="rgba(170,210,225,0.40)" font-family="'SF Mono',Menlo,Consolas,monospace">    --shm-size 32g  axonos:latest  /startup.sh</text>
 <text x="1202" y="465" font-size="8" fill="rgba(170,210,225,0.26)" font-family="'SF Mono',Menlo,Consolas,monospace">mode: http  /  axonos-launcher:8090  /  multi-session enabled  /  default profile: small</text>
 
 <!-- LEGEND: x=1166 y=534 w=290 h=192 -->
@@ -333,7 +333,7 @@
 <!-- GPU SESSION: x=556 y=726 w=1194 h=268 -->
 <rect x="556" y="726" width="1194" height="268" rx="16" fill="url(#lgSess)" stroke="rgba(242,96,122,0.28)" stroke-width="1.5"/>
 <rect x="556" y="726" width="1194" height="3" rx="1.5" fill="#f2607a" opacity="0.50"/>
-<text x="576" y="747" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(242,96,122,0.65)" font-family="'SF Mono',Menlo,Consolas,monospace">GPU SESSION CONTAINER  /  axgt-session-{id}  /  image: axonos:public-beta</text>
+<text x="576" y="747" font-size="8.5" font-weight="700" letter-spacing="2" fill="rgba(242,96,122,0.65)" font-family="'SF Mono',Menlo,Consolas,monospace">GPU SESSION CONTAINER  /  axgt-session-{id}  /  image: axonos:latest</text>
 <!-- 5 chips: w=220 gap=14 starting x=576 y=758 h=106 -->
 <!-- chip positions: 576,810,1044,1278,1512 (576+220+14=810, etc.) -->
 <!-- Xorg chip -->

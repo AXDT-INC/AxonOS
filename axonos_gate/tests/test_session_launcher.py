@@ -102,7 +102,7 @@ class SessionLauncherTests(unittest.TestCase):
     def test_launch_via_docker_cli_enabled(self, mock_check_output: MagicMock) -> None:
         mock_check_output.side_effect = ["", "container_id_123"]
         os.environ["AXGT_SESSION_LAUNCHER_MODE"] = "docker_cli"
-        os.environ["AXGT_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"
+        os.environ["AXGT_SESSION_CONTAINER_IMAGE"] = "axonos:latest"
         os.environ["AXGT_USER_CONTAINER_ENABLED"] = "true"
         os.environ["AXGT_PERSISTENT_STORAGE_ENABLED"] = "true"
         os.environ["AXGT_HEARTBEAT_INTERVAL_SECONDS"] = "17"
@@ -147,7 +147,7 @@ class SessionLauncherTests(unittest.TestCase):
     def test_launch_via_docker_cli_with_template(self, mock_check_output: MagicMock) -> None:
         mock_check_output.side_effect = ["", "container_id_123"]
         os.environ["AXGT_SESSION_LAUNCHER_MODE"] = "docker_cli"
-        os.environ["AXGT_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"
+        os.environ["AXGT_SESSION_CONTAINER_IMAGE"] = "axonos:latest"
         os.environ["AXGT_USER_CONTAINER_ENABLED"] = "true"
         os.environ["AXGT_PERSISTENT_STORAGE_ENABLED"] = "false"
         os.environ["AXGT_SESSION_NETWORK_ISOLATION"] = "false"
@@ -180,7 +180,7 @@ class SessionLauncherTests(unittest.TestCase):
 
     def test_direct_launcher_rejects_unknown_template_before_side_effects(self) -> None:
         os.environ["AXGT_SESSION_LAUNCHER_MODE"] = "docker_cli"
-        os.environ["AXGT_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"
+        os.environ["AXGT_SESSION_CONTAINER_IMAGE"] = "axonos:latest"
         os.environ["AXGT_USER_CONTAINER_ENABLED"] = "true"
 
         import session_launcher
@@ -205,7 +205,7 @@ class SessionLauncherTests(unittest.TestCase):
     def test_launch_via_docker_cli_disabled(self, mock_check_output: MagicMock) -> None:
         mock_check_output.side_effect = ["", "container_id_123"]
         os.environ["AXGT_SESSION_LAUNCHER_MODE"] = "docker_cli"
-        os.environ["AXGT_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"
+        os.environ["AXGT_SESSION_CONTAINER_IMAGE"] = "axonos:latest"
         os.environ["AXGT_USER_CONTAINER_ENABLED"] = "true"
         os.environ["AXGT_PERSISTENT_STORAGE_ENABLED"] = "false"
         os.environ["AXGT_SESSION_NETWORK_ISOLATION"] = "false"
@@ -236,7 +236,7 @@ class SessionLauncherTests(unittest.TestCase):
     @patch("session_launcher_service._ensure_persistent_storage_volume")
     def test_service_build_launch_cmd_with_requested_storage_gb(self, mock_ensure_vol: MagicMock) -> None:
         mock_ensure_vol.return_value = (True, None)
-        os.environ["AXGT_HOST_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"
+        os.environ["AXGT_HOST_SESSION_CONTAINER_IMAGE"] = "axonos:latest"
         os.environ["AXGT_PERSISTENT_STORAGE_ENABLED"] = "true"
         
         from session_launcher_service import _build_launch_cmd
@@ -564,7 +564,7 @@ class SessionLauncherTests(unittest.TestCase):
         )
 
     def test_service_build_launch_cmd_enabled(self) -> None:
-        os.environ["AXGT_HOST_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"
+        os.environ["AXGT_HOST_SESSION_CONTAINER_IMAGE"] = "axonos:latest"
         os.environ["AXGT_PERSISTENT_STORAGE_ENABLED"] = "true"
         os.environ["AXGT_HEARTBEAT_INTERVAL_SECONDS"] = "17"
         
@@ -588,7 +588,7 @@ class SessionLauncherTests(unittest.TestCase):
         self.assertEqual(cmd[idx + 1], "axgt-user-storage-0xabc123-xyz_:/home/aXonian")
 
     def test_service_build_launch_cmd_with_template(self) -> None:
-        os.environ["AXGT_HOST_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"
+        os.environ["AXGT_HOST_SESSION_CONTAINER_IMAGE"] = "axonos:latest"
         os.environ["AXGT_PERSISTENT_STORAGE_ENABLED"] = "false"
         
         from session_launcher_service import _build_launch_cmd
@@ -608,7 +608,7 @@ class SessionLauncherTests(unittest.TestCase):
         self.assertIn("AXONOS_SELECTED_TEMPLATE=gromacs", cmd)
 
     def test_service_rejects_unknown_template_before_volume_work(self) -> None:
-        os.environ["AXGT_HOST_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"
+        os.environ["AXGT_HOST_SESSION_CONTAINER_IMAGE"] = "axonos:latest"
         os.environ["AXGT_PERSISTENT_STORAGE_ENABLED"] = "true"
 
         import session_launcher_service as service
@@ -650,7 +650,7 @@ class SessionLauncherTests(unittest.TestCase):
         inspect_contract.assert_not_called()
 
     def test_service_build_launch_cmd_disabled(self) -> None:
-        os.environ["AXGT_HOST_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"
+        os.environ["AXGT_HOST_SESSION_CONTAINER_IMAGE"] = "axonos:latest"
         os.environ["AXGT_PERSISTENT_STORAGE_ENABLED"] = "false"
         
         from session_launcher_service import _build_launch_cmd
@@ -668,7 +668,7 @@ class SessionLauncherTests(unittest.TestCase):
         self.assertNotIn("-v", cmd)
 
     def test_desktop_launch_requires_scoped_capability(self) -> None:
-        os.environ["AXGT_HOST_SESSION_CONTAINER_IMAGE"] = "axonos:public-beta"
+        os.environ["AXGT_HOST_SESSION_CONTAINER_IMAGE"] = "axonos:latest"
         os.environ["AXGT_PERSISTENT_STORAGE_ENABLED"] = "false"
 
         from session_launcher_service import _build_launch_cmd
@@ -691,7 +691,7 @@ class SessionLauncherTests(unittest.TestCase):
         os.environ.update(
             {
                 "AXGT_SESSION_LAUNCHER_MODE": "docker_cli",
-                "AXGT_SESSION_CONTAINER_IMAGE": "axonos:public-beta",
+                "AXGT_SESSION_CONTAINER_IMAGE": "axonos:latest",
                 "AXGT_USER_CONTAINER_ENABLED": "true",
                 "AXGT_SESSION_NETWORK_ISOLATION": "true",
                 "AXGT_SESSION_CONTAINER_EXTRA_ARGS": "'unterminated",

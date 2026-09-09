@@ -134,7 +134,7 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
             "webrtc_agent_token": "signed-capability",
         }
         environment = {
-            "AXGT_HOST_SESSION_CONTAINER_IMAGE": "axonos:public-beta",
+            "AXGT_HOST_SESSION_CONTAINER_IMAGE": "axonos:latest",
             "AXGT_HOST_SESSION_NETWORK_ISOLATION": "true",
         }
         with patch.dict(os.environ, environment, clear=True), patch.object(
@@ -214,7 +214,7 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
 
         environment = {
             "AXGT_SESSION_LAUNCHER_MODE": "docker_cli",
-            "AXGT_SESSION_CONTAINER_IMAGE": "axonos:public-beta",
+            "AXGT_SESSION_CONTAINER_IMAGE": "axonos:latest",
             "AXGT_USER_CONTAINER_ENABLED": "true",
             "AXGT_SESSION_NETWORK_ISOLATION": "true",
         }
@@ -255,7 +255,7 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
         import session_launcher_service as launcher
 
         base = {
-            "AXGT_HOST_SESSION_CONTAINER_IMAGE": "axonos:public-beta",
+            "AXGT_HOST_SESSION_CONTAINER_IMAGE": "axonos:latest",
             "AXGT_HOST_SESSION_NETWORK_ISOLATION": "true",
         }
         with patch.dict(os.environ, base, clear=True), patch.object(
@@ -432,7 +432,7 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
             "webrtc_agent_token": "signed-capability",
         }
         host_environment = {
-            "AXGT_HOST_SESSION_CONTAINER_IMAGE": "axonos:public-beta",
+            "AXGT_HOST_SESSION_CONTAINER_IMAGE": "axonos:latest",
             "AXGT_HOST_SESSION_NETWORK_ISOLATION": "true",
         }
         with patch.dict(os.environ, host_environment, clear=True), patch.object(
@@ -457,7 +457,7 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
         run_cmd.assert_not_called()
 
         direct_environment = {
-            "AXGT_SESSION_CONTAINER_IMAGE": "axonos:public-beta",
+            "AXGT_SESSION_CONTAINER_IMAGE": "axonos:latest",
             "AXGT_SESSION_NETWORK_ISOLATION": "true",
             "AXGT_USER_CONTAINER_ENABLED": "true",
         }
@@ -522,7 +522,7 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
             "webrtc_agent_token": "signed-capability",
         }
         environment = {
-            "AXGT_HOST_SESSION_CONTAINER_IMAGE": "axonos:public-beta",
+            "AXGT_HOST_SESSION_CONTAINER_IMAGE": "axonos:latest",
             "AXGT_HOST_SESSION_NETWORK_ISOLATION": "true",
         }
         with patch.dict(os.environ, environment, clear=True), patch.object(
@@ -822,7 +822,7 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "AXGT_HOST_SESSION_CONTAINER_IMAGE": "axonos:public-beta",
+                "AXGT_HOST_SESSION_CONTAINER_IMAGE": "axonos:latest",
                 "AXGT_HOST_SESSION_NETWORK_ISOLATION": "false",
             },
             clear=True,
@@ -838,7 +838,7 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
         import session_launcher_service as launcher
 
         environment = {
-            "AXGT_HOST_SESSION_CONTAINER_IMAGE": "axonos:public-beta",
+            "AXGT_HOST_SESSION_CONTAINER_IMAGE": "axonos:latest",
             "AXGT_PERSISTENT_STORAGE_ENABLED": "false",
             "AXGT_HOST_SESSION_NETWORK_ISOLATION": "true",
             "AXGT_HOST_SESSION_ENV_PASSTHROUGH": ",".join(
@@ -1085,7 +1085,7 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
 
         environment = {
             "AXGT_SESSION_LAUNCHER_MODE": "docker_cli",
-            "AXGT_SESSION_CONTAINER_IMAGE": "axonos:public-beta",
+            "AXGT_SESSION_CONTAINER_IMAGE": "axonos:latest",
             "AXGT_USER_CONTAINER_ENABLED": "true",
             "AXGT_PERSISTENT_STORAGE_ENABLED": "false",
             "AXGT_SESSION_NETWORK_ISOLATION": "true",

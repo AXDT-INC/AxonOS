@@ -1,4 +1,4 @@
-# AxonOS – public-beta single-instance stack (noVNC + AXGT gate + session launcher)
+# AxonOS – single-instance stack (noVNC + AXGT gate + session launcher)
 #
 # From repo root with .env:
 #   docker compose build
@@ -6,7 +6,7 @@
 #
 # UI: http://HOST:6080/vnc.html  —  gate API: 8889
 #
-# Image tag axonos:public-beta (not latest) so main-branch axonos:latest is untouched on rebuild.
+# Image tag axonos:latest — the same tag scripts/build_axonos.sh and the launcher CLI default to.
 # Each session gets a launcher-managed bridge shared only with the central gate;
 # Postgres and the Docker-socket launcher remain on axonos_control.
 # AXGT_CHALLENGE_DB_URL is set on the axonos service to this stack's postgres only.
@@ -29,7 +29,7 @@ services:
       # Session desktops must run the WebRTC capture agent; base gate stack disables it (see startup.sh).
       WEBRTC_ENABLED: ${WEBRTC_ENABLED:-false}
       WEBRTC_AGENT_ENABLED: "true"
-      AXGT_HOST_SESSION_CONTAINER_IMAGE: ${AXGT_HOST_SESSION_CONTAINER_IMAGE:-axonos:public-beta}
+      AXGT_HOST_SESSION_CONTAINER_IMAGE: ${AXGT_HOST_SESSION_CONTAINER_IMAGE:-axonos:latest}
       # Used only when the explicit isolation escape hatch is disabled.
       AXGT_HOST_SESSION_CONTAINER_NETWORK: ${AXGT_HOST_SESSION_CONTAINER_NETWORK:-axonos_stack}
       AXGT_HOST_SESSION_NETWORK_ISOLATION: ${AXGT_HOST_SESSION_NETWORK_ISOLATION:-true}
@@ -129,7 +129,7 @@ services:
       retries: 5
 
   axonos:
-    image: axonos:public-beta
+    image: axonos:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -138,7 +138,7 @@ services:
         # Pin to host `nvidia-smi` Driver Version — see env.example / Dockerfile NVIDIA_DRIVER_PKG_VERSION.
         NVIDIA_DRIVER_PKG_VERSION: ${NVIDIA_DRIVER_PKG_VERSION:-}
       tags:
-        - axonos:public-beta
+        - axonos:latest
     container_name: axonos
     shm_size: "32gb"
     env_file: .env

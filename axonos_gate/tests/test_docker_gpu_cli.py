@@ -99,7 +99,7 @@ class DockerGpuCliTests(unittest.TestCase):
             "files_key": "per-session-secret",
             "ssh_enabled": False,
             "network_name": "axgt-session-net-37",
-            "image_name": "axonos:public-beta",
+            "image_name": "axonos:latest",
         }
         first = session_runtime_config_digest(**base)
         self.assertEqual(

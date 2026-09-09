@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Host-side launcher service for AxonOS public-beta sessions.
+Host-side launcher service for AxonOS sessions.
 
 Run this service on the Docker host (not inside the AxonOS gate container) and
 configure gate/session_manager to use:

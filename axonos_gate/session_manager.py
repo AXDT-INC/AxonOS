@@ -113,7 +113,7 @@ def _default_profile() -> str:
 
 
 def _configured_profiles() -> Dict[str, int]:
-    # Fixed public-beta profiles
+    # Fixed session profiles
     return {
         "small": 1,
         "medium": 2,
