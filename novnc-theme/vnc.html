@@ -1794,7 +1794,7 @@ Copyright (C) 2019 The noVNC Authors
                             <button type="button" id="axonos_test_credit_btn"
                                 class="axonos-test-credit-btn">Use test credit</button>
                         </div>
-                        <p id="axonos_pay_eth_hint" class="axonos-pay-eth-hint" role="status" aria-live="polite"></p>
+                        <p id="axonos_pay_hint" class="axonos-pay-eth-hint" role="status" aria-live="polite"></p>
                         <p
                             style="margin:0.5rem 0;display:flex;gap:0.5rem;align-items:center;justify-content:center;flex-wrap:nowrap;">
                             <input type="text" id="axonos_tx_hash_input" placeholder="0x… transaction hash"
@@ -6415,6 +6415,28 @@ Copyright (C) 2019 The noVNC Authors
             axonosApplyTopbarNetworkPills(env);
         }
 
+        function axonosUpdateWalletNetworkLineForRail(rail) {
+            var walletLine = document.getElementById('axonos_wallet_network_line');
+            if (!walletLine) return;
+            var selected = String(rail || '').toLowerCase();
+            var chainId = selected === 'usdc'
+                ? String(axonosConfig.usdc_chain_id || '8453')
+                : String(axonosConfig.axgt_chain_id || '1');
+            var known = AXONOS_KNOWN_CHAIN_ENV[String(parseInt(chainId, 10))];
+            var asset = selected === 'usdc' ? 'USDC' : (selected === 'axgt' ? 'AXGT' : 'ETH');
+            var label = known ? known.label : ('Chain ID ' + chainId);
+            var caution = known && known.caution ? (' — ' + known.caution + '.') : '';
+            walletLine.textContent = 'Network: ' + label + ' — use this network in your wallet to pay with ' + asset + '.' + caution;
+            walletLine.classList.remove(
+                'axonos-wallet-network-line--hidden',
+                'axonos-wallet-network-line--mainnet',
+                'axonos-wallet-network-line--testnet',
+                'axonos-wallet-network-line--other'
+            );
+            walletLine.classList.add('axonos-wallet-network-line--' +
+                (known ? (known.kind === 'mainnet' ? 'mainnet' : 'testnet') : 'other'));
+        }
+
         function formatCreditMinutes(m) {
             if (m == null || (typeof m === 'number' && isNaN(m))) return '—';
             var x = Number(m);
@@ -7848,7 +7870,10 @@ Copyright (C) 2019 The noVNC Authors
         }
 
         function updateEthPayHint(payEthStr) {
-            var hint = document.getElementById('axonos_pay_eth_hint');
+            // ETH quotes can finish after the user has selected another rail.
+            // Never let that stale async result overwrite the shared status line.
+            if (axonosActivePayRail && axonosActivePayRail !== 'eth') return;
+            var hint = document.getElementById('axonos_pay_hint');
             if (!hint) return;
             var trimmed = String(payEthStr || '').trim();
             hint.className = 'axonos-pay-eth-hint';
@@ -7871,6 +7896,36 @@ Copyright (C) 2019 The noVNC Authors
             }
             hint.textContent = 'Ready to pay ' + trimmed + ' ETH from your wallet.';
             hint.classList.add('axonos-pay-eth-hint--ok');
+        }
+
+        function updateTokenPayHint(rail) {
+            if (rail === 'eth') {
+                var ethInput = document.getElementById('axonos_pay_eth_amount');
+                updateEthPayHint(ethInput ? ethInput.value : '');
+                return;
+            }
+            var hint = document.getElementById('axonos_pay_hint');
+            if (!hint) return;
+            var isUsdc = rail === 'usdc';
+            var input = document.getElementById(isUsdc ? 'axonos_pay_usdc_amount' : 'axonos_pay_axgt_amount');
+            var amount = input ? String(input.value || '').trim() : '';
+            var symbol = isUsdc ? 'USDC' : 'AXGT';
+            var quote = isUsdc ? axonosLastUsdcDiscountQuote : axonosLastAxgtDiscountQuote;
+            var minimum = String((quote && (quote.final_usdc || quote.final_axgt || quote.final_amount || quote.base_amount))
+                || (isUsdc ? axonosConfig.usdc_min_deposit : axonosConfig.axgt_min_deposit) || (isUsdc ? '1' : '100'));
+            hint.className = 'axonos-pay-eth-hint';
+            if (!amount) {
+                hint.textContent = 'Enter a ' + symbol + ' amount to see estimated desktop time.';
+            } else if (!(parseFloat(amount) > 0)) {
+                hint.textContent = 'Enter a valid positive ' + symbol + ' amount.';
+                hint.classList.add('axonos-pay-eth-hint--error');
+            } else if (parseFloat(amount) < parseFloat(minimum)) {
+                hint.textContent = 'Below minimum for your tier (' + minimum + ' ' + symbol + ').';
+                hint.classList.add('axonos-pay-eth-hint--error');
+            } else {
+                hint.textContent = 'Ready to pay ' + amount + ' ' + symbol + ' from your wallet.';
+                hint.classList.add('axonos-pay-eth-hint--ok');
+            }
         }
 
         function syncEthPaymentUiFromInput() {
@@ -9336,6 +9391,7 @@ Copyright (C) 2019 The noVNC Authors
             if (el) {
                 el.value = String(axonosConfig.axgt_min_deposit || '100');
                 delete el.dataset.axonosUserAmount;
+                updateTokenPayHint('axgt');
             }
         });
         // Segmented payment-rail selector. Shows ONLY the chosen rail's discount
@@ -9356,6 +9412,7 @@ Copyright (C) 2019 The noVNC Authors
                 rail = avail.usdc ? 'usdc' : (avail.eth ? 'eth' : (avail.axgt ? 'axgt' : 'eth'));
             }
             axonosActivePayRail = rail;
+            axonosUpdateWalletNetworkLineForRail(rail);
             try { localStorage.setItem('axonos_pay_rail', rail); } catch (e) { }
 
             var ethRowEl = document.getElementById('axonos_pay_eth_amount');
@@ -9379,6 +9436,7 @@ Copyright (C) 2019 The noVNC Authors
                 if (m.row) m.row.style.display = (active && shown) ? '' : 'none';
                 if (m.panel) m.panel.style.display = (active && shown) ? '' : 'none';
             });
+            updateTokenPayHint(rail);
         }
 
         var payEthInput = document.getElementById('axonos_pay_eth_amount');
@@ -9401,6 +9459,7 @@ Copyright (C) 2019 The noVNC Authors
                 payUsdcInput.dataset.axonosUserAmount = '1';
                 var wallet = window.verifiedWalletAddress || verifiedWalletAddress;
                 scheduleUsdcAmountQuoteRefresh(wallet);
+                updateTokenPayHint('usdc');
             });
             payUsdcInput.addEventListener('keydown', function (e) {
                 if (e.key === 'Enter') {
@@ -9414,6 +9473,7 @@ Copyright (C) 2019 The noVNC Authors
             payAxgtInput.addEventListener('input', function () {
                 payAxgtInput.dataset.axonosUserAmount = '1';
                 scheduleAxgtAmountQuoteRefresh(window.verifiedWalletAddress || verifiedWalletAddress);
+                updateTokenPayHint('axgt');
             });
             payAxgtInput.addEventListener('keydown', function (e) {
                 if (e.key === 'Enter') {

@@ -94,6 +94,21 @@ class ResponsiveWalletDialogContractTests(unittest.TestCase):
         self.assertIn("#noVNC_fallback_error > .axonos-fallback-card", self.css)
         self.assertIn("background: linear-gradient", self.css)
 
+    def test_payment_guidance_tracks_the_selected_rail(self) -> None:
+        self.assertIn('id="axonos_pay_hint"', self.page)
+        self.assertNotIn('id="axonos_pay_eth_hint"', self.page)
+        self.assertIn("axonosUpdateWalletNetworkLineForRail(rail)", self.page)
+        self.assertIn(
+            "selected === 'usdc'\n                ? String(axonosConfig.usdc_chain_id || '8453')",
+            self.page,
+        )
+        self.assertIn("updateTokenPayHint(rail)", self.page)
+        self.assertIn("'Ready to pay ' + amount + ' ' + symbol", self.page)
+        self.assertIn(
+            "if (axonosActivePayRail && axonosActivePayRail !== 'eth') return;",
+            self.page,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
