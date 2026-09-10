@@ -121,7 +121,7 @@ Copyright (C) 2019 The noVNC Authors
     <!-- Stylesheets -->
     <link rel="stylesheet" href="app/styles/base.css">
     <link rel="stylesheet" href="app/vendor/xterm/xterm.css?v=6.0.0">
-    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.3&t=20260909close1">
+    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.4&t=20260910paymentcta">
 
     <!-- Images that will later appear via CSS -->
     <link rel="preload" as="image" href="app/images/info.svg">
@@ -1568,7 +1568,7 @@ Copyright (C) 2019 The noVNC Authors
                                 proportionally more minutes.</p>
                             <p class="axonos-wallet-state__help" style="margin:0.45rem 0 0;font-size:0.88em;opacity:0.9;">
                                 You can also send from another wallet or DEX to the deposit address, then paste the
-                                transaction hash below and press <strong>Credit deposit</strong>.</p>
+                                transaction hash below and press <strong>Claim deposit</strong>.</p>
                         </div>
                         <p id="axonos_wallet_insufficient_balance" class="axonos-wallet-state__balance">Wallet AXGT
                             balance: —</p>
@@ -1761,7 +1761,7 @@ Copyright (C) 2019 The noVNC Authors
                                     <button type="button" id="axonos_pay_axgt_min_btn"
                                         class="axonos-connect-wallet-btn axonos-pay-min-btn">Min</button>
                                     <button type="button" id="axonos_pay_axgt_btn"
-                                        class="axonos-connect-wallet-btn axonos-pay-send-btn">Send AXGT</button>
+                                        class="axonos-connect-wallet-btn axonos-pay-send-btn">Pay with AXGT</button>
                                 </div>
                             </div>
                             <div class="axonos-pay-deposit-row">
@@ -1801,7 +1801,7 @@ Copyright (C) 2019 The noVNC Authors
                                 autocomplete="off" spellcheck="false"
                                 style="flex:1;min-width:6rem;padding:0.45rem 0.6rem;border-radius:8px;border:1px solid rgba(255, 255, 255, 0.112);background:rgba(8, 9, 16, 0.7);color:inherit;font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:0.85rem;" />
                             <button type="button" id="axonos_verify_deposit_btn" class="axonos-connect-wallet-btn"
-                                style="margin:0;white-space:nowrap;">Credit deposit</button>
+                                style="margin:0;white-space:nowrap;">Claim deposit</button>
                             <a id="axonos_get_axgt_btn"
                                 href="https://app.uniswap.org/swap?chain=mainnet&inputCurrency=NATIVE&outputCurrency=0x6112c3509a8a787df576028450febb3786a2274d"
                                 target="_blank" rel="noopener noreferrer" class="axonos-get-axgt-btn"
@@ -8662,7 +8662,7 @@ Copyright (C) 2019 The noVNC Authors
                             if (!recovered || !axonosPaymentIdentityIsCurrent(wallet)) {
                                 setPayDepositButtonsBusy(false);
                                 bailToDialog();
-                                if (msgEl) msgEl.textContent = 'Wallet re-authentication was not completed. Sign in, then use Credit deposit with your tx hash — no funds are lost.';
+                                if (msgEl) msgEl.textContent = 'Wallet re-authentication was not completed. Sign in, then use Claim deposit with your tx hash — no funds are lost.';
                                 return;
                             }
                             axonosPollVerifyDeposit(txHash, verifyEndpoint);
@@ -8690,7 +8690,7 @@ Copyright (C) 2019 The noVNC Authors
                         if (attempts >= maxAttempts) {
                             setPayDepositButtonsBusy(false);
                             bailToDialog();
-                            if (msgEl) msgEl.textContent = 'Still confirming. Use Credit deposit with your tx hash, or wait and refresh.';
+                            if (msgEl) msgEl.textContent = 'Still confirming. Use Claim deposit with your tx hash, or wait and refresh.';
                             return;
                         }
                         setTimeout(tick, 12000);
@@ -8704,7 +8704,7 @@ Copyright (C) 2019 The noVNC Authors
                     if (attempts >= maxAttempts) {
                         setPayDepositButtonsBusy(false);
                         bailToDialog();
-                        if (msgEl) msgEl.textContent = 'Network error while waiting. Try Credit deposit.';
+                        if (msgEl) msgEl.textContent = 'Network error while waiting. Try Claim deposit.';
                         return;
                     }
                     setTimeout(tick, 12000);
@@ -9484,12 +9484,19 @@ Copyright (C) 2019 The noVNC Authors
         }
         var txHashInput = document.getElementById('axonos_tx_hash_input');
         if (txHashInput) {
+            var syncClaimDepositButton = function () {
+                var claimBtn = document.getElementById('axonos_verify_deposit_btn');
+                if (claimBtn) claimBtn.classList.toggle('axonos-claim-deposit-btn--ready',
+                    /^0x[a-fA-F0-9]{64}$/.test(String(txHashInput.value || '').trim()));
+            };
+            txHashInput.addEventListener('input', syncClaimDepositButton);
             txHashInput.addEventListener('keydown', function (e) {
                 if (e.key === 'Enter') {
                     e.preventDefault();
                     runVerifyDeposit();
                 }
             });
+            syncClaimDepositButton();
         }
 
         var sessionUnavailableDismissBtn = document.getElementById('axonos_session_unavailable_dismiss_btn');

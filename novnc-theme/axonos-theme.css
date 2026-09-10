@@ -2135,9 +2135,20 @@ input[type="password"]#noVNC_password_input {
 
 .axonos-pay-send-btn {
   margin: 0 !important;
-  padding: 0.4rem 0.7rem !important;
-  font-size: 0.8rem !important;
-  opacity: 0.98;
+  padding: 0.48rem 0.85rem !important;
+  font-size: 0.82rem !important;
+  opacity: 1;
+  background: var(--grad-primary) !important;
+  border-color: transparent !important;
+  color: #fff !important;
+  -webkit-text-fill-color: #fff !important;
+  box-shadow: 0 5px 18px rgba(123, 108, 255, 0.34) !important;
+}
+
+.axonos-pay-send-btn:hover,
+.axonos-pay-send-btn:focus-visible {
+  filter: brightness(1.1);
+  box-shadow: 0 7px 24px rgba(123, 108, 255, 0.46) !important;
 }
 
 .axonos-wallet-picker-back {
@@ -6257,8 +6268,7 @@ html.noVNC_connected .axonos-landing-bg {
 /* ---- Wallet dialog primary actions: gradient CTA ---- */
 #axonos_connect_wallet_btn,
 #axonos_retry_connect_btn,
-#axonos_retry_connect_error_btn,
-#axonos_verify_deposit_btn {
+#axonos_retry_connect_error_btn {
   background: var(--grad-primary) !important;
   border: none !important;
   color: #fff !important;
@@ -6269,9 +6279,24 @@ html.noVNC_connected .axonos-landing-bg {
 
 #axonos_connect_wallet_btn:hover,
 #axonos_retry_connect_btn:hover,
-#axonos_retry_connect_error_btn:hover,
-#axonos_verify_deposit_btn:hover {
+#axonos_retry_connect_error_btn:hover {
   filter: brightness(1.08);
+}
+
+#axonos_verify_deposit_btn {
+  background: rgba(123, 108, 255, 0.08) !important;
+  border: 1px solid rgba(183, 166, 255, 0.34) !important;
+  color: rgba(232, 228, 255, 0.72) !important;
+  -webkit-text-fill-color: rgba(232, 228, 255, 0.72) !important;
+  box-shadow: none !important;
+}
+
+#axonos_verify_deposit_btn.axonos-claim-deposit-btn--ready {
+  background: rgba(123, 108, 255, 0.2) !important;
+  border-color: var(--cyan) !important;
+  color: var(--cyan) !important;
+  -webkit-text-fill-color: var(--cyan) !important;
+  box-shadow: 0 4px 16px rgba(123, 108, 255, 0.2) !important;
 }
 
 /* ==========================================================================

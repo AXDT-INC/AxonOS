@@ -109,6 +109,15 @@ class ResponsiveWalletDialogContractTests(unittest.TestCase):
             self.page,
         )
 
+    def test_manual_transaction_action_is_named_claim_deposit(self) -> None:
+        self.assertIn(">Claim deposit</button>", self.page)
+        self.assertIn("press <strong>Claim deposit</strong>", self.page)
+        self.assertNotIn("Credit deposit", self.page)
+        self.assertNotIn("Verify deposit", self.page)
+        self.assertIn(">Pay with AXGT</button>", self.page)
+        self.assertIn("axonos-claim-deposit-btn--ready", self.page)
+        self.assertIn(".axonos-pay-send-btn:focus-visible", self.css)
+
 
 if __name__ == "__main__":
     unittest.main()
