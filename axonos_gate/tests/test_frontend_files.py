@@ -47,6 +47,15 @@ class FrontendFileTransferContractTests(unittest.TestCase):
         self.assertIn("Connection problem${detail}", self.source)
         self.assertIn("kept ${_fmtBytes(t.offset)}", self.source)
 
+    def test_download_does_not_navigate_viewer_tab(self) -> None:
+        download = self.source.split("function downloadFile(relPath)", 1)[1].split(
+            "function enqueueUploads(fileList)", 1
+        )[0]
+        self.assertIn("const frameName = 'axonos_file_download'", download)
+        self.assertIn("frame.hidden = true", download)
+        self.assertIn("a.target = frameName", download)
+        self.assertLess(download.index("a.target = frameName"), download.index("a.click()"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -248,6 +248,21 @@ function downloadFile(relPath) {
     const a = document.createElement('a');
     a.href = _apiUrl('download', params);
     a.download = relPath.split('/').pop();
+    // Browsers may ignore `download` for the cross-origin direct file plane.
+    // Without a separate browsing context, that turns this click into a
+    // top-level navigation and fires the viewer's beforeunload/session-end
+    // warning. Keep the response in a hidden frame instead; Content-Disposition
+    // still hands the file to the browser's native download manager.
+    const frameName = 'axonos_file_download';
+    let frame = document.querySelector(`iframe[name="${frameName}"]`);
+    if (!frame) {
+        frame = document.createElement('iframe');
+        frame.name = frameName;
+        frame.hidden = true;
+        frame.title = 'File download';
+        document.body.appendChild(frame);
+    }
+    a.target = frameName;
     document.body.appendChild(a);
     a.click();
     a.remove();
