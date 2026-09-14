@@ -6,6 +6,7 @@ runtime-specific orchestration (Docker socket, host-side launcher service, etc.)
 is configurable without changing scheduler logic.
 """
 
+import hashlib
 import json
 import logging
 import math
@@ -57,6 +58,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 _session_operation_locks: dict[int, threading.RLock] = {}
 _session_operation_locks_guard = threading.Lock()
+_ALLOCATION_KEY_LABEL = "com.axonos.session-allocation-key-sha256"
 
 
 def _session_operation_lock(session_id: int) -> threading.RLock:
@@ -112,6 +114,10 @@ def _container_mode_enabled() -> bool:
 
 def _container_name_for_session(session_id: int) -> str:
     return f"axgt-session-{session_id}"
+
+
+def _allocation_key_digest(files_key: str) -> str:
+    return hashlib.sha256(str(files_key or "").encode("utf-8")).hexdigest()
 
 
 def _launcher_mode() -> str:
@@ -440,6 +446,40 @@ def list_running_sessions() -> List[int]:
     except Exception as exc:
         logger.warning("session_launcher: failed to list docker cli containers: %s", exc)
         return []
+
+
+def inspect_session_allocation(
+    session_id: int,
+    files_key: str,
+) -> Tuple[str, Optional[str], Optional[str]]:
+    """Classify a reserved runtime using its unforgeable allocation identity.
+
+    States are ``match_running``, ``match_stopped``, ``absent``, ``mismatch``,
+    ``unmanaged``, or ``error``. Callers may promote only ``match_running`` and
+    terminalize only ``absent``/``match_stopped``; every other state is
+    deliberately non-destructive.
+    """
+    try:
+        sid = int(session_id)
+    except (TypeError, ValueError):
+        return "error", None, "invalid session id"
+    key = str(files_key or "").strip()
+    if sid <= 0 or not key:
+        return "error", None, "invalid allocation identity"
+    if not _container_mode_enabled():
+        return "error", None, "session containers are disabled"
+    expected_key_digest = _allocation_key_digest(key)
+    mode = _launcher_mode()
+    if mode == "http":
+        return _inspect_allocation_via_http(sid, expected_key_digest)
+    if mode == "noop":
+        return "error", None, "noop launcher has no runtime to inspect"
+    with _session_operation_lock(sid):
+        return _inspect_managed_allocation_direct(
+            sid,
+            expected_key_digest,
+            _session_network_name(sid),
+        )
 
 
 def reconcile_session_networks() -> None:
@@ -979,6 +1019,64 @@ def _inspect_managed_container_contract_direct(
     return "match_stopped", container_id, ""
 
 
+def _inspect_managed_allocation_direct(
+    session_id: int,
+    expected_key_digest: str,
+    expected_network: str,
+) -> Tuple[str, Optional[str], str]:
+    """Atomically prove that a runtime belongs to one DB reservation."""
+    ok, output = _run_docker_direct(
+        [
+            "docker",
+            "inspect",
+            "--format",
+            '{{.State.Running}}|{{index .Config.Labels "com.axonos.session-container"}}|'
+            '{{index .Config.Labels "com.axonos.session-id"}}|'
+            '{{index .Config.Labels "com.axonos.session-config-sha256"}}|'
+            f'{{{{index .Config.Labels "{_ALLOCATION_KEY_LABEL}"}}}}|'
+            '{{json .NetworkSettings.Networks}}|{{.Id}}',
+            _container_name_for_session(session_id),
+        ]
+    )
+    if not ok:
+        if _docker_object_is_absent_direct(output):
+            return "absent", None, ""
+        return "error", None, output or "could not inspect session container"
+    parts = output.split("|", 6)
+    if len(parts) != 7:
+        return "error", None, "malformed session container inspection"
+    running, managed, labeled_id, config_digest, key_digest, networks_json, container_id = (
+        part.strip() for part in parts
+    )
+    container_id = container_id[:64]
+    if not container_id:
+        return "error", None, "session container inspection omitted its id"
+    valid_config_digest = len(config_digest) == 64 and all(
+        character in "0123456789abcdef" for character in config_digest
+    )
+    if (
+        managed.lower() != "true"
+        or labeled_id != str(int(session_id))
+        or not valid_config_digest
+    ):
+        return "unmanaged", container_id, "refusing unowned same-name session container"
+    if running.lower() not in ("true", "false"):
+        return "error", container_id, "invalid session container running state"
+    try:
+        networks = json.loads(networks_json)
+    except (TypeError, json.JSONDecodeError):
+        return "error", container_id, "malformed session container network inspection"
+    if not isinstance(networks, dict):
+        return "error", container_id, "malformed session container network inspection"
+    if not secrets.compare_digest(key_digest, expected_key_digest) or set(networks) != {
+        expected_network
+    }:
+        return "mismatch", container_id, "session allocation identity mismatch"
+    if running.lower() == "true":
+        return "match_running", container_id, ""
+    return "match_stopped", container_id, ""
+
+
 def _webrtc_port_range(session_id: int) -> str:
     start_port = _WEBRTC_BASE_PORT + (session_id % _MAX_SESSIONS) * _WEBRTC_BLOCK_SIZE
     end_port = start_port + _WEBRTC_BLOCK_SIZE - 1
@@ -1121,6 +1219,7 @@ def _launch_via_docker_cli(
         "--label", "com.axonos.session-container=true",
         "--label", f"com.axonos.session-id={session_id}",
         "--label", f"com.axonos.session-config-sha256={runtime_digest}",
+        "--label", f"{_ALLOCATION_KEY_LABEL}={_allocation_key_digest(files_key or '')}",
         "--cap-drop", "NET_RAW",
     ]
     cmd.extend(_publish_args_for_session(session_id, ssh_enabled, ssh_port))
@@ -1313,6 +1412,46 @@ def _launch_via_http(
         )
         return True, verified, None
     return False, None, reason
+
+
+def _inspect_allocation_via_http(
+    session_id: int,
+    expected_key_digest: str,
+) -> Tuple[str, Optional[str], Optional[str]]:
+    base_url = (os.getenv("AXGT_SESSION_LAUNCHER_URL") or "").strip().rstrip("/")
+    if not base_url:
+        return "error", None, "AXGT_SESSION_LAUNCHER_URL is required in http mode"
+    status, data, error = _http_json(
+        "POST",
+        f"{base_url}/inspect-allocation",
+        {
+            "session_id": int(session_id),
+            # Only a one-way fingerprint crosses this control-plane hop; the
+            # per-session bearer itself remains confined to the gate/runtime.
+            "allocation_key_sha256": expected_key_digest,
+        },
+        timeout_s=10.0,
+    )
+    if error or status >= 400 or not isinstance(data, dict) or not data.get("ok"):
+        reason = error or (
+            data.get("error") if isinstance(data, dict) else f"http {status}"
+        )
+        return "error", None, str(reason or "allocation inspection failed")
+    state = str(data.get("state") or "error")
+    allowed_states = {
+        "match_running",
+        "match_stopped",
+        "absent",
+        "mismatch",
+        "unmanaged",
+        "error",
+    }
+    if state not in allowed_states:
+        return "error", None, "launcher returned an invalid inspection state"
+    container_id = data.get("container_id")
+    return state, (str(container_id) if container_id else None), (
+        str(data.get("error") or "") or None
+    )
 
 
 def _stop_via_http(session_id: int, container_id: Optional[str]) -> bool:

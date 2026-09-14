@@ -8,6 +8,7 @@ import logging
 import json
 import math
 import secrets
+import socket
 import time
 import threading
 from pathlib import Path
@@ -17,11 +18,27 @@ from flask import Flask, Response, request, jsonify, send_from_directory, stream
 from flask_cors import CORS
 
 from security_utils import (
-    SimpleRateLimiter,
+    client_ip_for_rate_limit,
     cors_origin_for_request,
+    gpc_signal_active,
     get_rate_limiter_from_env,
+    get_x_capi_global_rate_limiter,
+    get_x_capi_privacy_rate_limiter,
+    get_x_capi_rate_limiter,
     parse_cors_allowlist,
+    redact_terminal_websocket_query,
+    request_is_effectively_https,
 )
+
+try:
+    import x_capi
+except ImportError:
+    try:
+        from axonos_gate import x_capi
+    except Exception:
+        x_capi = None
+except Exception:
+    x_capi = None
 
 # Add /axonos_gate to path for imports
 _script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -151,6 +168,61 @@ def _is_guest_shaped(address) -> bool:
             pass
     return bool(_GUEST_ADDRESS_RE_FALLBACK.match(str(address or "").strip().lower()))
 
+
+def _emit_wallet_verified_nonblocking(context_token, wallet_address) -> bool:
+    """Notify the local worker only after ownership proof and auth commit."""
+    try:
+        if (
+            x_capi is None
+            or not context_token
+            or not x_capi.wallet_is_campaign_eligible(wallet_address)
+        ):
+            return False
+        return bool(x_capi.emit_event_nonblocking(
+            context_token=context_token,
+            wallet_address=wallet_address,
+            milestone=x_capi.MILESTONE_WALLET_VERIFIED,
+            source_key=str(wallet_address or "").strip().lower(),
+            event_timestamp_ms=int(time.time() * 1000),
+            allow_context_binding=True,
+        ))
+    except Exception:
+        return False
+
+
+def _bind_attribution_nonblocking(context_token, wallet_address) -> bool:
+    """Bind an authenticated wallet without fabricating an auth milestone."""
+    try:
+        if (
+            x_capi is None
+            or not context_token
+            or not x_capi.wallet_is_campaign_eligible(wallet_address)
+        ):
+            return False
+        return bool(x_capi.emit_binding_nonblocking(
+            context_token=context_token,
+            wallet_address=wallet_address,
+            event_timestamp_ms=int(time.time() * 1000),
+        ))
+    except Exception:
+        return False
+
+
+def _request_attribution_context():
+    """Return a bounded context unless this request carries authoritative GPC."""
+    try:
+        if x_capi is None:
+            return None
+        gpc = gpc_signal_active(request.headers.get("Sec-GPC"))
+        if gpc and request.environ.get("axonos.x_capi_gpc_observed") is True:
+            return None
+        return x_capi.business_context_or_none(
+            request.headers.get("X-AxonOS-Attribution"),
+            gpc=gpc,
+        )
+    except Exception:
+        return None
+
 try:
     from session_manager import (
         get_active_session,
@@ -166,6 +238,7 @@ try:
         annotate_session,
         set_session_deadline,
         try_claim_session,
+        validate_launch_request_id,
         validate_session_files_key,
         validate_webrtc_agent_identity,
     )
@@ -186,6 +259,7 @@ except ImportError:
             annotate_session,
             set_session_deadline,
             try_claim_session,
+            validate_launch_request_id,
             validate_session_files_key,
             validate_webrtc_agent_identity,
         )
@@ -240,6 +314,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+class _SensitiveQueryLogFilter(logging.Filter):
+    def filter(self, record):
+        record.msg = redact_terminal_websocket_query(record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(redact_terminal_websocket_query(v) for v in record.args)
+        return True
+
+
+logging.getLogger("werkzeug").addFilter(_SensitiveQueryLogFilter())
+
 app = Flask(__name__)
 # CORS: default is same-origin (no wildcard). For unusual deployments, set AXGT_CORS_ORIGINS
 # to "*" or a comma-separated list of allowed origins.
@@ -255,10 +340,57 @@ _WEBRTC_AGENT_PATHS = {
     "/api/webrtc/agent/refresh",
 }
 
+_CAPI_EXACT_PATHS = frozenset({
+    "/api/auth/verify-wallet",
+    "/api/auth/verify-deposit",
+    "/api/auth/verify-usdc-deposit",
+    "/api/auth/verify-deposit-auto",
+    "/api/session/claim",
+    "/api/x402/access",
+    "/api/x402/settle",
+    "/api/x402/session",
+    "/api/x-attribution/status",
+    "/api/x-attribution/consent",
+    "/api/x-attribution/bind",
+})
+
 
 def _env_truthy(name: str, default: bool = False) -> bool:
     raw = (os.getenv(name) or ("true" if default else "false")).strip().lower()
     return raw in ("1", "true", "yes", "on")
+
+
+@app.before_request
+def _observe_gpc_before_route_dispatch():
+    """Honor a presented lifecycle before any method or route rejection."""
+    try:
+        if x_capi is None or not gpc_signal_active(
+            request.headers.get("Sec-GPC")
+        ):
+            return None
+        # This hook is deliberately registered before every listener and route
+        # restriction. Flask stops running before_request handlers after the
+        # first response, and privacy must not depend on later admission --
+        # including for the attribution namespace itself.
+        request.environ["axonos.x_capi_gpc_observed"] = True
+        context_token = request.headers.get("X-AxonOS-Attribution")
+        if not context_token or len(str(context_token)) > 2048:
+            return None
+        x_capi.observe_business_gpc_nonblocking(context_token)
+    except Exception:
+        # Privacy observation is fail-closed for conversion context (the
+        # marker above remains set) but fail-open for the core request path.
+        pass
+    return None
+
+
+@app.before_request
+def _reject_capi_path_parameter_aliases():
+    """Do not let Flask's static catch-all preflight malformed API aliases."""
+    path = request.path
+    if any(path.startswith(canonical + ";") for canonical in _CAPI_EXACT_PATHS):
+        return jsonify({"ok": False, "error": "Not found"}), 404
+    return None
 
 
 @app.before_request
@@ -276,6 +408,15 @@ def _restrict_internal_agent_listener():
     return None
 
 _rate_limiter = get_rate_limiter_from_env()
+_x_capi_rate_limiter = get_x_capi_rate_limiter()
+_x_capi_status_global_limiter = get_x_capi_global_rate_limiter("status")
+_x_capi_consent_global_limiter = get_x_capi_global_rate_limiter("consent")
+_x_capi_privacy_rate_limiter = get_x_capi_privacy_rate_limiter()
+if x_capi is not None:
+    # Populate immutable key objects in the long-lived parent. Flask workers
+    # reuse them; forked Websockify children inherit them without secret-file
+    # I/O on attacker-controlled bearer requests.
+    x_capi.preload_context_keyring()
 
 NOVNC_WEB_DIR = Path('/usr/share/novnc')
 
@@ -602,19 +743,53 @@ def _rotate_gate_auth_token(
 @app.after_request
 def after_request(response):
     """Add CORS headers to all responses."""
-    origin = cors_origin_for_request(
-        request.headers.get("Origin"),
-        request.headers.get("Host"),
-        _allow_any,
-        _allowlist,
-    )
+    is_x_capi = request.path.startswith("/api/x-attribution/")
+    if is_x_capi and x_capi is not None:
+        supplied = request.headers.get("Origin")
+        allow_revocation_origin = bool(
+            request.path in (
+                "/api/x-attribution/consent",
+                "/api/x-attribution/bind",
+            )
+            and (
+                request.method == "OPTIONS"
+                or request.environ.get("axonos.x_capi_privacy_cors") is True
+            )
+        )
+        origin = x_capi.attribution_cors_origin(
+            supplied, allow_revocation_origin=allow_revocation_origin
+        )
+    else:
+        origin = cors_origin_for_request(
+            request.headers.get("Origin"),
+            request.headers.get("Host"),
+            _allow_any,
+            _allowlist,
+        )
     if origin:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Vary"] = "Origin"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Wallet-Address, X-AXGT-Auth-Token"
+        response.headers["Access-Control-Allow-Headers"] = (
+            "Content-Type, X-AxonOS-Attribution, X-AxonOS-CSRF, "
+            "X-AxonOS-Landing-Click, X-Wallet-Address, X-AXGT-Auth-Token, Sec-GPC"
+            if is_x_capi
+            else (
+                "Content-Type, X-Wallet-Address, X-AXGT-Auth-Token, "
+                "X-PAYMENT, PAYMENT-SIGNATURE, Range, If-Range"
+            )
+        )
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+    response.headers["X-Frame-Options"] = "DENY"
+    if request_is_effectively_https(
+        request.remote_addr,
+        request.headers.get("X-Forwarded-For"),
+        request.headers.get("X-Forwarded-Proto"),
+        request.environ.get("wsgi.url_scheme") or request.scheme,
+    ):
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     # WebRTC status must never be cached (CDN/browser); stale JSON caused endless polling on wrong state.
-    if request.path.startswith("/api/webrtc/status") or request.path.startswith(
+    if is_x_capi or request.path.startswith("/api/webrtc/status") or request.path.startswith(
         "/api/terminal/"
     ):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
@@ -685,6 +860,9 @@ def verify_wallet():
                     "wallet_address": wallet_address,
                 }
             ), 503
+        _emit_wallet_verified_nonblocking(
+            _request_attribution_context(), wallet_address
+        )
         if status.get("verified"):
             logger.info("Wallet verified (prepaid): %s", mask_wallet_address(wallet_address))
             return _set_gate_auth_cookie(jsonify(status), token, ttl)
@@ -696,6 +874,249 @@ def verify_wallet():
     except Exception as e:
         logger.error(f"Error in verify_wallet: {e}", exc_info=True)
         return jsonify({'verified': False, 'error': 'Internal server error'}), 500
+
+
+def _x_capi_request_rate_allowed(scope: str) -> bool:
+    client_ip = client_ip_for_rate_limit(
+        request.remote_addr, request.headers.get("X-Forwarded-For")
+    )
+    global_limiter = (
+        _x_capi_consent_global_limiter
+        if scope == "consent"
+        else _x_capi_status_global_limiter
+    )
+    return _x_capi_rate_limiter.allow(scope + ":" + client_ip) and global_limiter.allow("all-clients")
+
+
+def _x_capi_privacy_rate_allowed(privacy_key: str) -> bool:
+    """Decide whether to emit a redundant low-latency worker hint.
+
+    The complete fixed-slot privacy fence is never rate limited. A shared
+    global bucket would let one bearer deny every other user's first GPC or
+    revocation request, while per-capability replay is already deduplicated by
+    the slot/marker protocol.
+    """
+    return bool(
+        _x_capi_privacy_rate_limiter.allow(
+            "privacy:" + privacy_key, fail_open_on_error=True
+        )
+    )
+
+
+def _x_capi_live_transport_allowed() -> bool:
+    if x_capi is None:
+        return True
+    cfg = x_capi.load_config()
+    requires_https = cfg.mode == "live" or urlparse(cfg.allowed_origin).scheme == "https"
+    context_token = request.headers.get("X-AxonOS-Attribution")
+    if not requires_https and len(str(context_token or "")) <= 2048:
+        ticket = x_capi.decode_context_ticket(context_token)
+        requires_https = bool(ticket and ticket.get("mode_scope") == "live")
+    if not requires_https:
+        return True
+    return request_is_effectively_https(
+        request.remote_addr,
+        request.headers.get("X-Forwarded-For"),
+        request.headers.get("X-Forwarded-Proto"),
+        request.environ.get("wsgi.url_scheme") or request.scheme,
+    )
+
+
+@app.route('/api/x-attribution/status', methods=['GET', 'OPTIONS'])
+def x_attribution_status():
+    if request.method == 'OPTIONS':
+        return '', 200
+    if x_capi is None:
+        return jsonify({"enabled": False, "state": "unavailable"}), 503
+    context_token = request.headers.get("X-AxonOS-Attribution")
+    landing_click = request.headers.get("X-AxonOS-Landing-Click")
+    gpc = gpc_signal_active(request.headers.get("Sec-GPC"))
+    if len(str(context_token or "")) > 2048:
+        return jsonify({"enabled": False, "state": "invalid_context"}), 400
+    if len(str(landing_click or "")) > 512:
+        return jsonify({"enabled": False, "state": "invalid_click"}), 400
+    if gpc and context_token:
+        try:
+            privacy_key = x_capi.privacy_signal_rate_key(context_token)
+            if privacy_key:
+                if not x_capi.observe_privacy_signal_nonblocking(
+                    context_token,
+                    emit_hint=_x_capi_privacy_rate_allowed(privacy_key),
+                ):
+                    return jsonify({
+                        "enabled": False,
+                        "state": "revocation_required",
+                        "gpc_applied": True,
+                        "error": "Privacy handoff unavailable",
+                    }), 503
+        except Exception:
+            return jsonify({
+                "enabled": False,
+                "state": "revocation_required",
+                "gpc_applied": True,
+                "error": "Privacy handoff unavailable",
+            }), 503
+    if not _x_capi_live_transport_allowed():
+        return jsonify({"enabled": False, "state": "https_required"}), 400
+    # Off/no-attribution visitors cause no rate-limit file or unique state.
+    needs_state = bool(context_token or landing_click)
+    if needs_state and not _x_capi_request_rate_allowed("status"):
+        return jsonify({"enabled": False, "error": "Rate limit exceeded"}), 429
+    response = jsonify(
+        x_capi.attribution_status(
+            context_token,
+            landing_twclid=landing_click,
+            gpc=gpc,
+        )
+    )
+    response.headers["Cache-Control"] = "no-store, private"
+    return response
+
+
+@app.route('/api/x-attribution/consent', methods=['POST', 'OPTIONS'])
+def x_attribution_consent():
+    if request.method == 'OPTIONS':
+        return '', 200
+    if x_capi is None:
+        return jsonify({"ok": False, "error": "Consent store unavailable"}), 503
+    context_token = request.headers.get("X-AxonOS-Attribution")
+    if len(str(context_token or "")) > 2048:
+        return jsonify({"ok": False, "error": "Invalid consent headers"}), 400
+    gpc = gpc_signal_active(request.headers.get("Sec-GPC"))
+    gpc_fenced = False
+    gpc_rate_admitted = False
+    gpc_hint_allowed = True
+    if gpc and context_token:
+        # GPC dominates malformed/stale frontend payloads too. A bad body may
+        # still receive 400/413, but it cannot leave prior queued sharing live.
+        privacy_key = x_capi.privacy_signal_rate_key(context_token)
+        if privacy_key:
+            request.environ["axonos.x_capi_privacy_cors"] = True
+            gpc_rate_admitted = True
+            gpc_hint_allowed = _x_capi_privacy_rate_allowed(privacy_key)
+            gpc_fenced = bool(
+                x_capi.observe_privacy_signal_nonblocking(
+                    context_token, emit_hint=gpc_hint_allowed
+                )
+            )
+    if request.content_length is not None and request.content_length > 2048:
+        return jsonify({"ok": False, "error": "Invalid request body"}), 413
+    if (
+        request.content_length is None
+        or request.content_length <= 0
+        or request.mimetype != "application/json"
+    ):
+        return jsonify({"ok": False, "error": "Invalid request body"}), 400
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"ok": False, "error": "JSON body required"}), 400
+    if (
+        len(str(request.headers.get("X-AxonOS-CSRF") or "")) > 128
+        or len(str(request.headers.get("X-AxonOS-Landing-Click") or "")) > 512
+    ):
+        return jsonify({"ok": False, "error": "Invalid consent headers"}), 400
+    privacy_key = x_capi.privacy_action_rate_key(
+        context_token=context_token,
+        csrf_token=request.headers.get("X-AxonOS-CSRF"),
+        action=data.get("action"),
+        origin=request.headers.get("Origin"),
+        gpc=gpc,
+    )
+    if privacy_key:
+        request.environ["axonos.x_capi_privacy_cors"] = True
+        if not gpc_rate_admitted:
+            gpc_hint_allowed = _x_capi_privacy_rate_allowed(privacy_key)
+        # Mutation follows shared admission. A failed fast handoff is not an
+        # acknowledgement; update_consent still attempts its durable close and
+        # returns an error unless the worker confirms it.
+        if not gpc_fenced:
+            gpc_fenced = bool(
+                x_capi.observe_privacy_signal_nonblocking(
+                    context_token, emit_hint=gpc_hint_allowed
+                )
+            )
+    elif not _x_capi_request_rate_allowed("consent"):
+        return jsonify({"ok": False, "error": "Rate limit exceeded"}), 429
+    if not _x_capi_live_transport_allowed():
+        return jsonify({"ok": False, "error": "HTTPS is required"}), 400
+    result, status_code = x_capi.update_consent(
+        context_token=context_token,
+        csrf_token=request.headers.get("X-AxonOS-CSRF"),
+        action=data.get("action"),
+        twclid=data.get("twclid"),
+        landing_twclid=request.headers.get("X-AxonOS-Landing-Click"),
+        origin=request.headers.get("Origin"),
+        gpc=gpc,
+    )
+    response = jsonify(result)
+    response.headers["Cache-Control"] = "no-store, private"
+    return response, status_code
+
+
+@app.route('/api/x-attribution/bind', methods=['POST', 'OPTIONS'])
+def x_attribution_bind():
+    """Best-effort authenticated backfill when attribution and wallet boot race."""
+    if request.method == 'OPTIONS':
+        return '', 200
+    if x_capi is None:
+        return jsonify({"ok": False, "error": "Attribution unavailable"}), 503
+    context_token = request.headers.get("X-AxonOS-Attribution")
+    if len(str(context_token or "")) > 2048:
+        return jsonify({"ok": False, "error": "Invalid attribution context"}), 400
+    if gpc_signal_active(request.headers.get("Sec-GPC")):
+        privacy_key = x_capi.privacy_bearer_rate_key(
+            context_token=context_token,
+            origin=request.headers.get("Origin"),
+        )
+        if privacy_key:
+            request.environ["axonos.x_capi_privacy_cors"] = True
+            x_capi.observe_privacy_signal_nonblocking(
+                context_token,
+                emit_hint=_x_capi_privacy_rate_allowed(privacy_key),
+            )
+        elif not _x_capi_request_rate_allowed("consent"):
+            return jsonify({"ok": False, "error": "Rate limit exceeded"}), 429
+        if not _x_capi_live_transport_allowed():
+            return jsonify({"ok": False, "error": "HTTPS is required"}), 400
+        result, status_code = x_capi.revoke_for_gpc(
+            context_token,
+            origin=request.headers.get("Origin"),
+        )
+        response = jsonify(result)
+        response.headers["Cache-Control"] = "no-store, private"
+        return response, status_code
+    if not _x_capi_live_transport_allowed():
+        return jsonify({"ok": False, "error": "Attribution unavailable"}), 503
+    if request.content_length is not None and request.content_length > 1024:
+        return jsonify({"ok": False, "error": "Invalid request body"}), 413
+    if (
+        request.content_length is None
+        or request.content_length <= 0
+        or request.mimetype != "application/json"
+    ):
+        return jsonify({"ok": False, "error": "Invalid request body"}), 400
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"ok": False, "error": "JSON body required"}), 400
+    wallet = str(data.get("wallet_address") or "").strip().lower()
+    if not validate_wallet_address(wallet) or _is_guest_shaped(wallet):
+        return jsonify({"ok": False, "error": "Valid wallet address required"}), 400
+    if not x_capi.exact_origin_allowed(request.headers.get("Origin")):
+        return jsonify({"ok": False, "error": "Origin not allowed"}), 403
+    if not _x_capi_request_rate_allowed("consent"):
+        return jsonify({"ok": False, "error": "Rate limit exceeded"}), 429
+    auth_error = _require_auth_token(wallet)
+    if auth_error:
+        return auth_error
+    ticket = x_capi.decode_context_ticket(context_token, require_primary=True)
+    if (
+        ticket is None
+        or not x_capi.config_guard_current(x_capi.load_config())
+        or x_capi._effective_ticket_state(ticket, x_capi.load_config(), time.time()) != "granted"
+    ):
+        return jsonify({"ok": False, "error": "Granted attribution required"}), 409
+    accepted = _bind_attribution_nonblocking(context_token, wallet)
+    return jsonify({"ok": True, "accepted": bool(accepted)}), 202
 
 def _guest_mode_ready() -> bool:
     return guest_mode is not None and guest_mode.guest_mode_enabled()
@@ -1077,7 +1498,11 @@ def api_verify_deposit():
     auth_err = _require_auth_token(wallet_address)
     if auth_err:
         return auth_err
-    result = verify_deposit(authenticated_wallet=wallet_address, tx_hash=tx_hash)
+    result = verify_deposit(
+        authenticated_wallet=wallet_address,
+        tx_hash=tx_hash,
+        attribution_context=_request_attribution_context(),
+    )
     if result.get("verified") or verify_deposit_is_pending(result):
         try:
             token, ttl = _issue_gate_auth_token(wallet_address)
@@ -1112,7 +1537,11 @@ def api_verify_usdc_deposit():
     auth_err = _require_auth_token(wallet_address)
     if auth_err:
         return auth_err
-    result = verify_usdc_deposit(authenticated_wallet=wallet_address, tx_hash=tx_hash)
+    result = verify_usdc_deposit(
+        authenticated_wallet=wallet_address,
+        tx_hash=tx_hash,
+        attribution_context=_request_attribution_context(),
+    )
     if result.get("verified") or verify_usdc_deposit_is_pending(result):
         try:
             token, ttl = _issue_gate_auth_token(wallet_address)
@@ -1158,6 +1587,7 @@ def api_verify_deposit_auto():
         eth_is_pending=verify_deposit_is_pending,
         verify_usdc=verify_usdc_deposit,
         usdc_is_pending=verify_usdc_deposit_is_pending,
+        attribution_context=_request_attribution_context(),
     )
     if result.get("verified") or is_pending:
         try:
@@ -1248,7 +1678,11 @@ def api_x402_access():
             or request.args.get('wallet_address') or request.headers.get('X-Wallet-Address') or '').strip()
         if not wallet_address or not validate_wallet_address(wallet_address):
             return jsonify({"error": "Could not determine paying wallet from X-PAYMENT"}), 400
-        result = settle_x402_payment(authenticated_wallet=wallet_address, x_payment_header=x_payment)
+        result = settle_x402_payment(
+            authenticated_wallet=wallet_address,
+            x_payment_header=x_payment,
+            attribution_context=_request_attribution_context(),
+        )
         if result.get("verified") or verify_usdc_deposit_is_pending(result):
             status = get_wallet_access_status(wallet_address)
             out = {
@@ -1368,7 +1802,11 @@ def api_x402_settle():
     auth_err = _require_auth_token(wallet_address)
     if auth_err:
         return auth_err
-    result = settle_x402_payment(authenticated_wallet=wallet_address, x_payment_header=x_payment)
+    result = settle_x402_payment(
+        authenticated_wallet=wallet_address,
+        x_payment_header=x_payment,
+        attribution_context=_request_attribution_context(),
+    )
     if result.get("verified") or verify_usdc_deposit_is_pending(result):
         try:
             token, ttl = _issue_gate_auth_token(wallet_address)
@@ -1425,6 +1863,13 @@ def api_x402_session():
     """
     if request.method == 'OPTIONS':
         return '', 200
+    # Capture once so the payment and the resulting session share the same
+    # sanitized, GPC-aware browser attribution capability. Headless agents
+    # simply omit the header and remain unattributed.
+    request_attribution_context = _request_attribution_context()
+    # This endpoint intentionally permits a wallet-name-only prepaid reclaim.
+    # That legacy path is not ownership proof and must never bind attribution.
+    attribution_context = None
     if not _session_mgr_available:
         return jsonify({"granted": False, "error": "Session manager unavailable"}), 503
 
@@ -1488,7 +1933,11 @@ def api_x402_session():
     if x_payment:
         if settle_x402_payment is None:
             return jsonify({"granted": False, "error": "x402 settlement unavailable"}), 503
-        settle_result = settle_x402_payment(authenticated_wallet=wallet_address, x_payment_header=x_payment)
+        settle_result = settle_x402_payment(
+            authenticated_wallet=wallet_address,
+            x_payment_header=x_payment,
+            attribution_context=request_attribution_context,
+        )
         if not (settle_result.get("verified") or verify_usdc_deposit_is_pending(settle_result)):
             resp = jsonify({"granted": False, "error": settle_result.get("error") or "Payment failed", "payment": settle_result})
             if "headers" in settle_result:
@@ -1496,12 +1945,16 @@ def api_x402_session():
                     resp.headers[k] = v
             resp.status_code = 400
             return resp
+        # A successfully verified x402 authorization proves the paying wallet;
+        # only that branch may carry browser attribution into session binding.
+        attribution_context = request_attribution_context
 
     claim = try_claim_session(
         wallet_address,
         requested_profile=requested_profile,
         requested_ssh=True,
         ssh_pubkey=ssh_pubkey,
+        attribution_context=attribution_context,
     )
     out = dict(claim)
     if settle_result is not None:
@@ -2399,6 +2852,29 @@ def api_session_claim():
             "error": "new_session must be a JSON boolean",
         }), 400
     new_session = new_session_raw is True
+    if new_session and (resume_only or expected_session_id is not None):
+        return jsonify({
+            "granted": False,
+            "error": (
+                "new_session cannot be combined with resume_only or "
+                "expected_session_id"
+            ),
+        }), 400
+    launch_request_id_raw = data.get('launch_request_id')
+    launch_request_id = validate_launch_request_id(launch_request_id_raw)
+    if new_session and launch_request_id is None:
+        return jsonify({
+            "granted": False,
+            "error": (
+                "new_session requires a 32-128 character URL-safe "
+                "launch_request_id"
+            ),
+        }), 400
+    if not new_session and launch_request_id_raw is not None:
+        return jsonify({
+            "granted": False,
+            "error": "launch_request_id is only valid when new_session is true",
+        }), 400
     # Fail closed: only an explicit JSON boolean true opts into a headless SSH
     # session. In particular, bool("false") is True in Python.
     requested_ssh = data.get('requested_ssh') is True
@@ -2412,7 +2888,7 @@ def api_session_claim():
     auth_err = _require_auth_token(wallet_address)
     if auth_err:
         return auth_err
-    return jsonify(try_claim_session(
+    claim = try_claim_session(
         wallet_address,
         requested_profile=requested_profile,
         requested_template=requested_template,
@@ -2422,7 +2898,16 @@ def api_session_claim():
         expected_session_id=expected_session_id,
         requested_storage_gb=requested_storage_gb,
         new_session=new_session,
-    ))
+        launch_request_id=launch_request_id,
+        attribution_context=_request_attribution_context(),
+    )
+    if launch_request_id is not None:
+        # An application response bearing the exact key lets the browser
+        # distinguish an authoritative result from a proxy/network failure.
+        claim = dict(claim)
+        claim.setdefault("launch_request_id", launch_request_id)
+        claim.setdefault("launch_request_consumed", False)
+    return jsonify(claim)
 
 
 @app.route('/api/session/heartbeat', methods=['POST', 'OPTIONS'])
@@ -3319,10 +3804,122 @@ def _handle_websockify_proxy(environ, start_response):
     return []
 
 
+_HTTP_HEADER_DEADLINE_SECONDS = 10.0
+_X_CAPI_REQUEST_DEADLINE_SECONDS = 2.0
+_X_CAPI_BOUNDED_POST_PATHS = frozenset(
+    ("/api/x-attribution/consent", "/api/x-attribution/bind")
+)
+
+
+def _deadline_websocket_handler(base_handler, gevent_module):
+    """Build the public gevent handler with absolute slow-client deadlines.
+
+    gevent's WSGI input limits line size but does not impose an absolute read
+    deadline. A client that trickles a request can otherwise retain a greenlet
+    indefinitely. Timer callbacks close only that client socket; WebSocket and
+    other long-lived responses are untouched after their headers are parsed.
+    """
+
+    class DeadlineWebSocketHandler(base_handler):
+        def _abort_slow_request(self):
+            self.close_connection = True
+            connection = getattr(self, "socket", None)
+            if connection is None:
+                return
+            try:
+                connection.shutdown(socket.SHUT_RDWR)
+            except (AttributeError, OSError):
+                pass
+            try:
+                connection.close()
+            except (AttributeError, OSError):
+                pass
+
+        @staticmethod
+        def _cancel_deadline(deadline):
+            try:
+                deadline.kill(block=False)
+            except (AttributeError, TypeError):
+                pass
+
+        def read_requestline(self):
+            deadline = gevent_module.spawn_later(
+                _HTTP_HEADER_DEADLINE_SECONDS, self._abort_slow_request
+            )
+            try:
+                return super().read_requestline()
+            finally:
+                self._cancel_deadline(deadline)
+
+        def read_request(self, raw_requestline):
+            deadline = gevent_module.spawn_later(
+                _HTTP_HEADER_DEADLINE_SECONDS, self._abort_slow_request
+            )
+            try:
+                return super().read_request(raw_requestline)
+            finally:
+                self._cancel_deadline(deadline)
+
+        def handle_one_response(self):
+            environ = getattr(self, "environ", {}) or {}
+            bounded = (
+                str(environ.get("REQUEST_METHOD") or "").upper() == "POST"
+                and str(environ.get("PATH_INFO") or "")
+                in _X_CAPI_BOUNDED_POST_PATHS
+            )
+            if not bounded:
+                return super().handle_one_response()
+            deadline = gevent_module.spawn_later(
+                _X_CAPI_REQUEST_DEADLINE_SECONDS, self._abort_slow_request
+            )
+            try:
+                return super().handle_one_response()
+            finally:
+                self._cancel_deadline(deadline)
+
+    DeadlineWebSocketHandler.__name__ = "DeadlineWebSocketHandler"
+    return DeadlineWebSocketHandler
+
+
+def _unsafe_flask_development_fallback_allowed() -> bool:
+    """Allow the builtin server only for the loopback agent or explicit dev use."""
+    return _env_truthy("GATE_AGENT_ONLY") or _env_truthy(
+        "GATE_ALLOW_UNSAFE_FLASK_DEVELOPMENT_SERVER"
+    )
+
+
+def _serve_unsafe_flask_development_fallback(host: str, port: int, reason: str) -> None:
+    if not _unsafe_flask_development_fallback_allowed():
+        raise RuntimeError(
+            "Refusing to start without the gevent/gevent-websocket public server; "
+            "the Flask development server lacks /websockify support and the "
+            "bounded X attribution request handler"
+        )
+    if _env_truthy("GATE_AGENT_ONLY"):
+        logger.info("Starting internal agent-only Flask server (%s)", reason)
+    else:
+        logger.warning(
+            "UNSAFE DEVELOPMENT MODE: starting Flask's builtin server (%s); "
+            "WebSocket and bounded-request protections are unavailable",
+            reason,
+        )
+    app.run(host=host, port=port, debug=False, use_reloader=False)
+
+
 def _application(environ, start_response):
     """WSGI app: route WebSocket transports, otherwise delegate to Flask."""
     path = (environ.get('PATH_INFO') or '').strip()
     is_ws = (environ.get('HTTP_UPGRADE') or '').lower() == 'websocket'
+    # WebSocket routes below bypass Flask and therefore its before_request GPC
+    # hook. Preserve parity with ordinary HTTP and Websockify upgrades using
+    # the same bounded, preallocated local privacy-fence observer.
+    if is_ws and x_capi is not None and gpc_signal_active(environ.get('HTTP_SEC_GPC')):
+        context_token = environ.get('HTTP_X_AXONOS_ATTRIBUTION')
+        if context_token and len(str(context_token)) <= 2048:
+            try:
+                x_capi.observe_business_gpc_nonblocking(context_token)
+            except Exception:
+                pass
     if path == '/api/terminal/ws' and is_ws and environ.get('wsgi.websocket'):
         return _handle_terminal_proxy(environ, start_response)
     if path == '/websockify' and is_ws and environ.get('wsgi.websocket'):
@@ -3473,16 +4070,26 @@ def main():
     use_gevent = (os.getenv('GATE_USE_GEVENT', '1').strip().lower() in ('1', 'true', 'yes'))
     if use_gevent:
         try:
+            import gevent
             from gevent import pywsgi
             from geventwebsocket.handler import WebSocketHandler
             logger.info("WebSocket /websockify enabled (proxy to websockify_gate on 127.0.0.1)")
-            server = pywsgi.WSGIServer((host, port), _application, handler_class=WebSocketHandler)
+            # gevent's default access writer bypasses Python logging filters and
+            # includes the raw query string. Disable it; application/security
+            # logs remain available without risking click/capability leakage.
+            handler_class = _deadline_websocket_handler(WebSocketHandler, gevent)
+            server = pywsgi.WSGIServer(
+                (host, port), _application, handler_class=handler_class, log=None
+            )
             server.serve_forever()
         except ImportError as e:
-            logger.warning("gevent/gevent-websocket not available (%s); running Flask only (no WebSocket)", e)
-            app.run(host=host, port=port, debug=False, use_reloader=False)
+            _serve_unsafe_flask_development_fallback(
+                host, port, f"gevent/gevent-websocket import failed: {type(e).__name__}"
+            )
     else:
-        app.run(host=host, port=port, debug=False, use_reloader=False)
+        _serve_unsafe_flask_development_fallback(
+            host, port, "GATE_USE_GEVENT is disabled"
+        )
 
 
 if __name__ == '__main__':

@@ -129,9 +129,13 @@ class TestSettleX402Gates(unittest.TestCase):
     def tearDown(self):
         self.patcher.stop()
 
-    def _settle(self, wallet, header):
+    def _settle(self, wallet, header, attribution_context=None):
         import x402_verifier as x
-        return x.settle_x402_payment(authenticated_wallet=wallet, x_payment_header=header)
+        return x.settle_x402_payment(
+            authenticated_wallet=wallet,
+            x_payment_header=header,
+            attribution_context=attribution_context,
+        )
 
     def test_happy_path_settles_and_credits(self):
         import x402_verifier as x
@@ -140,10 +144,14 @@ class TestSettleX402Gates(unittest.TestCase):
         with patch.object(x, "_submit_transfer_with_authorization", return_value=("0x" + "ab" * 32, None)) as submit, \
              patch.object(x, "_wait_for_confirmations", return_value=True) as wait, \
              patch.object(x, "verify_usdc_deposit", return_value={"verified": True, "credited_minutes": 60.0, "remaining_minutes": 60.0}) as verify:
-            result = self._settle(_SIGNER, header)
+            result = self._settle(_SIGNER, header, attribution_context="browser-context")
         submit.assert_called_once()
         wait.assert_called_once_with("https://base.example.com", "0x" + "ab" * 32, 6)
-        verify.assert_called_once()
+        verify.assert_called_once_with(
+            authenticated_wallet=_SIGNER.lower(),
+            tx_hash="0x" + "ab" * 32,
+            attribution_context="browser-context",
+        )
         self.assertTrue(result["verified"])
         self.assertTrue(result["x402"])
         self.assertEqual(result["settlement_tx_hash"], "0x" + "ab" * 32)
@@ -201,16 +209,107 @@ class TestSettleX402Gates(unittest.TestCase):
 
     def test_rejects_forged_signature(self):
         # Valid fields, but signature from a different key → recovery mismatch.
+        import x402_verifier as x
         authorization, _ = _sign_authorization(1_000_000)
         _, other_sig = _sign_authorization(
             1_000_000,
             key="0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
         )
         header = _x_payment_header(authorization, other_sig)
-        result = self._settle(_SIGNER, header)
+        with patch.object(x, "_warn_on_domain_mismatch", return_value=None):
+            result = self._settle(_SIGNER, header)
         self.assertFalse(result["verified"])
         self.assertIn("signature does not match", result["error"])
 
+
+class TestUsdcVerifierChainProvenance(unittest.TestCase):
+    def setUp(self):
+        self.patcher = patch.dict(os.environ, _env())
+        self.patcher.start()
+
+    def tearDown(self):
+        self.patcher.stop()
+
+    def _settle(self, wallet, header, attribution_context=None):
+        import x402_verifier as x
+        return x.settle_x402_payment(
+            authenticated_wallet=wallet,
+            x_payment_header=header,
+            attribution_context=attribution_context,
+        )
+
+    @staticmethod
+    def _receipt():
+        return {
+            "status": "0x1",
+            "blockNumber": "0x64",
+            "logs": [{
+                "address": _USDC,
+                "topics": [
+                    "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                    "0x" + "0" * 24 + _SIGNER.lower()[2:],
+                    "0x" + "0" * 24 + _REVENUE[2:],
+                ],
+                "data": "0x" + hex(1_000_000)[2:].zfill(64),
+            }],
+        }
+
+    def _verify_with_transaction(self, transaction):
+        import x402_verifier as x
+
+        def fake_rpc(_url, method, _params):
+            if method == "eth_getTransactionByHash":
+                return transaction
+            if method == "eth_getTransactionReceipt":
+                return self._receipt()
+            if method == "eth_blockNumber":
+                return "0x69"
+            self.fail(f"unexpected advertising-only RPC: {method}")
+
+        with patch.object(x._dv, "_rpc", side_effect=fake_rpc), patch.object(
+            x._dv, "_token_decimals", return_value=6
+        ), patch.object(
+            x._dv, "_import_discount", return_value=None
+        ), patch(
+            "axonos_gate.deposit_ledger.tx_hash_already_credited",
+            return_value=False,
+        ), patch(
+            "axonos_gate.deposit_ledger.credit_usdc_deposit",
+            return_value=(True, 60.0, None),
+        ) as credit:
+            result = x.verify_usdc_deposit(
+                _SIGNER, "0x" + "ab" * 32, attribution_context="browser-context"
+            )
+        return result, credit
+
+    def test_verified_transaction_chain_is_passed_to_committed_ledger(self):
+        result, credit = self._verify_with_transaction({"chainId": hex(_CHAIN_ID)})
+        self.assertTrue(result["verified"])
+        self.assertEqual(result["chain_id"], _CHAIN_ID)
+        self.assertEqual(credit.call_args.args[5], _CHAIN_ID)
+
+    def test_missing_chain_provenance_does_not_block_core_credit(self):
+        result, credit = self._verify_with_transaction({"hash": "0x" + "ab" * 32})
+        self.assertTrue(result["verified"])
+        self.assertIsNone(result["chain_id"])
+        self.assertIsNone(credit.call_args.args[5])
+
+    def test_known_transaction_chain_mismatch_rejects_before_credit(self):
+        import x402_verifier as x
+        with patch.object(
+            x._dv, "_rpc", return_value={"chainId": "0x1"}
+        ), patch(
+            "axonos_gate.deposit_ledger.tx_hash_already_credited",
+            return_value=False,
+        ), patch(
+            "axonos_gate.deposit_ledger.credit_usdc_deposit"
+        ) as credit:
+            result = x.verify_usdc_deposit(_SIGNER, "0x" + "ab" * 32)
+        self.assertFalse(result["verified"])
+        self.assertIn("chain ID", result["error"])
+        credit.assert_not_called()
+
+    @unittest.skipUnless(_HAVE_ETH, "eth_account not installed")
     def test_v2_facilitator_payload_serialization(self):
         import x402_verifier as x
         import axonos_gate.x402_facilitator as fac
@@ -253,6 +352,7 @@ class TestSettleX402Gates(unittest.TestCase):
             with patch.object(fac, "facilitator_enabled", return_value=True), \
                  patch.object(fac, "facilitator_verify", return_value=(True, None, None, {})) as mock_verify, \
                  patch.object(fac, "facilitator_settle", return_value=("0x" + "ab" * 32, None, None, {})) as mock_settle, \
+                 patch.object(x, "_warn_on_domain_mismatch", return_value=None), \
                  patch.object(x, "_wait_for_confirmations", return_value=True) as mock_wait, \
                  patch.object(x, "verify_usdc_deposit", return_value={"verified": True, "credited_minutes": 60}):
 

@@ -1,0 +1,245 @@
+# Optional X CAPI isolation overlay. Always combine this file with the base
+# compose file. It never alters the PostgreSQL service or its existing network.
+services:
+  axonos:
+    environment:
+      X_CAPI_CONTEXT_KEY_FILE: /run/secrets/x_capi_context_key
+      X_CAPI_INGEST_SOCKET: /run/axonos-x-capi/events.sock
+      X_CAPI_CONSENT_SOCKET: /run/axonos-x-capi/consent.sock
+      X_CAPI_PRIVACY_FENCE_DIR: /run/axonos-x-capi-privacy
+    volumes:
+      - type: bind
+        source: ${X_CAPI_CONTEXT_KEY_HOST_FILE:-/etc/axonos/x-capi-context-key}
+        target: /run/secrets/x_capi_context_key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: volume
+        source: x_capi_runtime
+        target: /run/axonos-x-capi
+        read_only: true
+      - type: volume
+        source: x_capi_privacy_fence
+        target: /run/axonos-x-capi-privacy
+  # A fresh named volume is root-owned. This one-shot service gives the
+  # unprivileged worker sole ownership before either producer or worker starts.
+  # It has no network, secrets, or access to any other filesystem state.
+  x-capi-privacy-init:
+    profiles: ["x-capi"]
+    build:
+      context: .
+      dockerfile: docker/x-capi-worker/Dockerfile
+    entrypoint: ["python3", "/app/init_privacy_fence.py"]
+    user: "0:0"
+    network_mode: none
+    restart: "no"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER"]
+    pids_limit: 16
+    mem_limit: 16m
+    cpus: 0.05
+    volumes:
+      - type: volume
+        source: x_capi_runtime
+        target: /run/axonos-x-capi
+      - type: volume
+        source: x_capi_privacy_fence
+        target: /run/axonos-x-capi-privacy
+
+  # Dedicated identifier store. It contains no AxonOS auth, billing, wallet,
+  # session, or launcher tables and is reachable only on the internal CAPI
+  # network. Its bootstrap superuser secret is never mounted into the worker.
+  x-capi-postgres:
+    profiles: ["x-capi"]
+    image: postgres:15-alpine@sha256:5fe8ca7fc662071188c30271cb870d1ce9a6ec4578c934b064697ae77a9241e1
+    container_name: axonos_x_capi_postgres
+    environment:
+      POSTGRES_DB: ${X_CAPI_POSTGRES_DB:-axonos_x_capi}
+      POSTGRES_USER: ${X_CAPI_POSTGRES_BOOTSTRAP_USER:-x_capi_bootstrap}
+      POSTGRES_PASSWORD_FILE: /run/secrets/x_capi_postgres_bootstrap_password
+    command:
+      - postgres
+      - -c
+      - log_error_verbosity=terse
+      - -c
+      - log_min_error_statement=panic
+      - -c
+      - log_parameter_max_length_on_error=0
+      - -c
+      - log_statement=none
+    volumes:
+      - x_capi_postgres_data:/var/lib/postgresql/data
+      - type: bind
+        source: ${X_CAPI_POSTGRES_BOOTSTRAP_PASSWORD_HOST_FILE:-/etc/axonos/x-capi-postgres-bootstrap-password}
+        target: /run/secrets/x_capi_postgres_bootstrap_password
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - x_capi_db
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /run/postgresql:size=8m,mode=0770,uid=70,gid=70
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 96
+    mem_limit: 256m
+    cpus: 0.50
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  x-capi-db-init:
+    profiles: ["x-capi"]
+    image: postgres:15-alpine@sha256:5fe8ca7fc662071188c30271cb870d1ce9a6ec4578c934b064697ae77a9241e1
+    entrypoint: ["/bin/sh", "/opt/axonos/bootstrap_x_capi_db.sh"]
+    environment:
+      POSTGRES_DB: ${X_CAPI_POSTGRES_DB:-axonos_x_capi}
+      POSTGRES_USER: ${X_CAPI_POSTGRES_BOOTSTRAP_USER:-x_capi_bootstrap}
+      X_CAPI_OWNER_DB_ROLE: ${X_CAPI_OWNER_DB_ROLE:-axonos_x_capi_owner}
+      X_CAPI_WORKER_DB_ROLE: ${X_CAPI_WORKER_DB_ROLE:-axonos_x_capi_worker}
+    volumes:
+      - ./docker/x-capi-worker/bootstrap_x_capi_db.sh:/opt/axonos/bootstrap_x_capi_db.sh:ro
+      - ./axonos_gate/migrations:/opt/axonos/x-capi-migrations:ro
+      - type: bind
+        source: ${X_CAPI_POSTGRES_BOOTSTRAP_PASSWORD_HOST_FILE:-/etc/axonos/x-capi-postgres-bootstrap-password}
+        target: /run/secrets/x_capi_postgres_bootstrap_password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${X_CAPI_POSTGRES_WORKER_PASSWORD_HOST_FILE:-/etc/axonos/x-capi-postgres-worker-password}
+        target: /run/secrets/x_capi_postgres_worker_password
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - x_capi_db
+    depends_on:
+      x-capi-postgres:
+        condition: service_healthy
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    user: "0:0"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+    pids_limit: 32
+    mem_limit: 64m
+    cpus: 0.10
+
+  x-capi-worker:
+    profiles: ["x-capi"]
+    build:
+      context: .
+      dockerfile: docker/x-capi-worker/Dockerfile
+    container_name: axonos_x_capi_worker
+    environment:
+      X_CAPI_MODE: ${X_CAPI_MODE:-off}
+      X_CAPI_PIXEL_ID: ${X_CAPI_PIXEL_ID:-}
+      X_CAPI_EVENT_WALLET_VERIFIED: ${X_CAPI_EVENT_WALLET_VERIFIED:-}
+      X_CAPI_EVENT_DEPOSIT_COMPLETED: ${X_CAPI_EVENT_DEPOSIT_COMPLETED:-}
+      X_CAPI_EVENT_SESSION_STARTED: ${X_CAPI_EVENT_SESSION_STARTED:-}
+      X_CAPI_DB_URL_FILE: /run/secrets/x_capi_db_url
+      X_CAPI_CONTEXT_KEY_FILE: /run/secrets/x_capi_context_key
+      X_CAPI_HASH_KEY_FILE: /run/secrets/x_capi_hash_key
+      X_CAPI_POSTGRES_DB: ${X_CAPI_POSTGRES_DB:-axonos_x_capi}
+      X_CAPI_OWNER_DB_ROLE: ${X_CAPI_OWNER_DB_ROLE:-axonos_x_capi_owner}
+      X_CAPI_WORKER_DB_ROLE: ${X_CAPI_WORKER_DB_ROLE:-axonos_x_capi_worker}
+      X_CAPI_INGEST_SOCKET: /run/axonos-x-capi/events.sock
+      X_CAPI_CONSENT_SOCKET: /run/axonos-x-capi/consent.sock
+      X_CAPI_PRIVACY_FENCE_DIR: /run/axonos-x-capi-privacy
+      X_CAPI_PRIVACY_RECOVERY_EPOCH: ${X_CAPI_PRIVACY_RECOVERY_EPOCH:-}
+      X_CAPI_INGEST_ALLOWED_UID: "0"
+      X_CAPI_ALLOWED_ORIGIN: ${X_CAPI_ALLOWED_ORIGIN:-}
+      X_CAPI_DEPLOYMENT_ID: ${X_CAPI_DEPLOYMENT_ID:-}
+      X_CAPI_CONSENT_POLICY_VERSION: ${X_CAPI_CONSENT_POLICY_VERSION:-x-capi-v1}
+      X_CAPI_CONSENT_POLICY_EPOCH: ${X_CAPI_CONSENT_POLICY_EPOCH:-}
+      X_CAPI_TWCLID_CONTRACT_VERSION: ${X_CAPI_TWCLID_CONTRACT_VERSION:-}
+      X_CAPI_TWCLID_CHARSET: ${X_CAPI_TWCLID_CHARSET:-}
+      X_CAPI_TWCLID_MIN_LENGTH: ${X_CAPI_TWCLID_MIN_LENGTH:-}
+      X_CAPI_TWCLID_MAX_LENGTH: ${X_CAPI_TWCLID_MAX_LENGTH:-}
+      X_CAPI_ATTRIBUTION_TTL_DAYS: ${X_CAPI_ATTRIBUTION_TTL_DAYS:-7}
+      X_CAPI_MAX_EVENT_AGE_HOURS: ${X_CAPI_MAX_EVENT_AGE_HOURS:-24}
+      X_CAPI_SEND_VALUES: ${X_CAPI_SEND_VALUES:-false}
+      X_CAPI_QUEUE_LIMIT: ${X_CAPI_QUEUE_LIMIT:-10000}
+      X_CAPI_CONTEXT_LIMIT: ${X_CAPI_CONTEXT_LIMIT:-10000}
+      X_CAPI_PRODUCTION_CHAIN_IDS: ${X_CAPI_PRODUCTION_CHAIN_IDS:-1,8453}
+      AXGT_REVENUE_WALLET: ${AXGT_REVENUE_WALLET:-}
+      AXONOS_TEST_CREDIT_WALLETS: ${AXONOS_TEST_CREDIT_WALLETS:-}
+      AXONOS_WHITELISTED_WALLETS: ${AXONOS_WHITELISTED_WALLETS:-}
+      AXONOS_GUEST_INVITE_MINTERS: ${AXONOS_GUEST_INVITE_MINTERS:-}
+      X_CAPI_EXCLUDED_WALLETS: ${X_CAPI_EXCLUDED_WALLETS:-}
+    volumes:
+      - type: bind
+        source: ${X_CAPI_DB_URL_HOST_FILE:-/etc/axonos/x-capi-db-url}
+        target: /run/secrets/x_capi_db_url
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${X_CAPI_CONTEXT_KEY_HOST_FILE:-/etc/axonos/x-capi-context-key}
+        target: /run/secrets/x_capi_context_key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${X_CAPI_HASH_KEY_HOST_FILE:-/etc/axonos/x-capi-hash-key}
+        target: /run/secrets/x_capi_hash_key
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: volume
+        source: x_capi_runtime
+        target: /run/axonos-x-capi
+      - type: volume
+        source: x_capi_privacy_fence
+        target: /run/axonos-x-capi-privacy
+    networks:
+      - x_capi_db
+    depends_on:
+      x-capi-postgres:
+        condition: service_healthy
+      x-capi-db-init:
+        condition: service_completed_successfully
+      x-capi-privacy-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    stop_grace_period: 60s
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.25
+    healthcheck:
+      test: ["CMD", "python3", "/app/x_capi_cli.py", "validate", "--require-listener"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+networks:
+  x_capi_db:
+    name: axonos_x_capi_db
+    driver: bridge
+    internal: true
+volumes:
+  x_capi_runtime:
+    name: axonos_x_capi_runtime
+  x_capi_privacy_fence:
+    name: axonos_x_capi_privacy_fence
+  x_capi_postgres_data:
+    name: axonos_x_capi_postgres_data

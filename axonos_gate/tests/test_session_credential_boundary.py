@@ -511,6 +511,115 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
             )
         self.assertEqual((state, container_id), ("error", None))
 
+    def test_allocation_recovery_inspection_requires_key_label_and_exact_network(self) -> None:
+        import session_launcher as direct
+        import session_launcher_service as host
+
+        key_digest = direct._allocation_key_digest("session-files-key")
+        exact = (
+            f'true|true|37|{"a" * 64}|{key_digest}|'
+            f'{{"axgt-session-net-37":{{}}}}|{"c" * 64}'
+        )
+        for module, helper_name, runner_name in (
+            (host, "_inspect_managed_allocation", "_run_cmd"),
+            (direct, "_inspect_managed_allocation_direct", "_run_docker_direct"),
+        ):
+            with self.subTest(module=module.__name__), patch.object(
+                module, runner_name, return_value=(True, exact)
+            ):
+                state, container_id, _error = getattr(module, helper_name)(
+                    37, key_digest, "axgt-session-net-37"
+                )
+                self.assertEqual(state, "match_running")
+                self.assertEqual(container_id, "c" * 64)
+
+            wrong_key = exact.replace(key_digest, "d" * 64)
+            with patch.object(module, runner_name, return_value=(True, wrong_key)):
+                state, _container_id, _error = getattr(module, helper_name)(
+                    37, key_digest, "axgt-session-net-37"
+                )
+                self.assertEqual(state, "mismatch")
+
+            wrong_network = exact.replace("axgt-session-net-37", "bridge")
+            with patch.object(module, runner_name, return_value=(True, wrong_network)):
+                state, _container_id, _error = getattr(module, helper_name)(
+                    37, key_digest, "axgt-session-net-37"
+                )
+                self.assertEqual(state, "mismatch")
+
+    def test_http_allocation_inspection_sends_only_key_fingerprint(self) -> None:
+        import session_launcher as launcher
+
+        environment = {
+            "AXGT_USER_CONTAINER_ENABLED": "true",
+            "AXGT_SESSION_LAUNCHER_MODE": "http",
+            "AXGT_SESSION_LAUNCHER_URL": "http://launcher:8090",
+        }
+        with patch.dict(os.environ, environment, clear=True), patch.object(
+            launcher,
+            "_http_json",
+            return_value=(
+                200,
+                {"ok": True, "state": "match_running", "container_id": "cid"},
+                None,
+            ),
+        ) as http:
+            result = launcher.inspect_session_allocation(37, "session-files-key")
+
+        self.assertEqual(result[0:2], ("match_running", "cid"))
+        payload = http.call_args.args[2]
+        self.assertNotIn("files_key", payload)
+        self.assertNotIn("session-files-key", repr(payload))
+        self.assertEqual(
+            payload["allocation_key_sha256"],
+            launcher._allocation_key_digest("session-files-key"),
+        )
+
+    def test_host_allocation_inspection_endpoint_is_authenticated_and_read_only(self) -> None:
+        import session_launcher_service as host
+
+        host.app.testing = True
+        digest = "a" * 64
+        with patch.dict(
+            os.environ,
+            {
+                "AXGT_SESSION_LAUNCHER_TOKEN": "launcher-secret",
+                "AXGT_HOST_SESSION_NETWORK_ISOLATION": "true",
+            },
+            clear=True,
+        ), patch.object(
+            host,
+            "_inspect_managed_allocation",
+            return_value=("match_running", "container-id", ""),
+        ) as inspect_allocation, patch.object(
+            host.subprocess, "run"
+        ) as mutate:
+            client = host.app.test_client()
+            denied = client.post(
+                "/inspect-allocation",
+                json={"session_id": 37, "allocation_key_sha256": digest},
+            )
+            allowed = client.post(
+                "/inspect-allocation",
+                json={"session_id": 37, "allocation_key_sha256": digest},
+                headers={"Authorization": "Bearer launcher-secret"},
+            )
+
+        with patch.dict(os.environ, {}, clear=True):
+            unconfigured = host.app.test_client().post(
+                "/inspect-allocation",
+                json={"session_id": 37, "allocation_key_sha256": digest},
+            )
+
+        self.assertEqual(denied.status_code, 401)
+        self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(unconfigured.status_code, 503)
+        self.assertEqual(allowed.get_json()["state"], "match_running")
+        inspect_allocation.assert_called_once_with(
+            37, digest, "axgt-session-net-37"
+        )
+        mutate.assert_not_called()
+
     def test_network_cleanup_failure_blocks_replacement_launch(self) -> None:
         import session_launcher_service as launcher
 
@@ -885,6 +994,16 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
                     "AXGT_RPC_URL",
                     "USDC_RPC_URL",
                     "X402_SETTLEMENT_PRIVATE_KEY",
+                    "X_CAPI_ACCESS_TOKEN",
+                    "X_CAPI_ACCESS_TOKEN_FILE",
+                    "X_CAPI_DB_URL",
+                    "X_CAPI_DB_URL_FILE",
+                    "X_CAPI_MODE",
+                    "X_CAPI_OWNER_DB_ROLE",
+                    "X_CAPI_POSTGRES_BOOTSTRAP_PASSWORD_HOST_FILE",
+                    "X_CAPI_POSTGRES_BOOTSTRAP_USER",
+                    "X_CAPI_POSTGRES_DB",
+                    "X_CAPI_POSTGRES_WORKER_PASSWORD_HOST_FILE",
                 )
             ),
             "WEBRTC_CAPTURE_FPS": "24",
@@ -895,6 +1014,16 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
             "AXGT_RPC_URL": "https://control-plane-rpc.invalid",
             "USDC_RPC_URL": "https://payment-rpc.invalid",
             "X402_SETTLEMENT_PRIVATE_KEY": "settlement-key-must-stay-central",
+            "X_CAPI_ACCESS_TOKEN": "x-token-must-stay-worker-only",
+            "X_CAPI_ACCESS_TOKEN_FILE": "/run/secrets/x-capi-access-token",
+            "X_CAPI_DB_URL": "postgresql://worker-only",
+            "X_CAPI_DB_URL_FILE": "/run/secrets/x-capi-db-url",
+            "X_CAPI_MODE": "live",
+            "X_CAPI_OWNER_DB_ROLE": "x_capi_owner",
+            "X_CAPI_POSTGRES_BOOTSTRAP_PASSWORD_HOST_FILE": "/etc/axonos/bootstrap-password",
+            "X_CAPI_POSTGRES_BOOTSTRAP_USER": "x_capi_bootstrap",
+            "X_CAPI_POSTGRES_DB": "axonos_x_capi",
+            "X_CAPI_POSTGRES_WORKER_PASSWORD_HOST_FILE": "/etc/axonos/worker-password",
             "AXGT_HOST_SESSION_CONTAINER_EXTRA_ARGS": " ".join(
                 (
                     "--privileged",
@@ -905,6 +1034,7 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
                     "--ipc host",
                     "-e AXGT_CHALLENGE_DB_URL=attacker-db",
                     "--env=WEBRTC_AGENT_INTERNAL_KEY=attacker-key",
+                    "-v /etc/axonos/x-capi-access-token:/run/secrets/x-capi-access-token:ro",
                     "-e AXGT_WALLET_ADDRESS=0xattacker",
                     "--label com.axonos.session-container=false",
                     "--use-api-socket",
@@ -941,6 +1071,7 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
         self.assertNotIn("--cap-add", command)
         self.assertNotIn("--pid", command)
         self.assertNotIn("--ipc", command)
+        self.assertNotIn("x-capi-access-token", " ".join(command))
 
         self.assertIn("AXGT_SESSION_ID=37", assignments)
         self.assertIn("AXGT_WALLET_ADDRESS=0xabc123", assignments)
@@ -959,6 +1090,16 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
             "AXGT_RPC_URL",
             "USDC_RPC_URL",
             "X402_SETTLEMENT_PRIVATE_KEY",
+            "X_CAPI_ACCESS_TOKEN",
+            "X_CAPI_ACCESS_TOKEN_FILE",
+            "X_CAPI_DB_URL",
+            "X_CAPI_DB_URL_FILE",
+            "X_CAPI_MODE",
+            "X_CAPI_OWNER_DB_ROLE",
+            "X_CAPI_POSTGRES_BOOTSTRAP_PASSWORD_HOST_FILE",
+            "X_CAPI_POSTGRES_BOOTSTRAP_USER",
+            "X_CAPI_POSTGRES_DB",
+            "X_CAPI_POSTGRES_WORKER_PASSWORD_HOST_FILE",
         )
         for name in protected_names:
             self.assertFalse(
@@ -987,6 +1128,16 @@ class SessionLauncherCredentialBoundaryTests(unittest.TestCase):
             "USDC_RPC_URL",
             "USDC_CONTRACT_ADDRESS",
             "X402_SETTLEMENT_PRIVATE_KEY",
+            "X_CAPI_ACCESS_TOKEN",
+            "X_CAPI_ACCESS_TOKEN_FILE",
+            "X_CAPI_DB_URL",
+            "X_CAPI_DB_URL_FILE",
+            "X_CAPI_MODE",
+            "X_CAPI_OWNER_DB_ROLE",
+            "X_CAPI_POSTGRES_BOOTSTRAP_PASSWORD_HOST_FILE",
+            "X_CAPI_POSTGRES_BOOTSTRAP_USER",
+            "X_CAPI_POSTGRES_DB",
+            "X_CAPI_POSTGRES_WORKER_PASSWORD_HOST_FILE",
         )
         requested = ("WEBRTC_CAPTURE_FPS", "WEBRTC_STUN_URLS", *protected)
         with patch.dict(
@@ -1163,11 +1314,15 @@ class StaticTenantBoundaryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.compose = (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        cls.x_capi_compose = (_REPO_ROOT / "docker-compose.x-capi.yml").read_text(
+            encoding="utf-8"
+        )
         cls.supervisor = (_REPO_ROOT / "supervisord.conf").read_text(encoding="utf-8")
         cls.startup = (_REPO_ROOT / "startup.sh").read_text(encoding="utf-8")
 
-    def _service_block(self, name: str) -> str:
-        services = self.compose.split("\nservices:\n", 1)[1].split("\nnetworks:\n", 1)[0]
+    def _service_block(self, name: str, compose: str | None = None) -> str:
+        document = self.compose if compose is None else compose
+        services = document.split("\nservices:\n", 1)[1].split("\nnetworks:\n", 1)[0]
         markers = list(re.finditer(r"(?m)^  ([a-zA-Z0-9_-]+):\n", services))
         for index, marker in enumerate(markers):
             if marker.group(1) != name:
@@ -1201,6 +1356,25 @@ class StaticTenantBoundaryTests(unittest.TestCase):
             self._service_networks(self._service_block("postgres")),
             ["axonos_control"],
         )
+        self.assertNotIn("\n  x-capi-worker:\n", self.compose)
+        self.assertNotRegex(self.x_capi_compose, r"(?m)^  postgres:\s*$")
+        self.assertEqual(
+            self._service_networks(
+                self._service_block("x-capi-postgres", self.x_capi_compose)
+            ),
+            ["x_capi_db"],
+        )
+        self.assertEqual(
+            self._service_networks(
+                self._service_block("x-capi-db-init", self.x_capi_compose)
+            ),
+            ["x_capi_db"],
+        )
+        worker = self._service_block("x-capi-worker", self.x_capi_compose)
+        self.assertEqual(self._service_networks(worker), ["x_capi_db"])
+        self.assertNotIn("x_capi_egress", worker)
+        self.assertNotIn("X_CAPI_ACCESS_TOKEN", worker)
+        self.assertNotIn("x_capi_access_token", worker)
         self.assertEqual(
             self._service_networks(self._service_block("coturn")),
             ["axonos_stack"],
@@ -1240,6 +1414,18 @@ class StaticTenantBoundaryTests(unittest.TestCase):
                 }
             )
         )
+
+    def test_launcher_erases_dedicated_capi_database_namespace(self) -> None:
+        launcher = self._service_block("axonos-launcher")
+        for name in (
+            "X_CAPI_OWNER_DB_ROLE",
+            "X_CAPI_POSTGRES_BOOTSTRAP_PASSWORD_HOST_FILE",
+            "X_CAPI_POSTGRES_BOOTSTRAP_USER",
+            "X_CAPI_POSTGRES_DB",
+            "X_CAPI_POSTGRES_WORKER_PASSWORD_HOST_FILE",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(f'{name}: ""', launcher)
 
     def test_internal_agent_listener_is_not_host_published(self) -> None:
         axonos = self._service_block("axonos")

@@ -112,6 +112,31 @@ def _get_rpc_url() -> str:
     return (os.getenv("AXGT_RPC_URL") or "").strip()
 
 
+def _configured_chain_id() -> Optional[int]:
+    raw = (os.getenv("AXGT_CHAIN_ID") or "").strip()
+    try:
+        chain_id = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return chain_id if chain_id > 0 else None
+
+
+def _transaction_chain_id(transaction: Any) -> Optional[int]:
+    """Extract chain provenance without adding an advertising-only RPC call."""
+    if not isinstance(transaction, dict):
+        return None
+    raw = transaction.get("chainId")
+    # bool is an int subclass; accepting True here would silently turn a
+    # malformed provider response into Ethereum mainnet chain id 1.
+    if isinstance(raw, bool):
+        return None
+    try:
+        chain_id = int(raw, 16) if isinstance(raw, str) else int(raw)
+    except (TypeError, ValueError):
+        return None
+    return chain_id if chain_id > 0 else None
+
+
 def _min_confirmations() -> int:
     raw = (os.getenv("AXGT_DEPOSIT_MIN_CONFIRMATIONS") or "").strip()
     try:
@@ -298,6 +323,7 @@ def _parse_transfer_logs(
 def verify_deposit(
     authenticated_wallet: str,
     tx_hash: str,
+    attribution_context: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Verify tx_hash as AXGT transfer from authenticated_wallet to revenue wallet.
@@ -316,6 +342,7 @@ def verify_deposit(
     revenue = _get_revenue_wallet()
     contract = _get_contract_address()
     rpc_url = _get_rpc_url()
+    expected_chain_id = _configured_chain_id()
 
     fail = lambda msg: {
         "verified": False,
@@ -354,6 +381,13 @@ def verify_deposit(
             confirmations=0,
             required=min_conf,
         )
+    observed_chain_id = _transaction_chain_id(tx_obj)
+    if (
+        observed_chain_id is not None
+        and expected_chain_id is not None
+        and observed_chain_id != expected_chain_id
+    ):
+        return fail("Transaction chain ID does not match AXGT_CHAIN_ID")
 
     # Fetch receipt (None while pending)
     receipt = _rpc(rpc_url, "eth_getTransactionReceipt", [tx])
@@ -500,6 +534,8 @@ def verify_deposit(
                 credited_minutes,
                 tx,
                 block_number,
+                observed_chain_id,
+                attribution_context=attribution_context,
             )
             if not ok:
                 return fail(err or "Failed to credit ETH deposit")
@@ -516,6 +552,7 @@ def verify_deposit(
                 "credited_minutes": round(credited_minutes, 2),
                 "remaining_minutes": round(remaining, 2),
                 "confirmations": confirmations,
+                "chain_id": observed_chain_id,
             }
 
     # AXGT direct deposit path (legacy / opt-in only). New ETH-first tokenomics
@@ -584,6 +621,8 @@ def verify_deposit(
         credited_minutes,
         tx,
         block_number,
+        observed_chain_id,
+        attribution_context=attribution_context,
     )
     if not ok:
         return fail(err or "Failed to credit deposit")
@@ -599,4 +638,5 @@ def verify_deposit(
         "credited_minutes": round(credited_minutes, 2),
         "remaining_minutes": round(remaining, 2),
         "confirmations": confirmations,
+        "chain_id": observed_chain_id,
     }

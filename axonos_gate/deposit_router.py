@@ -40,6 +40,7 @@ def verify_deposit_auto(
     eth_is_pending: Optional[Callable[[Dict[str, Any]], bool]],
     verify_usdc: Optional[Callable[..., Dict[str, Any]]],
     usdc_is_pending: Optional[Callable[[Dict[str, Any]], bool]],
+    attribution_context: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], bool]:
     """
     Try the ETH/AXGT and USDC rails and return (result, is_pending).
@@ -62,7 +63,10 @@ def verify_deposit_auto(
     results: List[Tuple[str, Dict[str, Any], bool]] = []
     for name, verify, is_pending_fn in rails:
         try:
-            res = verify(authenticated_wallet=authenticated_wallet, tx_hash=tx_hash)
+            kwargs = {"authenticated_wallet": authenticated_wallet, "tx_hash": tx_hash}
+            if attribution_context:
+                kwargs["attribution_context"] = attribution_context
+            res = verify(**kwargs)
         except Exception as exc:  # noqa: BLE001 — one rail failing must not kill the other
             logger.warning("verify_deposit_auto: %s rail raised: %s", name, exc)
             continue

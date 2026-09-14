@@ -1993,7 +1993,7 @@ class TestDualGateParity(unittest.TestCase):
         gate_status = gate_status.split("def api_test_credit", 1)[0]
         self.assertIn("if not _is_guest_shaped(wallet_address)", gate_status)
         proxy_status = self.proxy.split(
-            "if self.path.startswith('/api/auth/wallet-status'):", 1
+            "if request_path == '/api/auth/wallet-status':", 1
         )[1].split("if webrtc_service", 1)[0]
         self.assertIn("None if _is_guest_shaped(wallet_address)", proxy_status)
 
@@ -2001,8 +2001,8 @@ class TestDualGateParity(unittest.TestCase):
         gate_release = self.gate.split("def api_session_release():", 1)[1]
         gate_release = gate_release.split("def api_session_restart", 1)[0]
         proxy_release = self.proxy.split(
-            "self.path.startswith('/api/session/release')", 1
-        )[1].split("self.path.startswith('/api/session/restart')", 1)[0]
+            "ponly == '/api/session/release'", 1
+        )[1].split("ponly == '/api/session/restart'", 1)[0]
         for name, source, validator in (
             ("gate_server", gate_release, "_is_gate_auth_token_valid"),
             ("websockify_gate", proxy_release, "_is_auth_token_valid"),

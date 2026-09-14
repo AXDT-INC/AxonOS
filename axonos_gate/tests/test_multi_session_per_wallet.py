@@ -8,7 +8,9 @@ rather than on "the wallet's session".
 
 import os
 import sys
+import threading
 import unittest
+import uuid
 from unittest.mock import MagicMock, patch
 
 _repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -16,6 +18,7 @@ if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
 WALLET = "0x1234567890123456789012345678901234567890"
+DISPOSABLE_TEST_DB_URL = os.getenv("X_CAPI_TEST_DB_URL")
 
 
 def _row(session_id, profile="small", gpu_ids=(0,), ssh=False):
@@ -67,7 +70,9 @@ class AdditionalSessionClaimTests(unittest.TestCase):
 
         owned = _row(91)
         primary, primary_cur = _cursor_conn()
-        primary_cur.fetchone.return_value = (92,)
+        # The explicit launch idempotency lookup finds no prior reservation;
+        # the following INSERT returns the fresh session id.
+        primary_cur.fetchone.side_effect = [None, (92,)]
         finalizer, finalizer_cur = _cursor_conn()
         finalizer_cur.rowcount = 1
 
@@ -84,7 +89,12 @@ class AdditionalSessionClaimTests(unittest.TestCase):
              patch.object(session_manager, "_issue_webrtc_agent_capability", return_value="cap"), \
              patch.object(session_manager, "_spawn_session_container",
                           return_value=(True, "axgt-session-92", None)) as spawn:
-            result = session_manager.try_claim_session(WALLET, "medium", new_session=True)
+            result = session_manager.try_claim_session(
+                WALLET,
+                "medium",
+                new_session=True,
+                launch_request_id="ab" * 32,
+            )
 
         self.assertTrue(result["granted"])
         self.assertEqual(result["session_id"], 92)
@@ -96,6 +106,243 @@ class AdditionalSessionClaimTests(unittest.TestCase):
         spawn.assert_called_once()
         self.assertEqual(spawn.call_args.kwargs["session_id"], 92)
         self.assertEqual(spawn.call_args.kwargs["gpu_ids"], [1, 2])
+
+    def _replay_explicit_launch(self, prior):
+        from axonos_gate import session_manager
+
+        conn, cur = _cursor_conn()
+        launch_id = "cd" * 32
+        with patch.object(session_manager, "_init_once", return_value=True), \
+             patch.object(session_manager, "_get_connection", return_value=conn), \
+             patch.object(session_manager, "_run_stale_session_maintenance_locked"), \
+             patch.object(
+                 session_manager,
+                 "_session_for_launch_request",
+                 return_value=prior,
+             ) as lookup, \
+             patch.object(session_manager, "_prepaid_credit_allows_profile") as credit, \
+             patch.object(session_manager, "_choose_allocation") as choose, \
+             patch.object(session_manager, "_spawn_session_container") as spawn, \
+             patch.object(session_manager, "_emit_session_started_nonblocking") as emit, \
+             patch.object(session_manager.time, "time", return_value=1000.0):
+            result = session_manager.try_claim_session(
+                WALLET,
+                "medium",
+                new_session=True,
+                launch_request_id=launch_id,
+                attribution_context="A" * 64,
+            )
+
+        lookup.assert_called_once_with(cur, WALLET.lower(), launch_id)
+        self.assertGreaterEqual(conn.commit.call_count, 1)
+        credit.assert_not_called()
+        choose.assert_not_called()
+        spawn.assert_not_called()
+        emit.assert_not_called()
+        statements = [
+            str(call.args[0]).upper()
+            for call in cur.execute.call_args_list
+            if call.args
+        ]
+        self.assertFalse(
+            any("INSERT INTO AXGT_SESSIONS" in statement for statement in statements),
+            statements,
+        )
+        return result
+
+    def test_same_launch_id_replays_allocated_session_without_side_effects(self):
+        prior = {
+            **_row(92, profile="medium", gpu_ids=(1, 2)),
+            "status": "active",
+            "launch_request_id": "cd" * 32,
+        }
+
+        result = self._replay_explicit_launch(prior)
+
+        self.assertTrue(result["granted"])
+        self.assertTrue(result["already_active"])
+        self.assertTrue(result["idempotent_replay"])
+        self.assertTrue(result["launch_request_consumed"])
+        self.assertEqual(result["launch_request_id"], "cd" * 32)
+        self.assertEqual(result["session_id"], 92)
+        self.assertEqual(result["assigned_gpu_ids"], [1, 2])
+        self.assertIsNone(result["scheduled_stop_at"])
+        self.assertIsNone(result["hard_cap_remaining_seconds"])
+
+    def test_same_launch_id_preserves_original_scheduled_stop_without_side_effects(self):
+        prior = {
+            **_row(92, profile="medium", gpu_ids=(1, 2)),
+            "status": "active",
+            "launch_request_id": "cd" * 32,
+            "hard_expires_at": 1600.0,
+        }
+
+        result = self._replay_explicit_launch(prior)
+
+        self.assertTrue(result["granted"])
+        self.assertEqual(result["scheduled_stop_at"], 1600.0)
+        self.assertEqual(result["hard_cap_remaining_seconds"], 600)
+
+    def test_same_launch_id_replays_allocating_session_without_side_effects(self):
+        prior = {
+            **_row(92, profile="medium", gpu_ids=(1, 2)),
+            "status": "active",
+            "allocation_status": "allocating",
+            "container_id": None,
+            "launch_request_id": "cd" * 32,
+        }
+
+        result = self._replay_explicit_launch(prior)
+
+        self.assertFalse(result["granted"])
+        self.assertTrue(result["retryable"])
+        self.assertTrue(result["idempotent_replay"])
+        self.assertTrue(result["launch_request_consumed"])
+        self.assertEqual(result["launch_request_id"], "cd" * 32)
+        self.assertEqual(result["session_id"], 92)
+        self.assertEqual(result["allocation_status"], "allocating")
+
+    def test_terminal_launch_id_is_consumed_and_never_respawns(self):
+        for status, allocation_status in (
+            ("credit_grace", "allocated"),
+            ("ended", "failed"),
+            ("failed", "failed"),
+        ):
+            with self.subTest(status=status):
+                prior = {
+                    **_row(92, profile="medium", gpu_ids=(1, 2)),
+                    "status": status,
+                    "allocation_status": allocation_status,
+                    "launch_request_id": "cd" * 32,
+                }
+
+                result = self._replay_explicit_launch(prior)
+
+                self.assertFalse(result["granted"])
+                self.assertFalse(result["retryable"])
+                self.assertTrue(result["idempotent_replay"])
+                self.assertTrue(result["launch_request_consumed"])
+                self.assertTrue(result["launch_request_terminal"])
+                self.assertEqual(result["launch_request_id"], "cd" * 32)
+                self.assertEqual(result["session_id"], 92)
+                self.assertIn("new launch", result["reason"])
+
+    def test_different_launch_id_is_blocked_while_wallet_allocation_is_unresolved(self):
+        from axonos_gate import session_manager
+
+        unresolved = {
+            **_row(92, profile="medium", gpu_ids=(1, 2)),
+            "allocation_status": "allocating",
+            "container_id": None,
+        }
+        conn, _cur = _cursor_conn()
+        fresh_id = "de" * 32
+        with patch.object(session_manager, "_init_once", return_value=True), \
+             patch.object(session_manager, "_get_connection", return_value=conn), \
+             patch.object(session_manager, "_run_stale_session_maintenance_locked"), \
+             patch.object(session_manager, "_session_for_launch_request", return_value=None), \
+             patch.object(session_manager, "_get_active_rows", return_value=[unresolved]), \
+             patch.object(session_manager, "_get_credit_grace_rows", return_value=[]), \
+             patch.object(session_manager, "_prepaid_credit_allows_profile") as credit, \
+             patch.object(session_manager, "_choose_allocation") as choose, \
+             patch.object(session_manager, "_spawn_session_container") as spawn, \
+             patch.object(session_manager, "_emit_session_started_nonblocking") as emit:
+            result = session_manager.try_claim_session(
+                WALLET,
+                "small",
+                new_session=True,
+                launch_request_id=fresh_id,
+            )
+
+        self.assertFalse(result["granted"])
+        self.assertTrue(result["retryable"])
+        self.assertEqual(result["session_id"], 92)
+        self.assertEqual(result["allocation_status"], "allocating")
+        self.assertEqual(result["launch_request_id"], fresh_id)
+        self.assertFalse(result["launch_request_consumed"])
+        credit.assert_not_called()
+        choose.assert_not_called()
+        spawn.assert_not_called()
+        emit.assert_not_called()
+
+    def test_exact_reattach_to_allocated_sibling_survives_unresolved_launch(self):
+        from axonos_gate import session_manager
+
+        owned = _row(91)
+        unresolved = {
+            **_row(92, profile="medium", gpu_ids=(1, 2)),
+            "allocation_status": "allocating",
+            "container_id": None,
+        }
+        conn, _cur = _cursor_conn()
+
+        def active_for_wallet(_cur_arg, _wallet_arg, session_id=None):
+            if session_id == 91:
+                return owned
+            return unresolved
+
+        with patch.object(session_manager, "_init_once", return_value=True), \
+             patch.object(session_manager, "_get_connection", return_value=conn), \
+             patch.object(session_manager, "_run_stale_session_maintenance_locked"), \
+             patch.object(session_manager, "_get_active_rows", return_value=[owned, unresolved]), \
+             patch.object(session_manager, "_get_credit_grace_rows", return_value=[]), \
+             patch.object(
+                 session_manager,
+                 "_active_session_for_wallet",
+                 side_effect=active_for_wallet,
+             ), \
+             patch.object(
+                 session_manager, "_credit_grace_session_for_wallet", return_value=None
+             ), \
+             patch.object(session_manager, "_spawn_session_container") as spawn:
+            result = session_manager.try_claim_session(
+                WALLET,
+                "small",
+                expected_session_id=91,
+            )
+
+        self.assertTrue(result["granted"])
+        self.assertEqual(result["session_id"], 91)
+        self.assertEqual(result["allocation_status"], "allocated")
+        spawn.assert_not_called()
+
+    def test_launch_request_lookup_echoes_the_mapping_table_id_exactly(self):
+        from axonos_gate import session_manager
+
+        launch_id = "Gh_-" * 16
+        cur = MagicMock()
+        cur.fetchone.return_value = (
+            92,
+            WALLET.lower(),
+            "medium",
+            "1,2",
+            "axgt-session-92",
+            "allocated",
+            900.0,
+            990.0,
+            990.0,
+            9000.0,
+            "files-key",
+            None,
+            False,
+            None,
+            None,
+            "pymol",
+            None,
+            None,
+            launch_id,
+            "active",
+        )
+
+        result = session_manager._session_for_launch_request(
+            cur, WALLET.lower(), launch_id
+        )
+
+        self.assertEqual(result["id"], 92)
+        self.assertEqual(result["launch_request_id"], launch_id)
+        self.assertEqual(result["status"], "active")
+        self.assertEqual(result["gpu_ids"], [1, 2])
+        self.assertEqual(cur.execute.call_args.args[1], (WALLET.lower(), launch_id))
 
     def test_legacy_claim_without_flag_still_reattaches_to_owned_session(self):
         from axonos_gate import session_manager
@@ -189,6 +436,156 @@ class AdditionalSessionClaimTests(unittest.TestCase):
         self.assertTrue(result["invalid_resume_request"])
 
 
+@unittest.skipUnless(
+    DISPOSABLE_TEST_DB_URL,
+    "X_CAPI_TEST_DB_URL not set (disposable PostgreSQL required)",
+)
+class ConcurrentLaunchIdempotencyPostgresTests(unittest.TestCase):
+    """Exercise the wallet lock and durable key across real DB connections."""
+
+    @classmethod
+    def setUpClass(cls):
+        import psycopg2
+        from axonos_gate import session_manager
+
+        cls.psycopg2 = psycopg2
+        cls.schema = "sessionidem_" + uuid.uuid4().hex[:16]
+        admin = psycopg2.connect(DISPOSABLE_TEST_DB_URL)
+        admin.autocommit = True
+        with admin.cursor() as cur:
+            cur.execute("CREATE SCHEMA " + cls.schema)
+        admin.close()
+        cls.options = "-c search_path=" + cls.schema
+        conn = cls.connect()
+        try:
+            session_manager._ensure_tables(conn)
+        finally:
+            conn.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        admin = cls.psycopg2.connect(DISPOSABLE_TEST_DB_URL)
+        admin.autocommit = True
+        with admin.cursor() as cur:
+            cur.execute("DROP SCHEMA " + cls.schema + " CASCADE")
+        admin.close()
+
+    @classmethod
+    def connect(cls):
+        return cls.psycopg2.connect(
+            DISPOSABLE_TEST_DB_URL,
+            options=cls.options,
+        )
+
+    def test_concurrent_same_wallet_and_key_insert_and_spawn_once(self):
+        from axonos_gate import session_manager
+
+        launch_id = "ef" * 32
+        start = threading.Barrier(2)
+        spawn_entered = threading.Event()
+        replay_returned = threading.Event()
+        release_spawn = threading.Event()
+        results = []
+        errors = []
+        result_lock = threading.Lock()
+
+        def slow_spawn(**_kwargs):
+            spawn_entered.set()
+            if not release_spawn.wait(timeout=10):
+                raise RuntimeError("timed out waiting for concurrent replay")
+            return True, "axgt-session-idempotent", None
+
+        def claim():
+            try:
+                start.wait(timeout=5)
+                result = session_manager.try_claim_session(
+                    WALLET,
+                    "small",
+                    new_session=True,
+                    launch_request_id=launch_id,
+                    attribution_context="A" * 64,
+                )
+                with result_lock:
+                    results.append(result)
+                if result.get("idempotent_replay"):
+                    replay_returned.set()
+            except Exception as exc:  # propagate thread failures to unittest
+                with result_lock:
+                    errors.append(exc)
+                replay_returned.set()
+
+        env = {
+            "AXGT_CHALLENGE_DB_URL": DISPOSABLE_TEST_DB_URL,
+            "AXGT_USER_CONTAINER_ENABLED": "true",
+            "AXGT_MULTI_SESSION_ENABLED": "true",
+            "WEBRTC_ENABLED": "true",
+        }
+        with patch.dict(os.environ, env, clear=False), patch.object(
+            session_manager, "_init_once", return_value=True
+        ), patch.object(
+            session_manager, "_get_connection", side_effect=self.connect
+        ), patch.object(
+            session_manager, "_run_stale_session_maintenance_locked"
+        ), patch.object(
+            session_manager,
+            "_prepaid_credit_allows_profile",
+            return_value=(True, None),
+        ), patch.object(
+            session_manager, "_provisioned_storage_gb_for_wallet", return_value=None
+        ), patch.object(
+            session_manager, "_gpu_device_ids", return_value=[0, 1]
+        ), patch.object(
+            session_manager, "_issue_webrtc_agent_capability", return_value="cap"
+        ), patch.object(
+            session_manager, "_spawn_session_container", side_effect=slow_spawn
+        ) as spawn, patch.object(
+            session_manager, "_emit_session_started_nonblocking"
+        ) as emit:
+            threads = [threading.Thread(target=claim) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            try:
+                self.assertTrue(spawn_entered.wait(timeout=5))
+                self.assertTrue(replay_returned.wait(timeout=5))
+            finally:
+                release_spawn.set()
+            for thread in threads:
+                thread.join(timeout=10)
+
+        self.assertFalse(errors, errors)
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual(len(results), 2)
+        self.assertEqual(spawn.call_count, 1)
+        self.assertEqual(emit.call_count, 1)
+        granted = [result for result in results if result.get("granted")]
+        replay = [result for result in results if result.get("idempotent_replay")]
+        self.assertEqual(len(granted), 1, results)
+        self.assertEqual(len(replay), 1, results)
+        self.assertTrue(replay[0]["retryable"])
+        self.assertEqual(replay[0]["allocation_status"], "allocating")
+        self.assertEqual(granted[0]["session_id"], replay[0]["session_id"])
+
+        conn = self.connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT COUNT(*), MIN(session.status),
+                                      MIN(session.allocation_status)
+                         FROM axgt_session_launch_requests AS request
+                         JOIN axgt_sessions AS session
+                           ON session.id = request.session_id
+                        WHERE request.wallet_address = %s
+                          AND request.launch_request_id = %s""",
+                    (WALLET.lower(), launch_id),
+                )
+                count, status, allocation_status = cur.fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(count, 1)
+        self.assertEqual(status, "active")
+        self.assertEqual(allocation_status, "allocated")
+
+
 class SessionScopedHeartbeatTests(unittest.TestCase):
     def test_heartbeat_bills_the_named_session_only(self):
         from axonos_gate import session_manager
@@ -198,7 +595,7 @@ class SessionScopedHeartbeatTests(unittest.TestCase):
         cur.fetchall.return_value = []
         cur.fetchone.side_effect = [
             (True,),
-            (92, 1000.0, 2000.0, 500.0, "medium", "1,2", "axgt-session-92", None, False),
+            (92, 1000.0, 2000.0, 500.0, "medium", "1,2", "axgt-session-92", None, False, False, "allocated"),
             (2000.0,),
         ]
         conn.cursor.return_value = cur
@@ -211,7 +608,7 @@ class SessionScopedHeartbeatTests(unittest.TestCase):
              patch("axonos_gate.deposit_ledger.get_remaining_minutes", return_value=50.0), \
              patch.object(session_manager.time, "time", return_value=1060.0):
             session_manager._pg_init_done = True
-            result = session_manager.heartbeat(WALLET, session_id=92)
+            result = session_manager.heartbeat(WALLET, session_id=92, ssh_active=False)
 
         self.assertTrue(result["ok"])
         select = next(
@@ -219,7 +616,47 @@ class SessionScopedHeartbeatTests(unittest.TestCase):
             if call.args and "FOR UPDATE" in call.args[0]
         )
         self.assertIn("AND id = %s", select.args[0])
+        self.assertIn("ssh_present, allocation_status", select.args[0])
         self.assertEqual(select.args[1], (WALLET, 92))
+        self.assertFalse(any(
+            "SET ssh_present" in str(call.args[0])
+            for call in cur.execute.call_args_list if call.args
+        ))
+
+    def test_heartbeat_never_bills_or_mutates_an_allocating_session(self):
+        from axonos_gate import session_manager
+
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.fetchall.return_value = []
+        cur.fetchone.side_effect = [
+            (True,),
+            (92, 1000.0, 2000.0, 500.0, "medium", "1,2", None, None, False, True, "allocating"),
+        ]
+        conn.cursor.return_value = cur
+        with patch.dict(os.environ, {"AXGT_CHALLENGE_DB_URL": "postgresql://test/test"}), \
+             patch.object(session_manager, "_init_once", return_value=True), \
+             patch.object(session_manager, "_get_connection", return_value=conn), \
+             patch("axonos_gate.deposit_ledger.init_once") as ledger_init, \
+             patch("axonos_gate.deposit_ledger._deduct_usage_on_cursor") as deduct, \
+             patch.object(session_manager.time, "time", return_value=1060.0):
+            session_manager._pg_init_done = True
+            result = session_manager.heartbeat(WALLET, session_id=92)
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["retryable"])
+        self.assertEqual(result["allocation_status"], "allocating")
+        ledger_init.assert_not_called()
+        deduct.assert_not_called()
+        mutating_sql = [
+            " ".join(str(call.args[0]).split()).lower()
+            for call in cur.execute.call_args_list
+            if call.args and "axgt_sessions" in str(call.args[0]).lower()
+        ]
+        self.assertFalse(
+            any("set last_heartbeat" in statement for statement in mutating_sql),
+            mutating_sql,
+        )
 
     def test_heartbeat_rejects_a_malformed_session_id(self):
         from axonos_gate import session_manager
@@ -227,6 +664,120 @@ class SessionScopedHeartbeatTests(unittest.TestCase):
         result = session_manager.heartbeat(WALLET, session_id=-4)
         self.assertFalse(result["ok"])
         self.assertIn("session_id", result["reason"])
+
+
+class StrandedAllocationRecoveryTests(unittest.TestCase):
+    def _reconcile(self, state, container_id=None, error=None):
+        from axonos_gate import session_manager
+
+        cur = MagicMock()
+        cur.fetchall.return_value = [(92, WALLET, "per-session-secret")]
+        cur.rowcount = 1
+        launcher = MagicMock()
+        launcher.inspect_session_allocation.return_value = (state, container_id, error)
+        with patch.object(
+            session_manager, "_allocation_reconcile_after_seconds", return_value=180
+        ), patch.object(
+            session_manager, "_import_session_launcher", return_value=launcher
+        ), patch.object(
+            session_manager, "_emit_session_started_nonblocking"
+        ) as emit:
+            session_manager._reconcile_stale_allocations(cur, 1000.0)
+        emit.assert_not_called()
+        launcher.inspect_session_allocation.assert_called_once_with(
+            92, "per-session-secret"
+        )
+        return cur
+
+    def test_exact_running_allocation_is_promoted_without_conversion(self):
+        from axonos_gate import session_manager
+
+        cur = self._reconcile("match_running", "container-92")
+        update_call = next(
+            call for call in cur.execute.call_args_list
+            if call.args and "SET container_id = %s" in call.args[0]
+        )
+        sql, params = update_call.args
+        normalized = " ".join(sql.split()).lower()
+        self.assertIn("set container_id = %s", normalized)
+        self.assertIn("allocation_status = 'allocated'", normalized)
+        self.assertIn("last_billed_at = %s", normalized)
+        self.assertIn("expires_at = case", normalized)
+        self.assertEqual(
+            params,
+            (
+                "container-92",
+                1000.0,
+                1000.0,
+                1000.0 + session_manager._session_max_seconds(),
+                1000.0 + session_manager._session_max_seconds(),
+                92,
+            ),
+        )
+
+    def test_absent_or_stopped_allocation_becomes_terminal(self):
+        for state, container_id in (("absent", None), ("match_stopped", "container-92")):
+            with self.subTest(state=state):
+                cur = self._reconcile(state, container_id)
+                update_call = next(
+                    call for call in cur.execute.call_args_list
+                    if call.args and "SET status = 'ended'" in call.args[0]
+                )
+                sql, params = update_call.args
+                normalized = " ".join(sql.split()).lower()
+                self.assertIn("set status = 'ended', allocation_status = 'failed'", normalized)
+                self.assertEqual(params, (92,))
+
+    def test_uncertain_or_wrong_identity_remains_reserved(self):
+        for state in ("mismatch", "unmanaged", "error"):
+            with self.subTest(state=state):
+                cur = self._reconcile(state, "container-92", "cannot prove identity")
+                self.assertFalse(
+                    any(
+                        call.args and str(call.args[0]).lstrip().upper().startswith("UPDATE")
+                        for call in cur.execute.call_args_list
+                    )
+                )
+
+    def test_live_launch_lease_prevents_stale_reconciliation_race(self):
+        from axonos_gate import session_manager
+
+        cur = MagicMock()
+        cur.fetchall.return_value = [(92, WALLET, "per-session-secret")]
+        cur.fetchone.return_value = (False,)
+        launcher = MagicMock()
+        with patch.object(
+            session_manager, "_allocation_reconcile_after_seconds", return_value=180
+        ), patch.object(
+            session_manager, "_import_session_launcher", return_value=launcher
+        ):
+            session_manager._reconcile_stale_allocations(cur, 1000.0)
+
+        launcher.inspect_session_allocation.assert_not_called()
+        self.assertFalse(
+            any(
+                call.args and str(call.args[0]).lstrip().upper().startswith("UPDATE")
+                for call in cur.execute.call_args_list
+            )
+        )
+
+    def test_ambiguous_commit_resolution_takes_bounded_row_lock(self):
+        from axonos_gate import session_manager
+
+        cur = MagicMock()
+        cur.fetchone.return_value = ("allocated", "container-92")
+        with patch.object(
+            session_manager, "_spawn_finalization_resolve_timeout_ms", return_value=3210
+        ):
+            committed = session_manager._spawn_finalization_is_committed(
+                cur, 92, "container-92"
+            )
+
+        self.assertTrue(committed)
+        self.assertEqual(cur.execute.call_args_list[0].args[1], ("3210ms",))
+        lock_sql, lock_params = cur.execute.call_args_list[1].args
+        self.assertIn("FOR UPDATE", lock_sql)
+        self.assertEqual(lock_params, (92,))
 
 
 class UnscopedReleaseTests(unittest.TestCase):

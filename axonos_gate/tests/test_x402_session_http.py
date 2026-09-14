@@ -102,6 +102,58 @@ class TestX402SessionHttp(unittest.TestCase):
         self.assertIn("ssh_pubkey", resp.get_json().get("error", "").lower())
         claim.assert_not_called()
 
+    def test_paid_browser_context_reaches_settlement_and_session_claim(self):
+        settlement = {
+            "verified": True,
+            "credited_minutes": 60.0,
+            "settlement_tx_hash": "0x" + "b" * 64,
+        }
+        claim_result = {"granted": True, "remaining_seconds": 3600}
+        with patch.object(
+            gate_server, "_request_attribution_context", return_value="browser-context"
+        ) as context, patch.object(
+            gate_server, "validate_ssh_public_key", return_value="ssh-ed25519 AAAA"
+        ), patch.object(
+            gate_server, "settle_x402_payment", return_value=settlement
+        ) as settle, patch.object(
+            gate_server, "try_claim_session", return_value=claim_result
+        ) as claim, patch.object(
+            gate_server, "_issue_gate_auth_token", return_value=("tok", 3600)
+        ):
+            response = self.client.post(
+                "/api/x402/session",
+                json={"wallet_address": _WALLET, "ssh_pubkey": "ssh-ed25519 AAAA"},
+                headers={
+                    "X-PAYMENT": "dGVzdA==",
+                    "X-AxonOS-Attribution": "opaque-browser-ticket",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        context.assert_called_once_with()
+        self.assertEqual(settle.call_args.kwargs["attribution_context"], "browser-context")
+        self.assertEqual(claim.call_args.kwargs["attribution_context"], "browser-context")
+
+    def test_prepaid_wallet_string_cannot_bind_browser_attribution(self):
+        prepaid = {"verified": True, "remaining_minutes": 120.0}
+        with patch.object(
+            gate_server, "_request_attribution_context", return_value="attacker-context"
+        ), patch.object(
+            gate_server, "get_wallet_access_status", return_value=prepaid
+        ), patch.object(
+            gate_server, "validate_ssh_public_key", return_value="ssh-ed25519 AAAA"
+        ), patch.object(
+            gate_server, "try_claim_session", return_value={"granted": True}
+        ) as claim, patch.object(
+            gate_server, "_issue_gate_auth_token", return_value=("tok", 3600)
+        ):
+            response = self.client.post(
+                "/api/x402/session",
+                json={"wallet_address": _WALLET, "ssh_pubkey": "ssh-ed25519 AAAA"},
+                headers={"X-AxonOS-Attribution": "attacker-context"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(claim.call_args.kwargs["attribution_context"])
+
     @patch("axonos_gate.gate_server.verify_agentlink_header")
     @patch("gate_server.verify_agentlink_header")
     def test_agentlink_verified_annotates_session(self, mock_verify1, mock_verify2):

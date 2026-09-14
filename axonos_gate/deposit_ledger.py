@@ -19,6 +19,21 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+try:
+    from . import x_capi as _x_capi
+except ImportError:
+    try:
+        from axonos_gate import x_capi as _x_capi
+    except ImportError:
+        try:
+            import x_capi as _x_capi
+        except Exception:
+            _x_capi = None
+    except Exception:
+        _x_capi = None
+except Exception:
+    _x_capi = None
+
 _DEPOSITS_TABLE = "axgt_deposits"
 _LEDGER_TABLE = "axgt_ledger"
 _VERIFIED_TABLE = "axgt_verified_deposits"
@@ -302,12 +317,92 @@ def _ledger_write(
     )
 
 
+def _positive_chain_id(value: Any) -> Optional[int]:
+    """Normalize an authoritative verifier-supplied chain identifier."""
+    if isinstance(value, bool):
+        return None
+    try:
+        chain_id = int(value)
+    except (TypeError, ValueError):
+        return None
+    return chain_id if chain_id > 0 else None
+
+
+def _positive_finite(value: Any) -> bool:
+    try:
+        parsed = Decimal(str(value))
+    except Exception:
+        return False
+    return parsed.is_finite() and parsed > 0
+
+
+def _emit_paid_deposit_conversion(
+    wallet_address: str,
+    tx_hash: str,
+    credit_source: str,
+    payment_rail: str,
+    block_number: int,
+    credited_minutes: float,
+    paid_amount: Any,
+    attribution_context: Optional[str],
+    observed_at: float,
+    observed_chain_id: Optional[int],
+) -> bool:
+    """Best-effort datagram notification after the financial commit succeeds."""
+    try:
+        source = str(credit_source or "").strip().lower()
+        rail = str(payment_rail or "").strip().lower()
+        if isinstance(block_number, bool):
+            return False
+        try:
+            block = int(block_number)
+        except (TypeError, ValueError):
+            return False
+        if (
+            _x_capi is None
+            or not attribution_context
+            or source != "onchain"
+            or rail not in ("axgt", "eth", "usdc")
+            or block <= 0
+            or not _positive_finite(credited_minutes)
+            or not _positive_finite(paid_amount)
+            or not _x_capi.wallet_is_campaign_eligible(wallet_address)
+        ):
+            return False
+        chain_id = _positive_chain_id(observed_chain_id)
+        if chain_id is None or not _x_capi.production_chain_eligible(
+            payment_rail=rail,
+            chain_id=chain_id,
+        ):
+            return False
+        return bool(_x_capi.emit_event_nonblocking(
+            context_token=attribution_context,
+            wallet_address=wallet_address,
+            milestone=_x_capi.MILESTONE_DEPOSIT_COMPLETED,
+            source_key=tx_hash,
+            event_timestamp_ms=int(observed_at * 1000),
+            # A committed, verifier-authenticated on-chain payment proves the
+            # same wallet as strongly as SIWE and may establish first-touch
+            # binding atomically with the deposit conversion. The worker repeats
+            # provenance, chain, ticket, and cross-wallet checks.
+            allow_context_binding=True,
+            credit_source=source,
+            payment_rail=rail,
+            chain_id=chain_id,
+        ))
+    except Exception:
+        # The hook is optional and must never change a committed credit result.
+        return False
+
+
 def credit_deposit(
     wallet_address: str,
     axgt_amount: Decimal,
     credited_minutes: float,
     tx_hash: str,
     block_number: int,
+    observed_chain_id: Optional[int],
+    attribution_context: Optional[str] = None,
 ) -> Tuple[bool, Optional[float], Optional[str]]:
     """
     In one transaction: insert verified deposit, upsert deposits, write ledger.
@@ -315,6 +410,7 @@ def credit_deposit(
     """
     wallet = (wallet_address or "").strip().lower()
     tx_hash_norm = (tx_hash or "").strip().lower()
+    chain_id = _positive_chain_id(observed_chain_id)
     if not wallet or not tx_hash_norm:
         return False, None, "Invalid wallet or tx_hash"
     if not init_once():
@@ -328,8 +424,8 @@ def credit_deposit(
             cur.execute(
                 f"""INSERT INTO {_VERIFIED_TABLE}
                     (tx_hash, wallet_address, sender_wallet, recipient_wallet,
-                     axgt_amount, credited_minutes, block_number, credit_source,
-                     payment_rail, created_at)
+                     axgt_amount, credited_minutes, block_number,
+                     credit_source, payment_rail, created_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (
                     tx_hash_norm,
@@ -373,13 +469,26 @@ def credit_deposit(
                 created_by="deposit_verifier",
             )
         conn.commit()
-        return True, remaining, None
+        completed_at = time.time()
     except Exception as exc:
         conn.rollback()
         logger.warning("credit_deposit failed: %s", exc)
         return False, None, str(exc)
     finally:
         conn.close()
+    _emit_paid_deposit_conversion(
+        wallet,
+        tx_hash_norm,
+        "onchain",
+        "axgt",
+        block_number,
+        credited_minutes,
+        axgt_amount,
+        attribution_context,
+        completed_at,
+        chain_id,
+    )
+    return True, remaining, None
 
 
 _TEST_CREDIT_REQUEST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
@@ -648,6 +757,8 @@ def credit_eth_deposit(
     credited_minutes: float,
     tx_hash: str,
     block_number: int,
+    observed_chain_id: Optional[int],
+    attribution_context: Optional[str] = None,
 ) -> Tuple[bool, Optional[float], Optional[str]]:
     """
     Credit minutes from a verified native ETH deposit (replay-safe).
@@ -655,6 +766,7 @@ def credit_eth_deposit(
     """
     wallet = (wallet_address or "").strip().lower()
     tx_hash_norm = (tx_hash or "").strip().lower()
+    chain_id = _positive_chain_id(observed_chain_id)
     if not wallet or not tx_hash_norm:
         return False, None, "Invalid wallet or tx_hash"
     if not init_once():
@@ -668,8 +780,8 @@ def credit_eth_deposit(
             cur.execute(
                 f"""INSERT INTO {_VERIFIED_TABLE}
                     (tx_hash, wallet_address, sender_wallet, recipient_wallet,
-                     axgt_amount, credited_minutes, block_number, credit_source,
-                     payment_rail, created_at)
+                     axgt_amount, credited_minutes, block_number,
+                     credit_source, payment_rail, created_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (
                     tx_hash_norm,
@@ -713,13 +825,26 @@ def credit_eth_deposit(
                 created_by="deposit_verifier",
             )
         conn.commit()
-        return True, remaining, None
+        completed_at = time.time()
     except Exception as exc:
         conn.rollback()
         logger.warning("credit_eth_deposit failed: %s", exc)
         return False, None, str(exc)
     finally:
         conn.close()
+    _emit_paid_deposit_conversion(
+        wallet,
+        tx_hash_norm,
+        "onchain",
+        "eth",
+        block_number,
+        credited_minutes,
+        eth_amount,
+        attribution_context,
+        completed_at,
+        chain_id,
+    )
+    return True, remaining, None
 
 
 def credit_usdc_deposit(
@@ -728,6 +853,8 @@ def credit_usdc_deposit(
     credited_minutes: float,
     tx_hash: str,
     block_number: int,
+    observed_chain_id: Optional[int],
+    attribution_context: Optional[str] = None,
 ) -> Tuple[bool, Optional[float], Optional[str]]:
     """
     Credit minutes from a verified USDC (x402 rail) deposit (replay-safe).
@@ -735,6 +862,7 @@ def credit_usdc_deposit(
     """
     wallet = (wallet_address or "").strip().lower()
     tx_hash_norm = (tx_hash or "").strip().lower()
+    chain_id = _positive_chain_id(observed_chain_id)
     if not wallet or not tx_hash_norm:
         return False, None, "Invalid wallet or tx_hash"
     if not init_once():
@@ -748,8 +876,8 @@ def credit_usdc_deposit(
             cur.execute(
                 f"""INSERT INTO {_VERIFIED_TABLE}
                     (tx_hash, wallet_address, sender_wallet, recipient_wallet,
-                     axgt_amount, credited_minutes, block_number, credit_source,
-                     payment_rail, created_at)
+                     axgt_amount, credited_minutes, block_number,
+                     credit_source, payment_rail, created_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (
                     tx_hash_norm,
@@ -793,13 +921,26 @@ def credit_usdc_deposit(
                 created_by="x402_verifier",
             )
         conn.commit()
-        return True, remaining, None
+        completed_at = time.time()
     except Exception as exc:
         conn.rollback()
         logger.warning("credit_usdc_deposit failed: %s", exc)
         return False, None, str(exc)
     finally:
         conn.close()
+    _emit_paid_deposit_conversion(
+        wallet,
+        tx_hash_norm,
+        "onchain",
+        "usdc",
+        block_number,
+        credited_minutes,
+        usdc_amount,
+        attribution_context,
+        completed_at,
+        chain_id,
+    )
+    return True, remaining, None
 
 
 def deduct_usage(

@@ -18,15 +18,20 @@ import select
 import socket
 from http.cookies import SimpleCookie
 from threading import Lock
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlsplit
 
 # Local security helpers (same directory)
 from security_utils import (
-    SimpleRateLimiter,
+    client_ip_for_rate_limit,
     cors_origin_for_request,
+    gpc_signal_active,
     get_rate_limiter_from_env,
+    get_x_capi_global_rate_limiter,
+    get_x_capi_privacy_rate_limiter,
+    get_x_capi_rate_limiter,
     parse_cors_allowlist,
     redact_terminal_websocket_query,
+    request_is_effectively_https,
 )
 
 # Add system Python path for Ubuntu 22.04 packages (websockify) FIRST
@@ -168,6 +173,61 @@ def _is_guest_shaped(address) -> bool:
             pass
     return bool(_GUEST_ADDRESS_RE_FALLBACK.match(str(address or "").strip().lower()))
 
+
+def _emit_wallet_verified_nonblocking(context_token, wallet_address) -> bool:
+    """Notify the local worker only after ownership proof and auth commit."""
+    try:
+        if (
+            x_capi is None
+            or not context_token
+            or not x_capi.wallet_is_campaign_eligible(wallet_address)
+        ):
+            return False
+        return bool(x_capi.emit_event_nonblocking(
+            context_token=context_token,
+            wallet_address=wallet_address,
+            milestone=x_capi.MILESTONE_WALLET_VERIFIED,
+            source_key=str(wallet_address or "").strip().lower(),
+            event_timestamp_ms=int(time.time() * 1000),
+            allow_context_binding=True,
+        ))
+    except Exception:
+        return False
+
+
+def _bind_attribution_nonblocking(context_token, wallet_address) -> bool:
+    """Bind an authenticated wallet without fabricating an auth milestone."""
+    try:
+        if (
+            x_capi is None
+            or not context_token
+            or not x_capi.wallet_is_campaign_eligible(wallet_address)
+        ):
+            return False
+        return bool(x_capi.emit_binding_nonblocking(
+            context_token=context_token,
+            wallet_address=wallet_address,
+            event_timestamp_ms=int(time.time() * 1000),
+        ))
+    except Exception:
+        return False
+
+
+def _request_attribution_context(headers):
+    """Return a bounded context unless this request carries authoritative GPC."""
+    try:
+        if x_capi is None:
+            return None
+        gpc = gpc_signal_active(headers.get("Sec-GPC"))
+        if gpc and getattr(headers, "_axonos_x_capi_gpc_observed", False):
+            return None
+        return x_capi.business_context_or_none(
+            headers.get("X-AxonOS-Attribution"),
+            gpc=gpc,
+        )
+    except Exception:
+        return None
+
 try:
     from session_manager import (
         get_active_session,
@@ -184,6 +244,7 @@ try:
         annotate_session,
         set_session_deadline,
         try_claim_session,
+        validate_launch_request_id,
         validate_session_files_key,
     )
     _session_mgr_available = True
@@ -204,6 +265,7 @@ except ImportError:
             annotate_session,
             set_session_deadline,
             try_claim_session,
+            validate_launch_request_id,
             validate_session_files_key,
         )
         _session_mgr_available = True
@@ -240,6 +302,16 @@ except ImportError:
     except ImportError:
         _terminal_gateway = None
 
+try:
+    import x_capi
+except ImportError:
+    try:
+        from axonos_gate import x_capi
+    except Exception:
+        x_capi = None
+except Exception:
+    x_capi = None
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -248,6 +320,15 @@ logger = logging.getLogger(__name__)
 
 _allow_any, _allowlist = parse_cors_allowlist(os.getenv("AXGT_CORS_ORIGINS"))
 _rate_limiter = get_rate_limiter_from_env()
+_x_capi_rate_limiter = get_x_capi_rate_limiter()
+_x_capi_status_global_limiter = get_x_capi_global_rate_limiter("status")
+_x_capi_consent_global_limiter = get_x_capi_global_rate_limiter("consent")
+_x_capi_privacy_rate_limiter = get_x_capi_privacy_rate_limiter()
+if x_capi is not None:
+    # Websockify forks once per request. Validate/cache the immutable keyring in
+    # the parent so a structurally valid junk bearer cannot force every child
+    # to reopen the mounted secret and rebuild every decrypt-only Fernet key.
+    x_capi.preload_context_keyring()
 
 _webrtc_sig_ws = None
 
@@ -1010,7 +1091,7 @@ def _rotate_auth_token(existing_token: str, wallet_address: str) -> tuple[str | 
 
 def _extract_wallet_from_path_and_headers(path: str, headers) -> str | None:
     try:
-        parsed = urlparse(path if path else '/')
+        parsed = urlsplit(path if path else '/')
         query_params = parse_qs(parsed.query)
         wallet_address = query_params.get('wallet', [None])[0] or query_params.get('wallet_address', [None])[0]
     except Exception:
@@ -1034,7 +1115,7 @@ def _auth_token_candidates_from_path_and_headers(path: str, headers) -> list[str
 
     add(headers.get('X-AXGT-Auth-Token') if headers else None)
     try:
-        parsed = urlparse(path if path else '/')
+        parsed = urlsplit(path if path else '/')
         query_params = parse_qs(parsed.query)
         add(query_params.get('auth_token', [None])[0])
     except Exception:
@@ -1099,7 +1180,7 @@ def _terminal_context_for_handler(handler):
         raise _terminal_gateway.TerminalGatewayError(
             "Exact same-origin WebSocket required", 403, "invalid_origin"
         )
-    parsed = urlparse(handler.path or "/")
+    parsed = urlsplit(handler.path or "/")
     query = parse_qs(parsed.query, keep_blank_values=True)
     if set(query) != {"ticket"} or len(query.get("ticket", [])) != 1:
         raise _terminal_gateway.TerminalGatewayError(
@@ -1141,6 +1222,75 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         safe_args = tuple(redact_terminal_websocket_query(arg) for arg in args)
         return super().log_message(safe_format, *safe_args)
 
+    def parse_request(self):
+        """Observe GPC after bounded header parsing and before method dispatch."""
+        parsed = super().parse_request()
+        if parsed:
+            # BaseHTTPRequestHandler dispatches every syntactically valid verb
+            # only after parse_request returns. Keeping the hook here covers
+            # OPTIONS, unsupported verbs, ordinary HTTP, and upgrade requests.
+            self._observe_request_gpc_early()
+        return parsed
+
+    def _x_capi_rate_allowed(self, scope: str, client_ip: str) -> bool:
+        global_limiter = (
+            _x_capi_consent_global_limiter
+            if scope == "consent" else _x_capi_status_global_limiter
+        )
+        return bool(
+            _x_capi_rate_limiter.allow(scope + ":" + client_ip)
+            and global_limiter.allow("all-clients")
+        )
+
+    @staticmethod
+    def _x_capi_privacy_rate_allowed(privacy_key: str) -> bool:
+        """Rate only the redundant hint, never the complete privacy fence."""
+        return bool(
+            _x_capi_privacy_rate_limiter.allow(
+                "privacy:" + privacy_key, fail_open_on_error=True
+            )
+        )
+
+    def _observe_request_gpc_early(self, _path: str | None = None) -> None:
+        """Close a presented lifecycle before any method or route rejection."""
+        try:
+            if (
+                x_capi is None
+                or not gpc_signal_active(self.headers.get("Sec-GPC"))
+                or getattr(
+                    self.headers, "_axonos_x_capi_gpc_observed", False
+                )
+            ):
+                return
+            setattr(self.headers, "_axonos_x_capi_gpc_observed", True)
+            context_token = self.headers.get("X-AxonOS-Attribution")
+            if not context_token or len(str(context_token)) > 2048:
+                return
+            x_capi.observe_business_gpc_nonblocking(context_token)
+        except Exception:
+            # X CAPI must never make the proxy's core request path unavailable.
+            return
+
+    def _x_capi_live_transport_allowed(self) -> bool:
+        if x_capi is None:
+            return True
+        cfg = x_capi.load_config()
+        requires_https = cfg.mode == "live" or urlparse(cfg.allowed_origin).scheme == "https"
+        context_token = self.headers.get("X-AxonOS-Attribution")
+        if not requires_https and len(str(context_token or "")) <= 2048:
+            ticket = x_capi.decode_context_ticket(context_token)
+            requires_https = bool(ticket and ticket.get("mode_scope") == "live")
+        if not requires_https:
+            return True
+        peer_ip = self.client_address[0] if getattr(self, "client_address", None) else None
+        direct_scheme = "https" if getattr(self.server, "ssl_only", False) else "http"
+        return request_is_effectively_https(
+            peer_ip,
+            self.headers.get("X-Forwarded-For"),
+            self.headers.get("X-Forwarded-Proto"),
+            direct_scheme,
+        )
+
     def send_header(self, keyword, value):
         if keyword.lower() == 'content-type':
             ct = str(value).lower()
@@ -1153,6 +1303,19 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             super().send_header('Cache-Control', 'no-cache, must-revalidate')
             super().send_header('Pragma', 'no-cache')
             self._response_no_cache = False
+        super().send_header('Content-Security-Policy', "frame-ancestors 'none'")
+        super().send_header('X-Frame-Options', 'DENY')
+        peer_ip = self.client_address[0] if getattr(self, "client_address", None) else None
+        direct_scheme = "https" if getattr(self.server, "ssl_only", False) else "http"
+        if request_is_effectively_https(
+            peer_ip,
+            self.headers.get("X-Forwarded-For"),
+            self.headers.get("X-Forwarded-Proto"),
+            direct_scheme,
+        ):
+            super().send_header(
+                'Strict-Transport-Security', 'max-age=31536000; includeSubDomains'
+            )
         super().end_headers()
 
     def _guest_invite_url(self, token: str) -> str:
@@ -1185,22 +1348,37 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         if no_cache:
             self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, private')
             self.send_header('Pragma', 'no-cache')
-        # CORS: default is same-origin (no wildcard). For unusual deployments set AXGT_CORS_ORIGINS.
-        origin = cors_origin_for_request(
-            self.headers.get("Origin"),
-            self.headers.get("Host"),
-            _allow_any,
-            _allowlist,
-        )
+        path_only = urlsplit(self.path).path
+        is_x_capi = path_only.startswith('/api/x-attribution/')
+        if is_x_capi and x_capi is not None:
+            supplied = self.headers.get("Origin")
+            origin = x_capi.attribution_cors_origin(
+                supplied,
+                allow_revocation_origin=bool(
+                    getattr(self, "_x_capi_privacy_cors", False)
+                ),
+            )
+        else:
+            # CORS: default is same-origin (no wildcard). For unusual
+            # deployments set AXGT_CORS_ORIGINS.
+            origin = cors_origin_for_request(
+                self.headers.get("Origin"),
+                self.headers.get("Host"),
+                _allow_any,
+                _allowlist,
+            )
         if origin:
             self.send_header('Access-Control-Allow-Origin', origin)
             self.send_header('Vary', 'Origin')
             self.send_header(
                 'Access-Control-Allow-Headers',
-                'Content-Type, X-Wallet-Address, X-AXGT-Auth-Token, X-PAYMENT, PAYMENT-SIGNATURE'
+                'Content-Type, X-AxonOS-Attribution, X-AxonOS-CSRF, X-AxonOS-Landing-Click, X-Wallet-Address, X-AXGT-Auth-Token, Sec-GPC'
+                if is_x_capi else
+                'Content-Type, X-Wallet-Address, X-AXGT-Auth-Token, X-PAYMENT, PAYMENT-SIGNATURE, Range, If-Range'
             )
             self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-            self.send_header('Access-Control-Allow-Credentials', 'true')
+            if not is_x_capi:
+                self.send_header('Access-Control-Allow-Credentials', 'true')
             # Let browser-based x402 clients read the payment headers.
             self.send_header('Access-Control-Expose-Headers', 'PAYMENT-REQUIRED, PAYMENT-RESPONSE, X-PAYMENT-REQUIRED, X-PAYMENT-RESPONSE')
         if set_cookie:
@@ -1221,41 +1399,158 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         _probe_open_db_connections(self.path)
 
     def do_OPTIONS(self):
-        if (
-            self.path.startswith('/api/auth/')
-            or self.path.startswith('/api/config')
-            or self.path.startswith('/api/session/')
-            or self.path.startswith('/api/webrtc/')
-            or self.path.startswith('/api/terminal/')
-            or self.path.startswith('/api/public/')
-            or self.path.startswith('/api/files/')
-            or self.path.startswith('/api/x402/')
-        ):
+        path_only = urlsplit(self.path).path
+        is_x_capi = path_only in {
+            '/api/x-attribution/status',
+            '/api/x-attribution/consent',
+            '/api/x-attribution/bind',
+        }
+        allowed_path = path_only in {
+            '/.well-known/x402',
+            '/openapi.json',
+            '/api/config',
+            '/api/discount/quote',
+            '/api/auth/verify-wallet',
+            '/api/auth/guest-invite',
+            '/api/auth/guest',
+            '/api/auth/challenge',
+            '/api/auth/wallet-status',
+            '/api/auth/test-credit',
+            '/api/auth/verify-deposit',
+            '/api/auth/verify-usdc-deposit',
+            '/api/auth/verify-deposit-auto',
+            '/api/session/status',
+            '/api/session/claim',
+            '/api/session/heartbeat',
+            '/api/session/release',
+            '/api/session/annotate',
+            '/api/session/restart',
+            '/api/webrtc/config',
+            '/api/webrtc/session',
+            '/api/webrtc/offer',
+            '/api/webrtc/status',
+            '/api/webrtc/ice',
+            '/api/webrtc/metrics',
+            '/api/webrtc/close',
+            '/api/terminal/ticket',
+            '/api/public/files-config',
+            '/api/public/telemetry/summary',
+            '/api/public/telemetry/sessions',
+            '/api/public/telemetry/wallets',
+            '/api/public/telemetry/events',
+            '/api/public/telemetry/live',
+            '/api/public/telemetry/webrtc',
+            '/api/x402/access',
+            '/api/x402/settle',
+            '/api/x402/session',
+            '/api/x-attribution/status',
+            '/api/x-attribution/consent',
+            '/api/x-attribution/bind',
+        }
+        if allowed_path or path_only.startswith('/api/files/'):
             self.send_response(200)
-            origin = cors_origin_for_request(
-                self.headers.get("Origin"),
-                self.headers.get("Host"),
-                _allow_any,
-                _allowlist,
-            )
+            if is_x_capi and x_capi is not None:
+                supplied = self.headers.get("Origin")
+                origin = x_capi.attribution_cors_origin(
+                    supplied,
+                    allow_revocation_origin=(
+                        path_only in (
+                            "/api/x-attribution/consent",
+                            "/api/x-attribution/bind",
+                        )
+                    ),
+                )
+            else:
+                origin = cors_origin_for_request(
+                    self.headers.get("Origin"),
+                    self.headers.get("Host"),
+                    _allow_any,
+                    _allowlist,
+                )
             if origin:
                 self.send_header('Access-Control-Allow-Origin', origin)
                 self.send_header('Vary', 'Origin')
                 self.send_header(
                     'Access-Control-Allow-Headers',
+                    'Content-Type, X-AxonOS-Attribution, X-AxonOS-CSRF, X-AxonOS-Landing-Click, X-Wallet-Address, X-AXGT-Auth-Token, Sec-GPC'
+                    if is_x_capi else
                     'Content-Type, X-Wallet-Address, X-AXGT-Auth-Token, X-PAYMENT, Range, If-Range'
                 )
-                self.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS')
-                self.send_header('Access-Control-Allow-Credentials', 'true')
+                self.send_header(
+                    'Access-Control-Allow-Methods',
+                    'GET, POST, OPTIONS' if is_x_capi else 'GET, POST, PUT, OPTIONS',
+                )
+                if not is_x_capi:
+                    self.send_header('Access-Control-Allow-Credentials', 'true')
             self.send_header('Content-Length', '0')
             self.end_headers()
             return
-        return super().do_OPTIONS()
+        return self.send_error(404, "Not Found")
 
     def do_GET(self):
-        from urllib.parse import urlparse as _up_cfg
+        from urllib.parse import urlsplit as _up_cfg
 
-        if _up_cfg(self.path).path in ('/telemetry', '/telemetry/'):
+        request_path = _up_cfg(self.path).path
+        self._observe_request_gpc_early(request_path)
+        if request_path == '/api/x-attribution/status':
+            peer_ip = self.client_address[0] if getattr(self, "client_address", None) else None
+            client_ip = client_ip_for_rate_limit(peer_ip, self.headers.get("X-Forwarded-For"))
+            if x_capi is None:
+                return self._send_json(503, {"enabled": False, "state": "unavailable"}, no_cache=True)
+            context_token = self.headers.get("X-AxonOS-Attribution")
+            landing_click = self.headers.get("X-AxonOS-Landing-Click")
+            gpc = gpc_signal_active(self.headers.get("Sec-GPC"))
+            if len(str(context_token or "")) > 2048:
+                return self._send_json(400, {"enabled": False, "state": "invalid_context"}, no_cache=True)
+            if len(str(landing_click or "")) > 512:
+                return self._send_json(400, {"enabled": False, "state": "invalid_click"}, no_cache=True)
+            if gpc and context_token:
+                try:
+                    privacy_key = x_capi.privacy_signal_rate_key(context_token)
+                    if privacy_key:
+                        if not x_capi.observe_privacy_signal_nonblocking(
+                            context_token,
+                            emit_hint=self._x_capi_privacy_rate_allowed(
+                                privacy_key
+                            ),
+                        ):
+                            return self._send_json(
+                                503,
+                                {
+                                    "enabled": False,
+                                    "state": "revocation_required",
+                                    "gpc_applied": True,
+                                    "error": "Privacy handoff unavailable",
+                                },
+                                no_cache=True,
+                            )
+                except Exception:
+                    return self._send_json(
+                        503,
+                        {
+                            "enabled": False,
+                            "state": "revocation_required",
+                            "gpc_applied": True,
+                            "error": "Privacy handoff unavailable",
+                        },
+                        no_cache=True,
+                    )
+            if not self._x_capi_live_transport_allowed():
+                return self._send_json(400, {"enabled": False, "state": "https_required"}, no_cache=True)
+            needs_state = bool(context_token or landing_click)
+            if needs_state and not self._x_capi_rate_allowed("status", client_ip):
+                return self._send_json(429, {"enabled": False, "error": "Rate limit exceeded"}, no_cache=True)
+            return self._send_json(
+                200,
+                x_capi.attribution_status(
+                    context_token,
+                    landing_twclid=landing_click,
+                    gpc=gpc,
+                ),
+                no_cache=True,
+            )
+
+        if request_path in ('/telemetry', '/telemetry/'):
             try:
                 with open('/usr/share/novnc/telemetry.html', 'rb') as f:
                     body = f.read()
@@ -1268,21 +1563,21 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 self.send_error(500, str(exc))
             return
 
-        if _up_cfg(self.path).path.startswith('/api/files/'):
+        if request_path.startswith('/api/files/'):
             return self._handle_files_request('GET')
 
-        if _up_cfg(self.path).path == '/.well-known/x402':
+        if request_path == '/.well-known/x402':
             if discovery_document is None:
                 return self._send_json(503, {"error": "x402 unavailable"})
             return self._send_json(200, discovery_document())
 
-        if _up_cfg(self.path).path == '/openapi.json':
+        if request_path == '/openapi.json':
             # Public OpenAPI descriptor for x402scan discovery (metadata only).
             if openapi_document is None:
                 return self._send_json(503, {"error": "x402 unavailable"})
             return self._send_json(200, openapi_document())
 
-        if _up_cfg(self.path).path == '/api/x402/access':
+        if request_path == '/api/x402/access':
             # Canonical x402 resource endpoint (works with generic x402 clients):
             #   GET (no X-PAYMENT)   -> 200 if funded else 402 + terms
             #   GET (with X-PAYMENT) -> settle inline, then 200 + access
@@ -1303,7 +1598,11 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 )
                 if not wallet_address or not validate_wallet_address(wallet_address):
                     return self._send_json(400, {"error": "Could not determine paying wallet from X-PAYMENT"})
-                result = settle_x402_payment(authenticated_wallet=wallet_address, x_payment_header=x_payment)
+                result = settle_x402_payment(
+                    authenticated_wallet=wallet_address,
+                    x_payment_header=x_payment,
+                    attribution_context=_request_attribution_context(self.headers),
+                )
                 if result.get("verified") or verify_usdc_deposit_is_pending(result):
                     status = get_wallet_access_status(wallet_address)
                     out = {
@@ -1339,7 +1638,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             return self._send_json(402, _x402_402_body(_xv, minutes_wanted, "Payment required for access"),
                 extra_headers=_x402_v2_headers(minutes_wanted, "Payment required for access"))
 
-        if _up_cfg(self.path).path == '/api/config':
+        if request_path == '/api/config':
             policy = get_credit_policy()
             try:
                 from axonos_gate.session_launcher import session_claim_timeout_seconds
@@ -1430,9 +1729,9 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 )
             return self._send_json(200, payload)
 
-        if self.path.startswith('/api/discount/quote'):
-            from urllib.parse import urlparse, parse_qs
-            qs = parse_qs(urlparse(self.path).query)
+        if request_path == '/api/discount/quote':
+            from urllib.parse import urlsplit, parse_qs
+            qs = parse_qs(urlsplit(self.path).query)
             wallet_address = ''
             if 'wallet_address' in qs and qs['wallet_address']:
                 wallet_address = (qs['wallet_address'][0] or '').strip()
@@ -1561,7 +1860,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 _quote['usdc_credit_per_usdc_minutes'] = float(policy.get('usdc_credit_per_usdc_minutes') or 60)
             return self._send_json(200, _quote)
 
-        if self.path.startswith('/api/auth/challenge'):
+        if request_path == '/api/auth/challenge':
             wallet_address = _extract_wallet_from_path_and_headers(self.path, self.headers)
             if not wallet_address:
                 return self._send_json(400, {'error': 'wallet_address is required'})
@@ -1583,7 +1882,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 logger.error("Failed generating auth challenge: %s", e, exc_info=True)
                 return self._send_json(500, {'error': 'Failed to generate challenge'})
 
-        if self.path.startswith('/api/auth/wallet-status'):
+        if request_path == '/api/auth/wallet-status':
             wallet_address = _extract_wallet_from_path_and_headers(self.path, self.headers)
             if not wallet_address:
                 return self._send_json(400, {'verified': False, 'error': 'wallet_address is required'})
@@ -1640,9 +1939,9 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 no_cache=True,
             )
 
-        from urllib.parse import parse_qs, urlparse
+        from urllib.parse import parse_qs, urlsplit
 
-        pu = urlparse(self.path)
+        pu = urlsplit(self.path)
         ponly = pu.path
 
         if webrtc_service and ponly == '/api/webrtc/config':
@@ -1672,7 +1971,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             return self._send_json(st, pl, no_cache=True)
 
         # ---- Session / Queue read endpoints ----
-        if _session_mgr_available and self.path.startswith('/api/session/status'):
+        if _session_mgr_available and ponly == '/api/session/status':
             wallet_address = _extract_wallet_from_path_and_headers(self.path, self.headers)
             result = session_status(wallet_address)
             return self._send_json(200, result)
@@ -1857,7 +2156,9 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         except Exception:
             return {}
 
-    def _read_bounded_json_body(self, max_bytes: int) -> tuple[dict, str | None]:
+    def _read_bounded_json_body(
+        self, max_bytes: int, *, read_timeout_seconds: float | None = None
+    ) -> tuple[dict, str | None]:
         """Consume a small JSON request body or force the connection closed.
 
         Reading an accepted Content-Length in full is important on HTTP/1.1:
@@ -1879,7 +2180,23 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         if content_length > max(0, int(max_bytes)):
             self.close_connection = True
             return {}, "too_large"
-        raw = self.rfile.read(content_length) if content_length else b""
+        previous_timeout = None
+        timeout_changed = False
+        try:
+            if read_timeout_seconds is not None:
+                previous_timeout = self.connection.gettimeout()
+                self.connection.settimeout(max(0.1, float(read_timeout_seconds)))
+                timeout_changed = True
+            raw = self.rfile.read(content_length) if content_length else b""
+        except (OSError, TimeoutError, socket.timeout, ValueError):
+            self.close_connection = True
+            return {}, "invalid"
+        finally:
+            if timeout_changed:
+                try:
+                    self.connection.settimeout(previous_timeout)
+                except OSError:
+                    self.close_connection = True
         if len(raw) != content_length:
             self.close_connection = True
             return {}, "invalid"
@@ -1896,7 +2213,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         if _file_transfer is None or not _file_transfer.files_enabled():
             self.close_connection = True
             return self._send_json(503, {'ok': False, 'error': 'File transfer unavailable'})
-        pu = urlparse(self.path)
+        pu = urlsplit(self.path)
         suffix = pu.path[len('/api/files/'):]
         route = _file_transfer.ROUTES.get(suffix)
         if not route or route[0] != method:
@@ -1980,16 +2297,171 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         _probe_open_db_connections(self.path)
 
     def do_PUT(self):
-        if urlparse(self.path).path.startswith('/api/files/'):
+        request_path = urlsplit(self.path).path
+        self._observe_request_gpc_early(request_path)
+        if request_path.startswith('/api/files/'):
             return self._handle_files_request('PUT')
         self.send_error(405, "Method Not Allowed")
 
     def do_POST(self):
-        from urllib.parse import urlparse
+        from urllib.parse import urlsplit
 
-        pu = urlparse(self.path)
+        pu = urlsplit(self.path)
         ponly = pu.path
-        client_ip = self.client_address[0] if getattr(self, "client_address", None) else "unknown"
+        self._observe_request_gpc_early(ponly)
+        peer_ip = self.client_address[0] if getattr(self, "client_address", None) else None
+        client_ip = client_ip_for_rate_limit(peer_ip, self.headers.get("X-Forwarded-For"))
+
+        if ponly == '/api/x-attribution/consent':
+            if x_capi is None:
+                return self._send_json(503, {"ok": False, "error": "Consent store unavailable"}, no_cache=True)
+            context_token = self.headers.get("X-AxonOS-Attribution")
+            if len(str(context_token or "")) > 2048:
+                return self._send_json(400, {"ok": False, "error": "Invalid consent headers"}, no_cache=True)
+            gpc = gpc_signal_active(self.headers.get("Sec-GPC"))
+            gpc_fenced = False
+            gpc_rate_admitted = False
+            gpc_hint_allowed = True
+            if gpc and context_token:
+                # Observe GPC before reading/parsing the body so malformed or
+                # slow stale frontend requests cannot preserve queued sharing.
+                privacy_key = x_capi.privacy_signal_rate_key(context_token)
+                if privacy_key:
+                    self._x_capi_privacy_cors = True
+                    gpc_rate_admitted = True
+                    gpc_hint_allowed = self._x_capi_privacy_rate_allowed(
+                        privacy_key
+                    )
+                    gpc_fenced = bool(
+                        x_capi.observe_privacy_signal_nonblocking(
+                            context_token, emit_hint=gpc_hint_allowed
+                        )
+                    )
+            data, body_error = self._read_bounded_json_body(
+                2048, read_timeout_seconds=2.0
+            )
+            if body_error:
+                return self._send_json(
+                    413 if body_error == "too_large" else 400,
+                    {"ok": False, "error": "Invalid consent request body"},
+                    no_cache=True,
+                )
+            content_type = str(self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+            if content_type != "application/json" or not self.headers.get("Content-Length"):
+                return self._send_json(400, {"ok": False, "error": "Invalid request body"}, no_cache=True)
+            if (
+                len(str(self.headers.get("X-AxonOS-CSRF") or "")) > 128
+                or len(str(self.headers.get("X-AxonOS-Landing-Click") or "")) > 512
+            ):
+                return self._send_json(400, {"ok": False, "error": "Invalid consent headers"}, no_cache=True)
+            privacy_key = x_capi.privacy_action_rate_key(
+                context_token=context_token,
+                csrf_token=self.headers.get("X-AxonOS-CSRF"),
+                action=data.get("action"),
+                origin=self.headers.get("Origin"),
+                gpc=gpc,
+            )
+            if privacy_key:
+                self._x_capi_privacy_cors = True
+                if not gpc_rate_admitted:
+                    gpc_hint_allowed = self._x_capi_privacy_rate_allowed(
+                        privacy_key
+                    )
+                if not gpc_fenced:
+                    gpc_fenced = bool(
+                        x_capi.observe_privacy_signal_nonblocking(
+                            context_token, emit_hint=gpc_hint_allowed
+                        )
+                    )
+            elif not self._x_capi_rate_allowed("consent", client_ip):
+                return self._send_json(429, {"ok": False, "error": "Rate limit exceeded"}, no_cache=True)
+            if not self._x_capi_live_transport_allowed():
+                return self._send_json(400, {"ok": False, "error": "HTTPS is required"}, no_cache=True)
+            result, status_code = x_capi.update_consent(
+                context_token=context_token,
+                csrf_token=self.headers.get("X-AxonOS-CSRF"),
+                action=data.get("action"),
+                twclid=data.get("twclid"),
+                landing_twclid=self.headers.get("X-AxonOS-Landing-Click"),
+                origin=self.headers.get("Origin"),
+                gpc=gpc,
+                # Each Websockify child handles one request then exits. Calling
+                # the bounded 0.75s Unix RPC directly avoids creating a separate
+                # native executor in every fork; the worker listener itself is
+                # single-threaded with a bounded listen backlog.
+                offload_worker_rpc=False,
+            )
+            return self._send_json(status_code, result, no_cache=True)
+
+        if ponly == '/api/x-attribution/bind':
+            if x_capi is None:
+                return self._send_json(503, {"ok": False, "error": "Attribution unavailable"}, no_cache=True)
+            context_token = self.headers.get("X-AxonOS-Attribution")
+            if len(str(context_token or "")) > 2048:
+                return self._send_json(400, {"ok": False, "error": "Invalid attribution context"}, no_cache=True)
+            if gpc_signal_active(self.headers.get("Sec-GPC")):
+                privacy_key = x_capi.privacy_bearer_rate_key(
+                    context_token=context_token,
+                    origin=self.headers.get("Origin"),
+                )
+                if privacy_key:
+                    self._x_capi_privacy_cors = True
+                    x_capi.observe_privacy_signal_nonblocking(
+                        context_token,
+                        emit_hint=self._x_capi_privacy_rate_allowed(
+                            privacy_key
+                        ),
+                    )
+                elif not self._x_capi_rate_allowed("consent", client_ip):
+                    return self._send_json(
+                        429, {"ok": False, "error": "Rate limit exceeded"}, no_cache=True
+                    )
+                if not self._x_capi_live_transport_allowed():
+                    return self._send_json(
+                        400, {"ok": False, "error": "HTTPS is required"}, no_cache=True
+                    )
+                result, status_code = x_capi.revoke_for_gpc(
+                    context_token,
+                    origin=self.headers.get("Origin"),
+                    offload_worker_rpc=False,
+                ) if x_capi is not None else (
+                    {"ok": False, "error": "Consent store unavailable"}, 503
+                )
+                return self._send_json(status_code, result, no_cache=True)
+            if not self._x_capi_live_transport_allowed():
+                return self._send_json(503, {"ok": False, "error": "Attribution unavailable"}, no_cache=True)
+            data, body_error = self._read_bounded_json_body(
+                1024, read_timeout_seconds=2.0
+            )
+            if body_error:
+                return self._send_json(
+                    413 if body_error == "too_large" else 400,
+                    {"ok": False, "error": "Invalid request body"},
+                    no_cache=True,
+                )
+            content_type = str(self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+            if content_type != "application/json" or not self.headers.get("Content-Length"):
+                return self._send_json(400, {"ok": False, "error": "Invalid request body"}, no_cache=True)
+            wallet = str(data.get("wallet_address") or "").strip().lower()
+            if not validate_wallet_address(wallet) or _is_guest_shaped(wallet):
+                return self._send_json(400, {"ok": False, "error": "Valid wallet address required"}, no_cache=True)
+            if not x_capi.exact_origin_allowed(self.headers.get("Origin")):
+                return self._send_json(403, {"ok": False, "error": "Origin not allowed"}, no_cache=True)
+            if not self._x_capi_rate_allowed("consent", client_ip):
+                return self._send_json(429, {"ok": False, "error": "Rate limit exceeded"}, no_cache=True)
+            if not _valid_auth_token_from_path_and_headers(self.path, self.headers, wallet):
+                return self._send_json(401, {"ok": False, "error": "Valid auth token required"}, no_cache=True)
+            ticket = x_capi.decode_context_ticket(context_token, require_primary=True)
+            if (
+                ticket is None
+                or not x_capi.config_guard_current(x_capi.load_config())
+                or x_capi._effective_ticket_state(
+                    ticket, x_capi.load_config(), time.time()
+                ) != "granted"
+            ):
+                return self._send_json(409, {"ok": False, "error": "Granted attribution required"}, no_cache=True)
+            accepted = _bind_attribution_nonblocking(context_token, wallet)
+            return self._send_json(202, {"ok": True, "accepted": bool(accepted)}, no_cache=True)
 
         if ponly.startswith('/api/files/'):
             return self._handle_files_request('POST')
@@ -2211,7 +2683,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             return self._send_json(404, {"ok": False, "error": "Unknown WebRTC path"})
 
         # ---- Session / Queue write endpoints ----
-        if _session_mgr_available and self.path.startswith('/api/session/claim'):
+        if _session_mgr_available and ponly == '/api/session/claim':
             data = self._read_json_body()
             wallet_address = (data.get('wallet_address') or '').strip()
             requested_profile = (data.get('requested_profile') or '').strip() or None
@@ -2266,6 +2738,29 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                     'error': 'new_session must be a JSON boolean',
                 })
             new_session = new_session_raw is True
+            if new_session and (resume_only or expected_session_id is not None):
+                return self._send_json(400, {
+                    'granted': False,
+                    'error': (
+                        'new_session cannot be combined with resume_only or '
+                        'expected_session_id'
+                    ),
+                })
+            launch_request_id_raw = data.get('launch_request_id')
+            launch_request_id = validate_launch_request_id(launch_request_id_raw)
+            if new_session and launch_request_id is None:
+                return self._send_json(400, {
+                    'granted': False,
+                    'error': (
+                        'new_session requires a 32-128 character URL-safe '
+                        'launch_request_id'
+                    ),
+                })
+            if not new_session and launch_request_id_raw is not None:
+                return self._send_json(400, {
+                    'granted': False,
+                    'error': 'launch_request_id is only valid when new_session is true',
+                })
             # Fail closed: only an explicit JSON boolean true opts into a
             # headless SSH session (the string "false" must remain false).
             requested_ssh = data.get('requested_ssh') is True
@@ -2298,10 +2793,18 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 expected_session_id=expected_session_id,
                 requested_storage_gb=requested_storage_gb,
                 new_session=new_session,
+                launch_request_id=launch_request_id,
+                attribution_context=_request_attribution_context(self.headers),
             )
+            if launch_request_id is not None:
+                # Echo only an application-validated key, allowing a browser to
+                # distinguish this authoritative result from a proxy failure.
+                result = dict(result)
+                result.setdefault('launch_request_id', launch_request_id)
+                result.setdefault('launch_request_consumed', False)
             return self._send_json(200, result)
 
-        if _session_mgr_available and self.path.startswith('/api/session/heartbeat'):
+        if _session_mgr_available and ponly == '/api/session/heartbeat':
             data = self._read_json_body()
             wallet_address = (data.get('wallet_address') or '').strip()
             if not wallet_address or not validate_wallet_address(wallet_address):
@@ -2342,7 +2845,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             result = session_heartbeat(wallet_address, ssh_active=ssh_active, session_id=session_id)
             return self._send_json(200, result)
 
-        if _session_mgr_available and self.path.startswith('/api/session/release'):
+        if _session_mgr_available and ponly == '/api/session/release':
             data = self._read_json_body()
             wallet_address = (data.get('wallet_address') or '').strip()
             if not wallet_address or not validate_wallet_address(wallet_address):
@@ -2389,7 +2892,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             )
             return self._send_json(200, result)
 
-        if _session_mgr_available and self.path.startswith('/api/session/annotate'):
+        if _session_mgr_available and ponly == '/api/session/annotate':
             # Owner-editable title/notes so concurrent sessions can be told apart.
             data = self._read_json_body()
             wallet_address = (data.get('wallet_address') or '').strip()
@@ -2425,7 +2928,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             result = set_session_deadline(wallet_address, session_id, data['stop_at'])
             return self._send_json(200 if result.get('ok') else 409, result)
 
-        if _session_mgr_available and self.path.startswith('/api/session/restart'):
+        if _session_mgr_available and ponly == '/api/session/restart':
             data = self._read_json_body()
             wallet_address = (data.get('wallet_address') or '').strip()
             if not wallet_address or not validate_wallet_address(wallet_address):
@@ -2637,7 +3140,11 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 return self._send_json(
                     401, {"verified": False, "error": "Valid auth token required"}
                 )
-            result = verify_deposit(authenticated_wallet=wallet_address, tx_hash=tx_hash)
+            result = verify_deposit(
+                authenticated_wallet=wallet_address,
+                tx_hash=tx_hash,
+                attribution_context=_request_attribution_context(self.headers),
+            )
             if result.get("verified") or verify_deposit_is_pending(result):
                 return self._send_json(200, result)
             return self._send_json(400, result)
@@ -2664,7 +3171,11 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 return self._send_json(
                     401, {"verified": False, "error": "Valid auth token required"}
                 )
-            result = verify_usdc_deposit(authenticated_wallet=wallet_address, tx_hash=tx_hash)
+            result = verify_usdc_deposit(
+                authenticated_wallet=wallet_address,
+                tx_hash=tx_hash,
+                attribution_context=_request_attribution_context(self.headers),
+            )
             if result.get("verified") or verify_usdc_deposit_is_pending(result):
                 return self._send_json(200, result)
             return self._send_json(400, result)
@@ -2698,12 +3209,13 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 eth_is_pending=verify_deposit_is_pending,
                 verify_usdc=verify_usdc_deposit,
                 usdc_is_pending=verify_usdc_deposit_is_pending,
+                attribution_context=_request_attribution_context(self.headers),
             )
             if result.get("verified") or is_pending:
                 return self._send_json(200, result)
             return self._send_json(400, result)
 
-        if self.path.startswith('/api/x402/settle'):
+        if ponly == '/api/x402/settle':
             if settle_x402_payment is None:
                 return self._send_json(
                     503, {"verified": False, "error": "x402 settlement unavailable"}
@@ -2726,7 +3238,11 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 return self._send_json(
                     401, {"verified": False, "error": "Valid auth token required"}
                 )
-            result = settle_x402_payment(authenticated_wallet=wallet_address, x_payment_header=x_payment)
+            result = settle_x402_payment(
+                authenticated_wallet=wallet_address,
+                x_payment_header=x_payment,
+                attribution_context=_request_attribution_context(self.headers),
+            )
             extra_headers = None
             if result.get("settlement_tx_hash"):
                 import base64 as _b64
@@ -2742,12 +3258,18 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 return self._send_json(200, result, extra_headers=extra_headers)
             return self._send_json(400, result)
 
-        if self.path.startswith('/api/x402/session'):
+        if ponly == '/api/x402/session':
             # One-shot agent loop: pay via x402 (if needed) + claim an SSH session.
             # The EIP-3009 payment signature is the authorization — no prior
             # browser wallet sign-in required. SSH is the agent-usable session type.
             if not _session_mgr_available:
                 return self._send_json(503, {"granted": False, "error": "Session manager unavailable"})
+            # Use one sanitized, GPC-aware capability for both authoritative
+            # effects created by this browser request.
+            request_attribution_context = _request_attribution_context(self.headers)
+            # Prepaid reclaim accepts only a wallet string in this legacy API,
+            # so it is not strong enough to authorize an attribution binding.
+            attribution_context = None
             data = self._read_json_body() or {}
             wallet_address = (data.get("wallet_address") or self.headers.get('X-Wallet-Address') or '').strip()
             x_payment = self.headers.get('X-PAYMENT') or self.headers.get('PAYMENT-SIGNATURE') or ''
@@ -2790,9 +3312,14 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             if x_payment:
                 if settle_x402_payment is None:
                     return self._send_json(503, {"granted": False, "error": "x402 settlement unavailable"})
-                settle_result = settle_x402_payment(authenticated_wallet=wallet_address, x_payment_header=x_payment)
+                settle_result = settle_x402_payment(
+                    authenticated_wallet=wallet_address,
+                    x_payment_header=x_payment,
+                    attribution_context=request_attribution_context,
+                )
                 if not (settle_result.get("verified") or verify_usdc_deposit_is_pending(settle_result)):
                     return self._send_json(400, {"granted": False, "error": settle_result.get("error") or "Payment failed", "payment": settle_result})
+                attribution_context = request_attribution_context
                 try:
                     auth_token, auth_ttl = _issue_auth_token(wallet_address)
                 except Exception as ex:
@@ -2808,6 +3335,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 requested_profile=requested_profile,
                 requested_ssh=True,
                 ssh_pubkey=ssh_pubkey,
+                attribution_context=attribution_context,
             )
             out = dict(claim)
             if settle_result is not None:
@@ -2830,7 +3358,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 }).encode()).decode()}
             return self._send_json(200 if claim.get("granted") else 409, out, extra_headers=extra_headers)
 
-        if not self.path.startswith('/api/auth/verify-wallet'):
+        if ponly != '/api/auth/verify-wallet':
             return self.send_error(404, "Not Found")
 
         # Best-effort rate limiting (per client IP)
@@ -2889,6 +3417,9 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 },
                 set_cookie=_clear_auth_cookie(),
             )
+        _emit_wallet_verified_nonblocking(
+            _request_attribution_context(self.headers), wallet_address
+        )
         if status.get("verified"):
             status["auth_token"] = token
             status["auth_token_expires_in_seconds"] = ttl
@@ -3033,7 +3564,8 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         return super().new_websocket_client()
 
     def handle_upgrade(self):
-        request_path = urlparse(self.path or "/").path
+        request_path = urlsplit(self.path or "/").path
+        self._observe_request_gpc_early(request_path)
         if (
             _terminal_gateway is not None
             and request_path == _terminal_gateway.WEBSOCKET_PATH

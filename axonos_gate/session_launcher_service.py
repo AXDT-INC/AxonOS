@@ -10,6 +10,7 @@ configure gate/session_manager to use:
   AXGT_SESSION_LAUNCHER_TOKEN=<shared-secret>
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -23,6 +24,13 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 from flask import Flask, jsonify, request
+
+
+_ALLOCATION_KEY_LABEL = "com.axonos.session-allocation-key-sha256"
+
+
+def _allocation_key_digest(files_key: str) -> str:
+    return hashlib.sha256(str(files_key or "").encode("utf-8")).hexdigest()
 
 
 def _tool_path(name: str) -> str:
@@ -139,6 +147,68 @@ _FORBIDDEN_SESSION_ENV_NAMES = {
     "POSTGRES_USER",
     "POSTGRES_PASSWORD",
     "POSTGRES_DB",
+    "X_CAPI_ACCESS_TOKEN",
+    "X_CAPI_ACCESS_TOKEN_FILE",
+    "X_CAPI_ACCESS_TOKEN_HOST_FILE",
+    "X_CAPI_ALLOW_TEST_DB_URL",
+    "X_CAPI_ALLOW_TEST_CONFIG_GUARD_BYPASS",
+    "X_CAPI_ALLOW_TEST_CONFIG_GUARD_FILE",
+    "X_CAPI_ALLOW_TEST_PRIVACY_FENCE",
+    "X_CAPI_ALLOW_TEST_RATE_FILE",
+    "X_CAPI_ALLOW_TEST_SECRETS",
+    "X_CAPI_ALLOW_TEST_SOCKET",
+    "X_CAPI_ALLOWED_ORIGIN",
+    "X_CAPI_ATTRIBUTION_TTL_DAYS",
+    "X_CAPI_CONSENT_POLICY_VERSION",
+    "X_CAPI_CONSENT_POLICY_EPOCH",
+    "X_CAPI_CONSENT_SOCKET",
+    "X_CAPI_CONTEXT_KEY",
+    "X_CAPI_CONTEXT_KEY_FILE",
+    "X_CAPI_CONTEXT_KEY_HOST_FILE",
+    "X_CAPI_CONTEXT_LIMIT",
+    "X_CAPI_CONFIG_GUARD_FILE",
+    "X_CAPI_DEPLOYMENT_ID",
+    "X_CAPI_DB_URL",
+    "X_CAPI_DB_URL_FILE",
+    "X_CAPI_DB_URL_HOST_FILE",
+    "X_CAPI_EVENT_DEPOSIT_COMPLETED",
+    "X_CAPI_EVENT_SESSION_STARTED",
+    "X_CAPI_EVENT_WALLET_VERIFIED",
+    "X_CAPI_MAX_EVENT_AGE_HOURS",
+    "X_CAPI_MODE",
+    "X_CAPI_OWNER_DB_ROLE",
+    "X_CAPI_PIXEL_ID",
+    "X_CAPI_POSTGRES_BOOTSTRAP_PASSWORD_HOST_FILE",
+    "X_CAPI_POSTGRES_BOOTSTRAP_USER",
+    "X_CAPI_POSTGRES_DB",
+    "X_CAPI_POSTGRES_WORKER_PASSWORD_HOST_FILE",
+    "X_CAPI_PRIVACY_RATE_LIMIT_PER_MIN",
+    "X_CAPI_PRIVACY_GLOBAL_RATE_LIMIT_PER_MIN",
+    "X_CAPI_PRIVACY_FENCE_DIR",
+    "X_CAPI_PRODUCTION_CHAIN_IDS",
+    "X_CAPI_QUEUE_LIMIT",
+    "X_CAPI_RATE_LIMIT_PER_MIN",
+    "X_CAPI_RUNTIME_HOST_DIR",
+    "X_CAPI_SEND_VALUES",
+    "X_CAPI_TEST_DB_URL",
+    "X_CAPI_TWCLID",
+    "X_CAPI_TWCLID_CHARSET",
+    "X_CAPI_TWCLID_CONTRACT_VERSION",
+    "X_CAPI_TWCLID_MAX_LENGTH",
+    "X_CAPI_TWCLID_MIN_LENGTH",
+    "X_CAPI_EXCLUDED_WALLETS",
+    "X_CAPI_HASH_KEY",
+    "X_CAPI_HASH_KEY_FILE",
+    "X_CAPI_HASH_KEY_HOST_FILE",
+    "X_CAPI_GLOBAL_RATE_LIMIT_PER_MIN",
+    "X_CAPI_INGEST_ALLOWED_UID",
+    "X_CAPI_INGEST_SOCKET",
+    "X_CAPI_TRUSTED_PROXY_CIDRS",
+    "X_CAPI_TRUSTED_PROXY_HOPS",
+    "X_CAPI_WORKER_UID",
+    "X_CAPI_UNUSED_DB_SECRET_VALUE",
+    "X_CAPI_UPGRADE_V1",
+    "X_CAPI_WORKER_DB_ROLE",
 }
 
 # Keep inherited tenant configuration deliberately narrow. Every value here is
@@ -1180,6 +1250,64 @@ def _inspect_managed_container_contract(
     return "match_stopped", container_id, ""
 
 
+def _inspect_managed_allocation(
+    session_id: int,
+    expected_key_digest: str,
+    expected_network: str,
+) -> Tuple[str, Optional[str], str]:
+    """Atomically prove that a runtime belongs to one DB reservation."""
+    ok, output = _run_cmd(
+        [
+            "docker",
+            "inspect",
+            "--format",
+            '{{.State.Running}}|{{index .Config.Labels "com.axonos.session-container"}}|'
+            '{{index .Config.Labels "com.axonos.session-id"}}|'
+            '{{index .Config.Labels "com.axonos.session-config-sha256"}}|'
+            f'{{{{index .Config.Labels "{_ALLOCATION_KEY_LABEL}"}}}}|'
+            '{{json .NetworkSettings.Networks}}|{{.Id}}',
+            _container_name(session_id),
+        ]
+    )
+    if not ok:
+        if _docker_object_is_absent(output):
+            return "absent", None, ""
+        return "error", None, output or "could not inspect session container"
+    parts = output.split("|", 6)
+    if len(parts) != 7:
+        return "error", None, "malformed session container inspection"
+    running, managed, labeled_id, config_digest, key_digest, networks_json, container_id = (
+        part.strip() for part in parts
+    )
+    container_id = container_id[:64]
+    if not container_id:
+        return "error", None, "session container inspection omitted its id"
+    valid_config_digest = len(config_digest) == 64 and all(
+        character in "0123456789abcdef" for character in config_digest
+    )
+    if (
+        managed.lower() != "true"
+        or labeled_id != str(int(session_id))
+        or not valid_config_digest
+    ):
+        return "unmanaged", container_id, "refusing unowned same-name session container"
+    if running.lower() not in ("true", "false"):
+        return "error", container_id, "invalid session container running state"
+    try:
+        networks = json.loads(networks_json)
+    except (TypeError, json.JSONDecodeError):
+        return "error", container_id, "malformed session container network inspection"
+    if not isinstance(networks, dict):
+        return "error", container_id, "malformed session container network inspection"
+    if not secrets.compare_digest(key_digest, expected_key_digest) or set(networks) != {
+        expected_network
+    }:
+        return "mismatch", container_id, "session allocation identity mismatch"
+    if running.lower() == "true":
+        return "match_running", container_id, ""
+    return "match_stopped", container_id, ""
+
+
 def _launch_row_authorized(payload: Dict[str, object]) -> Tuple[bool, str]:
     """Authorize launch input against the exact live scheduler allocation."""
     db_url = (os.getenv("AXGT_CHALLENGE_DB_URL") or "").strip()
@@ -1470,6 +1598,8 @@ def _build_launch_cmd(payload: Dict[str, object]) -> Tuple[Optional[List[str]], 
         f"com.axonos.session-id={session_id}",
         "--label",
         f"com.axonos.session-config-sha256={runtime_digest}",
+        "--label",
+        f"{_ALLOCATION_KEY_LABEL}={_allocation_key_digest(str(payload.get('files_key') or ''))}",
         "--cap-drop",
         "NET_RAW",
     ]
@@ -1832,6 +1962,45 @@ def launch():
         container_id = (out.splitlines()[-1] if out else "").strip()[:64] or name
         logger.info("launcher: started %s -> %s", name, container_id[:12])
         return jsonify({"ok": True, "container_id": container_id, "container_name": name})
+
+
+@app.route("/inspect-allocation", methods=["POST"])
+def inspect_allocation():
+    """Classify one reserved runtime without mutating Docker or PostgreSQL."""
+    # Unlike the mutation endpoints' explicit local-development compatibility,
+    # recovery evidence must always come from an authenticated inspector.  With
+    # no shared secret configured the gate keeps the reservation fail-safe.
+    if not (os.getenv("AXGT_SESSION_LAUNCHER_TOKEN") or "").strip():
+        return jsonify({"ok": False, "error": "launcher bearer token is required"}), 503
+    auth_err = _require_token()
+    if auth_err:
+        return auth_err
+    payload = request.get_json(silent=True) or {}
+    try:
+        session_id = int(payload.get("session_id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "session_id must be an integer"}), 400
+    expected_key_digest = str(payload.get("allocation_key_sha256") or "").strip()
+    if session_id <= 0:
+        return jsonify({"ok": False, "error": "session_id must be positive"}), 400
+    if len(expected_key_digest) != 64 or any(
+        character not in "0123456789abcdef" for character in expected_key_digest
+    ):
+        return jsonify({"ok": False, "error": "invalid allocation identity"}), 400
+    with _session_operation_lock(session_id):
+        state, container_id, inspection_error = _inspect_managed_allocation(
+            session_id,
+            expected_key_digest,
+            _session_network_name(session_id),
+        )
+    response = {
+        "ok": True,
+        "state": state,
+        "container_id": container_id,
+    }
+    if inspection_error:
+        response["error"] = inspection_error
+    return jsonify(response)
 
 
 @app.route("/stop", methods=["POST"])
