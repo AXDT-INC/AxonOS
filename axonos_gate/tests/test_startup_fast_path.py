@@ -20,6 +20,21 @@ if str(_GATE_ROOT) not in sys.path:
 
 
 class StartupFastPathSourceTests(unittest.TestCase):
+    def test_desktop_image_does_not_ship_the_xfce_locker(self) -> None:
+        dockerfile = (_REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+        theme_script = (
+            _REPO_ROOT / "scripts" / "apply_theme_session.sh"
+        ).read_text(encoding="utf-8")
+
+        install_index = dockerfile.index("xfce4 xfce4-goodies")
+        purge_index = dockerfile.index("apt-get purge -y xfce4-screensaver")
+        self.assertLess(install_index, purge_index)
+
+        # Keep these runtime guards for rolling upgrades and older images even
+        # though newly built images no longer contain the locker package.
+        self.assertIn('"/lock/enabled"', theme_script)
+        self.assertIn("pkill -f xfce4-screensaver", theme_script)
+
     def test_wallpaper_is_preseeded_and_presentation_is_readiness_gated(self) -> None:
         startup = (_REPO_ROOT / "startup.sh").read_text(encoding="utf-8")
         dockerfile = (_REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")

@@ -4,7 +4,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV USER=aXonian
 ARG PASSWORD=axonpassword
 
-# Basic system setup
+# Basic system setup. xfce4 pulls in xfce4-screensaver as a recommended
+# package. AxonOS sessions are already wallet-gated, and the locker can be
+# D-Bus activated even after its idle settings are disabled and its process is
+# killed. Purge it after package installation so stale per-wallet XFCE state or
+# a lock shortcut can never strand a remote user at a PAM password prompt.
 RUN apt update && apt install -y \
     xfce4 xfce4-goodies tightvncserver \
     novnc websockify python3 python-is-python3 python3-pip python3-websockify \
@@ -53,6 +57,7 @@ RUN apt update && apt install -y \
     imagemagick \
     gnome-screenshot \
     x11-apps \
+    && apt-get purge -y xfce4-screensaver \
     && apt clean
 
 # Warm icon caches for desktop icons
