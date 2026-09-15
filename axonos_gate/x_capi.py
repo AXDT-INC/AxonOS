@@ -521,7 +521,7 @@ def validate_twclid(value: Any, cfg: Optional[Config] = None) -> Optional[str]:
 
     X documents ``twclid`` as X-generated but publishes no normative grammar.
     Dry-run uses a conservative URL-safe envelope; live readiness additionally
-    requires the operator to pin the vendor/CMO contract and its length/alphabet.
+    requires the operator to pin the vendor contract and its length/alphabet.
     Independent shape checks keep obvious wallet, phone, IP, UUID, digest,
     account-handle, and common credential values out of the identifier slot.
     """

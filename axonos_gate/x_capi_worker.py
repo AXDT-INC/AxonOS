@@ -7,6 +7,7 @@ import email.utils
 import fcntl
 import hashlib
 import hmac
+import http.client
 import json
 import logging
 import math
@@ -16,6 +17,7 @@ import re
 import select
 import signal
 import socket
+import ssl
 import stat
 import struct
 import sys
@@ -24,7 +26,7 @@ import time
 import uuid
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import timezone
 from typing import Any, Dict, Iterable, Mapping, Optional
 
 try:
@@ -34,6 +36,10 @@ except ImportError:
 
 logger = logging.getLogger("x_capi_worker")
 TOTAL_REQUEST_SECONDS = 20.0
+HTTP_SOCKET_TIMEOUT_SECONDS = 5.0
+MAX_RESPONSE_BYTES = 16 * 1024
+X_API_HOST = "ads-api.x.com"
+X_API_PATH = "/12/measurement/conversions/"
 LEASE_SECONDS = 45
 WORKER_STATEMENT_TIMEOUT_MS = 5_000
 WORKER_LOCK_TIMEOUT_MS = 500
@@ -243,18 +249,134 @@ class TransportResponse:
 
 
 class RequestsTransport:
-    """Permanently disabled concrete X transport pending provenance review."""
+    """Dedicated-token HTTPS adapter; the existing activation block still applies.
+
+    The historical class name is retained for the test-injection boundary. The
+    standard-library client has no ambient proxy, netrc, cookie, redirect, or
+    default User-Agent behavior. No network client or token is cached.
+    """
 
     def __init__(self):
         # Do not construct a network client or ambient cookie/proxy state.
         self._session = None
 
     def send(self, pixel_id: str, token: str, payload: Dict[str, Any]) -> TransportResponse:
-        # There is currently no reviewed, normative X mechanism that proves
-        # twclid authenticity or campaign provenance. Keep this concrete
-        # network adapter unusable even if a caller bypasses run_once and
-        # invokes it directly; retry/idempotency tests inject a fake transport.
-        raise RuntimeError(LIVE_DELIVERY_BLOCK_REASON)
+        cfg = x_capi.load_config()
+        if cfg.mode != "live" or not cfg.producer_ready or cfg.errors:
+            raise RuntimeError(LIVE_DELIVERY_BLOCK_REASON)
+        body = _serialize_request(pixel_id, payload, cfg)
+        # Read only the protected worker file, including for direct adapter
+        # callers. A supplied/environment token cannot replace that source.
+        runtime_token, error = read_token()
+        if (
+            error or runtime_token is None or type(token) is not str
+            or not hmac.compare_digest(token.encode("utf-8"), runtime_token.encode("ascii"))
+        ):
+            raise ValueError("invalid_transport_token")
+        return _post_conversion(pixel_id, runtime_token, body)
+
+
+@contextmanager
+def _http_deadline():
+    """Bound even DNS and slow-drip I/O without leaving a sender behind.
+
+    Socket timeouts handle ordinary failures. The kernel's default SIGALRM
+    action terminates a wedged worker at the absolute deadline, including when
+    Python cannot run a handler. Its durable lease is recovered after restart;
+    there is no thread that can send after the privacy lock is released.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        raise RuntimeError("transport_requires_main_thread")
+    if signal.SIGALRM in signal.pthread_sigmask(signal.SIG_BLOCK, set()):
+        raise RuntimeError("transport_deadline_signal_blocked")
+    if any(signal.getitimer(signal.ITIMER_REAL)):
+        raise RuntimeError("transport_deadline_conflict")
+    previous = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, signal.SIG_DFL)
+    try:
+        signal.setitimer(signal.ITIMER_REAL, TOTAL_REQUEST_SECONDS)
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def _serialize_request(pixel_id: str, payload: Any, cfg: x_capi.Config) -> bytes:
+    """Independently enforce the four-field allowlist at the HTTP boundary."""
+    if (
+        type(pixel_id) is not str or not x_capi._valid_vendor_id(pixel_id)
+        or pixel_id != cfg.pixel_id
+        or type(payload) is not dict or set(payload) != {"conversions"}
+    ):
+        raise ValueError("invalid_transport_payload")
+    conversions = payload["conversions"]
+    if type(conversions) is not list or len(conversions) != 1:
+        raise ValueError("invalid_transport_payload")
+    conversion = conversions[0]
+    if type(conversion) is not dict or set(conversion) != {
+        "conversion_timestamp", "event_id", "identifiers", "conversion_id"
+    }:
+        raise ValueError("invalid_transport_payload")
+    identifiers = conversion["identifiers"]
+    if (
+        type(identifiers) is not list or len(identifiers) != 1
+        or type(identifiers[0]) is not dict or set(identifiers[0]) != {"twclid"}
+    ):
+        raise ValueError("invalid_transport_payload")
+    event_id, click_id = conversion["event_id"], identifiers[0]["twclid"]
+    if (
+        type(event_id) is not str or not x_capi._valid_vendor_id(event_id)
+        or event_id not in cfg.event_ids.values()
+        or type(click_id) is not str or x_capi.validate_twclid(click_id, cfg) != click_id
+    ):
+        raise ValueError("invalid_transport_payload")
+    # Reconstruct primitive values instead of serializing caller-owned extras
+    # or invoking arbitrary __str__/JSON hooks.
+    canonical = build_payload({
+        "conversion_timestamp_ms": conversion["conversion_timestamp"],
+        "event_id": event_id, "twclid": click_id,
+        "conversion_id": conversion["conversion_id"],
+    })
+    return json.dumps(canonical, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("ascii")
+
+
+def _tls_context() -> ssl.SSLContext:
+    # Neither session-key logging nor environment-supplied trust stores are
+    # deployment inputs for this secret-bearing, fixed-destination transport.
+    if any(os.environ.get(name) for name in (
+        "SSLKEYLOGFILE", "SSL_CERT_FILE", "SSL_CERT_DIR"
+    )):
+        raise ValueError("unsupported_transport_tls_environment")
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.load_default_certs(ssl.Purpose.SERVER_AUTH)
+    return context
+
+
+def _post_conversion(pixel_id: str, token: str, body: bytes) -> TransportResponse:
+    # This private I/O primitive is reached only after send's configuration,
+    # payload and protected secret checks. TLS verification is never optional.
+    with _http_deadline():
+        connection = http.client.HTTPSConnection(
+            X_API_HOST, port=443, timeout=HTTP_SOCKET_TIMEOUT_SECONDS,
+            context=_tls_context(),
+        )
+        try:
+            # Never inherit stdlib wire debugging: it includes secret headers.
+            connection.set_debuglevel(0)
+            connection.request(
+                "POST", X_API_PATH + pixel_id, body=body,
+                headers={"Content-Type": "application/json", "X-Pixel-Token": token},
+            )
+            response = connection.getresponse()
+            response_body = response.read(MAX_RESPONSE_BYTES + 1)
+            if len(response_body) > MAX_RESPONSE_BYTES:
+                raise ValueError("response_too_large")
+            # Retain only the one response header used by the retry policy.
+            retry_after = response.getheader("Retry-After")
+            headers = {"Retry-After": retry_after} if retry_after is not None else {}
+            return TransportResponse(response.status, headers, response_body)
+        finally:
+            connection.close()
 
 
 def _injected_test_transport_allowed(transport: Any) -> bool:
@@ -266,36 +388,41 @@ def _injected_test_transport_allowed(transport: Any) -> bool:
     )
 
 
-def _format_conversion_time(timestamp_ms: Any) -> str:
-    """Format an exact integral Unix millisecond as UTC RFC-3339 milliseconds."""
-    if isinstance(timestamp_ms, bool) or not isinstance(timestamp_ms, int):
+def _conversion_timestamp(timestamp_ms: Any) -> int:
+    """Keep the immutable Unix milliseconds required by the token contract."""
+    if type(timestamp_ms) is not int:
         raise ValueError("invalid_conversion_timestamp_ms")
     # PostgreSQL already enforces >0; repeat it at the serialization boundary.
-    # datetime's year-9999 ceiling is explicit so every platform agrees.
+    # Retain the reviewed year-9999 bound at the serialization boundary.
     if not 0 < timestamp_ms <= 253_402_300_799_999:
         raise ValueError("invalid_conversion_timestamp_ms")
-    seconds, milliseconds = divmod(timestamp_ms, 1000)
-    try:
-        instant = datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(
-            seconds=seconds
-        )
-    except (OverflowError, ValueError):
-        raise ValueError("invalid_conversion_timestamp_ms") from None
-    return instant.strftime("%Y-%m-%dT%H:%M:%S.") + f"{milliseconds:03d}Z"
+    return timestamp_ms
 
 
 def build_payload(job: Mapping[str, Any]) -> Dict[str, Any]:
     """Strict documented allowlist: exactly four conversion fields."""
+    event_id, click_id = job["event_id"], job["twclid"]
+    conversion_id = job["conversion_id"]
+    if type(conversion_id) is uuid.UUID:
+        conversion_id = str(conversion_id)
+    if type(event_id) is not str or type(click_id) is not str or type(conversion_id) is not str:
+        raise ValueError("invalid_conversion_fields")
+    try:
+        parsed_id = uuid.UUID(conversion_id)
+        if parsed_id.version != 4 or str(parsed_id) != conversion_id:
+            raise ValueError
+    except ValueError:
+        raise ValueError("invalid_conversion_id") from None
     conversion = {
-        "conversion_time": _format_conversion_time(
+        "conversion_timestamp": _conversion_timestamp(
             job["conversion_timestamp_ms"]
         ),
-        "event_id": str(job["event_id"]),
-        "identifiers": [{"twclid": str(job["twclid"])}],
-        "conversion_id": str(job["conversion_id"]),
+        "event_id": event_id,
+        "identifiers": [{"twclid": click_id}],
+        "conversion_id": conversion_id,
     }
     if set(conversion) != {
-        "conversion_time", "event_id", "identifiers", "conversion_id"
+        "conversion_timestamp", "event_id", "identifiers", "conversion_id"
     } or set(conversion["identifiers"][0]) != {"twclid"}:
         raise AssertionError("outbound allowlist violated")
     return {"conversions": [conversion]}

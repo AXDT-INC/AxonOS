@@ -47,7 +47,7 @@ IDs. Only `off` and synthetic `dry_run` are stageable.
 | `X_CAPI_CONTEXT_LIMIT` | `10000` | Bounded durable-context capacity, configurable 100–1,000,000. |
 | `X_CAPI_PRODUCTION_CHAIN_IDS` | `1,8453` | Unique positive EVM chain IDs eligible for paid deposit signals. Missing/unknown verifier provenance is skipped. |
 | `X_CAPI_EXCLUDED_WALLETS` | blank | Additional comma-separated valid wallets excluded from binding/reporting. Invalid entries fail readiness. |
-| `X_CAPI_TWCLID_CONTRACT_VERSION` | blank | Operator/CMO identifier for the verified vendor click-ID contract; required in `live`. |
+| `X_CAPI_TWCLID_CONTRACT_VERSION` | blank | Operator identifier for the verified vendor click-ID contract; required in `live`. |
 | `X_CAPI_TWCLID_CHARSET` | `url_safe` | `lower_alnum`, `alnum`, or `url_safe`; must be explicitly pinned in `live`. |
 | `X_CAPI_TWCLID_MIN_LENGTH` / `X_CAPI_TWCLID_MAX_LENGTH` | `8` / `256` | Validated click-ID bounds; both must be explicitly pinned in `live`. |
 | `X_CAPI_RATE_LIMIT_PER_MIN` | `30` | Per-client status/ordinary-consent cap shared across processes. |
@@ -66,14 +66,17 @@ IDs. Only `off` and synthetic `dry_run` are stageable.
 | `X_CAPI_CONFIG_GUARD_FILE` | `/run/axonos-x-capi/config-guard.json` | Internal worker-owned high-water attestation; Compose pins the path. |
 | `X_CAPI_WORKER_UID` / `X_CAPI_INGEST_ALLOWED_UID` | `10001` / Compose `0` | Ownership/peer-credential checks for the isolated worker and gate datagrams. |
 
-The worker has no HTTP client, Internet-capable network, delivery credential
-mount, or callable live transport. The three runtime integration secret files
+The worker has an activation-blocked standard-library HTTPS adapter for the
+account's dedicated `X-Pixel-Token` contract, with no Internet-capable network
+or delivery credential mount. The three runtime integration secret files
 (DB URL, context keyring, and HMAC key) should be single-link regular files
 owned by the dedicated worker UID `10001` and mode `0400`/`0600`; never put
 them in the stack's shared `.env`. The database initializer separately uses
-two root-owned password files. Dormant `X_CAPI_ACCESS_TOKEN`/
-`X_CAPI_ACCESS_TOKEN_FILE` parsing exists only behind the explicit injected
-test-transport guard and is not a deployment input. Direct
+two root-owned password files. `X_CAPI_ACCESS_TOKEN` is always prohibited.
+The adapter accepts only the protected `X_CAPI_ACCESS_TOKEN_FILE` path (default
+`/run/secrets/x_capi_access_token`); that file is not read until activation gates
+pass. Tests fake HTTP and secret reads; they never require a real token.
+No new activation switch or token mount is introduced. Direct
 `X_CAPI_DB_URL`, `X_CAPI_CONTEXT_KEY`, and `X_CAPI_HASH_KEY` values, custom socket/guard/rate
 paths, `X_CAPI_TEST_DB_URL`, `X_CAPI_TEST_DB_DISPOSABLE_CONFIRM`, and every
 `X_CAPI_ALLOW_TEST_*` switch exist only for isolated tests and must be absent in

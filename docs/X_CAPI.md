@@ -3,7 +3,7 @@
 ## Status and protocol decision
 
 The implementation is staged and defaults to `X_CAPI_MODE=off`. It has not
-been migrated, deployed, activated, or tested against X. The CMO must create a
+been migrated, deployed, activated, or tested against X. The operator must create a
 new conversion source and supply the exact Events Manager source/Pixel ID and
 exact IDs for `wallet_verified`, `deposit_completed`, and `session_started`.
 IDs are copied verbatim; code never creates or rewrites them.
@@ -23,14 +23,26 @@ isolated-test secret guard can exercise retry/idempotency code. `off` and
 `dry_run` remain available for staging. Enabling real delivery requires a new
 reviewed provenance contract and code change; it is not an operator toggle.
 
-The dormant payload serializer follows X's current web-conversions example:
-`conversion_time` is UTC ISO-8601 with exactly three millisecond digits and a
-`Z` suffix. There is no callable HTTP implementation. X's Ads authentication
-documentation requires a newly signed OAuth 1.0a `Authorization` header on
-every request using application and user credentials; a single static bearer
-or pixel-token header is not an acceptable substitute. Any future transport
-must use a reviewed OAuth library and a four-part API-key/access-token secret
-design without exposing those credentials to the gate or tenants.
+A dedicated Conversion API token is confirmed in this account's X Events
+Manager configuration. The transport therefore implements X's official server-side
+GTM token contract: `POST https://ads-api.x.com/12/measurement/conversions/{pixel_id}`,
+`Content-Type: application/json`, and `X-Pixel-Token`. Its four-field JSON uses
+`conversion_timestamp` as integral Unix milliseconds, preserving the original
+event time across retries. It does not implement OAuth or `conversion_time`.
+This account-specific authentication decision does not resolve the separate
+click-provenance activation block above. The normal worker, direct adapter,
+producer readiness, and Compose network/mount configuration remain blocked.
+Automated tests replace HTTP with a fake and use generated synthetic tokens;
+no real token is needed, read, or submitted during testing.
+
+The adapter reads only the existing protected worker secret file
+`/run/secrets/x_capi_access_token` (or `X_CAPI_ACCESS_TOKEN_FILE` below
+`/run/secrets`) at dispatch. It rejects environment tokens, symlinks, multiple
+hard links, non-regular files, unexpected owners, permissive modes, non-ASCII
+or whitespace bytes, and invalid sizes. No delivery credential is mounted by
+the current overlay. Future approved provisioning must mount it read-only to
+the worker alone, owned by UID 10001 with mode 0400 or 0600 and no trailing
+newline; never place the token in an environment variable or checkout.
 
 Transport submission, an API response reporting `conversions_processed`, ad
 attribution, reporting, and optimization are separate outcomes. Local/mock
@@ -38,6 +50,8 @@ acceptance is not evidence of X ingestion or campaign attribution.
 
 Primary references:
 
+- <https://github.com/twitter/x-ads-conversion-api-gtm-template/blob/e637e1c4af64d3b4ff1a4da9b97e950d13ad5dc9/template.tpl#L297-L368>
+- <https://github.com/twitter/x-ads-conversion-api-gtm-template/blob/e637e1c4af64d3b4ff1a4da9b97e950d13ad5dc9/README.md>
 - <https://docs.x.com/x-ads-api/measurement/web-conversions>
 - <https://docs.x.com/x-ads-api/fundamentals/making-authenticated-requests>
 - <https://business.x.com/en/help/campaign-measurement-and-analytics/conversion-tracking-for-websites>
@@ -56,12 +70,12 @@ landing ?twclid=… -> app scrubs URL synchronously -> module-private memory onl
    -> isolated worker rechecks consent/expiry -> live delivery structurally blocked
 ```
 
-A future reviewed request payload is constrained to:
+The implemented, activation-blocked request payload is constrained to:
 
 ```json
 {
   "conversions": [{
-    "conversion_time": "2026-09-14T12:00:00.000Z",
+    "conversion_timestamp": 1789387200000,
     "event_id": "exact-events-manager-id",
     "identifiers": [{"twclid": "consented-click-id"}],
     "conversion_id": "opaque-stable-uuid"
@@ -255,7 +269,7 @@ check remain blocked while saturated. Cleanup can reopen only after both that
 deadline has elapsed and tombstone capacity is available, so freeing an older
 tombstone cannot resurrect a later denied lifecycle.
 
-The fake-transport state machine models an ambiguous result after hypothetical
+The delivery state machine treats an ambiguous result after hypothetical
 remote acceptance as an at-least-once retry. The stable conversion UUID and
 original event time survive SIGTERM, SIGKILL, OOM, and lease reclaim. This is a
 local correctness property, not evidence of remote idempotency or end-to-end
@@ -272,11 +286,28 @@ slots and consumed before dispatch. Because that hot path intentionally does
 not fsync, a host power loss before the page cache reaches durable storage is a
 documented residual; process-only crashes preserve the tuple and pending work.
 
-The retained fake-response classifier models timeouts, connection failures,
+The retained response classifier treats timeouts, connection failures,
 408/425/5xx, and 429 as bounded jittered retries; validated `Retry-After` is
 capped at one hour. It models 401/403 as a pause and refuses unrecognized 200
-bodies. `RequestsTransport.send` itself always raises the explicit live-block
-reason and contains no HTTP POST path. Database statements, locks, queue size,
+bodies. This remains deliberately stricter than the GTM template's acceptance
+of 2xx/3xx without body validation; redirects are rejected and never followed.
+`RequestsTransport.send` first enforces the existing live-readiness block, then
+independently checks the exact payload keys, configured pixel/event IDs, click
+validation, canonical UUIDv4 conversion ID, integer timestamp and runtime file
+token. The standard-library HTTPS client verifies TLS and does not use ambient
+proxies, netrc, cookies, default user-agent headers, or automatic retries. It
+disables HTTP wire debugging and rejects `SSLKEYLOGFILE`, `SSL_CERT_FILE`, and
+`SSL_CERT_DIR` overrides; the TLS client uses the container's default trust store.
+The client reads at most 16 KiB plus one byte and retains only `Retry-After` from response
+headers. Bodies, credentials and client exceptions are never logged.
+Socket operations have a five-second timeout. A separate 20-second kernel
+SIGALRM deadline terminates a wedged worker, including blocked DNS or slow-drip
+responses. This is a process crash: the existing lease recovery retries the
+same conversion after restart. No background sender survives release of the
+privacy lock. Delivery requires the main thread and refuses an existing alarm
+or a blocked `SIGALRM` signal.
+The current activation block is unchanged and these paths are tested with
+fake HTTP only. Database statements, locks, queue size,
 cleanup batches, and per-worker pacing are bounded. Queue admission uses
 an O(1), transactionally maintained singleton counter rather than scanning the
 outbox. Events age out at 24
@@ -304,7 +335,7 @@ and absence of user triggers, rules, RLS policies, inheritance, unexpected
 relations, and logical publication. A version-4 label alone is never trusted.
 
 The current worker joins only the internal dedicated-database network and has
-no Internet-capable Compose network or HTTP client dependency. A future live
+no Internet-capable Compose network or third-party HTTP client dependency. A future live
 implementation must additionally enforce outbound TCP/443 to the reviewed X
 API destination through a separately managed allowlisted firewall/proxy and
 prove that every other Internet/private destination is denied. Docker bridge
@@ -449,7 +480,7 @@ validated scope; a rejected rollback still republishes the durable high-water.
    its old capability from authenticating a revoke.
 4. Configure an explicit deployment ID, exact origin/pixel/event IDs, positive
    monotonic consent-policy epoch, production chain IDs, context/queue caps, and
-   the CMO/vendor-confirmed click-ID contract version, character set, and length
+   the vendor-confirmed click-ID contract version, character set, and length
    bounds. Changing origin, pixel, deployment ID, contract, or epoch changes the
    cryptographic audience scope and stales old contexts; never lower/reuse an
    epoch. `X_CAPI_PRIVACY_RATE_LIMIT_PER_MIN` controls only redundant,
@@ -521,22 +552,22 @@ validated scope; a rejected rollback still republishes the durable high-water.
 7. Leave `X_CAPI_MODE=off`; run
    `python3 axonos_gate/x_capi_cli.py validate`, `status`, and `demo-payload`.
    `status` reports only aggregate queue/reason counts and readiness. Confirm no X
-   dependencies/requests and that core auth, deposit, session, WebRTC, and
+   requests and that core auth, deposit, session, WebRTC, and
    credential-boundary tests pass. A configured `live` mode must report
    `live_ready=false` and
    `live_delivery_blocked_untrusted_twclid_provenance`.
 8. Use `dry_run` with synthetic browser
    fixtures, inspect only sanitized status/counters, then purge test contexts.
    Dry-run rows are permanently `mode_scope='dry_run'` and never become live.
-9. Do not provision or mount an X delivery credential in this build. A future
-   reviewed design needs OAuth 1.0a application key/secret plus user access
-   token/secret, per-request signing through an established library, strict
-   secret-file isolation, and a fresh threat review; a single token is not
-   sufficient.
+9. Do not provision or mount an X delivery credential in this build. The
+   dedicated-token HTTP adapter is implemented and fake-tested, but the
+   independent provenance and network activation gates remain unchanged.
+   Future approved provisioning uses the worker-only secret file described
+   above; no OAuth credentials are required for this account-specific path.
 10. Do not switch to live or submit a canary in this build. Before any future
    live activation, obtain and independently review a normative click-ID
    authenticity/provenance contract, implement a non-operator-overridable
-   verifier, repeat the privacy/security review, obtain privacy/legal and CMO
+   verifier, repeat the privacy/security review, obtain privacy/legal and account-owner
    approval, and enforce a tested destination-restricted egress policy for
    `ads-api.x.com:443`. Verify Events Manager ingestion separately from
    attribution. Do not invent a test flag, fabricate a purchase, assume sandbox

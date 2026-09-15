@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import socket
 import struct
 import tempfile
@@ -20,6 +21,7 @@ import threading
 import time
 import unittest
 import uuid
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -399,6 +401,103 @@ class PostgresOutboxTests(unittest.TestCase):
             context_limit=100, pixel_id="pixel", twclid_charset="url_safe",
             twclid_min_length=8, twclid_max_length=256,
         )
+
+    @contextmanager
+    def fake_live_http_worker(self, responses, *, on_request=None):
+        """Real DB/OS fences, synthetic credentials, and no network socket."""
+        from axonos_gate import x_capi, x_capi_worker
+
+        cfg = self.worker_cfg()
+        cfg.pixel_id = "p"
+        cfg.event_ids = {"session_started": "e"}
+        cfg.errors = ()
+        conn = self.connect()
+        try:
+            self.assertTrue(x_capi_worker.enforce_config_guard(conn, cfg, 9.0))
+        finally:
+            conn.close()
+        captured = []
+        connections = []
+        http_connections = []
+        pending_responses = iter(responses)
+        synthetic_token = secrets.token_urlsafe(32)
+
+        def connect_worker(*_args, **_kwargs):
+            connection = self.connect()
+            connections.append(connection)
+            return connection
+
+        def fake_https(*_args, **_kwargs):
+            connection = MagicMock()
+            http_connections.append(connection)
+            response = next(pending_responses)
+
+            def request(method, path, *, body, headers):
+                connection.set_debuglevel.assert_called_once_with(0)
+                captured.append((method, path, body, dict(headers)))
+                # begin_dispatch must have committed before the HTTP boundary.
+                self.assertEqual(
+                    connections[-1].get_transaction_status(),
+                    self.psycopg2.extensions.TRANSACTION_STATUS_IDLE,
+                )
+                if on_request is not None:
+                    on_request()
+                if isinstance(response, Exception):
+                    raise response
+
+            connection.request.side_effect = request
+            if not isinstance(response, Exception):
+                status, headers, body = response
+                reply = MagicMock(status=status)
+                reply.read.side_effect = lambda maximum: body[:maximum]
+                reply.getheader.side_effect = lambda name: headers.get(name)
+                connection.getresponse.return_value = reply
+            return connection
+
+        class FakeTransport:
+            # The production activation block remains intact. This explicitly
+            # injected wrapper exercises the concrete adapter only with the
+            # test guard, mocked configuration, file reader, and HTTPS client.
+            def send(self, pixel_id, token, payload):
+                return x_capi_worker.RequestsTransport().send(
+                    pixel_id, token, payload
+                )
+
+        with ExitStack() as stack:
+            runtime = stack.enter_context(
+                tempfile.TemporaryDirectory(prefix="xcapifakehttp-")
+            )
+            fence = x_capi_worker.PrivacyFence(os.path.join(runtime, "privacy"))
+            fence.open()
+            stack.callback(fence.close)
+            peer = x_capi_worker.PrivacyFence(fence.path)
+            peer.open(create_controls=False)
+            stack.callback(peer.close)
+            for target, name, options in (
+                (x_capi, "load_config", {"return_value": cfg}),
+                (x_capi, "_db_url", {"return_value": TEST_URL}),
+                (x_capi, "get_connection", {"side_effect": connect_worker}),
+                (x_capi_worker, "_schema_ready", {"return_value": True}),
+                (x_capi_worker, "read_token", {
+                    "return_value": (synthetic_token, None)
+                }),
+                (x_capi_worker.http.client, "HTTPSConnection", {
+                    "side_effect": fake_https
+                }),
+            ):
+                stack.enter_context(patch.object(target, name, **options))
+
+            def run(now):
+                return x_capi_worker.run_once(
+                    FakeTransport(), now_fn=lambda: now, rng=lambda: 0.5,
+                    privacy_fence=fence, worker_id="fake-http-worker",
+                    perform_cleanup=False,
+                )
+
+            yield SimpleNamespace(
+                run=run, cfg=cfg, fence=fence, peer=peer, requests=captured,
+                connections=http_connections,
+            )
 
     def lifecycle_ticket(self, *, handle="h" * 43, csrf="c" * 43, state="granted"):
         click_id = "click_12345678"
@@ -1177,6 +1276,244 @@ class PostgresOutboxTests(unittest.TestCase):
             59.0, rng=lambda: 0.5,
         ))
         first_conn.close(); second_conn.close()
+
+    def test_fake_http_rate_limit_retries_identical_wire_then_scrubs_click(self):
+        conn = self.connect()
+        with conn.cursor() as cur:
+            context_id = self.seed_context(cur, "b")
+            conversion_id = self.seed_outbox(cur, context_id, "b")
+            cur.execute(
+                "UPDATE x_capi_outbox SET conversion_timestamp_ms=10123 "
+                "WHERE conversion_id=%s", (conversion_id,),
+            )
+        conn.commit()
+        with self.fake_live_http_worker([
+            (429, {"Retry-After": "7"}, b"rate limited"),
+            (200, {}, b'{"data":{"conversions_processed":1}}'),
+        ]) as worker:
+            self.assertEqual(worker.run(20.0), "retry")
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT status,attempt_count,next_attempt_at,twclid "
+                    "FROM x_capi_outbox WHERE conversion_id=%s",
+                    (conversion_id,),
+                )
+                self.assertEqual(
+                    cur.fetchone(), ("retrying", 1, 27.0, "click_12345678")
+                )
+            conn.commit()
+            self.assertEqual(worker.run(26.0), "idle")
+            self.assertEqual(len(worker.requests), 1)
+            self.assertEqual(worker.run(27.0), "accepted")
+            self.assertEqual(len(worker.requests), 2)
+            self.assertEqual(worker.requests[0], worker.requests[1])
+            method, path, body, headers = worker.requests[0]
+            self.assertEqual(method, "POST")
+            self.assertEqual(path, "/12/measurement/conversions/p")
+            self.assertEqual(set(headers), {"Content-Type", "X-Pixel-Token"})
+            self.assertEqual(json.loads(body), {"conversions": [{
+                "conversion_timestamp": 10123,
+                "event_id": "e",
+                "identifiers": [{"twclid": "click_12345678"}],
+                "conversion_id": conversion_id,
+            }]})
+            for connection in worker.connections:
+                connection.close.assert_called_once()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT status,twclid,lease_owner,lease_token,accepted_at "
+                "FROM x_capi_outbox WHERE conversion_id=%s", (conversion_id,),
+            )
+            self.assertEqual(cur.fetchone(), ("accepted", None, None, None, 27.0))
+            cur.execute("SELECT outbox_active_count FROM x_capi_capacity")
+            self.assertEqual(cur.fetchone()[0], 0)
+        conn.close()
+
+    def test_fake_http_timeout_retries_same_conversion_and_timestamp(self):
+        conn = self.connect()
+        with conn.cursor() as cur:
+            context_id = self.seed_context(cur, "c")
+            conversion_id = self.seed_outbox(cur, context_id, "c")
+        conn.commit()
+        with self.fake_live_http_worker([
+            TimeoutError("synthetic transport timeout"),
+            (200, {}, b'{"data":{"conversions_processed":1}}'),
+        ]) as worker:
+            self.assertEqual(worker.run(20.0), "retry")
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT status,attempt_count,next_attempt_at,last_error_code "
+                    "FROM x_capi_outbox WHERE conversion_id=%s",
+                    (conversion_id,),
+                )
+                self.assertEqual(
+                    cur.fetchone(), ("retrying", 1, 30.0, "transport_failure")
+                )
+            conn.commit()
+            self.assertEqual(worker.run(30.0), "accepted")
+            self.assertEqual(len(worker.requests), 2)
+            self.assertEqual(worker.requests[0][2], worker.requests[1][2])
+            conversion = json.loads(worker.requests[0][2])["conversions"][0]
+            self.assertEqual(conversion["conversion_id"], conversion_id)
+            self.assertEqual(conversion["conversion_timestamp"], 1)
+            for connection in worker.connections:
+                connection.close.assert_called_once()
+        conn.close()
+
+    def test_fake_http_late_privacy_marker_prevents_request(self):
+        from axonos_gate import x_capi_worker
+
+        conn = self.connect()
+        with conn.cursor() as cur:
+            context_id = self.seed_context(cur, "a")
+            conversion_id = self.seed_outbox(cur, context_id, "a")
+            cur.execute(
+                "UPDATE x_capi_attribution_contexts SET expires_at=10000, "
+                "lifecycle_expires_at=10000 WHERE id=%s", (context_id,),
+            )
+        conn.commit()
+        with self.fake_live_http_worker([]) as worker:
+            def publish_after_prepare(*_args):
+                marker = {
+                    "v": 1, "handle_hash": "a" * 64, "csrf_hash": "c" * 64,
+                    "lifecycle_expires_at": 10000.0,
+                }
+                marker_path = os.path.join(worker.fence.path, "a" * 64 + ".json")
+                with open(marker_path, "x", encoding="ascii") as output:
+                    json.dump(marker, output, separators=(",", ":"))
+                os.chmod(marker_path, 0o600)
+                return {}, True
+
+            with patch.object(
+                x_capi_worker, "drain_ingest_until_empty",
+                side_effect=publish_after_prepare,
+            ):
+                self.assertEqual(worker.run(20.0), "idle")
+            self.assertEqual(worker.requests, [])
+            self.assertEqual(worker.connections, [])
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT status,twclid,last_error_code FROM x_capi_outbox "
+                "WHERE conversion_id=%s", (conversion_id,),
+            )
+            self.assertEqual(
+                cur.fetchone(), ("cancelled", None, "local_privacy_fence")
+            )
+        conn.close()
+
+    def test_fake_http_stale_lease_before_send_never_opens_http(self):
+        from axonos_gate import x_capi_worker
+
+        conn = self.connect()
+        with conn.cursor() as cur:
+            context_id = self.seed_context(cur, "d")
+            conversion_id = self.seed_outbox(cur, context_id, "d")
+        conn.commit()
+        replacement_token = str(uuid.uuid4())
+        begin_dispatch = x_capi_worker.begin_dispatch
+
+        def replace_claim(connection, job, *args):
+            # Model a stale local job against a newer durable claim token.
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE x_capi_outbox SET lease_owner='replacement', "
+                    "lease_token=%s WHERE conversion_id=%s",
+                    (replacement_token, conversion_id),
+                )
+            conn.commit()
+            return begin_dispatch(connection, job, *args)
+
+        with self.fake_live_http_worker([]) as worker, patch.object(
+            x_capi_worker, "begin_dispatch", side_effect=replace_claim
+        ):
+            self.assertEqual(worker.run(20.0), "lease_lost")
+            self.assertEqual(worker.requests, [])
+            self.assertEqual(worker.connections, [])
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT status,lease_owner,lease_token FROM x_capi_outbox "
+                "WHERE conversion_id=%s", (conversion_id,),
+            )
+            row = cur.fetchone()
+            self.assertEqual(row[:2], ("leased", "replacement"))
+            self.assertEqual(str(row[2]), replacement_token)
+            cur.execute("SELECT count(*) FROM x_capi_counters")
+            self.assertEqual(cur.fetchone()[0], 0)
+        conn.close()
+
+    def test_fake_http_stale_acceptance_cannot_ack_replacement_lease(self):
+        conn = self.connect()
+        with conn.cursor() as cur:
+            context_id = self.seed_context(cur, "e")
+            conversion_id = self.seed_outbox(cur, context_id, "e")
+        conn.commit()
+        replacement_token = str(uuid.uuid4())
+
+        def replace_before_response():
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE x_capi_outbox SET lease_owner='replacement', "
+                    "lease_token=%s WHERE conversion_id=%s",
+                    (replacement_token, conversion_id),
+                )
+            conn.commit()
+
+        with self.fake_live_http_worker(
+            [(200, {}, b'{"data":{"conversions_processed":1}}')],
+            on_request=replace_before_response,
+        ) as worker:
+            self.assertEqual(worker.run(20.0), "lease_lost")
+            self.assertEqual(len(worker.requests), 1)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT status,lease_owner,lease_token,accepted_at,twclid "
+                "FROM x_capi_outbox WHERE conversion_id=%s", (conversion_id,),
+            )
+            row = cur.fetchone()
+            self.assertEqual(row[:2], ("leased", "replacement"))
+            self.assertEqual(str(row[2]), replacement_token)
+            self.assertEqual(row[3:], (None, "click_12345678"))
+            cur.execute("SELECT outbox_active_count FROM x_capi_capacity")
+            self.assertEqual(cur.fetchone()[0], 1)
+            cur.execute("SELECT count(*) FROM x_capi_counters")
+            self.assertEqual(cur.fetchone()[0], 0)
+        conn.close()
+
+    def test_fake_http_keeps_privacy_lock_until_response_and_completion(self):
+        from axonos_gate import x_capi_worker
+
+        conn = self.connect()
+        with conn.cursor() as cur:
+            context_id = self.seed_context(cur, "f")
+            self.seed_outbox(cur, context_id, "f")
+        conn.commit()
+        conn.close()
+        observations = []
+
+        def assert_inflight_boundary():
+            with worker.peer.dispatch_boundary() as acquired:
+                observations.append(acquired)
+            request = {
+                "v": 1, "action": "consent", "operation": "revoke",
+                "context_token": "t" * 40, "csrf_token": "c" * 43,
+                "request_timestamp_ms": 20_000,
+            }
+            with patch.object(x_capi_worker.time, "time", return_value=20.0):
+                result = x_capi_worker.ConsentService(None)._process(
+                    request, worker.peer
+                )
+            self.assertEqual(
+                result, {"v": 1, "ok": False, "error": "lock_unavailable"}
+            )
+
+        with self.fake_live_http_worker(
+            [(200, {}, b'{"data":{"conversions_processed":1}}')],
+            on_request=assert_inflight_boundary,
+        ) as worker:
+            self.assertEqual(worker.run(20.0), "accepted")
+            self.assertEqual(observations, [False])
+            with worker.peer.dispatch_boundary() as acquired:
+                self.assertTrue(acquired)
 
     def test_clean_and_dirty_lifecycle_transitions_do_not_mutate_work(self):
         from axonos_gate import x_capi_worker
@@ -2065,7 +2402,7 @@ class PostgresOutboxTests(unittest.TestCase):
             )
         transport._session.post.assert_not_called()
 
-    def test_payload_uses_exact_documented_utc_millisecond_time(self):
+    def test_payload_uses_exact_dedicated_token_unix_milliseconds(self):
         from axonos_gate import x_capi_worker
 
         job = {
@@ -2077,17 +2414,18 @@ class PostgresOutboxTests(unittest.TestCase):
         conversion = x_capi_worker.build_payload(job)["conversions"][0]
         self.assertEqual(
             set(conversion),
-            {"conversion_time", "event_id", "identifiers", "conversion_id"},
+            {"conversion_timestamp", "event_id", "identifiers", "conversion_id"},
         )
         self.assertEqual(
-            conversion["conversion_time"], "2022-02-18T01:14:00.603Z"
+            conversion["conversion_timestamp"], 1_645_146_840_603
         )
+        self.assertIs(type(conversion["conversion_timestamp"]), int)
         maximum = dict(job, conversion_timestamp_ms=253_402_300_799_999)
         self.assertEqual(
             x_capi_worker.build_payload(maximum)["conversions"][0][
-                "conversion_time"
+                "conversion_timestamp"
             ],
-            "9999-12-31T23:59:59.999Z",
+            253_402_300_799_999,
         )
         for invalid in (
             True, False, 1.0, "1", None, 0, -1, 253_402_300_800_000,

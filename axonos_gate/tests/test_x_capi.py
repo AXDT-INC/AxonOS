@@ -3109,9 +3109,10 @@ class AdapterTests(unittest.TestCase):
         conversion = payload["conversions"][0]
         self.assertEqual(
             set(conversion),
-            {"conversion_time", "event_id", "identifiers", "conversion_id"},
+            {"conversion_timestamp", "event_id", "identifiers", "conversion_id"},
         )
-        self.assertEqual(conversion["conversion_time"], "2026-09-14T12:00:00.000Z")
+        self.assertEqual(conversion["conversion_timestamp"], 1_789_387_200_000)
+        self.assertIs(type(conversion["conversion_timestamp"]), int)
         self.assertEqual(conversion["identifiers"], [{"twclid": "click_12345678"}])
         serialized = json.dumps(payload)
         for forbidden in (
@@ -3216,14 +3217,15 @@ class AdapterTests(unittest.TestCase):
             transport.send("source", "dedicated-secret", x_capi_worker.build_payload(self.job))
         fake_requests.Session.assert_not_called()
 
-    def test_blocked_worker_has_no_http_client_or_response_buffer_path(self):
+    def test_worker_transport_has_bounded_response_and_no_new_dependency(self):
         source = (ROOT / "axonos_gate" / "x_capi_worker.py").read_text(
             encoding="utf-8"
         )
         image = (ROOT / "docker" / "x-capi-worker" / "Dockerfile").read_text(
             encoding="utf-8"
         )
-        self.assertFalse(hasattr(x_capi_worker, "MAX_RESPONSE_BYTES"))
+        self.assertEqual(x_capi_worker.MAX_RESPONSE_BYTES, 16 * 1024)
+        self.assertIn("import http.client", source)
         self.assertNotIn("import requests", source)
         self.assertNotIn(".post(", source)
         self.assertNotIn("iter_content", source)
