@@ -121,7 +121,7 @@ Copyright (C) 2019 The noVNC Authors
     <!-- Stylesheets -->
     <link rel="stylesheet" href="app/styles/base.css">
     <link rel="stylesheet" href="app/vendor/xterm/xterm.css?v=6.0.0">
-    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.5&t=20260925schedule">
+    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.5&t=20260925creditentry">
 
     <!-- Images that will later appear via CSS -->
     <link rel="preload" as="image" href="app/images/info.svg">
@@ -178,7 +178,7 @@ Copyright (C) 2019 The noVNC Authors
     </script>
     <script src="app/error-handler.js"></script>
     <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
-    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260925schedule"></script>
+    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260925creditentry"></script>
 </head>
 
 <body>
@@ -1332,7 +1332,7 @@ Copyright (C) 2019 The noVNC Authors
                                 <div id="axonos_wizard_test_credit_panel" class="axonos-test-credit-panel" hidden>
                                     <div>
                                         <strong>Release-test credit</strong>
-                                        <p>Add the configured test-credit grant to this signed-in wallet on every
+                                        <p>Enter the test credits to add to this signed-in wallet on each
                                             click. The payment buttons above always submit real payments.</p>
                                     </div>
                                     <button type="button" id="axonos_wizard_test_credit_btn"
@@ -1789,7 +1789,7 @@ Copyright (C) 2019 The noVNC Authors
                         <div id="axonos_test_credit_panel" class="axonos-test-credit-panel" hidden>
                             <div>
                                 <strong>Release-test credit</strong>
-                                <p>Add the configured test-credit grant on every click without sending a transaction.
+                                <p>Enter the test credits to add without sending a transaction.
                                     Pay with ETH, USDC, and AXGT always remain real on-chain actions.</p>
                             </div>
                             <button type="button" id="axonos_test_credit_btn"
@@ -1986,7 +1986,7 @@ Copyright (C) 2019 The noVNC Authors
                 <span class="axonos-sidebar-ctrl-btn__details">
                     <span class="axonos-sidebar-ctrl-btn__title">Detach session</span>
                     <span class="axonos-sidebar-ctrl-btn__desc">Return to home screen (desktop keeps running)</span>
-                    <span class="axonos-sidebar-ctrl-btn__hint">Closing the tab keeps jobs and billing running. Use End session to stop.</span>
+                    <span class="axonos-sidebar-ctrl-btn__hint">Closing the tab keeps jobs and billing running. Confirming the browser’s leave-page prompt does not stop compute. Use End session to stop.</span>
                 </span>
             </button>
             <button type="button" id="axonos_sidebar_end_btn"
@@ -4412,27 +4412,67 @@ Copyright (C) 2019 The noVNC Authors
                 var panel = document.getElementById(id);
                 if (panel) panel.hidden = !eligible;
             });
-            ['axonos_dashboard_topup_btn', 'axonos_sidebar_topup_btn'].forEach(function (id) {
-                var balanceButton = document.getElementById(id);
-                if (!balanceButton) return;
-                if (eligible) {
-                    var grant = Number(window.axonosTestCreditGrantMinutes);
-                    var grantLabel = Number.isFinite(grant) && grant > 0
-                        ? String(Math.round(grant * 100) / 100)
-                        : '';
-                    balanceButton.textContent = grantLabel
-                        ? ('Add ' + grantLabel + ' test credits')
-                        : 'Add test credits';
-                    balanceButton.dataset.axonosTestCredit = 'true';
-                    balanceButton.title = grantLabel
-                        ? ('Each click adds ' + grantLabel + ' test credits to this eligible wallet.')
-                        : 'Each click adds the configured test-credit grant.';
-                } else {
-                    balanceButton.textContent = 'Top up credits';
-                    balanceButton.dataset.axonosTestCredit = 'false';
-                    balanceButton.removeAttribute('title');
+            ['axonos_dashboard_topup_btn', 'axonos_sidebar_topup_btn',
+                'axonos_test_credit_btn', 'axonos_wizard_test_credit_btn'].forEach(function (id) {
+                var button = document.getElementById(id);
+                if (!button) return;
+                var label = document.getElementById(id + '_amount_label');
+                if (!label && eligible) {
+                    label = document.createElement('label');
+                    label.id = id + '_amount_label';
+                    label.className = 'axonos-test-credit-amount';
+                    label.textContent = 'Test credits to add';
+                    var input = document.createElement('input');
+                    input.id = id + '_amount';
+                    input.type = 'text';
+                    input.inputMode = 'numeric';
+                    input.pattern = '[0-9]+';
+                    input.required = true;
+                    input.autocomplete = 'off';
+                    input.maxLength = 4;
+                    input.value = String(Math.max(1, Math.floor(window.axonosTestCreditGrantMinutes || 60)));
+                    var previousValue = input.value;
+                    input.addEventListener('beforeinput', function (event) {
+                        if (event.data && /[^0-9]/.test(event.data)) event.preventDefault();
+                    });
+                    input.addEventListener('paste', function (event) {
+                        if (/[^0-9]/.test(event.clipboardData.getData('text'))) event.preventDefault();
+                    });
+                    input.addEventListener('input', function () {
+                        if (/[^0-9]/.test(input.value)) input.value = previousValue;
+                        previousValue = input.value;
+                        input.setCustomValidity('');
+                    });
+                    label.appendChild(input);
+                    button.before(label);
                 }
+                if (label) {
+                    label.hidden = !eligible;
+                    var field = label.querySelector('input');
+                    field.disabled = !eligible;
+                    if (!eligible) field.value = '';
+                    field.title = 'Enter 1–' + (window.axonosTestCreditMaxGrantMinutes || 1440) + ' whole test credits.';
+                }
+                button.textContent = eligible ? 'Add test credits' : 'Top up credits';
+                button.dataset.axonosTestCredit = eligible ? 'true' : 'false';
+                if (eligible) button.title = 'Add the entered amount without sending a transaction.';
+                else button.removeAttribute('title');
             });
+        }
+
+        function axonosReadTestCreditAmount(buttonId) {
+            var input = document.getElementById(buttonId + '_amount');
+            if (!input) return null;
+            var raw = input.value;
+            var amount = Number(raw);
+            var limit = window.axonosTestCreditMaxGrantMinutes || 1440;
+            if (!/^[0-9]+$/.test(raw) || !Number.isSafeInteger(amount) || amount < 1 || amount > limit) {
+                input.setCustomValidity('Enter a whole number from 1 to ' + limit + '.');
+                input.reportValidity();
+                return null;
+            }
+            input.setCustomValidity('');
+            return amount;
         }
 
         function axonosPaymentIdentityIsCurrent(wallet) {
@@ -4459,11 +4499,13 @@ Copyright (C) 2019 The noVNC Authors
             if (eligible && dataOrEligible && typeof dataOrEligible === 'object') {
                 var grant = Number(dataOrEligible.test_credit_grant_minutes);
                 var cap = Number(dataOrEligible.test_credit_max_balance_minutes);
+                window.axonosTestCreditMaxGrantMinutes = Number(dataOrEligible.test_credit_max_grant_minutes) || 1440;
                 window.axonosTestCreditGrantMinutes = Number.isFinite(grant) && grant > 0
                     ? grant : null;
                 window.axonosTestCreditMaxBalanceMinutes = Number.isFinite(cap) && cap > 0
                     ? cap : null;
             } else if (!eligible) {
+                window.axonosTestCreditMaxGrantMinutes = null;
                 window.axonosTestCreditGrantMinutes = null;
                 window.axonosTestCreditMaxBalanceMinutes = null;
             }
@@ -9093,6 +9135,14 @@ Copyright (C) 2019 The noVNC Authors
 
         function axonosRequestTestCredit(rail, messageEl, options) {
             var requestOptions = options && typeof options === 'object' ? options : {};
+            var amount = requestOptions.amount;
+            if (amount === undefined) {
+                amount = axonosReadTestCreditAmount(requestOptions.amountButtonId || 'axonos_test_credit_btn');
+            }
+            if (amount === null || !Number.isSafeInteger(amount) || amount < 1) {
+                return Promise.resolve({ verified: false, error_code: 'invalid_amount', error: 'Enter a valid test-credit amount.' });
+            }
+            requestOptions = Object.assign({}, requestOptions, { amount: amount });
             var wallet = (verifiedWalletAddress || window.verifiedWalletAddress || '').trim();
             var tok = window.verifiedWalletAuthToken;
             var selectedRail = String(rail || '').trim().toLowerCase();
@@ -9143,7 +9193,8 @@ Copyright (C) 2019 The noVNC Authors
                 body: JSON.stringify({
                     wallet_address: wallet,
                     rail: selectedRail,
-                    request_id: axonosNewTestCreditRequestId()
+                    request_id: axonosNewTestCreditRequestId(),
+                    amount: amount
                 })
             };
             if (controller) testCreditFetchOptions.signal = controller.signal;
@@ -9384,7 +9435,7 @@ Copyright (C) 2019 The noVNC Authors
             axonosRequestTestCredit(axonosActivePayRail || 'eth', document.getElementById('axonos_verify_deposit_msg'));
         });
         if (wizardTestCreditBtn) wizardTestCreditBtn.addEventListener('click', function () {
-            axonosRequestTestCredit(axonosSelectedPaymentToken || 'usdc', document.getElementById('axonos_wizard_test_credit_msg'));
+            axonosRequestTestCredit(axonosSelectedPaymentToken || 'usdc', document.getElementById('axonos_wizard_test_credit_msg'), { amountButtonId: 'axonos_wizard_test_credit_btn' });
         });
         ['axonos_pay_rail_eth', 'axonos_pay_rail_usdc', 'axonos_pay_rail_axgt'].forEach(function (id) {
             var pill = document.getElementById(id);
@@ -13673,10 +13724,11 @@ Copyright (C) 2019 The noVNC Authors
         // Shared one-click refill for eligible release-test wallets. It only adds
         // bounded credit; resumeCreditGraceOnly prevents this balance action from
         // ever launching a brand-new GPU session as a side effect.
-        function axonosRequestBalanceCardTestCredit() {
+        function axonosRequestBalanceCardTestCredit(buttonId) {
             const requestWallet = String(window.verifiedWalletAddress || '').toLowerCase();
             const request = axonosRequestTestCredit('eth', null, {
-                resumeCreditGraceOnly: true
+                resumeCreditGraceOnly: true,
+                amountButtonId: buttonId
             });
             if (request && typeof request.then === 'function') {
                 request.then(function (result) {
@@ -13702,7 +13754,7 @@ Copyright (C) 2019 The noVNC Authors
         if (dashTopupBtn) {
             dashTopupBtn.addEventListener('click', () => {
                 if (window.axonosTestCreditEligible) {
-                    axonosRequestBalanceCardTestCredit();
+                    axonosRequestBalanceCardTestCredit('axonos_dashboard_topup_btn');
                     return;
                 }
                 axonosStartWizard();
@@ -13798,7 +13850,7 @@ Copyright (C) 2019 The noVNC Authors
         if (sidebarTopupBtn) {
             sidebarTopupBtn.addEventListener('click', () => {
                 if (window.axonosTestCreditEligible) {
-                    axonosRequestBalanceCardTestCredit();
+                    axonosRequestBalanceCardTestCredit('axonos_sidebar_topup_btn');
                     return;
                 }
                 if (typeof window.axonosOpenWalletTopUpDialog === 'function') {

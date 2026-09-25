@@ -765,13 +765,11 @@ def get_wallet_access_status(wallet_address: str, consume_usage: bool = False) -
         "is_whitelisted": test_credit_eligible,
     }
     if test_credit_eligible:
-        # The dashboard must describe the server-enforced bounded grant, rather
-        # than hard-coding the default.  In particular, the default policy fills
-        # a wallet *toward* a 60-credit balance cap; it is not an unconditional
-        # +60 on every click.
+        # Publish the default and per-request limit only to eligible wallets.
         test_credit_policy.update(
             {
                 "test_credit_grant_minutes": get_test_credit_grant_minutes(),
+                "test_credit_max_grant_minutes": MAX_TEST_CREDIT_GRANT_MINUTES,
                 "test_credit_max_balance_minutes": get_test_credit_max_balance_minutes(),
             }
         )
@@ -969,8 +967,11 @@ def get_test_credit_max_balance_minutes() -> float:
     )
 
 
-def grant_test_credit(wallet_address: str, payment_rail: str, request_id: str) -> Dict[str, Any]:
-    """Add one configured test-credit grant to an explicitly eligible wallet."""
+_DEFAULT_TEST_CREDIT_AMOUNT = object()
+
+
+def grant_test_credit(wallet_address: str, payment_rail: str, request_id: str, amount=_DEFAULT_TEST_CREDIT_AMOUNT) -> Dict[str, Any]:
+    """Add a validated requested amount, or the legacy default, to an eligible wallet."""
     wallet = (wallet_address or "").strip().lower()
     rail = (payment_rail or "").strip().lower()
     request_norm = (request_id or "").strip().lower()
@@ -1009,11 +1010,18 @@ def grant_test_credit(wallet_address: str, payment_rail: str, request_id: str) -
             "error": "request_id must be 8-128 safe characters",
         }
 
+    grant = get_test_credit_grant_minutes()
+    if amount is not _DEFAULT_TEST_CREDIT_AMOUNT:
+        if isinstance(amount, bool) or not isinstance(amount, int) or not 1 <= amount <= MAX_TEST_CREDIT_GRANT_MINUTES:
+            return {**base, "error_code": "invalid_amount",
+                    "error": f"amount must be a whole number from 1 to {int(MAX_TEST_CREDIT_GRANT_MINUTES)}"}
+        grant = amount
+
     try:
         deposit_ledger = _get_deposit_ledger()
         result = deposit_ledger.credit_test_grant(
             wallet_address=wallet,
-            grant_minutes=get_test_credit_grant_minutes(),
+            grant_minutes=grant,
             max_balance_minutes=get_test_credit_max_balance_minutes(),
             request_id=request_norm,
             payment_rail=rail,

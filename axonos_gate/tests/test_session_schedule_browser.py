@@ -100,3 +100,75 @@ class SessionScheduleBrowserTests(unittest.TestCase):
         self.assertEqual(self.page.locator('#axonos_scheduled_stop_warning').count(), 0)
         self.page.evaluate("UI.updateScheduledStopWarnings([{session_id:529,guest_session:true,scheduled_stop_at:Date.now()/1000+30}],true)")
         self.assertEqual(self.page.locator('#axonos_scheduled_stop_warning').count(), 0)
+
+    def _install_lifecycle_handlers(self):
+        source = (ROOT / 'novnc-theme/ui.js').read_text()
+        method = source[source.index('    addAxonosSessionLifecycleHandlers() {'):source.index('    persistAxonosSelectedTemplate()')]
+        self.page.evaluate('Object.assign(UI, {' + method + '}); UI.addAxonosSessionLifecycleHandlers();')
+
+    def test_attached_viewer_requests_native_confirmation_without_release(self):
+        self._install_lifecycle_handlers()
+        self.page.evaluate("""() => {
+            UI.connected = true;
+            window.releaseCalls = 0;
+            UI._axonosReleaseSessionBeacon = () => window.releaseCalls++;
+            document.body.insertAdjacentHTML('beforeend','<button id="activate">Activate</button>');
+        }""")
+        self.page.locator('#activate').click()
+        dialogs = []
+        def confirm(dialog):
+            dialogs.append(dialog.type)
+            dialog.dismiss()
+        self.page.on('dialog', confirm)
+        # Reload surfaces the real Chromium confirmation. Dismissing keeps
+        # the page alive so we can verify no release was requested.
+        self.page.evaluate('setTimeout(() => location.reload(), 0)')
+        self.page.wait_for_timeout(100)
+        self.assertEqual(dialogs, ['beforeunload'])
+        self.assertFalse(self.page.is_closed())
+        self.assertEqual(self.page.evaluate('window.releaseCalls'), 0)
+        self.page.remove_listener('dialog', confirm)
+        self.page.evaluate('UI.connected = false')
+
+    def test_confirmation_only_for_attached_desktop_or_terminal(self):
+        self._install_lifecycle_handlers()
+        for connected, terminal, detached, ending, expected in [
+            (True, 'idle', False, False, True),
+            (False, 'connected', False, False, True),
+            (False, 'idle', True, False, False),
+            (False, 'idle', False, False, False),
+            (True, 'idle', False, True, False),
+        ]:
+            blocked = self.page.evaluate("""([connected, terminal, detached, ending]) => {
+                UI.connected=connected; UI.terminalState=terminal;
+                window.axonosSessionDetached=detached; UI._axgtEndingSession=ending;
+                const event=new Event('beforeunload',{cancelable:true});
+                window.dispatchEvent(event); return event.defaultPrevented;
+            }""", [connected, terminal, detached, ending])
+            self.assertEqual(blocked, expected)
+
+    def test_numeric_credit_fields_are_eligible_only_and_validate_amounts(self):
+        source = (ROOT / 'novnc-theme/vnc.html').read_text()
+        helpers = source[source.index('        function axonosSyncTestCreditControls()'):source.index('        function axonosPaymentIdentityIsCurrent')]
+        self.page.evaluate("""() => {
+            ['axonos_dashboard_topup_btn','axonos_sidebar_topup_btn','axonos_test_credit_btn','axonos_wizard_test_credit_btn'].forEach(id => {
+                const button=document.createElement('button'); button.id=id; document.body.appendChild(button);
+            });
+        }""")
+        self.page.evaluate('() => {' + helpers + '; window.axonosSyncTestCreditControls=axonosSyncTestCreditControls; window.axonosReadTestCreditAmount=axonosReadTestCreditAmount; }')
+        self.page.evaluate('window.axonosTestCreditEligible=false; axonosSyncTestCreditControls()')
+        self.assertEqual(self.page.locator('.axonos-test-credit-amount').count(), 0)
+        self.page.evaluate('window.axonosTestCreditEligible=true; window.axonosTestCreditGrantMinutes=60; window.axonosTestCreditMaxGrantMinutes=1440; axonosSyncTestCreditControls()')
+        self.assertEqual(self.page.locator('.axonos-test-credit-amount').count(), 4)
+        field = self.page.locator('#axonos_dashboard_topup_btn_amount')
+        field.fill('500')
+        field.press('e')
+        self.assertEqual(field.input_value(), '500')
+        self.assertEqual(self.page.evaluate("axonosReadTestCreditAmount('axonos_dashboard_topup_btn')"), 500)
+        for value in ['', '0', '1441']:
+            field.fill(value)
+            self.assertIsNone(self.page.evaluate("axonosReadTestCreditAmount('axonos_dashboard_topup_btn')"))
+        self.page.evaluate('window.axonosTestCreditEligible=false; axonosSyncTestCreditControls()')
+        self.assertTrue(field.is_disabled())
+        self.assertTrue(field.is_hidden())
+        self.assertEqual(self.page.locator('#axonos_dashboard_topup_btn').inner_text(), 'Top up credits')

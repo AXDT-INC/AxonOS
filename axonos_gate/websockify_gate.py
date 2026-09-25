@@ -2596,7 +2596,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 return self._send_json(
                     401, {"verified": False, "error": "Valid auth token required"}
                 )
-            result = grant_test_credit(wallet_address, rail, request_id)
+            result = grant_test_credit(wallet_address, rail, request_id, **({"amount": data["amount"]} if "amount" in data else {}))
             set_cookie = None
             if result.get("verified"):
                 try:

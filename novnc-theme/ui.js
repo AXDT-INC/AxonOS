@@ -591,6 +591,16 @@ const UI = {
             }
         }, true);
 
+        // Browsers supply the confirmation wording. Confirming navigation
+        // only closes the viewer; it never releases the runtime.
+        window.addEventListener('beforeunload', (event) => {
+            if (UI._axgtEndingSession || window.axonosSessionDetached) return;
+            if (UI.connected || UI.terminalState === 'connected') {
+                event.preventDefault();
+                event.returnValue = '';
+            }
+        });
+
         // Closing or reloading a viewer never releases funded compute. End
         // session is explicit; runtime health and billing are server-owned.
         window.addEventListener('pagehide', () => {
@@ -1671,7 +1681,7 @@ const UI = {
         }
 
         try {
-            const terminalModule = await import('./terminal/axonos-terminal.js?v=20260925schedule');
+            const terminalModule = await import('./terminal/axonos-terminal.js?v=20260925creditentry');
             const client = await terminalModule.openAxonosTerminal({
                 container: document.getElementById('noVNC_container'),
                 wallet,
@@ -4379,7 +4389,7 @@ const UI = {
                         try {
                             // A stable module URL keeps negotiation generation/cancellation
                             // state shared across retries and rapid user reconnects.
-                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260925schedule');
+                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260925creditentry');
                             if (!connectAttemptIsCurrent()) {
                                 return;
                             }

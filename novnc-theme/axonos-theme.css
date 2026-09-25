@@ -9036,3 +9036,7 @@ body.axonos-guest-mode #axonos_wizard_ssh_key_wrap {
     padding: 8px 12px; cursor: pointer; border-radius: 6px;
 }
 .axonos-schedule-dialog .schedule-error { color: #ffbcac; }
+
+.axonos-test-credit-amount { display: grid; gap: 6px; margin: 8px 0; font-size: 0.8rem; }
+.axonos-test-credit-amount[hidden] { display: none; }
+.axonos-test-credit-amount input { width: 100%; min-width: 0; box-sizing: border-box; padding: 8px 10px; border: 1px solid #8873b3; border-radius: 6px; color: inherit; background: #181323; }

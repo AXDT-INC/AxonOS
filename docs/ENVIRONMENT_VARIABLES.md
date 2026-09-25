@@ -118,17 +118,18 @@ ETH, USDC, and AXGT payment controls always submit on-chain transactions. Grants
 recorded with separate ledger/provenance fields and are disabled unless both the
 feature flag and wallet eligibility list permit them.
 
-For an eligible signed-in wallet, the dashboard balance card becomes a one-click
-test-credit action and displays the configured grant. The wallet button uses the
-additive grant path: every new request adds `AXONOS_TEST_CREDIT_GRANT_MINUTES`
-(0→60, 25→85, 60→120). A successful grant reconnects an existing
+For an eligible signed-in wallet, the test-credit controls show a numeric amount
+field and an **Add test credits** button. Each request accepts a whole number from
+1 to 1440 and adds that amount to the balance. The field initially uses
+`AXONOS_TEST_CREDIT_GRANT_MINUTES`; API requests that omit `amount` also use this
+default (for example, a grant of 60 changes 25→85). A successful grant reconnects an existing
 credit-grace session only; it never silently starts a new compute session.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `AXONOS_TEST_CREDITS_ENABLED` | `false` | Explicit fail-closed switch for token-free test credit. A wallet list alone never enables it. |
 | `AXONOS_TEST_CREDIT_WALLETS` | *(none)* | Comma-separated wallets eligible to request test credit. |
-| `AXONOS_TEST_CREDIT_GRANT_MINUTES` | `60` | Minutes requested per grant; finite hard maximum `1440`. |
+| `AXONOS_TEST_CREDIT_GRANT_MINUTES` | `60` | Default grant when no amount is supplied; eligible wallets can select 1–1440 whole credits per request. |
 | `AXONOS_TEST_CREDIT_MAX_BALANCE_MINUTES` | `60` | Balance cap for bounded (non-additive) grant paths such as guest funding; finite hard maximum `10080`. The wallet test-credit button is additive and is **not** capped by this value. |
 | `AXONOS_WHITELISTED_WALLETS` | *(none)* | Legacy wallet-list alias only. It does not enable test credits. |
 

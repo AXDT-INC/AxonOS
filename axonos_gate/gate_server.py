@@ -1038,7 +1038,7 @@ def api_test_credit():
     if auth_err:
         return auth_err
 
-    result = grant_test_credit(wallet_address, rail, request_id)
+    result = grant_test_credit(wallet_address, rail, request_id, **({"amount": data["amount"]} if "amount" in data else {}))
     status_code = test_credit_http_status(result)
     if result.get("verified"):
         try:

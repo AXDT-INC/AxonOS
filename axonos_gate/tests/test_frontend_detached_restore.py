@@ -48,7 +48,9 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
             "persistAxonosSelectedTemplate() {",
         )
         self.assertNotIn("_axonosReleaseSessionBeacon", handlers)
-        self.assertNotIn("beforeunload", handlers)
+        self.assertIn("beforeunload", handlers)
+        self.assertIn("event.preventDefault()", handlers)
+        self.assertIn("event.returnValue", handlers)
         self.assertIn("Closing the tab keeps jobs and billing running", self.page_source)
 
     def test_wallet_picker_deduplicates_repeated_eip6963_announcements(self) -> None:
@@ -124,7 +126,7 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
             "function axonosPaymentIdentityIsCurrent(wallet)",
         )
         refill = self._page_between(
-            "function axonosRequestBalanceCardTestCredit()",
+            "function axonosRequestBalanceCardTestCredit(buttonId)",
             "const dashTopupBtn = document.getElementById('axonos_dashboard_topup_btn')",
         )
         balance_actions = self._page_between(
@@ -136,8 +138,8 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
             "var AXONOS_VERIFY_DEPOSIT_ENDPOINT",
         )
 
-        self.assertIn("'Add ' + grantLabel + ' test credits'", eligibility)
-        self.assertIn("Each click adds ", eligibility)
+        self.assertIn("'Add test credits'", eligibility)
+        self.assertIn("input.inputMode = 'numeric'", eligibility)
         self.assertIn("axonos_dashboard_topup_btn", eligibility)
         self.assertIn("axonos_sidebar_topup_btn", eligibility)
         self.assertIn("test_credit_grant_minutes", self.page_source)
@@ -145,7 +147,7 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         self.assertIn("axonosRequestTestCredit('eth', null", refill)
         self.assertIn("resumeCreditGraceOnly: true", refill)
         self.assertGreaterEqual(balance_actions.count("if (window.axonosTestCreditEligible)"), 2)
-        self.assertGreaterEqual(balance_actions.count("axonosRequestBalanceCardTestCredit()"), 2)
+        self.assertGreaterEqual(balance_actions.count("axonosRequestBalanceCardTestCredit("), 2)
         self.assertIn("axonosStartWizard()", balance_actions)
         self.assertIn("window.axonosOpenWalletTopUpDialog(true)", balance_actions)
         self.assertIn("if (successOptions.resumeCreditGraceOnly)", success)

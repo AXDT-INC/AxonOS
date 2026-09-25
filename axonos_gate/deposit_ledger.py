@@ -516,6 +516,7 @@ def credit_test_grant(
                     previous_wallet != wallet
                     or previous_source != credit_source
                     or previous_rail != rail
+                    or (additive and float(previous[1]) != grant)
                 ):
                     conn.commit()
                     return {
@@ -523,7 +524,7 @@ def credit_test_grant(
                         "error_code": "request_mismatch",
                         "request_mismatch": True,
                         "remaining_minutes": remaining_now,
-                        "error": "request_id was already used for a different wallet or rail",
+                        "error": "request_id was already used for a different wallet, rail, or amount",
                     }
                 conn.commit()
                 previous_credited = float(previous[1])

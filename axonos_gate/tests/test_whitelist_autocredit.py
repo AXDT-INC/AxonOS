@@ -146,6 +146,28 @@ class TestTestCreditPolicy(unittest.TestCase):
             additive=True,
         )
 
+    def test_custom_amount_is_forwarded_only_for_eligible_wallet(self):
+        ledger = make_ledger()
+        with patch.object(axgt_verifier, "_get_deposit_ledger", return_value=ledger):
+            result = axgt_verifier.grant_test_credit(ELIGIBLE, "eth", REQUEST_ID, amount=500)
+        self.assertTrue(result["verified"])
+        self.assertEqual(ledger.credit_test_grant.call_args.kwargs["grant_minutes"], 500)
+        ledger.reset_mock()
+        with patch.object(axgt_verifier, "_get_deposit_ledger", return_value=ledger):
+            result = axgt_verifier.grant_test_credit(INELIGIBLE, "eth", REQUEST_ID, amount=500)
+        self.assertEqual(result["error_code"], "not_test_credit_eligible")
+        ledger.credit_test_grant.assert_not_called()
+
+    def test_invalid_custom_amounts_never_reach_ledger(self):
+        ledger = make_ledger()
+        with patch.object(axgt_verifier, "_get_deposit_ledger", return_value=ledger):
+            for amount in (None, True, False, 0, -1, 1441, 10**1000, 1.5, "500", "1e3", [], {}):
+                with self.subTest(amount=str(amount)[:20]):
+                    result = axgt_verifier.grant_test_credit(ELIGIBLE, "eth", REQUEST_ID, amount=amount)
+                    self.assertEqual(result["error_code"], "invalid_amount")
+                    self.assertEqual(axgt_verifier.test_credit_http_status(result), 400)
+        ledger.credit_test_grant.assert_not_called()
+
     def test_disabled_and_ineligible_requests_never_touch_ledger(self):
         ledger = make_ledger()
         with patch.object(axgt_verifier, "_get_deposit_ledger", return_value=ledger), patch.dict(
@@ -267,6 +289,15 @@ class TestTestCreditHttp(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 401)
         grant.assert_not_called()
+
+    def test_custom_amount_is_forwarded(self):
+        with patch.object(gate_server, "_require_auth_token", return_value=None), patch.object(
+            gate_server, "grant_test_credit", return_value={"verified": False, "error_code": "invalid_amount"}
+        ) as grant:
+            self.client.post("/api/auth/test-credit", json={
+                "wallet_address": ELIGIBLE, "rail": "eth", "request_id": REQUEST_ID, "amount": 500,
+            })
+        grant.assert_called_once_with(ELIGIBLE, "eth", REQUEST_ID, amount=500)
 
     def test_success_rotates_auth_token(self):
         grant_result = {

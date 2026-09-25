@@ -186,6 +186,15 @@ class TestDepositLedger(unittest.TestCase):
         self.assertEqual(updates[0].args[1][0], 60.0)
         self.assertEqual(updates[0].args[1][1], 119.0)
 
+    def test_additive_replay_with_different_amount_is_rejected(self):
+        import deposit_ledger as dl
+        wallet = "0x1234567890123456789012345678901234567890"
+        conn, cur = self._test_credit_connection([(500.0,), (wallet, 500.0, "test_credit", "eth")])
+        with patch.object(dl, "init_once", return_value=True), patch.object(dl, "_get_connection", return_value=conn):
+            result = dl.credit_test_grant(wallet, 600.0, 60.0, "request-0001", "eth", additive=True)
+        self.assertEqual(result["error_code"], "request_mismatch")
+        self.assertFalse(any("UPDATE axgt_deposits" in str(c.args[0]) for c in cur.execute.call_args_list))
+
     def test_test_credit_replay_is_idempotent(self):
         import deposit_ledger as dl
 
