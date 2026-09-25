@@ -176,7 +176,7 @@ class FrontendTerminalContractTests(unittest.TestCase):
         ownership = self._between(
             self.ui,
             "_axonosSessionOwnsServerSlot()",
-            "/** Fire-and-forget release for tab close",
+            "/** Legacy release helper; never invoked on tab close.",
         )
         billing = self._between(
             self.ui,
@@ -197,29 +197,21 @@ class FrontendTerminalContractTests(unittest.TestCase):
         self.assertIn("showDetach = viewerAttached", controls)
 
     def test_frontend_module_cache_tokens_stay_in_lockstep(self) -> None:
-        self.assertIn("axonos-theme.css?v=20.3&t=20260909railtab", self.page)
-        self.assertIn("app/ui.js?v=20260909elapsed2", self.page)
-        self.assertIn("./webrtc/axonos-webrtc.js?v=20260909elapsed2", self.ui)
-        self.assertIn("./terminal/axonos-terminal.js?v=20260909elapsed2", self.ui)
+        self.assertIn("axonos-theme.css?v=20.5&t=20260925schedule", self.page)
+        self.assertIn("app/ui.js?v=20260925schedule", self.page)
+        self.assertIn("./webrtc/axonos-webrtc.js?v=20260925schedule", self.ui)
+        self.assertIn("./terminal/axonos-terminal.js?v=20260925schedule", self.ui)
 
-    def test_ssh_extension_reports_actual_deadline_change(self) -> None:
+    def test_ssh_schedule_control_uses_explicit_deadline_endpoint(self) -> None:
         handler = self._between(
             self.ui,
             "const extendBtn = document.getElementById('axonos_ssh_extend_btn');",
             "UI.updateAxonosSshUi();",
         )
-        cap_update = self._between(
-            self.ui,
-            "_axonosUpdateSshCardCap(payload)",
-            "hideAxonosSshCard()",
-        )
-
-        self.assertIn("previousDeadline", handler)
-        self.assertIn("Extended by ~${addedMinutes} min", handler)
-        self.assertIn("Already at maximum", handler)
-        self.assertIn("updated deadline is shown above", handler)
-        self.assertIn("UI._axonosSshClaim =", handler)
-        self.assertIn("UI._axonosSshHardCapDeadlineMs", cap_update)
+        self.assertIn("UI.openSessionSchedule(UI._axonosSshClaim)", handler)
+        self.assertNotIn("_axonosFetchSessionClaim", handler)
+        self.assertIn("fetch('/api/session/deadline'", self.ui)
+        self.assertIn("Number(deadline) + 3600", self.ui)
 
     def test_terminal_fallback_does_not_start_a_dashboard_status_refresh(self) -> None:
         fallback = self._between(

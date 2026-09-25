@@ -337,11 +337,10 @@ class TestBillingAndSession(unittest.TestCase):
     @patch("axonos_gate.deposit_ledger.init_once", return_value=True)
     @patch("axonos_gate.session_manager.time.time", return_value=1500.0)
     @patch("axonos_gate.session_manager._get_connection")
-    def test_heartbeat_ssh_active_renews_hard_cap(
+    def test_heartbeat_presence_never_changes_scheduled_stop(
         self, mock_conn, _mock_time, _mock_init, mock_deduct
     ):
-        """A daemon-reported live SSH connection slides hard_expires_at forward
-        (extend-only, min(affordable, ceiling)); without the flag it must not move."""
+        """Presence cannot change an explicit stop or impose one on a funded session."""
         from axonos_gate import session_manager
 
         session_manager._pg_init_done = True
@@ -376,10 +375,10 @@ class TestBillingAndSession(unittest.TestCase):
 
         mock_deduct.return_value = (True, 58.5, None)
 
-        # Presence renews: cap 100s away -> now + 240 min.
+        # Presence does not renew an explicit scheduled stop.
         result, new_hard = run(ssh_active=True, hard=1600.0)
-        self.assertEqual(new_hard, 1500.0 + 240 * 60)
-        self.assertEqual(result.get("hard_cap_remaining_seconds"), 240 * 60)
+        self.assertEqual(new_hard, 1600.0)
+        self.assertEqual(result.get("hard_cap_remaining_seconds"), 100)
 
         # No presence: cap untouched, still reported.
         result, new_hard = run(ssh_active=False, hard=1600.0)
@@ -394,7 +393,7 @@ class TestBillingAndSession(unittest.TestCase):
         # Uncapped session stays uncapped even with a (spoofed) presence flag.
         result, new_hard = run(ssh_active=True, hard=None)
         self.assertIsNone(new_hard)
-        self.assertNotIn("hard_cap_remaining_seconds", result)
+        self.assertIsNone(result["hard_cap_remaining_seconds"])
 
     @patch("axonos_gate.deposit_ledger._deduct_usage_on_cursor")
     @patch("axonos_gate.deposit_ledger.get_remaining_minutes", return_value=50.0)
@@ -1362,7 +1361,7 @@ class TestBillingAndSession(unittest.TestCase):
         self.assertIn("COALESCE(credit_grace_started_at, last_heartbeat) >= %s", sql)
         self.assertEqual(
             params,
-            (1000.0, 1000.0, 8200.0, 91, wallet, -6200.0),
+            (1000.0, 1000.0, 8200.0, 91, wallet, -6200.0, 1000.0),
         )
         launcher.assert_not_called()
 

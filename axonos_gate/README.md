@@ -29,6 +29,19 @@ This module implements **prepaid deposit-credit billing** for AxonOS remote desk
 5. Claim a session; during the session the in-container heartbeat daemon (and optionally the browser) sends heartbeats; each heartbeat bills elapsed time since last billing checkpoint.
 6. When remaining minutes reach zero, the session enters credit grace (or ends) and access is denied. Offline storage continues to bill against the balance (accruing debt) unless the volume is deleted or balance drops below the negative debt limit threshold.
 
+## Session lifetime
+
+Paid desktop and SSH workloads survive viewer/SSH disconnection and tab close.
+Use **End session** or **Schedule stop** to bound spending; credit exhaustion follows
+its configured top-up grace. Runtime heartbeat timeout is a separate health check.
+Whitelisted wallets follow the same lifetime and billing rules. Estimates use the
+combined rate of all active sessions; an estimate is never stored as an expiry.
+
+The authenticated `POST /api/session/deadline` API sets/removes a session's explicit
+stop (`stop_at`: Unix seconds or null). Demo deadlines cannot be changed. See
+[session lifecycle and upgrade notes](../docs/ENVIRONMENT_VARIABLES.md#session-lifecycle)
+for migration behavior, warning limitations, and termination diagnostics.
+
 ## Configuration
 
 ### Required

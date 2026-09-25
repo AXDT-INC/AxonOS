@@ -355,7 +355,6 @@ class SshPortPoolTests(unittest.TestCase):
              patch.object(session_manager, "_provisioned_storage_gb_for_wallet", return_value=None), \
              patch.object(session_manager, "_choose_allocation", return_value=[3]), \
              patch.object(session_manager, "_allocate_ssh_port", return_value=42011) as allocate, \
-             patch.object(session_manager, "_ssh_hard_cap_seconds", return_value=None), \
              patch.object(session_manager, "_spawn_session_container",
                           return_value=(True, "axgt-session-93", None)) as spawn:
             result = session_manager.try_claim_session(
@@ -398,7 +397,6 @@ class SshPortPoolTests(unittest.TestCase):
              patch.object(session_manager, "_provisioned_storage_gb_for_wallet", return_value=None), \
              patch.object(session_manager, "_choose_allocation", return_value=[3]), \
              patch.object(session_manager, "_allocate_ssh_port", return_value=None), \
-             patch.object(session_manager, "_ssh_hard_cap_seconds", return_value=None), \
              patch.object(session_manager, "_spawn_session_container") as spawn:
             result = session_manager.try_claim_session(
                 WALLET, "small", requested_ssh=True, ssh_pubkey="ssh-ed25519 AAAA test"

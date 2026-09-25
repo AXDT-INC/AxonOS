@@ -182,6 +182,7 @@ try:
         session_status,
         session_id_for_files_key,
         annotate_session,
+        set_session_deadline,
         try_claim_session,
         validate_session_files_key,
     )
@@ -201,6 +202,7 @@ except ImportError:
             session_status,
             session_id_for_files_key,
             annotate_session,
+            set_session_deadline,
             try_claim_session,
             validate_session_files_key,
         )
@@ -2305,8 +2307,8 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             if not wallet_address or not validate_wallet_address(wallet_address):
                 return self._send_json(400, {'ok': False, 'error': 'Valid wallet_address required'})
             # Auth: wallet token (browser) OR per-session files_key (runtime daemon).
-            # ssh_active: daemon-reported live sshd connection -> renews the SSH hard cap.
-            ssh_active = bool(data.get('ssh_active'))
+            # Optional daemon presence for diagnostics; never renews a scheduled stop.
+            ssh_active = data.get('ssh_active') if isinstance(data.get('ssh_active'), bool) else None
             # session_id: which of the wallet's concurrent sessions this
             # heartbeat keeps alive and bills. Browser viewers send the session
             # they are attached to; the container daemon is resolved from its
@@ -2404,6 +2406,23 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
                 return self._send_json(401, {'ok': False, 'error': 'Valid auth token required'})
             result = annotate_session(wallet_address, session_id, title=title, notes=notes)
+            return self._send_json(200 if result.get('ok') else 409, result)
+
+        if _session_mgr_available and ponly == '/api/session/deadline':
+            # Exact-session scheduled stop control.
+            data = self._read_json_body()
+            wallet_address = (data.get('wallet_address') or '').strip()
+            if not wallet_address or not validate_wallet_address(wallet_address):
+                return self._send_json(400, {'ok': False, 'error': 'Valid wallet_address required'})
+            session_id = data.get('session_id')
+            if isinstance(session_id, bool) or not isinstance(session_id, int) or session_id <= 0:
+                return self._send_json(400, {'ok': False, 'error': 'session_id must be a positive integer'})
+            if 'stop_at' not in data:
+                return self._send_json(400, {'ok': False, 'error': 'stop_at is required (null removes the schedule)'})
+            auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
+            if not auth_token or not _is_auth_token_valid(auth_token, wallet_address):
+                return self._send_json(401, {'ok': False, 'error': 'Valid auth token required'})
+            result = set_session_deadline(wallet_address, session_id, data['stop_at'])
             return self._send_json(200 if result.get('ok') else 409, result)
 
         if _session_mgr_available and self.path.startswith('/api/session/restart'):

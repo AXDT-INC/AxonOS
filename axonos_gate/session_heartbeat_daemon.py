@@ -14,8 +14,7 @@ needed.
 
 Each heartbeat also reports ``ssh_active`` — whether an ESTABLISHED TCP
 connection to the container's sshd (:22) or private browser-terminal agent
-exists — which the gate uses to renew the SSH hard billing cap while a user is
-actually connected (presence-based extension; see session_manager.heartbeat).
+exists — for diagnostics. Connection presence does not change session lifetime.
 
 Env (injected at session launch):
   AXGT_WALLET_ADDRESS       the session's wallet
@@ -56,9 +55,8 @@ def _ssh_connection_active() -> bool:
     """True when native SSH or the authenticated web terminal is attached.
 
     Read straight from /proc/net/tcp{,6} (hex local_address:port, state 01 =
-    ESTABLISHED) so no external tools are needed. This is the "user present"
-    signal: the gate renews the SSH hard billing cap while someone is actually
-    connected and lets it lapse when nobody is.
+    ESTABLISHED) so no external tools are needed. The gate logs transitions;
+    workload lifetime does not depend on a viewer remaining connected.
     """
     presence_ports = {22, TERMINAL_AGENT_PORT}
     for path in ("/proc/net/tcp", "/proc/net/tcp6"):

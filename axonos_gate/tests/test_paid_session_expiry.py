@@ -217,7 +217,7 @@ class TestPaidSessionExpiry(unittest.TestCase):
         sql, params = cur.execute.call_args.args
         self.assertIn("SET status = 'ended'", sql)
         self.assertNotIn("credit_grace", sql)
-        self.assertEqual(params, (880.0, 1000.0, 60, 1000.0))
+        self.assertEqual(params, (60, 1000.0, 880.0, 1000.0, 60, 1000.0))
 
         with patch.object(session_manager, "_on_session_credit_grace") as grace_hook, \
              patch.object(session_manager, "_on_session_ended") as ended_hook:
@@ -252,8 +252,8 @@ class TestPaidSessionExpiry(unittest.TestCase):
             "COALESCE(credit_grace_started_at, last_heartbeat)",
             " ".join(sql.split()),
         )
-        self.assertNotIn("hard_expires_at", sql)
-        self.assertEqual(params, (2800.0,))
+        self.assertIn("deadline_kind = 'scheduled'", sql)
+        self.assertEqual(params, (10000.0, 2800.0, 10000.0))
 
     def test_reconciliation_does_not_apply_ssh_hard_cap_during_credit_grace(self):
         from axonos_gate import session_manager

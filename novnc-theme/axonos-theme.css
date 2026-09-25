@@ -9016,3 +9016,23 @@ body.axonos-guest-mode #axonos_wizard_ssh_toggle_card,
 body.axonos-guest-mode #axonos_wizard_ssh_key_wrap {
   display: none !important;
 }
+
+/* Scheduled stops stay visible over desktop and terminal views. */
+.axonos-scheduled-stop-warning {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    z-index: 100000; width: min(680px, 90vw); padding: 16px;
+    background: #30250d; color: #fff1c7; border: 1px solid #f2c14e;
+    border-radius: 12px; box-shadow: 0 8px 30px #0008;
+}
+.axonos-scheduled-stop-warning[hidden] { display: none; }
+.axonos-schedule-dialog {
+    max-width: min(520px, 90vw); padding: 24px; border-radius: 12px;
+    border: 1px solid #77649d; background: #1c1729; color: #f3eefb;
+}
+.axonos-schedule-dialog::backdrop { background: #0009; }
+.axonos-schedule-dialog input { display: block; margin: 12px 0; padding: 8px; }
+.axonos-schedule-dialog .schedule-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.axonos-schedule-dialog button, .axonos-scheduled-stop-warning button {
+    padding: 8px 12px; cursor: pointer; border-radius: 6px;
+}
+.axonos-schedule-dialog .schedule-error { color: #ffbcac; }

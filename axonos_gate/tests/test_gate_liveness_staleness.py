@@ -254,12 +254,12 @@ class TestExpireStaleSessionAccounting(unittest.TestCase):
         sql, params = self._run(0.0)
         self.assertIn("last_heartbeat < %s", sql)
         # cutoff == now - timeout, with no downtime credit
-        self.assertEqual(params[0], 1_000_000.0 - 120)
+        self.assertEqual(params[2], 1_000_000.0 - 120)
 
     def test_downtime_is_credited_to_the_cutoff(self):
         sql, params = self._run(285.0)
         self.assertIn("last_heartbeat < %s", sql)
-        self.assertEqual(params[0], 1_000_000.0 - 120 - 285.0)
+        self.assertEqual(params[2], 1_000_000.0 - 120 - 285.0)
 
     def test_unobserved_span_suppresses_the_liveness_branch(self):
         """With no presence record, heartbeat silence proves nothing."""

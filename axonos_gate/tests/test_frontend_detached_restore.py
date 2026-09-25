@@ -40,32 +40,16 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         self.assertNotIn("desktop pauses shortly", detach)
         self.assertNotIn("closing the tab then pauses", self.page_source)
         self.assertIn("jobs and compute billing continue, even if this tab closes", self.page_source)
-        self.assertIn("Closing an attached tab requests session end", self.page_source)
+        self.assertIn("Closing a tab leaves compute running", self.page_source)
 
-    def test_tab_close_on_connected_desktop_asks_before_ending(self) -> None:
-        # Closing a connected desktop tab releases (ENDS) the session, which
-        # destroys running work with no warning. The browser's native
-        # leave-page dialog must guard it; reloads and detached/terminal
-        # sessions (which do not own a server slot) must stay unprompted.
+    def test_tab_close_never_releases_funded_compute(self) -> None:
         handlers = self._ui_between(
             "addAxonosSessionLifecycleHandlers() {",
             "persistAxonosSelectedTemplate() {",
         )
-        before = handlers.split("addEventListener('beforeunload'", 1)[1].split(
-            "addEventListener('pagehide'", 1
-        )[0]
-        self.assertIn("nav !== 'reload'", before)
-        self.assertIn("UI._axonosSessionOwnsServerSlot()", before)
-        self.assertIn("e.preventDefault()", before)
-        self.assertIn("e.returnValue = ''", before)
-
-        # Sidebar copy states the rule next to the Detach control.
-        detach_card = self._page_between(
-            'axonos-sidebar-ctrl-btn__title">Detach session',
-            'id="axonos_sidebar_end_btn"',
-        )
-        self.assertIn("Closing the tab ends the session", detach_card)
-        self.assertIn("Detach to keep it running", detach_card)
+        self.assertNotIn("_axonosReleaseSessionBeacon", handlers)
+        self.assertNotIn("beforeunload", handlers)
+        self.assertIn("Closing the tab keeps jobs and billing running", self.page_source)
 
     def test_wallet_picker_deduplicates_repeated_eip6963_announcements(self) -> None:
         discovery = self._page_between(

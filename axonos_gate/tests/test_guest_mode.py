@@ -1092,16 +1092,11 @@ class TestGuestHardCap(unittest.TestCase):
         self.assertIn("hard_expires_at IS NOT NULL", sweep)
         self.assertNotIn("ssh_enabled", sweep)
 
-    def test_cap_renewal_paths_stay_ssh_gated(self):
-        # A demo cap must be non-renewable: every extension of hard_expires_at
-        # has to remain behind an SSH condition.
-        source = (_PKG_DIR / "session_manager.py").read_text(encoding="utf-8")
-        for renewal in (
-            'if ssh_enabled and ssh_active and hard_expires_at is not None:',
-            'if owned.get("ssh_enabled") and hard_expires_at is not None:',
-            'if credit_grace.get("ssh_enabled"):',
-        ):
-            self.assertIn(renewal, source, f"missing SSH gate: {renewal}")
+    def test_demo_schedule_changes_are_rejected(self):
+        from axonos_gate import session_manager
+        result = session_manager.set_session_deadline(guest_mode.new_guest_identity(), 1, None)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "Demo deadlines cannot be changed")
 
     def test_guest_claim_sets_the_cap_without_ssh(self):
         source = (_PKG_DIR / "session_manager.py").read_text(encoding="utf-8")

@@ -121,7 +121,7 @@ Copyright (C) 2019 The noVNC Authors
     <!-- Stylesheets -->
     <link rel="stylesheet" href="app/styles/base.css">
     <link rel="stylesheet" href="app/vendor/xterm/xterm.css?v=6.0.0">
-    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.4&t=20260910paymentcta">
+    <link rel="stylesheet" href="app/styles/axonos-theme.css?v=20.5&t=20260925schedule">
 
     <!-- Images that will later appear via CSS -->
     <link rel="preload" as="image" href="app/images/info.svg">
@@ -178,7 +178,7 @@ Copyright (C) 2019 The noVNC Authors
     </script>
     <script src="app/error-handler.js"></script>
     <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
-    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260909close1"></script>
+    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260925schedule"></script>
 </head>
 
 <body>
@@ -212,7 +212,7 @@ Copyright (C) 2019 The noVNC Authors
                         <span class="axonos-prerequisites-ticker__bullet" aria-hidden="true">·</span>
                         <span class="axonos-prerequisites-ticker__chunk"><strong>Detach</strong> returns to home while
                             your desktop and jobs keep running and minutes still count, even after this tab closes.
-                            Closing an attached tab requests session end; <strong>End session</strong> stops billing
+                            Closing a tab leaves compute running; <strong>End session</strong> stops billing
                             and removes the desktop. At credit exhaustion,
                             compute billing and viewer access stop while the same running container, jobs, and GPUs are retained for
                             a 2-hour top-up grace; it is automatically ended when that grace expires</span>
@@ -783,16 +783,17 @@ Copyright (C) 2019 The noVNC Authors
                         <p id="axonos_ssh_host_fingerprint" class="axonos-ssh-card__note">
                             ED25519 host-key fingerprint: loading…
                         </p>
+                        <p id="axonos_ssh_compute_estimate" class="axonos-ssh-card__ttl"></p>
                         <p id="axonos_ssh_card_ttl" class="axonos-ssh-card__ttl"></p>
                         <p class="axonos-ssh-card__note">You can close this tab — the session keeps running while
-                            you're connected over SSH (its time cap renews automatically) or until the cap above is
-                            reached. Extend adds more time; End it here, from the dashboard, or by signing out.
+                            credits remain, even after you disconnect. You can schedule a stop or end the session
+                            here or from the dashboard.
                         </p>
                         <div class="axonos-ssh-card__actions">
                             <button type="button" id="axonos_ssh_web_terminal_btn"
                                 class="axonos-ssh-card__terminal">Open web terminal</button>
                             <button type="button" id="axonos_ssh_extend_btn"
-                                class="axonos-ssh-card__extend">Extend session</button>
+                                class="axonos-ssh-card__extend">Schedule stop</button>
                             <button type="button" id="axonos_ssh_end_btn" class="axonos-ssh-card__end">End
                                 session</button>
                         </div>
@@ -1457,8 +1458,8 @@ Copyright (C) 2019 The noVNC Authors
             <!-- Footer banner (matching axonos-web exactly) -->
             <div class="axonos-footer-banner axonos-view-landing">
                 <span id="axonos_session_timer" class="axonos-session-timer axonos-session-timer--hidden"
-                    title="Desktop time remaining on your prepaid credit"><span class="axonos-session-timer__label">Time
-                        left</span>&nbsp;<span id="axonos_session_timer_value"
+                    title="Estimated compute time from your balance and active billing rate"><span class="axonos-session-timer__label">Est. compute
+                        remaining</span>&nbsp;<span id="axonos_session_timer_value"
                         class="axonos-session-timer__value">—:—</span></span><span id="axonos_session_timer_sep"
                     class="axonos-session-timer--hidden"
                     style="color: rgba(255, 255, 255, 0.15); line-height: 1;">|</span>
@@ -1985,7 +1986,7 @@ Copyright (C) 2019 The noVNC Authors
                 <span class="axonos-sidebar-ctrl-btn__details">
                     <span class="axonos-sidebar-ctrl-btn__title">Detach session</span>
                     <span class="axonos-sidebar-ctrl-btn__desc">Return to home screen (desktop keeps running)</span>
-                    <span class="axonos-sidebar-ctrl-btn__hint">Closing the tab ends the session. Detach to keep it running.</span>
+                    <span class="axonos-sidebar-ctrl-btn__hint">Closing the tab keeps jobs and billing running. Use End session to stop.</span>
                 </span>
             </button>
             <button type="button" id="axonos_sidebar_end_btn"
@@ -2110,7 +2111,7 @@ Copyright (C) 2019 The noVNC Authors
         <div class="axonos-session-hud__row"><span class="axonos-session-hud__label">Active Billing Rate:</span>
             <span id="axonos_session_hud_rate" class="axonos-session-hud__value">—</span>
         </div>
-        <div class="axonos-session-hud__row"><span class="axonos-session-hud__label">Remaining Credit Time:</span>
+        <div class="axonos-session-hud__row"><span class="axonos-session-hud__label">Estimated compute remaining:</span>
             <span id="axonos_session_hud_remaining" class="axonos-session-hud__value">—</span>
         </div>
         <!-- Wallet-management popover — hidden until "Manage" is clicked. Destructive
@@ -5032,6 +5033,7 @@ Copyright (C) 2019 The noVNC Authors
                 owner_ssh_enabled: !!row.ssh_enabled,
                 owner_remaining_seconds: row.remaining_seconds,
                 owner_hard_cap_remaining_seconds: row.hard_cap_remaining_seconds,
+                owner_scheduled_stop_at: row.scheduled_stop_at,
                 ssh_host: row.ssh_host,
                 ssh_port: row.ssh_port,
                 ssh_user: row.ssh_user
@@ -5554,6 +5556,7 @@ Copyright (C) 2019 The noVNC Authors
                     ssh_host: st.ssh_host,
                     ssh_port: st.ssh_port,
                     hard_cap_remaining_seconds: st.owner_hard_cap_remaining_seconds,
+                    scheduled_stop_at: st.owner_scheduled_stop_at,
                     remaining_seconds: (typeof st.owner_remaining_seconds === 'number')
                         ? st.owner_remaining_seconds
                         : st.session_remaining_seconds
@@ -6211,6 +6214,7 @@ Copyright (C) 2019 The noVNC Authors
                     axonosRestoreSshSessionUi(Object.assign({}, claim, {
                         owner_ssh_enabled: true,
                         owner_hard_cap_remaining_seconds: claim.hard_cap_remaining_seconds,
+                        owner_scheduled_stop_at: claim.scheduled_stop_at,
                         owner_remaining_seconds: claim.remaining_seconds
                     }));
                     if (typeof UI !== 'undefined' && typeof UI.showStatus === 'function') {
@@ -7075,7 +7079,7 @@ Copyright (C) 2019 The noVNC Authors
                         var sessionHints = document.getElementById('axonos-dlg-session-hints');
                         if (sessionHints) {
                             sessionHints.innerHTML = discountHint +
-                                '<span class="axonos-wallet-card__hints-session">' + billingHint + ' <strong>Detach</strong> leaves the view while desktop jobs and compute billing continue, even if this tab closes. Closing an attached tab requests session end; use <strong>End session</strong> when finished. At credit exhaustion, viewer access and compute billing stop for the 2-hour top-up grace while the same running container, jobs, and GPUs are retained; it is automatically ended after the grace.</span>';
+                                '<span class="axonos-wallet-card__hints-session">' + billingHint + ' <strong>Detach</strong> leaves the view while desktop jobs and compute billing continue, even if this tab closes. Closing a tab leaves compute running; use <strong>End session</strong> when finished. At credit exhaustion, viewer access and compute billing stop for the 2-hour top-up grace while the same running container, jobs, and GPUs are retained; it is automatically ended after the grace.</span>';
                         }
                     }
                     var insRates = document.getElementById('axonos_insufficient_credit_rates');
@@ -7155,7 +7159,7 @@ Copyright (C) 2019 The noVNC Authors
                         dh.innerHTML = 'Connect wallet to see live rates from the server — payments are valued at the live token price when they are credited.';
                         var dhSession = document.getElementById('axonos-dlg-session-hints');
                         if (dhSession) {
-                            dhSession.innerHTML = '<span class="axonos-wallet-card__hints-session">While connected or explicitly detached, compute minutes count (idle included). After Detach they continue even if this tab closes; closing an attached tab requests session end. Use <strong>End session</strong> when finished. At credit exhaustion, viewer access and compute billing stop for the 2-hour top-up grace while the same running container, jobs, and GPUs are retained.</span>';
+                            dhSession.innerHTML = '<span class="axonos-wallet-card__hints-session">While connected or explicitly detached, compute minutes count (idle included). After Detach they continue even if this tab closes; closing a tab leaves compute running. Use <strong>End session</strong> when finished. At credit exhaustion, viewer access and compute billing stop for the 2-hour top-up grace while the same running container, jobs, and GPUs are retained.</span>';
                         }
                     }
                     syncAxonosPrerequisiteTickerMirror();
@@ -11999,6 +12003,9 @@ Copyright (C) 2019 The noVNC Authors
                     listEl.style.display = 'none';
                 }
                 if (emptyEl) emptyEl.style.display = 'none';
+                if (window.UI && typeof UI.updateScheduledStopWarnings === 'function') {
+                    UI.updateScheduledStopWarnings(dashboardSessions, true);
+                }
                 if (activeCountEl) activeCountEl.textContent = '0';
                 if (combinedRateEl) combinedRateEl.textContent = '—';
                 if (creditsValEl) creditsValEl.textContent = '—';
@@ -12050,7 +12057,7 @@ Copyright (C) 2019 The noVNC Authors
                     return axonosGpuCountForProfile((session && session.requested_profile) || 'small');
                 };
                 const totalRate = activeOwnedSessions.reduce(function (sum, session) {
-                    return sum + gpuCountForSession(session);
+                    return sum + (window.axonosGpuBillingEnabled === false ? 1 : gpuCountForSession(session));
                 }, 0);
 
                 if (activeCountEl) activeCountEl.textContent = String(activeOwnedSessions.length);
@@ -12068,7 +12075,7 @@ Copyright (C) 2019 The noVNC Authors
                                 session.allocation_status === 'credit_grace';
                             const profile = session.requested_profile || 'small';
                             const gpuCount = gpuCountForSession(session);
-                            const rate = gpuCount; // credits per min
+                            const rate = window.axonosGpuBillingEnabled === false ? 1 : gpuCount; // credits per min
 
                             const card = document.createElement('div');
                             card.className = 'axonos-session-card' +
@@ -12137,7 +12144,7 @@ Copyright (C) 2019 The noVNC Authors
                             specParts.push(axonosEscapeHtml(envTitle));
                             const statsText = isCreditGrace
                                 ? `${graceTtl || 'Top up within 2h'} · billing paused`
-                                : `Up <span class="axonos-session-card__uptime" data-started-at="${Number(session.started_at) || ''}">${uptimeStr}</span> · Remaining ≈ <span class="axonos-session-card__remaining" data-rate="${rate}">${axonosFormatSessionCardRemaining(window.axonosLastKnownCredits, rate)}</span> · ${rate} cr/min`;
+                                : `Up <span class="axonos-session-card__uptime" data-started-at="${Number(session.started_at) || ''}">${uptimeStr}</span> · Estimated compute remaining ≈ <span class="axonos-session-card__remaining" data-rate="${totalRate}">${axonosFormatSessionCardRemaining(window.axonosLastKnownCredits, totalRate)}</span> across active sessions · ${rate} cr/min for this session`;
                             const noteText = String(session.notes || '');
                             const canAnnotate = sessionKey !== '' && !isCreditGrace;
                             card.innerHTML = `
@@ -12155,6 +12162,7 @@ Copyright (C) 2019 The noVNC Authors
                                         </div>
                                         <div class="axonos-session-card__specs">${specParts.join(' <span class="axonos-session-card__sep">/</span> ')}</div>
                                         <div class="axonos-session-card__stats">${statsText}</div>
+                                        <div class="axonos-session-card__stats">Scheduled stop: ${session.scheduled_stop_at ? axonosEscapeHtml(new Date(session.scheduled_stop_at * 1000).toLocaleString()) : 'none'}</div>
                                         ${sshCmdRow}
                                     </div>
                                 </div>
@@ -12168,6 +12176,7 @@ Copyright (C) 2019 The noVNC Authors
                                 <div class="axonos-session-card__bottom">
                                     <div class="axonos-session-card__rate-desc">${isCreditGrace ? 'Jobs still running · compute billing and viewer access stopped' : `Burning <b>${rate}</b> cr/min`}</div>
                                     <div class="axonos-session-card__actions">
+                                        ${!isCreditGrace && !window.axonosGuestSession ? '<button type="button" class="axonos-session-card__btn schedule-btn">Schedule stop</button>' : ''}
                                         <button type="button" class="axonos-session-card__btn axonos-session-card__btn--danger end-btn">End</button>
                                         <button type="button" class="axonos-session-card__btn axonos-session-card__btn--primary reconnect-btn">
                                             ${actionText}
@@ -12177,6 +12186,10 @@ Copyright (C) 2019 The noVNC Authors
                                 </div>
                             `;
 
+                            const scheduleBtn = card.querySelector('.schedule-btn');
+                            if (scheduleBtn) scheduleBtn.addEventListener('click', () => {
+                                if (window.UI) UI.openSessionSchedule(session);
+                            });
                             // Inline title edit: pencil (or double-click) swaps the label for
                             // an input; Enter/blur saves, Escape cancels. Saved server-side so
                             // every device and reload sees the same name.

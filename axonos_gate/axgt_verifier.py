@@ -844,19 +844,16 @@ def get_wallet_access_status(wallet_address: str, consume_usage: bool = False) -
                 import session_manager as _sm
         billing_ctx = _sm.billing_context_for_wallet(wallet_address)
         response.update(billing_ctx)
-        if (
-            billing_ctx.get("gpu_billing_enabled")
-            and billing_ctx.get("billing_gpu_count", 1) > 1
-            and remaining > 0
-        ):
-            count = int(billing_ctx["billing_gpu_count"])
-            wall_left = remaining / count
-            response["estimated_wall_minutes_remaining"] = round(wall_left, 2)
-            if wall_left <= warning_threshold:
-                response["reason"] = (
-                    f"Warning: about {wall_left:.1f} minute(s) of desktop time left "
-                    f"({count} GPUs, billing {count}× wall-clock)."
-                )
+        count = max(1, int(billing_ctx.get("billing_gpu_count", 1)))
+        rate = max(1, int(billing_ctx.get("compute_billing_rate") or
+                         (count if billing_ctx.get("gpu_billing_enabled") else 1)))
+        wall_left = max(0, remaining) / rate
+        response["estimated_wall_minutes_remaining"] = round(wall_left, 2)
+        if 0 < wall_left <= warning_threshold:
+            response["reason"] = (
+                f"Warning: about {wall_left:.1f} minute(s) of compute remaining "
+                f"across active sessions ({rate} credits/min)."
+            )
     except Exception as exc:
         logger.debug("wallet billing context unavailable: %s", exc)
     # Optional on-chain balance for UI (wallet dialog); None if RPC not configured or on error.

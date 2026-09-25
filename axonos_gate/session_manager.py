@@ -216,7 +216,7 @@ def billing_context_for_wallet(wallet_address: str) -> Dict[str, Any]:
         return ctx
     try:
         with conn.cursor() as cur:
-            owned_rows = _active_sessions_for_wallet(cur, wallet) if enabled else []
+            owned_rows = _active_sessions_for_wallet(cur, wallet)
             cur.execute(
                 f"""
                 SELECT
@@ -258,6 +258,7 @@ def billing_context_for_wallet(wallet_address: str) -> Dict[str, Any]:
                     owned.get("gpu_ids") or [], owned.get("requested_profile")
                 )
             ctx["billing_gpu_count"] = max(1, total)
+            ctx["compute_billing_rate"] = max(1, total if enabled else len(owned_rows))
             ctx["requested_profile"] = owned_rows[0].get("requested_profile") or "small"
             ctx["active_session_count"] = len(owned_rows)
     except Exception as exc:
@@ -432,7 +433,7 @@ def _session_max_seconds() -> int:
 
 
 def _remaining_minutes_for(wallet: str) -> Optional[float]:
-    """Current prepaid remaining minutes for a wallet (for the SSH hard cap)."""
+    """Current prepaid remaining minutes for a wallet (legacy internal lookup)."""
     try:
         try:
             from . import deposit_ledger
@@ -450,37 +451,19 @@ def _remaining_minutes_for(wallet: str) -> Optional[float]:
         return None
 
 
-def _ssh_hard_cap_seconds(remaining_minutes: Optional[float]) -> Optional[float]:
-    """Hard billing cap for a headless/SSH session, in seconds from now.
+def _estimated_compute_seconds(remaining_minutes: Optional[float], billing_gpu_count: int = 1) -> Optional[float]:
+    """Balance-derived estimate, never a persisted termination deadline."""
+    if remaining_minutes is None:
+        return None
+    rate = max(1, billing_gpu_count) if _gpu_billing_enabled() else 1
+    return max(0.0, remaining_minutes) * 60.0 / rate
 
-    An SSH session bills for at most the time it can afford,
-    optionally clamped to an operator ceiling (AXGT_SSH_MAX_SESSION_MINUTES). The
-    in-container heartbeat daemon keeps a headless session alive with no natural
-    "user left" signal, so without this an abandoned session would slide
-    expires_at forward until the entire prepaid balance is drained.
 
-    Returns seconds-from-now for the cap, or None to disable (no SSH cap).
-    """
-    # Operator ceiling (0/unset = no ceiling).
-    ceiling_min = None
-    raw = (os.getenv("AXGT_SSH_MAX_SESSION_MINUTES") or "").strip()
-    if raw:
-        try:
-            n = float(raw)
-            if n > 0:
-                ceiling_min = n
-        except (ValueError, TypeError):
-            pass
-
-    # Affordability: cap to the minutes the wallet can pay for (× GPU billing
-    # already reflected in remaining_minutes deduction rate is per heartbeat, so
-    # use remaining minutes directly as a wall-clock-ish bound).
-    afford_min = remaining_minutes if (remaining_minutes is not None and remaining_minutes > 0) else None
-
-    candidates = [m for m in (ceiling_min, afford_min) if m is not None]
-    if not candidates:
-        return None  # nothing to cap on (e.g. no ceiling + unknown balance)
-    return min(candidates) * 60.0
+def _deadline_fields(deadline: Optional[float], now: float) -> Dict[str, Any]:
+    return {
+        "scheduled_stop_at": deadline,
+        "hard_cap_remaining_seconds": int(max(0, deadline - now)) if deadline is not None else None,
+    }
 
 
 def _guest_claim_context(
@@ -549,7 +532,7 @@ def _guest_claim_context(
             "reason": "This demo session has ended. Connect a wallet to continue.",
         }
 
-    # SSH needs a key exchange and a renewable cap by design; a demo has neither.
+    # Demos do not allow SSH; their immutable deadline remains the binding limit.
     if requested_ssh:
         return None, {
             "granted": False,
@@ -898,10 +881,12 @@ def _ensure_tables(conn) -> None:
             # capability. The bearer token itself is never stored in Postgres.
             ("webrtc_cap_jti_hash", "TEXT"),
             ("webrtc_cap_expires_at", "DOUBLE PRECISION"),
-            # Non-sliding hard cap (unlike expires_at, which slides on heartbeat).
-            # Set for headless/SSH sessions so an abandoned session can't drain the
-            # whole prepaid balance. NULL = no cap (e.g. desktop, legacy rows).
+            # Explicit stop deadline for paid sessions; immutable demo deadline
+            # for guests. Credit estimates are never stored as deadlines.
             ("hard_expires_at", "DOUBLE PRECISION"),
+            ("deadline_kind", "TEXT"),
+            ("termination_reason", "TEXT"),
+            ("ssh_present", "BOOLEAN"),
             # Persisted SSH mode so a page reload / status query can tell a headless
             # SSH session from a desktop one without the client re-asserting intent.
             ("ssh_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
@@ -940,12 +925,20 @@ def _ensure_tables(conn) -> None:
                     # the FALSE default): hard_expires_at was only ever set for
                     # requested_ssh claims, so it reliably marks old SSH sessions.
                     # Without this, an SSH session active across the upgrade would
-                    # lose its connect-string recovery and cap renewal.
+                    # lose its connect-string recovery.
                     cur.execute(
                         f"UPDATE {_SESSION_TABLE} SET ssh_enabled = TRUE "
                         f"WHERE hard_expires_at IS NOT NULL"
                     )
-        # Ensure no NULL last_billed_at: bill from session start (fixes pre-migration or old migrations)
+        # Retire old implicit SSH caps. Explicit schedules carry deadline_kind
+        # and are preserved on every boot; demos cannot be SSH sessions.
+        cur.execute(f"""UPDATE {_SESSION_TABLE}
+            SET hard_expires_at = NULL
+            WHERE ssh_enabled = TRUE AND deadline_kind IS NULL
+              AND hard_expires_at IS NOT NULL AND status IN ('active', 'credit_grace')
+            RETURNING id""")
+        migrated_caps = cur.fetchall() or []
+        # Ensure no NULL billing checkpoint in pre-migration rows.
         cur.execute(
             f"UPDATE {_SESSION_TABLE} SET last_billed_at = started_at WHERE last_billed_at IS NULL"
         )
@@ -995,6 +988,8 @@ def _ensure_tables(conn) -> None:
             ON {_SESSION_TABLE} (status)
         """)
     conn.commit()
+    for migrated in migrated_caps:
+        logger.info("session_deadline_changed session=%s source=legacy_cap_migration deadline=none", migrated[0])
 
 
 def _init_once() -> bool:
@@ -1184,23 +1179,31 @@ def _expire_stale_session(
     if hb_cutoff is None:
         cur.execute(
             f"""UPDATE {_SESSION_TABLE}
-                SET status = 'ended'
+                SET status = 'ended', termination_reason = CASE
+                    WHEN hard_expires_at IS NOT NULL AND hard_expires_at +
+                        CASE WHEN deadline_kind = 'scheduled' THEN 0 ELSE %s END <= %s
+                    THEN CASE WHEN deadline_kind = 'scheduled' THEN 'scheduled_expiry' ELSE 'demo_expiry' END
+                    ELSE 'heartbeat_timeout' END
                 WHERE status = 'active'
                   AND (expires_at <= %s
-                       OR (hard_expires_at IS NOT NULL AND hard_expires_at + %s <= %s))
+                       OR (hard_expires_at IS NOT NULL AND hard_expires_at + CASE WHEN deadline_kind = 'scheduled' THEN 0 ELSE %s END <= %s))
                 RETURNING wallet_address, id""",
-            (now, grace, now),
+            (grace, now, now, grace, now),
         )
     else:
         cur.execute(
             f"""UPDATE {_SESSION_TABLE}
-                SET status = 'ended'
+                SET status = 'ended', termination_reason = CASE
+                    WHEN hard_expires_at IS NOT NULL AND hard_expires_at +
+                        CASE WHEN deadline_kind = 'scheduled' THEN 0 ELSE %s END <= %s
+                    THEN CASE WHEN deadline_kind = 'scheduled' THEN 'scheduled_expiry' ELSE 'demo_expiry' END
+                    ELSE 'heartbeat_timeout' END
                 WHERE status = 'active'
                   AND (last_heartbeat < %s
                        OR expires_at <= %s
-                       OR (hard_expires_at IS NOT NULL AND hard_expires_at + %s <= %s))
+                       OR (hard_expires_at IS NOT NULL AND hard_expires_at + CASE WHEN deadline_kind = 'scheduled' THEN 0 ELSE %s END <= %s))
                 RETURNING wallet_address, id""",
-            (hb_cutoff, now, grace, now),
+            (grace, now, hb_cutoff, now, grace, now),
         )
     rows = cur.fetchall() or []
     ended = [(row[0], row[1]) for row in rows]
@@ -1550,11 +1553,14 @@ def _expire_credit_grace_sessions(cur, now: float) -> List[tuple]:
     cutoff = now - _session_credit_grace_max_seconds()
     cur.execute(
         f"""UPDATE {_SESSION_TABLE}
-            SET status = 'ended'
+            SET status = 'ended', termination_reason = CASE
+                WHEN deadline_kind = 'scheduled' AND hard_expires_at <= %s
+                THEN 'scheduled_expiry' ELSE 'credit_exhaustion' END
             WHERE status = 'credit_grace'
-              AND COALESCE(credit_grace_started_at, last_heartbeat) < %s
+              AND (COALESCE(credit_grace_started_at, last_heartbeat) < %s
+                   OR (deadline_kind = 'scheduled' AND hard_expires_at <= %s))
             RETURNING wallet_address, id""",
-        (cutoff,),
+        (now, cutoff, now),
     )
     rows = cur.fetchall() or []
     return [(r[0], r[1]) for r in rows]
@@ -1660,6 +1666,7 @@ def _resume_credit_grace_session(
                 expires_at = %s
             WHERE id = %s AND status = 'credit_grace' AND wallet_address = %s
               AND COALESCE(credit_grace_started_at, last_heartbeat) >= %s
+              AND (hard_expires_at IS NULL OR hard_expires_at > %s)
             RETURNING id, gpu_ids, container_id, expires_at, requested_profile""",
         (
             now,
@@ -1668,6 +1675,7 @@ def _resume_credit_grace_session(
             credit_grace["id"],
             wallet,
             grace_cutoff,
+            now,
         ),
     )
     row = cur.fetchone()
@@ -1697,22 +1705,8 @@ def _resume_credit_grace_session(
         "allocation_status": "allocated",
         "remaining_seconds": int(remaining),
     }
+    resp.update(_deadline_fields(credit_grace.get("hard_expires_at"), now))
     if credit_grace.get("ssh_enabled"):
-        # Reactivation is an explicit owner action: renew the SSH hard cap (extend-only;
-        # an uncapped session stays uncapped) and return the connect fields so an
-        # agent or browser that lost state gets its endpoint back in the same
-        # shape as a fresh claim — the client must not attempt a desktop connect.
-        hard_expires_at = credit_grace.get("hard_expires_at")
-        if hard_expires_at is not None:
-            cap_secs = _ssh_hard_cap_seconds(_remaining_minutes_for(wallet))
-            if cap_secs is not None and now + cap_secs > hard_expires_at:
-                cur.execute(
-                    f"""UPDATE {_SESSION_TABLE} SET hard_expires_at = %s
-                        WHERE id = %s AND status = 'active'""",
-                    (now + cap_secs, session_id),
-                )
-                hard_expires_at = now + cap_secs
-            resp["hard_cap_remaining_seconds"] = int(max(0, hard_expires_at - now))
         resp.update(_ssh_connection_fields(session_id, credit_grace.get("ssh_port")))
     return resp
 
@@ -2271,28 +2265,8 @@ def try_claim_session(
             # Already owner in multi-session mode
             if owned:
                 remaining = max(0, owned["expires_at"] - now)
-                # An explicit owner re-claim of an SSH session RENEWS its hard
-                # billing cap: extend-only to max(current, now + min(affordable,
-                # ceiling)). This is the deliberate "extend session" signal for
-                # browsers (Extend button) and agents (re-POST claim / pay more
-                # via x402) — a forgotten session has nobody to renew it, so the
-                # anti-drain property of the cap is preserved. Sessions with no
-                # cap (legacy rows / no ceiling configured) are left uncapped.
+                # Reattach never changes an explicit scheduled stop.
                 hard_expires_at = owned.get("hard_expires_at")
-                if owned.get("ssh_enabled") and hard_expires_at is not None:
-                    cap_secs = _ssh_hard_cap_seconds(_remaining_minutes_for(wallet))
-                    if cap_secs is not None and now + cap_secs > hard_expires_at:
-                        cur.execute(
-                            f"""UPDATE {_SESSION_TABLE}
-                                SET hard_expires_at = %s
-                                WHERE id = %s AND status = 'active'""",
-                            (now + cap_secs, owned["id"]),
-                        )
-                        hard_expires_at = now + cap_secs
-                        logger.info(
-                            "session_manager: SSH hard cap renewed for session %s (%s): +%ds",
-                            owned["id"], _mask(wallet), int(cap_secs),
-                        )
                 conn.commit()
                 owned_resp = {
                     "granted": True,
@@ -2309,8 +2283,7 @@ def try_claim_session(
                         "expected_session_id": expected_session_id,
                         "already_active": True,
                     })
-                if hard_expires_at is not None:
-                    owned_resp["hard_cap_remaining_seconds"] = int(max(0, hard_expires_at - now))
+                owned_resp.update(_deadline_fields(hard_expires_at, now))
                 # The stored ssh_enabled flag (not the client's requested_ssh) decides
                 # whether SSH connect fields are returned: a reload with a stale SSH
                 # toggle must not present an ssh connect-string for a desktop container,
@@ -2415,15 +2388,11 @@ def try_claim_session(
                 # Per-session secret for the in-container file agent; injected into
                 # the container env at launch and used by the gate file proxy.
                 files_key = secrets.token_urlsafe(32)
-                # Hard billing cap for headless/SSH sessions (no browser "user left"
-                # signal). expires_at slides on heartbeat (idle timeout); hard_expires_at
-                # does NOT, bounding an abandoned session to min(affordable, ceiling).
+                # Paid runtimes have no implicit deadline; credit exhaustion
+                # is enforced by billing, independently of connection presence.
                 hard_expires_at = None
                 allocated_ssh_port: Optional[int] = None
                 if requested_ssh:
-                    cap_secs = _ssh_hard_cap_seconds(_remaining_minutes_for(wallet))
-                    if cap_secs is not None:
-                        hard_expires_at = now + cap_secs
                     allocated_ssh_port = _allocate_ssh_port(cur, now)
                     if allocated_ssh_port is None:
                         conn.commit()
@@ -2445,8 +2414,8 @@ def try_claim_session(
                     # sliding TTL is compared without a grace allowance, so it
                     # pins the exact deadline whatever AXGT_SESSION_GRACE_SECONDS
                     # is set to; the hard cap is the non-sliding backstop. Every
-                    # hard-cap renewal path is SSH-gated, which is why a demo cap
-                    # cannot be extended by re-claiming or reloading.
+                    # user deadline update rejects demos; reconnects and heartbeats
+                    # never renew a deadline.
                     # Re-read the clock immediately before INSERT and derive
                     # both columns from the immutable absolute guest deadline.
                     # No lock/query/allocator delay may buy extra demo time.
@@ -2670,8 +2639,7 @@ def try_claim_session(
                     "allocation_status": "allocated",
                     "remaining_seconds": max_secs,
                 }
-                if hard_expires_at is not None:
-                    granted["hard_cap_remaining_seconds"] = int(max(0, hard_expires_at - now))
+                granted.update(_deadline_fields(hard_expires_at, now))
                 if is_guest:
                     granted.update(_guest_claim_fields(guest_ctx, now))
                 if requested_ssh:
@@ -2715,7 +2683,7 @@ def try_claim_session(
 
 def heartbeat(
     wallet_address: str,
-    ssh_active: bool = False,
+    ssh_active: Optional[bool] = None,
     session_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Update heartbeat for the active session owner; bill elapsed time from last_billed_at.
@@ -2725,12 +2693,8 @@ def heartbeat(
     in-container daemon is resolved from its files_key). Without it the newest
     active row is billed, which is only correct for single-session clients.
 
-    ``ssh_active`` is reported by the in-container heartbeat daemon when at
-    least one ESTABLISHED connection to the container's sshd exists. A present
-    user renews the SSH hard billing cap exactly like an explicit re-claim
-    (extend-only, still bounded by min(affordable, ceiling)), so interactive
-    sessions never die under the operator ceiling while someone is connected,
-    and abandoned ones still do.
+    ``ssh_active`` is optional daemon-reported connection presence used only
+    for diagnostics. Browser heartbeats omit it; workloads survive disconnects.
     """
     wallet = wallet_address.lower()
     bound_session_id = _coerce_session_id(session_id)
@@ -2768,7 +2732,7 @@ def heartbeat(
                 hb_params = (wallet, bound_session_id)
             cur.execute(
                 f"""SELECT id, last_billed_at, expires_at, started_at, requested_profile, gpu_ids, container_id,
-                           hard_expires_at, ssh_enabled
+                           hard_expires_at, ssh_enabled, ssh_present
                     FROM {_SESSION_TABLE}
                     WHERE status = 'active' AND wallet_address = %s{hb_id_clause}
                     ORDER BY started_at DESC
@@ -2899,7 +2863,7 @@ def heartbeat(
                             _on_session_credit_grace(grace_row[0], session_id)
                     else:
                         cur.execute(
-                            f"""UPDATE {_SESSION_TABLE} SET status = 'ended'
+                            f"""UPDATE {_SESSION_TABLE} SET status = 'ended', termination_reason = 'credit_exhaustion'
                                 WHERE id = %s AND status = 'active' RETURNING wallet_address""",
                             (session_id,),
                         )
@@ -2986,15 +2950,15 @@ def heartbeat(
                 now,
                 current_expires_at=expires_at,
             )
-            # Presence-based SSH hard-cap renewal: a live sshd connection reported
-            # by the in-container daemon slides the cap forward (extend-only,
-            # min(affordable, ceiling) from now). Sessions without a cap stay
-            # uncapped; absence of the flag (old daemons, browser heartbeats)
-            # changes nothing.
-            if ssh_enabled and ssh_active and hard_expires_at is not None:
-                cap_secs = _ssh_hard_cap_seconds(_remaining_minutes_for(wallet))
-                if cap_secs is not None and now + cap_secs > hard_expires_at:
-                    hard_expires_at = now + cap_secs
+            # Presence is diagnostic only: disconnection cannot shorten a
+            # funded runtime or renew a user-selected stop time.
+            presence_changed = False
+            if ssh_active is not None:
+                previous_presence = row[9] if len(row) > 9 else None
+                if previous_presence is None or previous_presence != ssh_active:
+                    cur.execute(f"UPDATE {_SESSION_TABLE} SET ssh_present = %s WHERE id = %s",
+                                (ssh_active, session_id))
+                    presence_changed = True
             cur.execute(
                 f"""UPDATE {_SESSION_TABLE}
                     SET last_heartbeat = %s, last_billed_at = %s, expires_at = %s, hard_expires_at = %s
@@ -3008,9 +2972,12 @@ def heartbeat(
             conn.commit()
             if not row2:
                 return {"ok": False, "reason": "Session ended"}
+            if presence_changed:
+                logger.info("session_presence_changed session=%s ssh_present=%s", session_id, ssh_active)
             remaining_secs = max(0, row2[0] - now)
             result = {
                 "ok": True,
+                "session_id": session_id,
                 "remaining_seconds": int(remaining_secs),
                 "requested_profile": req_profile,
                 "assigned_gpu_ids": assigned_gpu_ids,
@@ -3019,8 +2986,7 @@ def heartbeat(
                 "gpu_billing_enabled": _gpu_billing_enabled(),
                 "billing_gpu_count": billing_gpu_count,
             }
-            if hard_expires_at is not None:
-                result["hard_cap_remaining_seconds"] = int(max(0, hard_expires_at - now))
+            result.update(_deadline_fields(hard_expires_at, now))
             result.update(_guest_fields_for_wallet(wallet, now))
             if wall_minutes > 0 and _gpu_billing_enabled():
                 result["wall_minutes_billed"] = round(wall_minutes, 4)
@@ -3028,10 +2994,9 @@ def heartbeat(
             if minutes_delta > 0 and deposit_ledger.init_once():
                 remaining_after = deposit_ledger.get_remaining_minutes(wallet)
                 result["remaining_minutes"] = round(remaining_after, 2)
-                if _gpu_billing_enabled() and billing_gpu_count > 1:
-                    result["estimated_wall_minutes_remaining"] = round(
-                        remaining_after / billing_gpu_count, 2
-                    )
+                result["estimated_wall_minutes_remaining"] = round(
+                    _estimated_compute_seconds(remaining_after, billing_gpu_count) / 60, 2
+                )
             return result
         finally:
             cur.close()
@@ -3081,7 +3046,7 @@ def release_session(
                 update_params = (wallet, expected_session_id)
             cur.execute(
                 f"""UPDATE {_SESSION_TABLE}
-                    SET status = 'ended'
+                    SET status = 'ended', termination_reason = 'manual_stop'
                     WHERE status IN ('active', 'credit_grace')
                       AND wallet_address = %s{expected_clause}
                     RETURNING id, requested_profile, gpu_ids, container_id""",
@@ -3225,8 +3190,7 @@ def _owned_session_summary(row: Dict[str, Any], now: float) -> Dict[str, Any]:
         "remaining_seconds": int(max(0, (row.get("expires_at") or now) - now)),
         "ssh_enabled": bool(row.get("ssh_enabled")),
     }
-    if row.get("hard_expires_at") is not None:
-        entry["hard_cap_remaining_seconds"] = int(max(0, row["hard_expires_at"] - now))
+    entry.update(_deadline_fields(row.get("hard_expires_at"), now))
     if row.get("ssh_enabled"):
         entry.update(_ssh_connection_fields(row["id"], row.get("ssh_port")))
     if row.get("requested_template"):
@@ -3249,6 +3213,54 @@ def _clean_annotation(value: Any, limit: int, multiline: bool) -> Optional[str]:
         text = text.replace("\n", " ")
     text = "".join(ch for ch in text if ch == "\n" or ch == "\t" or ord(ch) >= 32)
     return text.strip()[:limit]
+
+
+def set_session_deadline(wallet_address: str, session_id: int, stop_at: Optional[float]) -> Dict[str, Any]:
+    """Set/remove an explicit paid-session stop time; never alter a demo cap."""
+    if isinstance(session_id, bool) or not isinstance(session_id, int) or session_id <= 0:
+        return {"ok": False, "error": "session_id must be a positive integer"}
+    wallet = wallet_address.lower()
+    now = time.time()
+    if stop_at is not None and (
+        isinstance(stop_at, bool) or not isinstance(stop_at, (int, float))
+        or not (now < stop_at <= now + 365 * 86400)
+    ):
+        return {"ok": False, "error": "stop_at must be null or a future Unix timestamp within one year"}
+    if _import_guest_mode().is_guest_identity(wallet):
+        return {"ok": False, "error": "Demo deadlines cannot be changed"}
+    if not _init_once():
+        return {"ok": False, "error": "Session DB unavailable"}
+    conn = _get_connection()
+    if not conn:
+        return {"ok": False, "error": "Session DB unavailable"}
+    try:
+        with conn.cursor() as cur:
+            # Serialize against reconciliation's read/stop sequence. A deadline
+            # change cannot race a teardown already selected by the scheduler.
+            _acquire_allocation_scheduler_lock(cur)
+            now = time.time()
+            if stop_at is not None and stop_at <= now:
+                return {"ok": False, "error": "The selected stop time has already passed"}
+            cur.execute(f"""SELECT hard_expires_at FROM {_SESSION_TABLE}
+                WHERE id = %s AND wallet_address = %s AND status IN ('active', 'credit_grace')
+                FOR UPDATE""", (session_id, wallet))
+            row = cur.fetchone()
+            if not row or (row[0] is not None and row[0] <= now):
+                return {"ok": False, "error": "Session is absent or its scheduled stop has passed"}
+            cur.execute(f"""UPDATE {_SESSION_TABLE}
+                SET hard_expires_at = %s, deadline_kind = 'scheduled'
+                WHERE id = %s AND wallet_address = %s AND status IN ('active', 'credit_grace')""",
+                (stop_at, session_id, wallet))
+        conn.commit()
+        logger.info("session_deadline_changed session=%s source=owner previous=%s deadline=%s",
+                    session_id, row[0], stop_at)
+        return {"ok": True, "session_id": session_id, **_deadline_fields(stop_at, now)}
+    except Exception as exc:
+        conn.rollback()
+        logger.warning("set_session_deadline failed for session %s: %s", session_id, exc)
+        return {"ok": False, "error": "Could not update scheduled stop"}
+    finally:
+        conn.close()
 
 
 def annotate_session(
@@ -3433,10 +3445,9 @@ def session_status(wallet_address: Optional[str] = None) -> Dict[str, Any]:
                         else _billing_gpu_count(owner_gpu_ids, owner_profile)
                     )
                     result["owner_remaining_seconds"] = int(max(0, owned["expires_at"] - now))
-                    if owned.get("hard_expires_at") is not None:
-                        result["owner_hard_cap_remaining_seconds"] = int(
-                            max(0, owned["hard_expires_at"] - now)
-                        )
+                    result["owner_scheduled_stop_at"] = owned.get("hard_expires_at")
+                    result["owner_hard_cap_remaining_seconds"] = _deadline_fields(
+                        owned.get("hard_expires_at"), now)["hard_cap_remaining_seconds"]
                     # Headless SSH session: tell the client so a reload restores the
                     # SSH connect card instead of offering a desktop viewer that the
                     # container cannot serve.
@@ -3922,7 +3933,7 @@ def _reconcile_containers(cur, now: float) -> Tuple[List[int], List[Tuple[str, i
     grace = session_grace_seconds()
     for s_id in running_session_ids:
         cur.execute(
-            f"SELECT status, hard_expires_at, wallet_address FROM {_SESSION_TABLE} WHERE id = %s",
+            f"SELECT status, hard_expires_at, wallet_address, deadline_kind FROM {_SESSION_TABLE} WHERE id = %s",
             (s_id,),
         )
         row = cur.fetchone()
@@ -3940,12 +3951,12 @@ def _reconcile_containers(cur, now: float) -> Tuple[List[int], List[Tuple[str, i
         if (
             status == "active"
             and hard_expires_at is not None
-            and hard_expires_at + grace <= now
+            and hard_expires_at + (0 if len(row) > 3 and row[3] == "scheduled" else grace) <= now
         ):
             logger.info("reconcile: session %s reached hard expiry, scheduling DB update to ended", s_id)
             cur.execute(
-                f"UPDATE {_SESSION_TABLE} SET status = 'ended' WHERE id = %s",
-                (s_id,),
+                f"UPDATE {_SESSION_TABLE} SET status = 'ended', termination_reason = %s WHERE id = %s",
+                ("scheduled_expiry" if len(row) > 3 and row[3] == "scheduled" else "demo_expiry", s_id),
             )
             to_expire.append((wallet, s_id))
 

@@ -164,6 +164,7 @@ try:
         session_status,
         session_id_for_files_key,
         annotate_session,
+        set_session_deadline,
         try_claim_session,
         validate_session_files_key,
         validate_webrtc_agent_identity,
@@ -183,6 +184,7 @@ except ImportError:
             session_status,
             session_id_for_files_key,
             annotate_session,
+            set_session_deadline,
             try_claim_session,
             validate_session_files_key,
             validate_webrtc_agent_identity,
@@ -2435,8 +2437,8 @@ def api_session_heartbeat():
         return jsonify({"ok": False, "error": "Valid wallet_address required"}), 400
     # Auth: normal wallet auth token (browser) OR the per-session files_key
     # (durable in-container runtime heartbeat, no browser sign-in).
-    # ssh_active: daemon-reported live sshd connection -> renews the SSH hard cap.
-    ssh_active = bool(data.get('ssh_active'))
+    # Optional daemon presence for diagnostics; never renews a scheduled stop.
+    ssh_active = data.get('ssh_active') if isinstance(data.get('ssh_active'), bool) else None
     # session_id: which of the wallet's concurrent sessions this heartbeat
     # keeps alive and bills. Browser viewers send the session they are attached
     # to; the container daemon is resolved from its per-session files_key.
@@ -2539,6 +2541,31 @@ def api_session_annotate():
     if auth_err:
         return auth_err
     result = annotate_session(wallet_address, session_id, title=title, notes=notes)
+    return jsonify(result), (200 if result.get("ok") else 409)
+
+
+@app.route('/api/session/deadline', methods=['POST', 'OPTIONS'])
+def api_session_deadline():
+    """Authenticated, exact-session scheduled stop control."""
+    if request.method == 'OPTIONS':
+        return '', 200
+    if not _session_mgr_available:
+        return jsonify({"ok": False, "error": "Session manager unavailable"}), 503
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        data = {}
+    wallet_address = (data.get('wallet_address') or '').strip()
+    if not wallet_address or not validate_wallet_address(wallet_address):
+        return jsonify({"ok": False, "error": "Valid wallet_address required"}), 400
+    session_id = data.get('session_id')
+    if isinstance(session_id, bool) or not isinstance(session_id, int) or session_id <= 0:
+        return jsonify({"ok": False, "error": "session_id must be a positive integer"}), 400
+    if 'stop_at' not in data:
+        return jsonify({"ok": False, "error": "stop_at is required (null removes the schedule)"}), 400
+    auth_err = _require_auth_token(wallet_address)
+    if auth_err:
+        return auth_err
+    result = set_session_deadline(wallet_address, session_id, data['stop_at'])
     return jsonify(result), (200 if result.get("ok") else 409)
 
 

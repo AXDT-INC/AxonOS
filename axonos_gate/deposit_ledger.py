@@ -931,6 +931,11 @@ def record_session_expiry(
         return
     try:
         with conn.cursor() as cur:
+            cur.execute("SELECT termination_reason FROM axgt_sessions WHERE id = %s AND wallet_address = %s",
+                        (session_id, wallet))
+            row = cur.fetchone()
+            reason = row[0] if row and row[0] else "unknown"
+            logger.info("session_ended session=%s reason=%s balance=%s", session_id, reason, balance_after_minutes)
             _ledger_write(
                 cur,
                 wallet,
@@ -939,7 +944,7 @@ def record_session_expiry(
                 Decimal("0"),
                 balance_after_minutes,
                 reference_session_id=session_id,
-                notes="Session expired or heartbeat timeout",
+                notes=f"termination_reason={reason}",
                 created_by="session_manager",
             )
         conn.commit()

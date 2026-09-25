@@ -576,8 +576,7 @@ const UI = {
         }
     },
 
-    /** Tab close on a desktop viewer → release; F5/Ctrl+R → keep session
-     *  (reload); detached and SSH/web-terminal sessions survive tab close. */
+    /** Viewer navigation never controls funded runtime lifetime. */
     addAxonosSessionLifecycleHandlers() {
         if (window.axonosSessionLifecycleHandlersInstalled) {
             return;
@@ -592,42 +591,10 @@ const UI = {
             }
         }, true);
 
-        window.addEventListener('beforeunload', (e) => {
-            let nav = null;
-            try {
-                nav = sessionStorage.getItem('axonos_nav');
-                if (!nav) {
-                    sessionStorage.setItem('axonos_nav', 'close');
-                }
-            } catch (err) { /* ignore */ }
-            // Closing the tab ENDS a connected desktop (pagehide below releases
-            // the slot), which silently destroys running work. Ask first, via
-            // the browser's native leave-page dialog; cancelling keeps the
-            // session exactly as it was. Reloads and detached/terminal
-            // sessions are unaffected. An unattended crash never reaches this
-            // handler, so it cannot strand a session.
-            if (nav !== 'reload' && UI._axonosSessionOwnsServerSlot()) {
-                e.preventDefault();
-                e.returnValue = '';
-            }
-        });
-
-        window.addEventListener('pagehide', (e) => {
-            if (e.persisted) {
-                return;
-            }
-            let nav = 'close';
-            try {
-                nav = sessionStorage.getItem('axonos_nav') || 'close';
-                sessionStorage.removeItem('axonos_nav');
-            } catch (err) { /* ignore */ }
-            if (nav === 'reload') {
-                return;
-            }
-            if (!UI._axonosSessionOwnsServerSlot()) {
-                return;
-            }
-            UI._axonosReleaseSessionBeacon();
+        // Closing or reloading a viewer never releases funded compute. End
+        // session is explicit; runtime health and billing are server-owned.
+        window.addEventListener('pagehide', () => {
+            try { sessionStorage.removeItem('axonos_nav'); } catch (err) { /* ignore */ }
         });
     },
 
@@ -1225,49 +1192,8 @@ const UI = {
         }
         const extendBtn = document.getElementById('axonos_ssh_extend_btn');
         if (extendBtn) {
-            // Extend = owner re-claim: the gate renews the hard billing cap to
-            // now + min(affordable, ceiling) and returns the fresh deadline.
             extendBtn.addEventListener('click', () => {
-                if (extendBtn.disabled) return;
-                const restoreLabel = extendBtn.textContent;
-                const previousDeadline = Number(UI._axonosSshHardCapDeadlineMs) || 0;
-                extendBtn.disabled = true;
-                extendBtn.textContent = 'Extending…';
-                UI._axonosFetchSessionClaim().then((claim) => {
-                    const granted = claim && (claim.granted === true || claim.granted === 'true');
-                    if (granted && typeof claim.hard_cap_remaining_seconds === 'number') {
-                        UI._axonosSshClaim = { ...(UI._axonosSshClaim || {}), ...claim, ssh_enabled: true };
-                        UI._axonosUpdateSshCardCap(claim);
-                        const newDeadline = Number(UI._axonosSshHardCapDeadlineMs) || 0;
-                        const addedSeconds = previousDeadline > 0
-                            ? Math.max(0, Math.round((newDeadline - previousDeadline) / 1000))
-                            : 0;
-                        if (addedSeconds >= 30) {
-                            const addedMinutes = Math.max(1, Math.round(addedSeconds / 60));
-                            const message = `Extended by ~${addedMinutes} min`;
-                            extendBtn.textContent = message;
-                            UI.showStatus(`${message}. The updated deadline is shown above.`, 'normal', 5000);
-                        } else {
-                            extendBtn.textContent = 'Already at maximum';
-                            UI.showStatus('Session is already extended to the current maximum allowed by your balance and session limit.', 'normal', 5000);
-                        }
-                    } else if (granted) {
-                        extendBtn.textContent = 'Extension confirmed';
-                        UI.showStatus('Session extension confirmed.', 'normal', 5000);
-                    } else {
-                        const reason = (claim && claim.reason) ? String(claim.reason) : 'Could not extend the session.';
-                        UI.showStatus(reason, 'error');
-                        extendBtn.textContent = restoreLabel;
-                    }
-                }).catch(() => {
-                    UI.showStatus(_('Could not extend the session.'), 'error');
-                    extendBtn.textContent = restoreLabel;
-                }).finally(() => {
-                    setTimeout(() => {
-                        extendBtn.disabled = false;
-                        extendBtn.textContent = restoreLabel;
-                    }, 5000);
-                });
+                if (UI._axonosSshClaim) UI.openSessionSchedule(UI._axonosSshClaim);
             });
         }
         UI.updateAxonosSshUi();
@@ -1386,31 +1312,127 @@ const UI = {
         }
     },
 
-    /** Update the SSH card deadline line from any payload that carries
-     *  hard_cap_remaining_seconds (claim/status/heartbeat). The HARD cap is the
-     *  real end time — it renews while an SSH connection is live and on Extend;
-     *  the sliding idle TTL (remaining_seconds) is only a fallback for older
-     *  gates that don't report the cap. Turns amber under 30 minutes. */
+    /** A scheduled stop is independent of the balance-based estimate. */
     _axonosUpdateSshCardCap(payload) {
         const ttlEl = document.getElementById('axonos_ssh_card_ttl');
         if (!ttlEl || !payload) return;
-        const capSecs = (typeof payload.hard_cap_remaining_seconds === 'number')
-            ? payload.hard_cap_remaining_seconds
-            : null;
-        if (capSecs !== null) {
-            UI._axonosSshHardCapDeadlineMs = Date.now() + Math.max(0, capSecs) * 1000;
+        const deadline = typeof payload.scheduled_stop_at === 'number'
+            ? payload.scheduled_stop_at
+            : (typeof payload.hard_cap_remaining_seconds === 'number'
+                ? Date.now() / 1000 + payload.hard_cap_remaining_seconds : null);
+        UI._axonosSshHardCapDeadlineMs = deadline === null ? 0 : deadline * 1000;
+        if (UI._axonosSshClaim) UI._axonosSshClaim.scheduled_stop_at = deadline;
+        ttlEl.textContent = deadline === null
+            ? 'Scheduled stop: none. Compute continues while funded.'
+            : `Scheduled stop: ${new Date(deadline * 1000).toLocaleString()}`;
+        ttlEl.style.color = deadline !== null && deadline - Date.now() / 1000 <= 600
+            ? 'var(--warm, #f2c14e)' : '';
+    },
+
+    async _setSessionSchedule(session, stopAt) {
+        const wallet = window.verifiedWalletAddress;
+        const sessionId = Number(session.session_id);
+        if ((session.schedule_wallet && session.schedule_wallet !== wallet) || !wallet || !Number.isSafeInteger(sessionId) || sessionId <= 0) {
+            throw new Error('Session identity is unavailable. Reconnect your wallet.');
         }
-        const secs = capSecs !== null
-            ? capSecs
-            : (typeof payload.remaining_seconds === 'number' ? payload.remaining_seconds : null);
-        if (secs === null) return;
-        const mins = Math.max(0, Math.round(secs / 60));
-        const h = Math.floor(mins / 60);
-        const label = h > 0 ? `${h}h ${mins % 60}m` : `${mins} min`;
-        ttlEl.textContent = capSecs !== null
-            ? `Session ends in ~${label} — renews while you're connected over SSH, or press Extend.`
-            : `Session time remaining: ~${label}`;
-        ttlEl.style.color = mins <= 30 ? 'var(--warm, #f2c14e)' : '';
+        const response = await fetch('/api/session/deadline', {
+            method: 'POST', credentials: 'include',
+            headers: { 'Content-Type': 'application/json', 'X-Wallet-Address': wallet,
+                'X-AXGT-Auth-Token': window.verifiedWalletAuthToken || '' },
+            body: JSON.stringify({ wallet_address: wallet, session_id: sessionId, stop_at: stopAt })
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw new Error(result.error || 'Could not change scheduled stop.');
+        if (window.verifiedWalletAddress !== wallet) return;
+        Object.assign(session, result);
+        if (UI._axonosSshClaim && Number(UI._axonosSshClaim.session_id) === sessionId) {
+            UI._axonosUpdateSshCardCap(result);
+        }
+        UI.updateScheduledStopWarnings([session]);
+        if (typeof window.axonosLoadDashboard === 'function') window.axonosLoadDashboard();
+        return result;
+    },
+
+    openSessionSchedule(session) {
+        session = { ...session, schedule_wallet: window.verifiedWalletAddress };
+        let dialog = document.getElementById('axonos_schedule_dialog');
+        if (!dialog) {
+            dialog = document.createElement('dialog');
+            dialog.id = 'axonos_schedule_dialog';
+            dialog.className = 'axonos-schedule-dialog';
+            dialog.setAttribute('aria-labelledby', 'axonos_schedule_title');
+            dialog.innerHTML = `<h2 id="axonos_schedule_title">Schedule a stop</h2>
+                <p>Compute continues after you disconnect. It stops at your chosen time or when credits run out.</p>
+                <label>Stop time (your local time) <input type="datetime-local" required></label>
+                <p class="schedule-error" role="alert"></p>
+                <div class="schedule-actions"><button type="button" data-action="save">Save stop time</button>
+                <button type="button" data-action="extend">Extend 1 hour</button>
+                <button type="button" data-action="remove">Remove stop time</button>
+                <button type="button" data-action="cancel">Cancel</button></div>`;
+            document.body.appendChild(dialog);
+        }
+        const input = dialog.querySelector('input');
+        const error = dialog.querySelector('.schedule-error');
+        const deadline = session.scheduled_stop_at;
+        const initial = new Date((deadline || Date.now() / 1000 + 3600) * 1000);
+        input.value = new Date(initial.getTime() - initial.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+        error.textContent = '';
+        dialog.querySelector('[data-action="extend"]').hidden = !deadline;
+        dialog.querySelector('[data-action="remove"]').hidden = !deadline;
+        dialog.onclick = async (event) => {
+            const button = event.target.closest('button[data-action]');
+            if (!button || button.disabled) return;
+            const action = button.dataset.action;
+            if (action === 'cancel') { dialog.close(); return; }
+            const stopAt = action === 'remove' ? null
+                : action === 'extend' ? Number(deadline) + 3600
+                    : new Date(input.value).getTime() / 1000;
+            if (stopAt !== null && (!Number.isFinite(stopAt) || stopAt <= Date.now() / 1000)) {
+                error.textContent = 'Choose a future stop time.'; return;
+            }
+            const buttons = dialog.querySelectorAll('button');
+            buttons.forEach((el) => { el.disabled = true; });
+            try {
+                await UI._setSessionSchedule(session, stopAt);
+                dialog.close();
+            } catch (err) { error.textContent = err.message; }
+            finally { buttons.forEach((el) => { el.disabled = false; }); }
+        };
+        dialog.showModal();
+    },
+
+    updateScheduledStopWarnings(sessions, replace = false) {
+        const wallet = window.verifiedWalletAddress;
+        if (replace || UI._scheduleWarningWallet !== wallet) UI._scheduledSessions = new Map();
+        UI._scheduleWarningWallet = wallet;
+        for (const session of sessions) {
+            if (session && !session.guest_session && !window.axonosGuestSession && session.session_id) UI._scheduledSessions.set(Number(session.session_id), session);
+        }
+        if (!UI._scheduleWarningTimer) UI._scheduleWarningTimer = setInterval(() => UI._renderScheduledStopWarning(), 1000);
+        UI._renderScheduledStopWarning();
+    },
+
+    _renderScheduledStopWarning() {
+        let banner = document.getElementById('axonos_scheduled_stop_warning');
+        const now = Date.now() / 1000;
+        const sessions = UI._scheduleWarningWallet === window.verifiedWalletAddress
+            ? Array.from((UI._scheduledSessions || new Map()).values()) : [];
+        const due = sessions.filter((row) => typeof row.scheduled_stop_at === 'number' &&
+            row.scheduled_stop_at - now <= 600 && row.scheduled_stop_at > now)
+            .sort((a, b) => a.scheduled_stop_at - b.scheduled_stop_at)[0];
+        if (!due) { if (banner) banner.hidden = true; return; }
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'axonos_scheduled_stop_warning';
+            banner.className = 'axonos-scheduled-stop-warning';
+            banner.setAttribute('role', 'alert');
+            banner.innerHTML = '<span></span> <button type="button">Extend or change stop</button>';
+            document.body.appendChild(banner);
+        }
+        banner.hidden = false;
+        const message = `Session #${due.session_id} will stop in ${Math.ceil((due.scheduled_stop_at - now) / 60)} min. Running jobs will end even if credits remain.`;
+        if (banner.querySelector('span').textContent !== message) banner.querySelector('span').textContent = message;
+        banner.querySelector('button').onclick = () => UI.openSessionSchedule(due);
     },
 
     hideAxonosSshCard() {
@@ -1649,7 +1671,7 @@ const UI = {
         }
 
         try {
-            const terminalModule = await import('./terminal/axonos-terminal.js?v=20260909elapsed2');
+            const terminalModule = await import('./terminal/axonos-terminal.js?v=20260925schedule');
             const client = await terminalModule.openAxonosTerminal({
                 container: document.getElementById('noVNC_container'),
                 wallet,
@@ -3581,7 +3603,7 @@ const UI = {
         return !!(UI.connected || UI._axgtStatusPollId);
     },
 
-    /** Fire-and-forget release for tab close (pagehide). */
+    /** Legacy release helper; never invoked on tab close. */
     _axonosReleaseSessionBeacon() {
         const wallet = window.verifiedWalletAddress;
         const headers = UI._axonosReleaseSessionHeaders();
@@ -4357,7 +4379,7 @@ const UI = {
                         try {
                             // A stable module URL keeps negotiation generation/cancellation
                             // state shared across retries and rapid user reconnects.
-                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260909elapsed2');
+                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260925schedule');
                             if (!connectAttemptIsCurrent()) {
                                 return;
                             }
@@ -5288,11 +5310,11 @@ const UI = {
                         window.axonosApplyDetachedSessionUi(true);
                     }
                 }
-                // Live SSH-card deadline: heartbeats carry the (possibly
-                // presence-renewed) hard-cap remaining time.
-                if (hb && hb.ok === true && window.axonosSessionDetached &&
-                    typeof hb.hard_cap_remaining_seconds === 'number') {
-                    UI._axonosUpdateSshCardCap(hb);
+                // Scheduled stops are separate from credit estimates and
+                // connection presence; null explicitly clears a removed stop.
+                if (hb && hb.ok === true) {
+                    if (window.axonosSessionDetached) UI._axonosUpdateSshCardCap(hb);
+                    if (!hb.guest_session) UI.updateScheduledStopWarnings([hb]);
                 }
                 if (hb && hb.ok === false) {
                     const hbReason = String(hb.reason || '');
@@ -5308,6 +5330,8 @@ const UI = {
                             'Usage credit exhausted. Add more ETH to unlock access.'
                         );
                     } else if (/no active session|session ended/i.test(hbReason)) {
+                        if (UI._scheduledSessions) UI._scheduledSessions.delete(Number(heartbeatSessionId));
+                        UI._renderScheduledStopWarning();
                         UI._axonosOnServerSessionEnded();
                     }
                 }
@@ -5347,6 +5371,11 @@ const UI = {
                 const wallRemaining = typeof data.estimated_wall_minutes_remaining === 'number'
                     ? data.estimated_wall_minutes_remaining
                     : (gpuBilling && billingGpus > 1 ? remaining / billingGpus : remaining);
+                const estimateEl = document.getElementById('axonos_ssh_compute_estimate');
+                if (estimateEl) {
+                    const allocatedGpus = Math.max(1, Number(data.billing_gpu_count || billingGpus));
+                    estimateEl.textContent = `Estimated compute remaining: ${(wallRemaining / 60).toFixed(1)} hours · ${allocatedGpus} GPU${allocatedGpus === 1 ? '' : 's'} across active sessions`;
+                }
                 const reason = (data.reason && String(data.reason)) || '';
                 // Footer countdown — re-anchored on each poll, interpolated locally between.
                 if (!creditExhausted && wallRemaining > 0) {
@@ -5358,15 +5387,12 @@ const UI = {
                     UI._axgtDisconnectForCreditExhaustion(
                         'Usage credit exhausted. Add more ETH to unlock access.'
                     );
-                } else if (
-                    (gpuBilling && billingGpus > 1 && wallRemaining <= threshold && remaining > 0) ||
-                    (!gpuBilling && remaining <= threshold && remaining > 0)
-                ) {
+                } else if (wallRemaining <= threshold && remaining > 0) {
                     const warnMsg = reason || (gpuBilling && billingGpus > 1
                         ? `About ${wallRemaining.toFixed(1)} minute(s) of desktop time left (${billingGpus} GPUs, ${billingGpus}× billing). Add more ETH to continue.`
                         : `Less than ${threshold} minutes of usage credit remaining. Add more ETH to continue.`);
                     UI._axgtUpdateUsageOverlay('warning', warnMsg);
-                } else if (remaining > threshold * (gpuBilling && billingGpus > 1 ? billingGpus : 1)) {
+                } else if (wallRemaining > threshold) {
                     UI._axgtUpdateUsageOverlay('hidden');
                 }
             })

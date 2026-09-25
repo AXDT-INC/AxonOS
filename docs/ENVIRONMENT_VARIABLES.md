@@ -310,13 +310,45 @@ Read primarily by [`axonos_gate/session_manager.py`](../axonos_gate/session_mana
 |----------|---------|-------------|
 | `AXGT_SESSION_MAX_MINUTES` | `60` | Sliding runtime lease — extended by healthy container/browser heartbeats; session ends when the lease or stale-heartbeat timeout is exceeded. |
 | `AXGT_HEARTBEAT_TIMEOUT_SECONDS` | `120` | No heartbeat → session considered stale and released. |
-| `AXGT_SSH_MAX_SESSION_MINUTES` | *(unset = affordability only)* | Hard, **non-sliding** billing ceiling (minutes) for headless/SSH sessions kept alive by the in-container heartbeat daemon. Effective cap = `min(this, affordable minutes)`. Does not affect desktop sessions. |
+| `AXGT_SSH_MAX_SESSION_MINUTES` | *(deprecated; ignored)* | Paid sessions have no implicit SSH deadline. Use an explicit per-session scheduled stop instead. Funded workloads survive SSH/browser disconnection. |
 | `AXGT_SESSION_COOLDOWN_SECONDS` | `0` | Seconds before same wallet can reclaim after release. |
 | `AXGT_SESSION_CREDIT_GRACE_MINUTES` | `120` | Top-up grace after credit exhaustion. The container and jobs keep running, compute billing/viewer access remain stopped, and cleanup stops the container when this grace expires. |
 | `AXGT_SESSION_PAUSED_MAX_MINUTES` | *(unset)* | Legacy fallback for `AXGT_SESSION_CREDIT_GRACE_MINUTES`; ignored when the canonical variable is set. |
-| `AXGT_SESSION_GRACE_SECONDS` | `60` | Grace window applied to lease/heartbeat expiry checks before a session is released (accepts `>= 0`). Also read by both launchers when reconciling session networks. |
+| `AXGT_SESSION_GRACE_SECONDS` | `60` | Legacy/demo hard-cap grace (accepts `>= 0`), also read by launchers when reconciling session networks. Explicit scheduled stops do not receive this grace. Runtime lease/heartbeat checks use their own deadlines. |
 | `AXGT_GATE_LIVENESS_INTERVAL_SECONDS` | `15` | How often the gate stamps its own liveness row (must be `> 0`). Measured control-plane downtime is credited back to live sessions so they survive gate restarts/redeploys. |
 | `AXGT_SESSION_RESET_SCRIPT` | `/usr/local/bin/reset_session.sh` | Script run between users (desktop cleanup). Ignored when the file does not exist on disk. |
+
+Paid sessions (including test-credit/whitelisted wallets) run until explicitly ended,
+credit exhaustion, or an owner-selected scheduled stop. Runtime heartbeat failures
+remain a separate health termination path. Closing a viewer or SSH connection does
+not end compute or alter its schedule. The existing credit-exhaustion top-up grace
+still applies, but never extends a scheduled stop.
+
+Use **Schedule stop** on a session card to set a local date/time, extend it by one
+hour, or remove it. The authenticated `POST /api/session/deadline` endpoint accepts
+`wallet_address`, a positive integer `session_id`, and `stop_at` (Unix seconds, or
+`null` to remove). Omission is rejected. Only the owning wallet can change an active
+or credit-grace session, and an already-passed deadline cannot be revived. Dates must be in the
+future and within one year. Demo deadlines cannot be changed. Reattaching, topping
+up, and connection presence never change a schedule.
+
+Wallet-status and dashboard credit estimates divide the wallet balance by the combined billing rate of its
+active sessions; they are not stop deadlines. The browser shows a separate warning
+within ten minutes of a scheduled stop, including an action to extend/change it.
+Warnings require an open browser; no external notification is sent.
+
+**Upgrade:** deploy the gate listeners together. Startup adds `deadline_kind`,
+`termination_reason`, and `ssh_present` columns and clears legacy implicit caps on
+active/credit-grace SSH sessions. Explicit schedules and demo deadlines are
+preserved. This deliberately allows existing funded SSH workloads to continue
+until stopped or credit-exhausted. Old gate processes must not remain running
+alongside the new policy, as they can still renew or assign implicit caps.
+
+Termination reasons are persisted with the session state and copied to the ledger:
+`credit_exhaustion`, `scheduled_expiry`, `heartbeat_timeout`, `manual_stop`, or
+`demo_expiry`. Legacy rows with no known reason remain `unknown` in subsequent
+bookkeeping. Gate logs record presence transitions and owner/migration deadline
+changes without session credentials.
 
 ### Desktop mode (container runtime)
 
@@ -614,7 +646,7 @@ Headless GPU sessions reachable only over SSH (no X desktop / WebRTC), launched 
 | `AXGT_SSH_PUBLIC_HOST` | *(empty = SSH toggle disabled)* | Public IP/host the per-session SSH ports NAT to (the **media-plane** IP, not the landing-page hostname). |
 | `AXGT_SSH_USER` | `aXonian` | Login user shown in the connect-string (must be the in-container desktop user). |
 
-See also `AXGT_SSH_MAX_SESSION_MINUTES` (hard billing cap, [Session lifecycle](#session-lifecycle)).
+Paid-session scheduling is documented under [Session lifecycle](#session-lifecycle); demo deadlines remain fixed and cannot be extended.
 
 ---
 
