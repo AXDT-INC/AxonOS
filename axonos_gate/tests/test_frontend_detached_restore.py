@@ -1,3 +1,6 @@
+import os
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -241,6 +244,7 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
             "window.axonosDetachedSession = null",
             "window.axonosSessionDetached = false",
             "window.axonosPendingResumeClaim = null",
+            "window.axonosPendingSessionClaim = null",
             "window.axonosPausedResume = null",
             "window.axonosSshEnabled = false",
             "window.axonosCurrentSessionReleaseOperation = null",
@@ -1312,6 +1316,29 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         self.assertIn("activeId !== expectedId", reconcile)
         self.assertIn("confirmed: true", reconcile)
         self.assertIn("billingEnded: true", reconcile)
+
+    def test_ordinary_preclaim_runtime_teardown_and_reuse(self) -> None:
+        node = shutil.which("node")
+        if not node:
+            try:
+                import playwright
+
+                candidate = Path(playwright.__file__).resolve().parent / "driver" / "node"
+                if candidate.is_file() and os.access(candidate, os.X_OK):
+                    node = str(candidate)
+            except (ImportError, OSError, TypeError):
+                pass
+        if not node:
+            self.skipTest("Node runtime is unavailable")
+        repo = Path(__file__).resolve().parents[2]
+        completed = subprocess.run(
+            [node, str(repo / "axonos_gate/tests/session_claim_runtime.js"),
+             str(repo / "novnc-theme/ui.js"), str(repo / "novnc-theme/vnc.html")],
+            cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=15, check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("session claim runtime checks passed", completed.stdout)
 
 
 if __name__ == "__main__":

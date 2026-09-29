@@ -1,8 +1,13 @@
 /* App-owned, first-party X conversion-sharing consent bridge.
  * No X script, image, pixel, tag manager, cookie, or network request is used.
  */
-(function () {
+var axonosXAttributionInitialized = false;
+
+const initializeXAttribution = (initialLandingClick) => {
     'use strict';
+
+    if (axonosXAttributionInitialized) return;
+    axonosXAttributionInitialized = true;
 
     var STORAGE_KEY = 'axonos_x_attribution_context_v1';
     var REVOCATION_PENDING_KEY = 'axonos_x_attribution_revoke_pending_v1';
@@ -18,16 +23,18 @@
     var REQUEST_TIMEOUT_MS = 10000;
     var BIND_TIMEOUT_MS = 5000;
 
-    // The URL bootstrap is the only code allowed to put the raw click on a
-    // global. Consume it immediately, before later scripts can read or replace
-    // it, and retain only this module-private first-touch value.
-    // The parser-blocking bootstrap already validates the exact decoded value.
+    // The synchronous URL bootstrap is the only code allowed to put the raw
+    // click on a global. It deletes that property before starting this optional
+    // module import and passes its bounded, first-touch value directly here.
+    // The bootstrap already validates the exact decoded value.
     // Do not trim here: boundary whitespace/control characters must be rejected,
     // never normalized into an advertising identifier.
-    var landingClick = String(window.axonosPendingTwclid || '');
-    try { delete window.axonosPendingTwclid; } catch (e) {
-        window.axonosPendingTwclid = '';
-    }
+    var landingClick = typeof initialLandingClick === 'string'
+        ? initialLandingClick : '';
+    // Do not leave a second copy in this long-lived function activation. All
+    // lifecycle callbacks close over it, so overwrite the initializer argument
+    // before registering any of them.
+    initialLandingClick = '';
 
     var landingClickEligible = !!landingClick;
     var landingClickStatusSent = false;
@@ -1249,7 +1256,11 @@
         });
     }
 
-    document.addEventListener('DOMContentLoaded', initializeAttribution);
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initializeAttribution, { once: true });
+    } else {
+        initializeAttribution();
+    }
     window.addEventListener('pagehide', function () {
         attributionBootGeneration += 1;
         invalidateAsyncRequests();
@@ -1270,4 +1281,7 @@
             if (!recheckGlobalPrivacyControl()) maybeBindVerifiedWallet();
         }
     });
-})();
+};
+
+export { initializeXAttribution };
+export default initializeXAttribution;

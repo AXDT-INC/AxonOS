@@ -245,14 +245,97 @@ Copyright (C) 2019 The noVNC Authors
         })();
     </script>
 
-    <script src="app/x-attribution.js?v=4"
-        onerror="window.axonosPendingTwclid='';try{delete window.axonosPendingTwclid;}catch(e){}"></script>
     <script>
-        // The parser-blocking module captures the value synchronously. Whether
-        // it succeeded, failed integrity, or 404ed, never retain a raw click ID
-        // on the global object for later same-origin scripts to inspect.
-        window.axonosPendingTwclid = '';
-        try { delete window.axonosPendingTwclid; } catch (e) { }
+        // Keep the optional attribution bridge off the parser's critical path.
+        // This tiny inline closure is the sole handoff: it consumes and deletes
+        // the scrubbed click synchronously, then imports the larger bridge without
+        // delaying the wallet, payment, session, reconnect, or viewer UI.
+        (function loadAxonosAttributionBridge() {
+            'use strict';
+            var RAW_CLICK_RETENTION_MS = 10000;
+            var initialClick = String(window.axonosPendingTwclid || '');
+
+            // Business request builders fail closed while the optional module is
+            // unavailable.  They never read the private click held below.
+            window.axonosAttributionContext = '';
+            window.axonosAttributionReady = false;
+            window.axonosPendingTwclid = '';
+            try { delete window.axonosPendingTwclid; } catch (e) { }
+
+            function monotonicNow() {
+                try {
+                    var value = window.performance &&
+                        typeof window.performance.now === 'function'
+                        ? window.performance.now() : NaN;
+                    return Number.isFinite(value) && value >= 0 ? value : null;
+                } catch (e) {
+                    return null;
+                }
+            }
+            var clickCapturedAt = monotonicNow();
+            var clickDeadline = clickCapturedAt === null
+                ? null : clickCapturedAt + RAW_CLICK_RETENTION_MS;
+            if (clickDeadline === null) initialClick = '';
+
+            var retentionTimer = null;
+            function discardInitialClick() {
+                // A stalled module fetch must not retain a vendor identifier for
+                // the lifetime of an otherwise usable AxonOS page.
+                initialClick = '';
+                clickCapturedAt = null;
+                clickDeadline = null;
+                if (retentionTimer !== null) {
+                    clearTimeout(retentionTimer);
+                    retentionTimer = null;
+                }
+            }
+            function discardInitialClickOnPageHide() {
+                // A module completion queued across navigation/BFCache must never
+                // resurrect the prior document's advertising identifier.
+                discardInitialClick();
+            }
+            function expireInitialClick() {
+                discardInitialClick();
+                window.removeEventListener('pagehide', discardInitialClickOnPageHide);
+            }
+            retentionTimer = setTimeout(expireInitialClick, RAW_CLICK_RETENTION_MS);
+            window.addEventListener('pagehide', discardInitialClickOnPageHide, {
+                once: true
+            });
+
+            function takeInitialClick() {
+                var now = monotonicNow();
+                // Timers can be throttled in background tabs. The monotonic
+                // deadline, not callback scheduling order, is authoritative.
+                var withinDeadline = clickCapturedAt !== null &&
+                    clickDeadline !== null && now !== null &&
+                    now >= clickCapturedAt && now < clickDeadline;
+                var value = withinDeadline ? initialClick : '';
+                discardInitialClick();
+                window.removeEventListener('pagehide', discardInitialClickOnPageHide);
+                return value;
+            }
+
+            var moduleRequest;
+            try {
+                moduleRequest = import('./app/x-attribution.js?v=5');
+            } catch (e) {
+                takeInitialClick();
+                return;
+            }
+            Promise.resolve(moduleRequest).then(function (bridge) {
+                var click = takeInitialClick();
+                var initialize = bridge && (bridge.default || bridge.initializeXAttribution);
+                if (typeof initialize !== 'function') return;
+                try {
+                    initialize(click);
+                } finally {
+                    click = '';
+                }
+            }).catch(function () {
+                takeInitialClick();
+            });
+        })();
     </script>
 
     <!-- Icons - Using AxonOS icon.png -->
@@ -355,7 +438,7 @@ Copyright (C) 2019 The noVNC Authors
     </script>
     <script src="app/error-handler.js"></script>
     <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
-    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260929xcapirebase"></script>
+    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260929xcapiprivacy"></script>
 </head>
 
 <body>
@@ -3553,6 +3636,7 @@ Copyright (C) 2019 The noVNC Authors
                 window.axonosAllowVncConnect = false;
                 window.axonosSessionDetached = false;
                 window.axonosPendingResumeClaim = null;
+                window.axonosPendingSessionClaim = null;
                 window.axonosPausedResume = null;
                 window.axonosCurrentSessionReleaseOperation = null;
                 if (typeof window.axonosClearSessionReleaseFailure === 'function') {
@@ -6527,11 +6611,19 @@ Copyright (C) 2019 The noVNC Authors
             }
 
             if (granted && claim.ssh_enabled !== true) {
-                window.axonosPendingSessionClaim = {
+                var stagedSessionClaim = {
                     wallet: String(window.verifiedWalletAddress || '').trim(),
                     claim: claim,
                     createdAt: Date.now()
                 };
+                window.axonosPendingSessionClaim = stagedSessionClaim;
+                setTimeout(function () {
+                    // Physically release the full response after its one-shot
+                    // eligibility window, without erasing a newer handoff.
+                    if (window.axonosPendingSessionClaim === stagedSessionClaim) {
+                        window.axonosPendingSessionClaim = null;
+                    }
+                }, 30001);
             }
 
             // The page-level launch/payment flows already hold the authoritative
@@ -6541,6 +6633,7 @@ Copyright (C) 2019 The noVNC Authors
             // session type returned by the server is authoritative.
             if (granted && claim.ssh_enabled === true) {
                 window.axonosPendingResumeClaim = null;
+                window.axonosPendingSessionClaim = null;
                 window.axonosPausedResume = null;
                 if (typeof UI !== 'undefined' &&
                     typeof UI.showAxonosSshCard === 'function' &&
@@ -9992,6 +10085,7 @@ Copyright (C) 2019 The noVNC Authors
             axonosSetGuestInviteEligibility(false);
             window.axonosAllowVncConnect = false;
             window.axonosPendingResumeClaim = null;
+            window.axonosPendingSessionClaim = null;
             window.axonosPausedResume = null;
             try { localStorage.removeItem('axonos_last_wallet'); } catch (e) { }
             try { localStorage.removeItem('axonos_wallet_provider_rdns'); } catch (e) { }
@@ -12854,6 +12948,15 @@ Copyright (C) 2019 The noVNC Authors
                     return Promise.resolve(false);
                 }
                 releaseBody.expected_session_id = expectedSessionId;
+                var pendingClaim = window.axonosPendingSessionClaim;
+                var pendingClaimSessionId = Number(
+                    pendingClaim && pendingClaim.claim && pendingClaim.claim.session_id
+                );
+                if (pendingClaimSessionId === expectedSessionId) {
+                    // Cancel only the handoff for the session being ended. A
+                    // later release completion must not erase a newer launch.
+                    window.axonosPendingSessionClaim = null;
+                }
             }
             var releaseOperation = {
                 source: 'dashboard-end',

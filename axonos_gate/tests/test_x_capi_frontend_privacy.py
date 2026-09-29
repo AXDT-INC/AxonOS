@@ -1,9 +1,11 @@
 import unittest
 import fcntl
 import os
+import re
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -173,13 +175,34 @@ class XcapiFrontendPrivacyTests(unittest.TestCase):
         self.assertIn("navigator.globalPrivacyControl === true", scrub)
         self.assertLess(self.page.index("canonicalAttributionKey"), self.page.index('<link rel="icon"'))
         self.assertIn('<meta name="referrer" content="no-referrer">', self.page)
-        self.assertIn('<script src="app/x-attribution.js?v=4"', self.page)
-        self.assertIn(
-            "onerror=\"window.axonosPendingTwclid='';"
-            "try{delete window.axonosPendingTwclid;}catch(e){}\"",
+        loader = self.between(
             self.page,
+            "(function loadAxonosAttributionBridge()",
+            "</script>\n\n    <!-- Icons",
         )
-        self.assertNotIn('<script defer src="app/x-attribution.js', self.page)
+        self.assertNotIn('<script src="app/x-attribution.js', self.page)
+        self.assertIn("var initialClick = String(window.axonosPendingTwclid || '')", loader)
+        self.assertIn("delete window.axonosPendingTwclid", loader)
+        self.assertIn("var RAW_CLICK_RETENTION_MS = 10000", loader)
+        self.assertIn("initialClick = ''", loader)
+        self.assertIn("window.performance.now()", loader)
+        self.assertIn("now < clickDeadline", loader)
+        self.assertIn("import('./app/x-attribution.js?v=5')", loader)
+        self.assertIn("initialize(click)", loader)
+        self.assertIn("window.addEventListener('pagehide'", loader)
+        self.assertIn("window.removeEventListener('pagehide'", loader)
+        self.assertLess(
+            loader.index("delete window.axonosPendingTwclid"),
+            loader.index("import('./app/x-attribution.js?v=5')"),
+        )
+        self.assertLess(
+            loader.index("retentionTimer = setTimeout"),
+            loader.index("import('./app/x-attribution.js?v=5')"),
+        )
+        self.assertLess(
+            self.page.index("loadAxonosAttributionBridge"),
+            self.page.index('<link rel="icon"'),
+        )
         guest_fallback = self.between(
             self.page,
             "function axonosTakeGuestInviteFromUrl()",
@@ -189,6 +212,277 @@ class XcapiFrontendPrivacyTests(unittest.TestCase):
             guest_fallback.index("window.axonosUrlQueryScrubFailed === true"),
             guest_fallback.index("new URLSearchParams"),
         )
+
+    def test_stalled_bridge_module_does_not_block_chromium_or_retain_click(self):
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            self.skipTest("Playwright is unavailable")
+
+        head_before_resources = self.page.split('    <!-- Icons -', 1)[0]
+        inline_scripts = re.findall(
+            r"<script>\s*([\s\S]*?)</script>", head_before_resources
+        )
+        scrub = next(
+            (source for source in inline_scripts if "captureAxonosGuestEntry" in source),
+            None,
+        )
+        loader = next(
+            (source for source in inline_scripts if "loadAxonosAttributionBridge" in source),
+            None,
+        )
+        self.assertIsNotNone(scrub)
+        self.assertIsNotNone(loader)
+        # Keep the browser regression fast while exercising the production timer
+        # branch verbatim apart from its duration.
+        fast_loader = loader.replace(
+            "var RAW_CLICK_RETENTION_MS = 10000;",
+            "var RAW_CLICK_RETENTION_MS = 25;",
+        )
+        self.assertNotEqual(loader, fast_loader)
+        synthetic_page = f"""<!doctype html><html><head>
+            <meta charset=\"utf-8\"><meta name=\"referrer\" content=\"no-referrer\">
+            <script>{scrub}</script>
+            <script>{fast_loader}</script>
+            <script>
+                window.axonosCoreBootReached = true;
+                window.axonosRawClickVisibleToCore =
+                    typeof window.axonosPendingTwclid !== 'undefined' &&
+                    !!window.axonosPendingTwclid;
+            </script>
+            </head><body>core UI sentinel</body></html>"""
+
+        playwright = sync_playwright().start()
+        try:
+            try:
+                browser = playwright.chromium.launch(
+                    headless=True, args=["--no-sandbox"]
+                )
+            except Exception as exc:
+                if os.getenv("AXONOS_RUN_BROWSER_TESTS") == "1":
+                    raise
+                self.skipTest(f"Chromium is unavailable: {exc}")
+            try:
+                page = browser.new_page()
+                page.set_default_timeout(3000)
+                held_module_routes = []
+                observed_requests = []
+
+                def route_request(route):
+                    url = route.request.url
+                    observed_requests.append(url)
+                    if url.startswith("https://app.example/stalled"):
+                        route.fulfill(
+                            status=200,
+                            content_type="text/html; charset=utf-8",
+                            body=synthetic_page,
+                        )
+                    elif url == "https://app.example/app/x-attribution.js?v=5":
+                        # Intentionally leave the optional module request open.
+                        held_module_routes.append(route)
+                    else:
+                        route.abort()
+
+                page.route("**/*", route_request)
+                started = time.monotonic()
+                page.goto(
+                    "https://app.example/stalled?"
+                    "twclid=SYNTHETIC_PRIVACY_TEST_browser_stall_7f3a9c",
+                    wait_until="domcontentloaded",
+                    timeout=3000,
+                )
+                elapsed = time.monotonic() - started
+                self.assertLess(elapsed, 2.5)
+                self.assertTrue(page.evaluate("window.axonosCoreBootReached === true"))
+                self.assertFalse(page.evaluate("window.axonosRawClickVisibleToCore"))
+                self.assertEqual(
+                    page.evaluate("typeof window.axonosPendingTwclid"), "undefined"
+                )
+                self.assertEqual(
+                    page.evaluate("window.axonosAttributionContext"), ""
+                )
+                self.assertFalse(page.evaluate("window.axonosAttributionReady"))
+                self.assertEqual(page.evaluate("window.location.search"), "")
+                page.wait_for_timeout(10)
+                self.assertEqual(len(held_module_routes), 1, observed_requests)
+
+                # Resolve the previously stalled import only after the bounded
+                # retention deadline. The module must still initialize, but it
+                # receives no raw click and therefore cannot offer attribution.
+                page.wait_for_timeout(75)
+                held_module_routes[0].fulfill(
+                    status=200,
+                    content_type="application/javascript",
+                    body=(
+                        "export default function(initialClick){"
+                        "window.axonosLateBridgeClick=initialClick;"
+                        "window.axonosLateBridgeInitialized=true;}"
+                    ),
+                )
+                page.wait_for_function(
+                    "window.axonosLateBridgeInitialized === true"
+                )
+                self.assertEqual(page.evaluate("window.axonosLateBridgeClick"), "")
+                self.assertTrue(
+                    all("twitter.com" not in url and "x.com" not in url
+                        for url in observed_requests)
+                )
+                actual_module = page.evaluate(
+                    """async (source) => {
+                        const blobUrl = URL.createObjectURL(new Blob(
+                            [source], {type: 'application/javascript'}));
+                        try {
+                            const bridge = await import(blobUrl);
+                            bridge.default('');
+                            return {
+                                defaultType: typeof bridge.default,
+                                namedType: typeof bridge.initializeXAttribution,
+                                context: window.axonosAttributionContext,
+                                ready: window.axonosAttributionReady,
+                            };
+                        } finally {
+                            URL.revokeObjectURL(blobUrl);
+                        }
+                    }""",
+                    self.bridge,
+                )
+                self.assertEqual(actual_module["defaultType"], "function")
+                self.assertEqual(actual_module["namedType"], "function")
+                self.assertEqual(actual_module["context"], "")
+                self.assertTrue(actual_module["ready"])
+
+                # Background timer throttling must not extend eligibility. Hold
+                # the import with the real 10 s timer still pending, advance only
+                # the page's monotonic clock past the deadline, then resolve it.
+                monotonic_context = browser.new_context()
+                try:
+                    monotonic_page = monotonic_context.new_page()
+                    monotonic_page.set_default_timeout(3000)
+                    held_after_deadline = []
+                    monotonic_html = f"""<!doctype html><html><head>
+                        <meta charset=\"utf-8\">
+                        <script>
+                            window.__axonosTestMonotonicNow = 100;
+                            Object.defineProperty(window.performance, 'now', {{
+                                configurable: true,
+                                value: function () {{
+                                    return window.__axonosTestMonotonicNow;
+                                }}
+                            }});
+                        </script>
+                        <script>{scrub}</script>
+                        <script>{loader}</script>
+                        <script>window.axonosCoreBootReached = true;</script>
+                        </head><body>monotonic deadline sentinel</body></html>"""
+
+                    def route_monotonic_request(route):
+                        url = route.request.url
+                        if url.startswith("https://app.example/monotonic"):
+                            route.fulfill(
+                                status=200,
+                                content_type="text/html; charset=utf-8",
+                                body=monotonic_html,
+                            )
+                        elif url == "https://app.example/app/x-attribution.js?v=5":
+                            held_after_deadline.append(route)
+                        else:
+                            route.abort()
+
+                    monotonic_page.route("**/*", route_monotonic_request)
+                    monotonic_page.goto(
+                        "https://app.example/monotonic?"
+                        "twclid=SYNTHETIC_PRIVACY_TEST_monotonic_813fd2",
+                        wait_until="domcontentloaded",
+                        timeout=3000,
+                    )
+                    for _attempt in range(50):
+                        if held_after_deadline:
+                            break
+                        monotonic_page.wait_for_timeout(10)
+                    self.assertEqual(len(held_after_deadline), 1)
+                    monotonic_page.evaluate(
+                        "window.__axonosTestMonotonicNow = 10101"
+                    )
+                    held_after_deadline[0].fulfill(
+                        status=200,
+                        content_type="application/javascript",
+                        body=(
+                            "export default function(initialClick){"
+                            "window.axonosMonotonicBridgeClick=initialClick;"
+                            "window.axonosMonotonicBridgeInitialized=true;}"
+                        ),
+                    )
+                    monotonic_page.wait_for_function(
+                        "window.axonosMonotonicBridgeInitialized === true"
+                    )
+                    self.assertEqual(
+                        monotonic_page.evaluate("window.axonosMonotonicBridgeClick"),
+                        "",
+                    )
+                finally:
+                    monotonic_context.close()
+
+                # A navigation/BFCache transition is an independent deletion
+                # boundary. Exercise it before the production-duration timer so
+                # a late module cannot revive the old document's click.
+                pagehide_context = browser.new_context()
+                try:
+                    pagehide_page = pagehide_context.new_page()
+                    pagehide_page.set_default_timeout(3000)
+                    held_after_pagehide = []
+                    pagehide_html = synthetic_page.replace(fast_loader, loader)
+
+                    def route_pagehide_request(route):
+                        url = route.request.url
+                        if url.startswith("https://app.example/pagehide"):
+                            route.fulfill(
+                                status=200,
+                                content_type="text/html; charset=utf-8",
+                                body=pagehide_html,
+                            )
+                        elif url == "https://app.example/app/x-attribution.js?v=5":
+                            held_after_pagehide.append(route)
+                        else:
+                            route.abort()
+
+                    pagehide_page.route("**/*", route_pagehide_request)
+                    pagehide_page.goto(
+                        "https://app.example/pagehide?"
+                        "twclid=SYNTHETIC_PRIVACY_TEST_pagehide_4c2e18",
+                        wait_until="domcontentloaded",
+                        timeout=3000,
+                    )
+                    for _attempt in range(50):
+                        if held_after_pagehide:
+                            break
+                        pagehide_page.wait_for_timeout(10)
+                    self.assertEqual(len(held_after_pagehide), 1)
+                    pagehide_page.evaluate(
+                        "window.dispatchEvent(new PageTransitionEvent("
+                        "'pagehide', {persisted: true}))"
+                    )
+                    held_after_pagehide[0].fulfill(
+                        status=200,
+                        content_type="application/javascript",
+                        body=(
+                            "export default function(initialClick){"
+                            "window.axonosPagehideBridgeClick=initialClick;"
+                            "window.axonosPagehideBridgeInitialized=true;}"
+                        ),
+                    )
+                    pagehide_page.wait_for_function(
+                        "window.axonosPagehideBridgeInitialized === true"
+                    )
+                    self.assertEqual(
+                        pagehide_page.evaluate("window.axonosPagehideBridgeClick"),
+                        "",
+                    )
+                finally:
+                    pagehide_context.close()
+            finally:
+                browser.close()
+        finally:
+            playwright.stop()
 
     def test_gpc_and_pending_revocation_never_expose_context_during_boot(self):
         initial_blank = "window.axonosAttributionContext = '';"
@@ -278,12 +572,15 @@ class XcapiFrontendPrivacyTests(unittest.TestCase):
         self.assertIn("newLifecycleAvailable", startup)
         self.assertIn("landingClickEligible", startup)
         self.assertIn("var landingClick", self.bridge)
+        self.assertIn(
+            "const initializeXAttribution = (initialLandingClick) =>", self.bridge
+        )
+        self.assertIn("initialLandingClick = '';", self.bridge)
         self.assertIn("function discardLandingClick()", self.bridge)
         self.assertIn("landingClick = '';", self.bridge)
-        self.assertIn("delete window.axonosPendingTwclid", self.bridge)
-        # The bootstrap handoff is consumed once at module evaluation; no UI or
-        # request callback ever re-reads a mutable global click value.
-        self.assertEqual(self.bridge.count("window.axonosPendingTwclid"), 3)
+        # The synchronous bootstrap passes the value directly to the module
+        # initializer; no UI or request callback can re-read a global click.
+        self.assertNotIn("window.axonosPendingTwclid", self.bridge)
 
     def test_new_lifecycle_requires_a_separate_explicit_transition(self):
         choices = self.between(

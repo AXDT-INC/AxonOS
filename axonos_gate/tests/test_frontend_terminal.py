@@ -198,9 +198,9 @@ class FrontendTerminalContractTests(unittest.TestCase):
 
     def test_frontend_module_cache_tokens_stay_in_lockstep(self) -> None:
         self.assertIn("axonos-theme.css?v=20.5&t=20260925sessionnote", self.page)
-        self.assertIn("app/ui.js?v=20260929xcapirebase", self.page)
-        self.assertIn("./webrtc/axonos-webrtc.js?v=20260929xcapirebase", self.ui)
-        self.assertIn("./terminal/axonos-terminal.js?v=20260929xcapirebase", self.ui)
+        self.assertIn("app/ui.js?v=20260929xcapiprivacy", self.page)
+        self.assertIn("./webrtc/axonos-webrtc.js?v=20260929xcapiprivacy", self.ui)
+        self.assertIn("./terminal/axonos-terminal.js?v=20260929xcapiprivacy", self.ui)
 
     def test_ssh_schedule_control_uses_explicit_deadline_endpoint(self) -> None:
         handler = self._between(

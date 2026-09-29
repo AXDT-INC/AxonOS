@@ -1329,6 +1329,104 @@ class PostgresOutboxTests(unittest.TestCase):
             self.assertEqual(cur.fetchone()[0], 0)
         conn.close()
 
+    def test_fake_http_retry_budget_exhausts_by_event_age_not_attempt_count(self):
+        conn = self.connect()
+        try:
+            with conn.cursor() as cur:
+                context_id = self.seed_context(cur, "c")
+                conversion_id = self.seed_outbox(cur, context_id, "c")
+                cur.execute(
+                    "UPDATE x_capi_outbox SET attempt_count=100 "
+                    "WHERE conversion_id=%s", (conversion_id,),
+                )
+            conn.commit()
+            with self.fake_live_http_worker([
+                (429, {"Retry-After": "1"}, b"synthetic rate limit"),
+            ]) as worker:
+                # A fixed attempt ceiling is not this implementation's policy.
+                # The immutable event time, however, must stop retries even if
+                # retention cleanup has not run and Retry-After is very short.
+                self.assertEqual(worker.run(86400.0), "retry")
+                self.assertEqual(worker.run(86401.0), "event_too_old")
+                self.assertEqual(len(worker.requests), 1)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT status,attempt_count,twclid,conversion_timestamp_ms,"
+                    "last_error_code FROM x_capi_outbox WHERE conversion_id=%s",
+                    (conversion_id,),
+                )
+                self.assertEqual(
+                    cur.fetchone(), ("cancelled", 101, None, 1, "event_too_old")
+                )
+        finally:
+            conn.close()
+
+    def test_fake_http_reflected_click_is_not_retained_as_debug_id(self):
+        conn = self.connect()
+        try:
+            with conn.cursor() as cur:
+                context_id = self.seed_context(cur, "c")
+                conversion_id = self.seed_outbox(cur, context_id, "c")
+                # Match the previously accepted response-ID grammar exactly.
+                cur.execute(
+                    "UPDATE x_capi_attribution_contexts SET twclid='click12345678' "
+                    "WHERE id=%s", (context_id,),
+                )
+                cur.execute(
+                    "UPDATE x_capi_outbox SET twclid='click12345678' "
+                    "WHERE conversion_id=%s", (conversion_id,),
+                )
+            conn.commit()
+            with self.fake_live_http_worker([
+                (200, {}, b'{"data":{"conversions_processed":1,"debug_id":"click12345678"}}'),
+            ]) as worker:
+                self.assertEqual(worker.run(20.0), "accepted")
+                self.assertEqual(len(worker.requests), 1)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT status,twclid,safe_debug_id FROM x_capi_outbox "
+                    "WHERE conversion_id=%s", (conversion_id,),
+                )
+                self.assertEqual(cur.fetchone(), ("accepted", None, None))
+        finally:
+            conn.close()
+
+    def test_fake_http_retry_cannot_outlive_attribution_even_without_cleanup(self):
+        from axonos_gate import x_capi_worker
+
+        conn = self.connect()
+        try:
+            with conn.cursor() as cur:
+                context_id = self.seed_context(cur, "c")
+                conversion_id = self.seed_outbox(cur, context_id, "c")
+                cur.execute(
+                    "UPDATE x_capi_attribution_contexts SET expires_at=21,"
+                    "lifecycle_expires_at=21 WHERE id=%s", (context_id,),
+                )
+                cur.execute(
+                    "UPDATE x_capi_outbox SET attribution_expires_at=21 "
+                    "WHERE conversion_id=%s", (conversion_id,),
+                )
+            conn.commit()
+            with self.fake_live_http_worker([
+                (429, {"Retry-After": "1"}, b"synthetic rate limit"),
+            ]) as worker:
+                self.assertEqual(worker.run(20.0), "retry")
+                self.assertEqual(worker.run(21.0), "idle")
+                self.assertEqual(len(worker.requests), 1)
+                x_capi_worker.expire_and_cleanup(
+                    conn, 21.0, 24, "v1", policy_epoch=POLICY_EPOCH,
+                    audience_scope=AUDIENCE_SCOPE,
+                )
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT status,twclid FROM x_capi_outbox WHERE conversion_id=%s",
+                    (conversion_id,),
+                )
+                self.assertEqual(cur.fetchone(), ("expired", None))
+        finally:
+            conn.close()
+
     def test_fake_http_timeout_retries_same_conversion_and_timestamp(self):
         conn = self.connect()
         with conn.cursor() as cur:

@@ -4394,6 +4394,96 @@ class LaunchRequestIdRouteContractTests(unittest.TestCase):
                 self.assertEqual(malformed.status, 404)
 
 
+class WorkerPacingTests(unittest.TestCase):
+    def test_monotonic_wait_rechecks_short_sleep_and_bounds_delays(self):
+        for requested, expected in ((-1, 0), (0.25, 0.25), (5, 5), (60, 30)):
+            with self.subTest(timeout=requested):
+                clock = [0.0]
+                sleeps = []
+
+                def sleep(duration):
+                    sleeps.append(duration)
+                    # An early wake must not shorten the overall wait.
+                    if len(sleeps) > 1:
+                        clock[0] += duration
+
+                with patch.object(x_capi_worker, "_stop", False), patch.object(
+                    x_capi_worker.time, "monotonic", side_effect=lambda: clock[0]
+                ), patch.object(x_capi_worker.time, "sleep", side_effect=sleep):
+                    x_capi_worker._wait_between_iterations(requested)
+                self.assertAlmostEqual(clock[0], expected)
+                self.assertTrue(all(0 < duration <= 0.1 for duration in sleeps))
+
+    def test_stop_interrupts_backoff_without_waiting_for_deadline(self):
+        clock = [0.0]
+
+        def sleep(duration):
+            clock[0] += duration
+            x_capi_worker._handle_stop(None, None)
+
+        with patch.object(x_capi_worker, "_stop", False), patch.object(
+            x_capi_worker.time, "monotonic", side_effect=lambda: clock[0]
+        ), patch.object(x_capi_worker.time, "sleep", side_effect=sleep):
+            x_capi_worker._wait_between_iterations(30)
+        self.assertAlmostEqual(clock[0], 0.1)
+
+    def test_readable_ingest_cannot_bypass_main_pacing_or_error_backoff(self):
+        cases = (
+            (["accepted"], [0.25]),
+            (["retry"], [0.25]),
+            (["db_unavailable"], [1.0]),
+            (["schema_unavailable"], [1.0]),
+            (["config_guard_rejected"], [5.0]),
+            ([RuntimeError("synthetic failure")] * 6, [2, 4, 8, 16, 30, 30]),
+        )
+        for outcomes, delays in cases:
+            for has_socket in (True, False):
+                with self.subTest(outcomes=outcomes, has_socket=has_socket):
+                    clock = [0.0]
+                    starts = []
+                    listener = MagicMock()
+                    listener.sock = object() if has_socket else None
+                    consent_service = MagicMock(failure_type=None)
+
+                    def sleep(duration):
+                        clock[0] += duration
+
+                    def run_once(**_kwargs):
+                        starts.append(clock[0])
+                        if len(starts) > len(outcomes):
+                            x_capi_worker._handle_stop(None, None)
+                            return "idle"
+                        outcome = outcomes[len(starts) - 1]
+                        if isinstance(outcome, Exception):
+                            raise outcome
+                        return outcome
+
+                    with patch.object(x_capi_worker, "_stop", False), patch.object(
+                        x_capi_worker, "IngestListener", return_value=listener
+                    ), patch.object(x_capi_worker, "ConsentListener"), patch.object(
+                        x_capi_worker, "PrivacyFence"
+                    ), patch.object(
+                        x_capi_worker, "ConsentService", return_value=consent_service
+                    ), patch.object(
+                        x_capi_worker, "activate_worker_startup", return_value=True
+                    ), patch.object(
+                        x_capi_worker, "complete_worker_shutdown", return_value=True
+                    ), patch.object(
+                        x_capi_worker, "run_once", side_effect=run_once
+                    ), patch.object(x_capi_worker.signal, "signal"), patch.object(
+                        x_capi_worker, "logger"
+                    ), patch.object(
+                        x_capi_worker.select, "select",
+                        return_value=([listener.sock], [], []),
+                    ), patch.object(
+                        x_capi_worker.time, "monotonic", side_effect=lambda: clock[0]
+                    ), patch.object(x_capi_worker.time, "sleep", side_effect=sleep):
+                        self.assertEqual(x_capi_worker.main([]), 0)
+                    self.assertEqual(len(starts), len(delays) + 1)
+                    for index, delay in enumerate(delays):
+                        self.assertAlmostEqual(starts[index + 1] - starts[index], delay)
+
+
 class MigrationRunnerIsolationTests(unittest.TestCase):
     def test_manual_runner_attests_dedicated_target_before_any_migration(self):
         runner = (

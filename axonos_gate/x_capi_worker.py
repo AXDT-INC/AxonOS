@@ -4421,13 +4421,9 @@ def _accepted(body: bytes) -> tuple[bool, Optional[str]]:
     # an ambiguous response rather than accepting a job X may not have stored.
     if isinstance(processed, bool) or not isinstance(processed, int) or processed != 1:
         return False, None
-    debug_id = data.get("debug_id")
-    safe_debug = (
-        debug_id
-        if isinstance(debug_id, str) and x_capi._ID_RE.fullmatch(debug_id)
-        else None
-    )
-    return True, safe_debug
+    # A syntactically plausible vendor debug ID can still echo the credential
+    # or click. No response string is necessary for local acknowledgement.
+    return True, None
 
 
 def classify_response(response: TransportResponse, now: float) -> Dict[str, Any]:
@@ -4467,12 +4463,12 @@ def finish_job(
                 """UPDATE x_capi_outbox SET status='accepted', accepted_at=%s,
                    twclid=NULL, lease_owner=NULL, lease_expires_at=NULL,
                    lease_token=NULL, updated_at=%s, last_error_code=NULL,
-                   safe_debug_id=%s
+                   safe_debug_id=NULL
                    WHERE conversion_id=%s AND status='leased'
                      AND lease_owner=%s AND lease_token=%s
                    RETURNING 1""",
                 (
-                    now, now, result.get("debug_id"), job["conversion_id"],
+                    now, now, job["conversion_id"],
                     job["lease_owner"], job["lease_token"],
                 ),
             )
@@ -4924,15 +4920,18 @@ def _handle_stop(_signum, _frame):
     _stop = True
 
 
-def _wait_for_local_work(listener: IngestListener, timeout: float) -> None:
-    readable = [listener.sock] if listener.sock is not None else []
-    if not readable:
-        time.sleep(min(1.0, max(0.0, float(timeout))))
-        return
-    try:
-        select.select(readable, [], [], min(30.0, max(0.0, float(timeout))))
-    except (OSError, ValueError):
-        time.sleep(0.1)
+def _wait_between_iterations(timeout: float) -> None:
+    """Enforce pacing even with queued ingest or an unavailable database.
+
+    No DB or dispatch lock is held here. The separate consent service remains
+    responsive; ordinary ingest cannot bypass dispatch/error-retry pacing.
+    """
+    deadline = time.monotonic() + min(30.0, max(0.0, float(timeout)))
+    while not _stop:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        time.sleep(min(0.1, remaining))
 
 
 def activate_worker_startup(
@@ -5153,7 +5152,7 @@ def main(argv=None) -> int:
                 # and dedupe cleanup budget, so steady-state retention cannot
                 # grow faster than the bounded cleanup can retire it.
                 delay = MIN_ATTEMPT_INTERVAL_SECONDS
-            _wait_for_local_work(listener, delay)
+            _wait_between_iterations(delay)
         return 0
     finally:
         consent_stopped = bool(

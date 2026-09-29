@@ -1681,7 +1681,7 @@ const UI = {
         }
 
         try {
-            const terminalModule = await import('./terminal/axonos-terminal.js?v=20260929xcapirebase');
+            const terminalModule = await import('./terminal/axonos-terminal.js?v=20260929xcapiprivacy');
             const client = await terminalModule.openAxonosTerminal({
                 container: document.getElementById('noVNC_container'),
                 wallet,
@@ -3861,7 +3861,12 @@ const UI = {
     },
 
     /** Server ended or released the session (heartbeat while detached or idle). */
-    _axonosOnServerSessionEnded() {
+    _axonosOnServerSessionEnded(expectedSessionId) {
+        const pending = window.axonosPendingSessionClaim;
+        if (pending && pending.claim && expectedSessionId != null &&
+            Number(pending.claim.session_id) === Number(expectedSessionId)) {
+            window.axonosPendingSessionClaim = null;
+        }
         if (!window.axonosSessionDetached && UI._axgtSessionDesktopActive()) {
             UI.disconnect();
             return;
@@ -4009,6 +4014,8 @@ const UI = {
         const connectAttemptIsCurrent = () =>
             UI._axonosConnectAttemptIsCurrent(connectGeneration);
         const pendingSessionClaim = window.axonosPendingSessionClaim;
+        const selectedSessionId = typeof window.axonosCurrentSessionId === 'function'
+            ? window.axonosCurrentSessionId() : null;
         const pendingSessionMatchesWallet = !!(pendingSessionClaim &&
             pendingSessionClaim.claim &&
             (pendingSessionClaim.claim.granted === true ||
@@ -4016,6 +4023,8 @@ const UI = {
             Number.isFinite(Number(pendingSessionClaim.createdAt)) &&
             (Date.now() - Number(pendingSessionClaim.createdAt)) >= 0 &&
             (Date.now() - Number(pendingSessionClaim.createdAt)) <= 30000 &&
+            (selectedSessionId == null ||
+                Number(pendingSessionClaim.claim.session_id) === selectedSessionId) &&
             String(pendingSessionClaim.wallet || '').toLowerCase() ===
                 walletAtConnectStart.toLowerCase());
         const preclaimedSessionAtConnectStart = pendingSessionMatchesWallet
@@ -4138,6 +4147,30 @@ const UI = {
         // abnormal close (1006).
         const runSessionClaim = () => {
             if (!connectAttemptIsCurrent()) {
+                return;
+            }
+            // Identity/session teardown can discard a response while wallet
+            // preflight is pending. Never revive that snapshot or turn its
+            // cancelled launch into a new spawn-capable claim.
+            const selectedSessionIdNow = typeof window.axonosCurrentSessionId === 'function'
+                ? window.axonosCurrentSessionId() : null;
+            if (preclaimedSessionAtConnectStart &&
+                (window.axonosPendingSessionClaim !== pendingSessionClaim ||
+                    Date.now() - Number(pendingSessionClaim.createdAt) < 0 ||
+                    Date.now() - Number(pendingSessionClaim.createdAt) > 30000 ||
+                    (selectedSessionIdNow != null &&
+                        Number(preclaimedSessionAtConnectStart.session_id) !== selectedSessionIdNow))) {
+                if (window.axonosPendingSessionClaim === pendingSessionClaim) {
+                    window.axonosPendingSessionClaim = null;
+                }
+                if (typeof window.axonosHideConnectionLoader === 'function') {
+                    window.axonosHideConnectionLoader(true);
+                } else if (typeof window.axonosSetLaunchBusy === 'function') {
+                    window.axonosSetLaunchBusy(false);
+                }
+                UI.updateVisualState('disconnected');
+                UI.showStatus(_('Connection handoff expired or was cancelled. Check the workspace before reconnecting.'), 'warn', 6000);
+                UI._axonosReturnToWorkspace({ refresh: true, reason: 'claim-handoff-cancelled' });
                 return;
             }
             // Fail fast on a missing/invalid SSH key so the user gets a precise
@@ -4326,7 +4359,7 @@ const UI = {
                         try {
                             // A stable module URL keeps negotiation generation/cancellation
                             // state shared across retries and rapid user reconnects.
-                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260929xcapirebase');
+                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260929xcapiprivacy');
                             if (!connectAttemptIsCurrent()) {
                                 return;
                             }
@@ -4568,6 +4601,9 @@ const UI = {
         // an intentional End/Detach with an automatic reconnect.
         UI.inhibitReconnect = true;
         const disconnectGeneration = UI._axonosInvalidateConnectAttempt();
+        // Discard synchronously, not in the eventual release callback: that
+        // callback can outlive a newer, unrelated launch response.
+        window.axonosPendingSessionClaim = null;
         // A terminal has no RFB disconnect event to finish this transition. Close
         // it synchronously before an End release, Detach, wallet cleanup, or credit
         // grace can leave an authenticated socket accepting input.
@@ -4859,6 +4895,7 @@ const UI = {
     cancelReconnect() {
         UI.inhibitReconnect = true;
         UI._axonosInvalidateConnectAttempt();
+        window.axonosPendingSessionClaim = null;
         UI._axonosCancelWebRtcClient();
         if (UI.reconnectCallback !== null) {
             clearTimeout(UI.reconnectCallback);
@@ -5203,6 +5240,7 @@ const UI = {
         }
         UI.inhibitReconnect = true;
         UI._axonosInvalidateConnectAttempt();
+        window.axonosPendingSessionClaim = null;
         UI._axonosCancelWebRtcClient();
         UI.updateVisualState('disconnected');
         UI.openControlbar();
@@ -5279,7 +5317,7 @@ const UI = {
                     } else if (/no active session|session ended/i.test(hbReason)) {
                         if (UI._scheduledSessions) UI._scheduledSessions.delete(Number(heartbeatSessionId));
                         UI._renderScheduledStopWarning();
-                        UI._axonosOnServerSessionEnded();
+                        UI._axonosOnServerSessionEnded(heartbeatSessionId);
                     }
                 }
             })

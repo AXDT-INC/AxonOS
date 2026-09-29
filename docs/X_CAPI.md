@@ -196,10 +196,12 @@ Upstream request-header logging must also be disabled or explicitly redact
 `X-AXGT-Auth-Token`; the commitment protocol does not make the transient landing
 header safe to record.
 
-The marketing/Framer site is outside this repository and was not changed.
+The Next.js marketing site is outside this repository and was not changed.
 Until its handoff and proxy redaction are installed and browser-tested, full
 landing-to-deposit attribution is **not end-to-end validated**. Direct-to-app
 entry is covered by local contract tests only.
+The supplied production ingress audit confirms Envoy query logging and leaves
+Umami storage/retention unapproved. See [the ingress activation runbook](X_CAPI_INGRESS_RUNBOOK.md).
 
 ## Business milestone semantics
 
@@ -288,7 +290,12 @@ documented residual; process-only crashes preserve the tuple and pending work.
 
 The retained response classifier treats timeouts, connection failures,
 408/425/5xx, and 429 as bounded jittered retries; validated `Retry-After` is
-capped at one hour. It models 401/403 as a pause and refuses unrecognized 200
+capped at one hour. Retries are bounded by event age and attribution expiry,
+not by a fixed maximum attempt count. Exponential backoff has a one-hour base
+cap before 0.75–1.25 jitter (so the maximum computed delay is 75 minutes).
+Main-loop pacing and database-error backoff use a monotonic deadline that
+incoming ingest cannot bypass; the independent consent service remains active.
+It models 401/403 as a persisted, operator-cleared pause and refuses unrecognized 200
 bodies. This remains deliberately stricter than the GTM template's acceptance
 of 2xx/3xx without body validation; redirects are rejected and never followed.
 `RequestsTransport.send` first enforces the existing live-readiness block, then
@@ -299,7 +306,10 @@ proxies, netrc, cookies, default user-agent headers, or automatic retries. It
 disables HTTP wire debugging and rejects `SSLKEYLOGFILE`, `SSL_CERT_FILE`, and
 `SSL_CERT_DIR` overrides; the TLS client uses the container's default trust store.
 The client reads at most 16 KiB plus one byte and retains only `Retry-After` from response
-headers. Bodies, credentials and client exceptions are never logged.
+headers. Bodies, credentials and client exceptions are never logged. Optional
+response debug IDs are discarded, even when syntactically plausible: they can
+reflect identifiers or credentials. Accepted completion always stores NULL in
+the retained compatibility `safe_debug_id` column.
 Socket operations have a five-second timeout. A separate 20-second kernel
 SIGALRM deadline terminates a wedged worker, including blocked DNS or slow-drip
 responses. This is a process crash: the existing lease recovery retries the

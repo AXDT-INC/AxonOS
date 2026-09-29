@@ -270,6 +270,31 @@ class DedicatedTokenTransportTests(unittest.TestCase):
                 self.assertEqual(result["action"], "permanent")
                 self.assertEqual(result["code"], "unknown_success_body")
 
+    def test_reflected_response_identifiers_never_reach_completion_storage(self):
+        # All of these matched the old debug-ID grammar, including a permitted
+        # token shape. These are synthetic values, never production credentials.
+        self.token = secrets.token_hex(32)
+        for reflected in (self.token, self.job["twclid"], "opaque-vendor-debug"):
+            with self.subTest(kind=("credential" if reflected == self.token else "identifier")):
+                response, _wire, _constructor = self.round_trip(body=json.dumps({
+                    "data": {"conversions_processed": 1, "debug_id": reflected}
+                }).encode())
+                result = worker.classify_response(response, 100)
+                self.assertEqual(result["action"], "accepted")
+                self.assertIsNone(result.get("debug_id"))
+                self.assertNotIn(reflected, json.dumps(result))
+                conn = MagicMock()
+                cur = conn.cursor.return_value.__enter__.return_value
+                cur.fetchone.return_value = (1,)
+                job = dict(self.job, lease_owner="test-worker", lease_token="test-lease")
+                # Completion is defensive even if a caller supplies the old
+                # result shape. No arbitrary response field is DB-authoritative.
+                result["debug_id"] = reflected
+                self.assertTrue(worker.finish_job(conn, job, result, 101))
+                update_sql, parameters = cur.execute.call_args_list[0].args
+                self.assertIn("safe_debug_id=NULL", update_sql)
+                self.assertNotIn(reflected, repr(parameters))
+
     def test_response_rate_limit_values_have_bounded_effect(self):
         for raw, expected in (
             ("0", 101), ("-1", 101), ("999999999", 3700),

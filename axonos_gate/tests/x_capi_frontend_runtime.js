@@ -11,6 +11,13 @@ const { TextEncoder } = require('util');
 const bridgePath = process.argv[2];
 if (!bridgePath) throw new Error('bridge path is required');
 const bridgeSource = fs.readFileSync(bridgePath, 'utf8');
+const bridgeRuntimeSource = bridgeSource
+    .replace(/\nexport \{ initializeXAttribution \};/, '')
+    .replace(/\nexport default initializeXAttribution;\s*$/, '\n');
+if (bridgeRuntimeSource === bridgeSource ||
+    !bridgeRuntimeSource.includes('const initializeXAttribution =')) {
+    throw new Error('attribution module initializer export was not found');
+}
 const pagePath = process.argv[3];
 if (!pagePath) throw new Error('page path is required');
 const pageSource = fs.readFileSync(pagePath, 'utf8');
@@ -105,6 +112,7 @@ function createRuntime({ landingClick = '', stored = {}, fetchImpl }) {
     const body = makeElement('body', elementsById);
     const document = {
         body,
+        readyState: 'loading',
         visibilityState: 'visible',
         createElement: (tag) => makeElement(tag, elementsById),
         getElementById: (id) => elementsById.get(String(id)) || null,
@@ -170,11 +178,22 @@ function createRuntime({ landingClick = '', stored = {}, fetchImpl }) {
     };
     runtime.window = runtime;
     vm.createContext(runtime);
-    vm.runInContext(bridgeSource, runtime, { filename: bridgePath });
+    const initialClick = String(runtime.axonosPendingTwclid || '');
+    runtime.axonosPendingTwclid = '';
+    delete runtime.axonosPendingTwclid;
+    runtime.__axonosInitialLandingClick = initialClick;
+    vm.runInContext(
+        `${bridgeRuntimeSource}\ninitializeXAttribution(__axonosInitialLandingClick);`,
+        runtime,
+        { filename: bridgePath },
+    );
+    runtime.__axonosInitialLandingClick = '';
+    delete runtime.__axonosInitialLandingClick;
     return {
         runtime,
         values,
         dispatchDocument(type, event = {}) {
+            if (type === 'DOMContentLoaded') document.readyState = 'complete';
             for (const listener of documentListeners[type] || []) listener(event);
         },
         dispatchWindow(type, event = {}) {
