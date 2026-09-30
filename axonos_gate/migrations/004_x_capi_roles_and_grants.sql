@@ -279,7 +279,7 @@ BEGIN
         SELECT 1 FROM pg_largeobject_metadata object
          WHERE object.lomowner=(SELECT oid FROM pg_roles WHERE rolname=worker_name)
             OR EXISTS (
-               SELECT 1 FROM aclexplode(COALESCE(object.lomacl,'{}')) acl
+               SELECT 1 FROM aclexplode(object.lomacl) acl
                 WHERE acl.grantee IN (
                     0,(SELECT oid FROM pg_roles WHERE rolname=worker_name)
                 )
@@ -377,6 +377,15 @@ REVOKE ALL ON x_capi_schema_meta, x_capi_config_guard,
     x_capi_revocation_tombstones, x_capi_capacity,
     x_capi_outbox, x_capi_dedup, x_capi_counters,
     x_capi_worker_state FROM PUBLIC, :"worker_role";
+
+-- Fresh tables have the owner's normal table privileges. On a rerun the ACL
+-- cleanup above revokes that explicit entry too, so rebuild the same canonical
+-- owner rights every time. This NOLOGIN role owns exactly these nine tables;
+-- the worker's separate, restricted allowlist below is unchanged.
+GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+    ON x_capi_schema_meta, x_capi_config_guard, x_capi_attribution_contexts,
+       x_capi_revocation_tombstones, x_capi_capacity, x_capi_outbox,
+       x_capi_dedup, x_capi_counters, x_capi_worker_state TO :"owner_role";
 
 -- The public gate talks to the worker over a credential-checked local socket.
 -- Its normal database role deliberately has no access to any X CAPI object.
@@ -545,6 +554,39 @@ BEGIN
            )
     ) THEN
         RAISE EXCEPTION 'X CAPI relation owner postflight mismatch';
+    END IF;
+    IF EXISTS (
+        WITH owned_tables AS (
+            SELECT c.oid,c.relname,c.relacl
+              FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE n.nspname=current_schema() AND c.relkind IN ('r','p')
+               AND c.relname IN (
+                 'x_capi_schema_meta','x_capi_config_guard',
+                 'x_capi_attribution_contexts','x_capi_revocation_tombstones',
+                 'x_capi_capacity','x_capi_dedup','x_capi_outbox',
+                 'x_capi_counters','x_capi_worker_state'
+               )
+        ), actual AS (
+            SELECT t.relname,''::NAME AS column_name,acl.*
+              FROM owned_tables t CROSS JOIN LATERAL aclexplode(t.relacl) acl
+             WHERE acl.grantee=owner_oid
+            UNION ALL
+            SELECT t.relname,a.attname AS column_name,acl.*
+              FROM owned_tables t JOIN pg_attribute a ON a.attrelid=t.oid
+              CROSS JOIN LATERAL aclexplode(a.attacl) acl
+             WHERE a.attnum>0 AND NOT a.attisdropped AND acl.grantee=owner_oid
+        ), expected AS (
+            SELECT t.relname,''::NAME AS column_name,acl.*
+              FROM owned_tables t
+              CROSS JOIN LATERAL aclexplode(acldefault('r',owner_oid)) acl
+        ), mismatch AS (
+            (SELECT * FROM actual EXCEPT SELECT * FROM expected)
+            UNION ALL
+            (SELECT * FROM expected EXCEPT SELECT * FROM actual)
+        )
+        SELECT 1 FROM mismatch
+    ) THEN
+        RAISE EXCEPTION 'X CAPI owner ACL postflight mismatch';
     END IF;
     IF EXISTS (
         WITH actual AS (

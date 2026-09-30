@@ -3943,6 +3943,122 @@ class PostgresOutboxTests(unittest.TestCase):
             cur.execute(grants)
         connection.close()
 
+        # A real v4 catalog legitimately leaves column ACLs NULL when access
+        # is granted at table level. The bootstrap role preflight must accept
+        # that representation without inventing a zero-dimensional ACL array.
+        role_preflight = _migration_text(
+            "000_x_capi_roles_preflight.sql", self.schema
+        )
+        for variable, role in (("owner_role", owner), ("worker_role", worker)):
+            role_preflight = role_preflight.replace(
+                ":'" + variable + "'", "'" + role + "'"
+            )
+        acl_probe = self.connect()
+        try:
+            with acl_probe.cursor() as cur:
+                cur.execute(
+                    """SELECT a.attacl IS NULL
+                         FROM pg_attribute a
+                        WHERE a.attrelid='x_capi_config_guard'::regclass
+                          AND a.attname='singleton'"""
+                )
+                self.assertTrue(cur.fetchone()[0])
+                cur.execute("SELECT count(*) FROM aclexplode(NULL::aclitem[])")
+                self.assertEqual(cur.fetchone()[0], 0)
+                cur.execute(
+                    """SELECT count(*) FROM aclexplode(acldefault(
+                           'c',(SELECT oid FROM pg_roles WHERE rolname=current_user)))"""
+                )
+                self.assertEqual(cur.fetchone()[0], 0)
+                with self.assertRaises(self.psycopg2.errors.InvalidParameterValue):
+                    cur.execute("SELECT * FROM aclexplode('{}'::aclitem[])")
+            acl_probe.rollback()
+            with acl_probe.cursor() as cur:
+                cur.execute(role_preflight)
+        finally:
+            acl_probe.close()
+
+        # A successful postflight must attest the owner's canonical rights,
+        # not merely table ownership or the presence of one expected ACL item.
+        for drift in (
+            "REVOKE SELECT ON x_capi_outbox FROM " + owner,
+            "GRANT SELECT (twclid) ON x_capi_outbox TO " + owner,
+            "GRANT SELECT ON x_capi_outbox TO " + owner + " WITH GRANT OPTION",
+        ):
+            with self.subTest(owner_acl_drift=drift.split(" ON ")[0]):
+                rejected = self.connect()
+                try:
+                    altered = grants.replace(
+                        "DO $acl_postflight$", drift + ";\nDO $acl_postflight$", 1
+                    )
+                    with rejected.cursor() as cur:
+                        with self.assertRaises(self.psycopg2.errors.RaiseException) as error:
+                            cur.execute(altered)
+                        self.assertEqual(error.exception.diag.message_primary,
+                                         "X CAPI owner ACL postflight mismatch")
+                finally:
+                    rejected.rollback()
+                    rejected.close()
+
+        # Removing the NULL coercion must not hide actual delegated grant
+        # chains. Each hostile mutation and its failing preflight share one
+        # transaction, so rollback restores the reviewed catalog afterward.
+        for privilege in ("SELECT", "SELECT (twclid)"):
+            with self.subTest(delegated_privilege=privilege):
+                rejected = self.connect()
+                try:
+                    with rejected.cursor() as cur:
+                        # The disposable schema is owned by the test bootstrap
+                        # user, not the NOLOGIN relation owner.
+                        cur.execute("GRANT USAGE ON SCHEMA " + self.schema + " TO " + owner)
+                        cur.execute("SET ROLE " + owner)
+                        cur.execute("GRANT " + privilege + " ON x_capi_outbox TO "
+                                    + worker + " WITH GRANT OPTION")
+                        cur.execute("SET ROLE " + worker)
+                        cur.execute("GRANT " + privilege + " ON x_capi_outbox TO " + leaked)
+                        cur.execute("RESET ROLE")
+                        with self.assertRaises(self.psycopg2.errors.RaiseException) as error:
+                            cur.execute(role_preflight)
+                        self.assertIn("refuses delegated table or column grant chains",
+                                      error.exception.diag.message_primary)
+                finally:
+                    rejected.rollback()
+                    rejected.close()
+
+        # Exercise both nullable large-object ACL guards without applying DDL.
+        # The full dedicated-store preflight still rejects *all* large objects.
+        # The 004 prefix stops before ownership/grant changes, just as the
+        # bootstrap's read-only catalog prefix does. Every object rolls back.
+        boundary_end = "$worker_database_boundary$;"
+        self.assertEqual(grants.count(boundary_end), 1)
+        grants_boundary = grants.split(boundary_end, 1)[0] + boundary_end + "\nROLLBACK;"
+        for checker, expected_error in (
+            (role_preflight, "must not access database large objects"),
+            (grants_boundary, "worker indirect object privileges are not isolated"),
+        ):
+            for access in (None, "PUBLIC", worker, "worker_owner"):
+                with self.subTest(large_object_access=access, guard=expected_error):
+                    large_object = self.connect()
+                    try:
+                        with large_object.cursor() as cur:
+                            cur.execute("SELECT lo_create(0)")
+                            object_id = cur.fetchone()[0]
+                            if access == "worker_owner":
+                                cur.execute("ALTER LARGE OBJECT " + str(object_id)
+                                            + " OWNER TO " + worker)
+                            elif access is not None:
+                                cur.execute("GRANT SELECT ON LARGE OBJECT " + str(object_id)
+                                            + " TO " + access)
+                            if access is None:
+                                cur.execute(checker)
+                            else:
+                                with self.assertRaises(self.psycopg2.errors.RaiseException) as error:
+                                    cur.execute(checker)
+                                self.assertIn(expected_error, error.exception.diag.message_primary)
+                    finally:
+                        large_object.rollback()
+                        large_object.close()
+
         leaked_conn = self.connect()
         with leaked_conn.cursor() as cur:
             cur.execute("SET ROLE " + leaked)

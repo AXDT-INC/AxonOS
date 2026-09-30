@@ -108,7 +108,7 @@ BEGIN
         SELECT 1 FROM pg_largeobject_metadata object
          WHERE object.lomowner=(SELECT oid FROM pg_roles WHERE rolname=worker_name)
             OR EXISTS (
-               SELECT 1 FROM aclexplode(COALESCE(object.lomacl,'{}')) acl
+               SELECT 1 FROM aclexplode(object.lomacl) acl
                 WHERE acl.grantee IN (
                     0,(SELECT oid FROM pg_roles WHERE rolname=worker_name)
                 )
@@ -123,13 +123,17 @@ $worker_database_boundary$;
 -- A delegated grant chain may not be revocable after 004 transfers ownership.
 -- Reject it before any ownership change; owner-issued ACLs are cleared
 -- transactionally by 004 and then rebuilt from an exact allowlist.
+-- Inspect native ACLs directly: aclexplode is strict, so NULL contributes no
+-- explicit grantors. Coercing NULL to '{}' creates a zero-dimensional array
+-- that PostgreSQL rejects, unlike its own canonical empty ACL representation.
+-- Effective role/database privileges are checked independently above.
 DO $acl_grantors$
 BEGIN
     IF EXISTS (
         SELECT 1
           FROM pg_class c
           JOIN pg_namespace n ON n.oid=c.relnamespace
-          CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl,'{}')) acl
+          CROSS JOIN LATERAL aclexplode(c.relacl) acl
          WHERE n.nspname=current_schema()
            AND c.relname IN (
                'x_capi_schema_meta','x_capi_config_guard',
@@ -143,7 +147,7 @@ BEGIN
           FROM pg_class c
           JOIN pg_namespace n ON n.oid=c.relnamespace
           JOIN pg_attribute a ON a.attrelid=c.oid
-          CROSS JOIN LATERAL aclexplode(COALESCE(a.attacl,'{}')) acl
+          CROSS JOIN LATERAL aclexplode(a.attacl) acl
          WHERE n.nspname=current_schema()
            AND c.relname IN (
                'x_capi_schema_meta','x_capi_config_guard',

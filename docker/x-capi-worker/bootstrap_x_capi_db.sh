@@ -70,9 +70,14 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 escaped_bootstrap=$(printf '%s' "$bootstrap_password" | sed 's/\\/\\\\/g; s/:/\\:/g')
-printf '%s:%s:%s:%s:%s\n' \
-    x-capi-postgres 5432 "$database_name" "$bootstrap_role" \
-    "$escaped_bootstrap" > "$pgpass_file"
+# libpq matches the database as well as host, port, and user. Administrative
+# preflights below connect to postgres/template1 before any persistent changes.
+# Keep credentials scoped to exactly those databases, never a wildcard.
+for password_database in "$database_name" postgres template1; do
+    printf '%s:%s:%s:%s:%s\n' \
+        x-capi-postgres 5432 "$password_database" "$bootstrap_role" \
+        "$escaped_bootstrap"
+done > "$pgpass_file"
 chmod 600 "$pgpass_file"
 unset bootstrap_password escaped_bootstrap
 
