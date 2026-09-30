@@ -179,9 +179,13 @@ RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping 
 
 # Install Spyder (Scientific Python IDE)
 # Ubuntu apt matplotlib is built against NumPy 1.x; pip NumPy 2.x breaks Spyder kernels (_ARRAY_API).
+# Keep the tested roots and Pylint intersection fixed with Ubuntu's existing pip.
+# Bound resolution so a future dependency conflict cannot consume hours silently.
 # SKIPPED when AXONOS_SKIP_HEAVY=1: Spyder, matplotlib and the pinned NumPy (~0.8 GB).
+COPY docker/scientific-python.txt /opt/axonos-build/scientific-python.txt
 RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping Spyder"; exit 0; fi && \
-    pip install --no-cache-dir 'numpy>=1.24.0,<2' matplotlib spyder
+    timeout --kill-after=30s 15m /usr/bin/python3 -m pip install --no-cache-dir \
+        -r /opt/axonos-build/scientific-python.txt
 
 # Install UGENE (Bioinformatics suite)
 # SKIPPED when AXONOS_SKIP_HEAVY=1: UGENE (~1.5 GB); the ugenecl symlink step below is already conditional.
@@ -711,7 +715,9 @@ COPY novnc-theme/axon-x.png /usr/share/novnc/axon-x.png
 COPY axonos_gate/requirements.txt /axonos_gate/requirements.txt
 RUN /usr/bin/python3 -m pip install -r /axonos_gate/requirements.txt
 # Later pip layers may upgrade to NumPy 2.x; re-pin so apt/system matplotlib + Spyder stay compatible.
-RUN pip install --no-cache-dir 'numpy>=1.24.0,<2' matplotlib
+# Constraints do not pull Spyder into the intentionally minimal CI image.
+RUN timeout --kill-after=30s 15m /usr/bin/python3 -m pip install --no-cache-dir \
+        -c /opt/axonos-build/scientific-python.txt numpy matplotlib pyparsing
 
 # AXGT / gate configuration is provided via environment variables at runtime.
 
@@ -862,6 +868,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 COPY pulse-default.pa /etc/pulse/axonos-default.pa
 COPY pulse-client.conf /etc/pulse/client.conf
+
+# Fail the full build if any later pip/apt layer broke the scientific contract.
+# No global PIP_CONSTRAINT is left behind to constrain users' runtime installs.
+COPY scripts/check_scientific_python.py /opt/axonos-build/check_scientific_python.py
+RUN if [ "$AXONOS_SKIP_HEAVY" != "1" ]; then \
+        /usr/bin/python3 /opt/axonos-build/check_scientific_python.py \
+            /opt/axonos-build/scientific-python.txt; \
+    fi
 
 # AXGT Gate application code — COPY'd LAST so editing gate .py rebuilds only this
 # cheap layer (deps were installed earlier from requirements.txt; the heavy

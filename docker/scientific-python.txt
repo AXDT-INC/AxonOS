@@ -1,0 +1,13 @@
+# Central Ubuntu 22.04 / Python 3.10 image: production-reference versions.
+# Used as requirements for Spyder and constraints for the later NumPy repair.
+# This is deliberately NOT a freeze of the entire shared Python environment.
+numpy==1.26.4
+matplotlib==3.10.9
+spyder==6.1.7
+pyparsing==3.3.2
+
+# Spyder allows pylint<5, but its python-lsp-server[all] requires pylint<4.1.
+# pip 22.0.2 otherwise selects Pylint 4.1 / Astroid 4.3 first, then backtracks
+# through unrelated candidates. This single transitive pin avoids that branch;
+# leave the other dependencies to Spyder's own requirements (including extras).
+pylint==4.0.10

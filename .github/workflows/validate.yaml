@@ -41,6 +41,23 @@ jobs:
         # the MCP server running), not a unit test.
         run: python -m pytest axonos_assistant --ignore=axonos_assistant/test_mcp_integration.py -q -p no:cacheprovider
 
+  scientific-python:
+    # The normal hosted image build skips heavy applications. Exercise the real
+    # scientific dependency graph separately with the production pip resolver.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Resolve and validate the full scientific Python environment
+        run: |
+          python -m pip install --no-cache-dir pip==22.0.2
+          python -m pip install --no-cache-dir jupyterlab
+          timeout --kill-after=30s 10m python -m pip install --no-cache-dir -r docker/scientific-python.txt
+          python scripts/check_scientific_python.py docker/scientific-python.txt
+
   dockerfile:
     runs-on: ubuntu-latest
     steps:
