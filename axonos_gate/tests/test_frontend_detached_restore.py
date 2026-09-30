@@ -1,3 +1,6 @@
+import os
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -185,10 +188,11 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         ui_claim = self.ui_source.split("_axonosFetchSessionClaim(options)", 1)[1].split(
             "_axonosReleaseSessionHeaders()", 1
         )[0]
-        for source in (page_claim, ui_claim):
-            self.assertIn("payload.resume_only = true", source)
-            self.assertIn("payload.expected_session_id", source)
-            self.assertIn("invalid_resume_request: true", source)
+        self.assertIn("payload.resume_only = true", page_claim)
+        self.assertIn("payload.expected_session_id", page_claim)
+        self.assertIn("invalid_resume_request: true", page_claim)
+        self.assertIn("window.axonosClaimSession(options)", ui_claim)
+        self.assertNotIn("/api/session/claim", ui_claim)
         resume_flow = self._page_between(
             "function axonosTryResumeDesktopAfterCredit(paymentOperation, expectedSessionIdOverride, options)",
             "window.axonosResumeDesktopConnectIfPaused = function (options)",
@@ -240,6 +244,7 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
             "window.axonosDetachedSession = null",
             "window.axonosSessionDetached = false",
             "window.axonosPendingResumeClaim = null",
+            "window.axonosPendingSessionClaim = null",
             "window.axonosPausedResume = null",
             "window.axonosSshEnabled = false",
             "window.axonosCurrentSessionReleaseOperation = null",
@@ -433,7 +438,7 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         self.assertIn("launch again when ready", warning)
         self.assertIn("'warn'", warning)
 
-    def test_both_claim_paths_use_floor_checked_storage_selection(self) -> None:
+    def test_single_claim_builder_uses_floor_checked_storage_selection(self) -> None:
         page_claim = self._page_between(
             "function claimSession(options)",
             "function sessionStatus()",
@@ -443,15 +448,14 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         )[0]
 
         expected = "window.axonosRequestedStorageGbForClaim(wallet)"
-        for claim in (page_claim, ui_claim):
-            self.assertIn("payload.requested_storage_gb", claim)
-            self.assertIn(expected, claim)
-            self.assertNotIn("axonos_wizard_storage_slider", claim)
-        # A null from the helper means "capacity unknown" — both claim
-        # builders must OMIT the field (server preserves the provisioned
-        # volume) rather than send a fabricated explicit value.
+        self.assertIn("payload.requested_storage_gb", page_claim)
+        self.assertIn(expected, page_claim)
+        self.assertNotIn("axonos_wizard_storage_slider", page_claim)
+        # A null from the helper means "capacity unknown": the sole claim
+        # builder must omit the field rather than fabricate a value.
         self.assertIn("if (claimStorageGb !== null)", page_claim)
-        self.assertIn("if (requestedStorageGb !== null)", ui_claim)
+        self.assertIn("window.axonosClaimSession(options)", ui_claim)
+        self.assertNotIn("requested_storage_gb", ui_claim)
 
     def test_unresolved_floor_never_fabricates_explicit_storage(self) -> None:
         helper = self._page_between(
@@ -651,10 +655,10 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
 
     def test_same_origin_claim_route_forwards_requested_storage(self) -> None:
         claim_route = self.proxy_source.split(
-            "if _session_mgr_available and self.path.startswith('/api/session/claim'):",
+            "if _session_mgr_available and ponly == '/api/session/claim':",
             1,
         )[1].split(
-            "if _session_mgr_available and self.path.startswith('/api/session/heartbeat'):",
+            "if _session_mgr_available and ponly == '/api/session/heartbeat':",
             1,
         )[0]
 
@@ -811,10 +815,10 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         self.assertIn("session_claim_timeout_seconds", claim_deadline)
         self.assertIn("session_launcher_timeout_seconds", claim_deadline)
         self.assertIn("timeoutMs: axonosSessionClaimTimeoutMs(resumeRequested)", page_claim)
-        self.assertIn("resumeRequested ? 20000 : 150000", ui_claim)
         self.assertIn("AbortController", ui_fetch)
         self.assertIn("response.text()", ui_fetch)
-        self.assertIn("UI._axonosFetchJsonWithTimeout(url", ui_claim)
+        self.assertIn("window.axonosClaimSession(options)", ui_claim)
+        self.assertNotIn("UI._axonosFetchJsonWithTimeout(url", ui_claim)
         self.assertIn("'./api/config'", ui_connect)
         self.assertIn("UI._axonosFetchJsonWithTimeout(", ui_connect)
 
@@ -1312,6 +1316,29 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         self.assertIn("activeId !== expectedId", reconcile)
         self.assertIn("confirmed: true", reconcile)
         self.assertIn("billingEnded: true", reconcile)
+
+    def test_ordinary_preclaim_runtime_teardown_and_reuse(self) -> None:
+        node = shutil.which("node")
+        if not node:
+            try:
+                import playwright
+
+                candidate = Path(playwright.__file__).resolve().parent / "driver" / "node"
+                if candidate.is_file() and os.access(candidate, os.X_OK):
+                    node = str(candidate)
+            except (ImportError, OSError, TypeError):
+                pass
+        if not node:
+            self.skipTest("Node runtime is unavailable")
+        repo = Path(__file__).resolve().parents[2]
+        completed = subprocess.run(
+            [node, str(repo / "axonos_gate/tests/session_claim_runtime.js"),
+             str(repo / "novnc-theme/ui.js"), str(repo / "novnc-theme/vnc.html")],
+            cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=15, check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("session claim runtime checks passed", completed.stdout)
 
 
 if __name__ == "__main__":

@@ -25,6 +25,7 @@ Copyright (C) 2019 The noVNC Authors
     <title>AxonOS GPU-Native Desktop for Scientific Computing</title>
 
     <meta charset="utf-8">
+    <meta name="referrer" content="no-referrer">
 
     <script>
         // Guest entry must win the boot race synchronously. The main application
@@ -40,22 +41,188 @@ Copyright (C) 2019 The noVNC Authors
             window.axonosGuestEntryPending = false;
             window.axonosPendingGuestInvite = '';
             window.axonosPendingStoredGuestSession = null;
+            window.axonosUrlQueryScrubFailed = false;
             window.axonosGuestEntryPendingOrActive = function () {
                 return window.axonosGuestEntryPending === true ||
                     !!window.axonosGuestSession;
             };
 
+            // Capture X's click ID only in memory, validate its shape, and
+            // remove it before any unrelated page resource loads. A URL
+            // consent flag is deliberately ignored: consent is app-owned.
+            window.axonosPendingTwclid = '';
+            // If parsing or History API rewriting fails, discard the entire
+            // query. Initialize this before touching URLSearchParams so even a
+            // constructor failure cannot leave a click or confused key behind.
+            var attributionFallbackClean = window.location.pathname +
+                (window.location.hash || '');
             try {
-                var params = new URLSearchParams(window.location.search || '');
-                invite = (params.get('invite') || '').trim();
-                if (invite) {
-                    params.delete('invite');
-                    var query = params.toString();
-                    var clean = window.location.pathname + (query ? '?' + query : '') +
-                        (window.location.hash || '');
-                    window.history.replaceState(window.history.state, '', clean);
+                var rawAttributionQuery = String(window.location.search || '').replace(/^\?/, '');
+                if (rawAttributionQuery.length > 8192) {
+                    throw new Error('query too large to scrub safely');
                 }
-            } catch (e) { /* URL APIs unavailable: ordinary startup remains usable */ }
+                var rawExactTwclidCount = 0;
+                var rawConfusedTwclid = false;
+                var forceAttributionQueryRemoval = false;
+                function tolerantAsciiQueryName(value) {
+                    // decodeURIComponent rejects the entire input when even
+                    // one escape is malformed. Decode valid ASCII escapes
+                    // independently so `%74wclid%ZZ` cannot hide `twclid`
+                    // from the scrubber. Repetition covers nested `%25`.
+                    var current = String(value || '').replace(/\+/g, ' ');
+                    var decodeLimit = current.length + 1;
+                    for (var tolerantDecode = 0;
+                        tolerantDecode < decodeLimit; tolerantDecode += 1) {
+                        var next = current.replace(
+                            /%([0-9a-fA-F]{2})/g,
+                            function (_match, octet) {
+                                return String.fromCharCode(parseInt(octet, 16));
+                            }
+                        );
+                        if (next === current) break;
+                        current = next;
+                    }
+                    return current.toLowerCase();
+                }
+                rawAttributionQuery.split('&').forEach(function (entry) {
+                    if (!entry) return;
+                    var rawKey = entry.split('=', 1)[0];
+                    // Deep repeated decoding is intentionally conservative,
+                    // but must not become quadratic work on an attacker-sized
+                    // request line. No AxonOS query name needs this much room;
+                    // discard the complete query instead of interpreting it.
+                    if (rawKey.length > 256) {
+                        forceAttributionQueryRemoval = true;
+                        return;
+                    }
+                    var decodedRawKey = rawKey.replace(/\+/g, ' ');
+                    var rawDecodeLimit = decodedRawKey.length + 1;
+                    for (var rawKeyDecode = 0;
+                        rawKeyDecode < rawDecodeLimit; rawKeyDecode += 1) {
+                        try {
+                            var nextRawKey = decodeURIComponent(decodedRawKey);
+                            if (nextRawKey === decodedRawKey) break;
+                            decodedRawKey = nextRawKey;
+                        } catch (e) { break; }
+                    }
+                    var tolerantRawKey = tolerantAsciiQueryName(rawKey);
+                    if (decodedRawKey.toLowerCase() === 'twclid' &&
+                        tolerantRawKey === 'twclid') {
+                        if (rawKey === 'twclid') rawExactTwclidCount += 1;
+                        else rawConfusedTwclid = true;
+                    } else if (tolerantRawKey.indexOf('twclid') !== -1 ||
+                        /twclid/i.test(decodedRawKey) || /twclid/i.test(rawKey)) {
+                        // A malformed escape surrounding a visible sensitive
+                        // name cannot be safely deleted through URLSearchParams.
+                        forceAttributionQueryRemoval = true;
+                    }
+                });
+                var attributionParams = new URLSearchParams(window.location.search || '');
+                var attributionKeys = [];
+                var clickCandidates = [];
+                function canonicalAttributionKey(value) {
+                    var current = String(value || '');
+                    var decodeLimit = current.length + 1;
+                    for (var keyDecode = 0;
+                        keyDecode < decodeLimit; keyDecode += 1) {
+                        try {
+                            var decoded = decodeURIComponent(current);
+                            if (decoded === current) break;
+                            current = decoded;
+                        } catch (e) { break; }
+                    }
+                    return current.toLowerCase();
+                }
+                attributionParams.forEach(function (value, key) {
+                    if (String(key).length > 256) {
+                        forceAttributionQueryRemoval = true;
+                        attributionKeys.push(key);
+                        return;
+                    }
+                    var canonicalKey = canonicalAttributionKey(key);
+                    if (canonicalKey === 'twclid') {
+                        // URLSearchParams already performed the one normal URL
+                        // decode. Deeper/case-confused aliases are scrubbed but
+                        // never accepted as an advertising identifier.
+                        // Do not normalize surrounding whitespace or controls
+                        // into an otherwise valid identifier. The allowlist
+                        // below must evaluate the value exactly as decoded from
+                        // the URL.
+                        clickCandidates.push(
+                            key === 'twclid' ? String(value || '') : ''
+                        );
+                    }
+                    if (canonicalKey === 'twclid' || canonicalKey === 'consent' ||
+                        canonicalKey === 'x_capi_handoff' || canonicalKey === 'x_capi_context') {
+                        attributionKeys.push(key);
+                    }
+                });
+                var clickCandidate = clickCandidates.length === 1 &&
+                    rawExactTwclidCount === 1 && !rawConfusedTwclid
+                    ? clickCandidates[0] : '';
+                var walletShaped = /^(?:0x)?[0-9a-f]{40}$/i.test(clickCandidate);
+                var prefixedDigestShaped = /^0x[0-9a-f]{64}$/i.test(clickCandidate);
+                var uuidShaped = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clickCandidate);
+                var ipv4Shaped = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(clickCandidate);
+                var phoneDigits = (clickCandidate.match(/[0-9]/g) || []).length;
+                var phoneShaped = /^[0-9][0-9._~-]{6,20}$/.test(clickCandidate) &&
+                    phoneDigits >= 7 && phoneDigits <= 15;
+                var digestShaped = /^[0-9a-f]{32,128}$/i.test(clickCandidate);
+                var walletHandleShaped = /^[A-Za-z0-9_-]{1,64}\.(?:eth|sol|btc|crypto|wallet)$/i.test(clickCandidate);
+                var secretShaped = /^(?:sk-[A-Za-z0-9_-]+|xox[baprs]-|gh[pousr]_|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{8,}\.|bearer[._~-]|postgres(?:ql)?[._~:-])/i.test(clickCandidate);
+                var globalPrivacyControlActive = false;
+                try { globalPrivacyControlActive = navigator.globalPrivacyControl === true; } catch (e) { }
+                if (/^[A-Za-z0-9._~-]{8,256}$/.test(clickCandidate) &&
+                    !walletShaped && !prefixedDigestShaped && !uuidShaped &&
+                    !ipv4Shaped && !phoneShaped && !digestShaped &&
+                    !walletHandleShaped && !secretShaped &&
+                    !globalPrivacyControlActive) {
+                    window.axonosPendingTwclid = clickCandidate;
+                }
+                attributionKeys.forEach(function (name) {
+                    attributionParams.delete(name);
+                });
+                if (forceAttributionQueryRemoval) {
+                    throw new Error('ambiguous attribution key');
+                }
+                var attributionQuery = attributionParams.toString();
+                var attributionClean = window.location.pathname +
+                    (attributionQuery ? '?' + attributionQuery : '') +
+                    (window.location.hash || '');
+                var attributionCurrent = window.location.pathname +
+                    window.location.search + window.location.hash;
+                if (attributionClean !== attributionCurrent) {
+                    window.history.replaceState(window.history.state, '', attributionClean);
+                }
+            } catch (e) {
+                window.axonosPendingTwclid = '';
+                window.axonosUrlQueryScrubFailed = true;
+                // Old/restricted browsers that reject History API mutation get
+                // one clean replacement navigation. Never continue knowingly
+                // carrying the identifier into subresource referrers or app UI.
+                try {
+                    if (attributionFallbackClean !==
+                        window.location.pathname + window.location.search + window.location.hash) {
+                        window.location.replace(attributionFallbackClean);
+                    }
+                } catch (ignored) { }
+            }
+
+            // If canonical scrubbing failed, do not parse the original query a
+            // second time while the clean replacement navigation is pending.
+            if (!window.axonosUrlQueryScrubFailed) {
+                try {
+                    var params = new URLSearchParams(window.location.search || '');
+                    invite = (params.get('invite') || '').trim();
+                    if (invite) {
+                        params.delete('invite');
+                        var query = params.toString();
+                        var clean = window.location.pathname + (query ? '?' + query : '') +
+                            (window.location.hash || '');
+                        window.history.replaceState(window.history.state, '', clean);
+                    }
+                } catch (e) { /* URL APIs unavailable: ordinary startup remains usable */ }
+            }
 
             try {
                 var raw = window.sessionStorage.getItem(storageKey);
@@ -75,6 +242,99 @@ Copyright (C) 2019 The noVNC Authors
             window.axonosPendingGuestInvite = invite;
             window.axonosPendingStoredGuestSession = stored;
             window.axonosGuestEntryPending = !!(invite || stored);
+        })();
+    </script>
+
+    <script>
+        // Keep the optional attribution bridge off the parser's critical path.
+        // This tiny inline closure is the sole handoff: it consumes and deletes
+        // the scrubbed click synchronously, then imports the larger bridge without
+        // delaying the wallet, payment, session, reconnect, or viewer UI.
+        (function loadAxonosAttributionBridge() {
+            'use strict';
+            var RAW_CLICK_RETENTION_MS = 10000;
+            var initialClick = String(window.axonosPendingTwclid || '');
+
+            // Business request builders fail closed while the optional module is
+            // unavailable.  They never read the private click held below.
+            window.axonosAttributionContext = '';
+            window.axonosAttributionReady = false;
+            window.axonosPendingTwclid = '';
+            try { delete window.axonosPendingTwclid; } catch (e) { }
+
+            function monotonicNow() {
+                try {
+                    var value = window.performance &&
+                        typeof window.performance.now === 'function'
+                        ? window.performance.now() : NaN;
+                    return Number.isFinite(value) && value >= 0 ? value : null;
+                } catch (e) {
+                    return null;
+                }
+            }
+            var clickCapturedAt = monotonicNow();
+            var clickDeadline = clickCapturedAt === null
+                ? null : clickCapturedAt + RAW_CLICK_RETENTION_MS;
+            if (clickDeadline === null) initialClick = '';
+
+            var retentionTimer = null;
+            function discardInitialClick() {
+                // A stalled module fetch must not retain a vendor identifier for
+                // the lifetime of an otherwise usable AxonOS page.
+                initialClick = '';
+                clickCapturedAt = null;
+                clickDeadline = null;
+                if (retentionTimer !== null) {
+                    clearTimeout(retentionTimer);
+                    retentionTimer = null;
+                }
+            }
+            function discardInitialClickOnPageHide() {
+                // A module completion queued across navigation/BFCache must never
+                // resurrect the prior document's advertising identifier.
+                discardInitialClick();
+            }
+            function expireInitialClick() {
+                discardInitialClick();
+                window.removeEventListener('pagehide', discardInitialClickOnPageHide);
+            }
+            retentionTimer = setTimeout(expireInitialClick, RAW_CLICK_RETENTION_MS);
+            window.addEventListener('pagehide', discardInitialClickOnPageHide, {
+                once: true
+            });
+
+            function takeInitialClick() {
+                var now = monotonicNow();
+                // Timers can be throttled in background tabs. The monotonic
+                // deadline, not callback scheduling order, is authoritative.
+                var withinDeadline = clickCapturedAt !== null &&
+                    clickDeadline !== null && now !== null &&
+                    now >= clickCapturedAt && now < clickDeadline;
+                var value = withinDeadline ? initialClick : '';
+                discardInitialClick();
+                window.removeEventListener('pagehide', discardInitialClickOnPageHide);
+                return value;
+            }
+
+            var moduleRequest;
+            try {
+                moduleRequest = import('./app/x-attribution.js?v=5');
+            } catch (e) {
+                takeInitialClick();
+                return;
+            }
+            Promise.resolve(moduleRequest).then(function (bridge) {
+                var click = takeInitialClick();
+                var initialize = bridge && (bridge.default || bridge.initializeXAttribution);
+                if (typeof initialize !== 'function') return;
+                try {
+                    initialize(click);
+                } finally {
+                    click = '';
+                }
+            }).catch(function () {
+                takeInitialClick();
+            });
         })();
     </script>
 
@@ -178,7 +438,7 @@ Copyright (C) 2019 The noVNC Authors
     </script>
     <script src="app/error-handler.js"></script>
     <!-- Bump ?v= on ui.js changes so browsers fetch the new file instead of cache. -->
-    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260925creditentry"></script>
+    <script type="module" crossorigin="anonymous" src="app/ui.js?v=20260929xcapiprivacy"></script>
 </head>
 
 <body>
@@ -3154,6 +3414,9 @@ Copyright (C) 2019 The noVNC Authors
             var captured = String(window.axonosPendingGuestInvite || '').trim();
             window.axonosPendingGuestInvite = '';
             if (captured) return captured;
+            // The synchronous privacy bootstrap already attempted a clean
+            // replacement. Never reparse a URL that it marked unsafe.
+            if (window.axonosUrlQueryScrubFailed === true) return '';
             var token = '';
             try {
                 var params = new URLSearchParams(window.location.search || '');
@@ -3373,6 +3636,7 @@ Copyright (C) 2019 The noVNC Authors
                 window.axonosAllowVncConnect = false;
                 window.axonosSessionDetached = false;
                 window.axonosPendingResumeClaim = null;
+                window.axonosPendingSessionClaim = null;
                 window.axonosPausedResume = null;
                 window.axonosCurrentSessionReleaseOperation = null;
                 if (typeof window.axonosClearSessionReleaseFailure === 'function') {
@@ -4032,16 +4296,47 @@ Copyright (C) 2019 The noVNC Authors
             axonosResetQueueClientState();
         };
 
+        function axonosAttributionContextForWalletRequest(walletAddress) {
+            if (!/^0x[a-fA-F0-9]{40}$/.test(String(walletAddress || '').trim()) ||
+                typeof window.axonosAttributionContextForWalletCandidate !== 'function') {
+                return '';
+            }
+            try {
+                var candidateContext = String(
+                    window.axonosAttributionContextForWalletCandidate(walletAddress) || ''
+                ).trim();
+                return /^[A-Za-z0-9_-]{32,2048}$/.test(candidateContext)
+                    ? candidateContext : '';
+            } catch (e) {
+                // A stale/cached bridge or browser API failure may drop an X
+                // conversion, but it must never expose another wallet's value.
+                return '';
+            }
+        }
+
         function axonosFetch(opts) {
             const headers = { 'Content-Type': 'application/json' };
             if (window.verifiedWalletAddress) headers['X-Wallet-Address'] = window.verifiedWalletAddress;
             if (window.verifiedWalletAuthToken) headers['X-AXGT-Auth-Token'] = window.verifiedWalletAuthToken;
             var controller = typeof AbortController !== 'undefined'
                 ? new AbortController() : null;
+            var selectedHeaders = Object.assign({}, opts.headers || headers);
+            var requestAttribution = opts.includeAttribution === true
+                ? axonosAttributionContextForWalletRequest(window.verifiedWalletAddress) : '';
+            // Callers cannot smuggle a value captured before the synchronous
+            // wallet check; this builder is the sole attribution authority.
+            Object.keys(selectedHeaders).forEach(function (name) {
+                if (String(name).toLowerCase() === 'x-axonos-attribution') {
+                    delete selectedHeaders[name];
+                }
+            });
+            if (requestAttribution) {
+                selectedHeaders['X-AxonOS-Attribution'] = requestAttribution;
+            }
             var fetchOptions = {
                 method: opts.method || 'GET',
                 credentials: 'include',
-                headers: opts.headers || headers,
+                headers: selectedHeaders,
                 body: opts.body
             };
             if (controller) fetchOptions.signal = controller.signal;
@@ -4096,11 +4391,70 @@ Copyright (C) 2019 The noVNC Authors
         // A successful strict resume claim is handed to UI.connect so opening the
         // viewer does not issue a second, spawn-capable claim.
         window.axonosPendingResumeClaim = null;
+        // The same handoff is used for an ordinary page-level allocation. This
+        // lets UI.connect consume the authoritative response instead of issuing
+        // a redundant re-claim after the page has already started compute.
+        window.axonosPendingSessionClaim = null;
+        var axonosSessionClaimPostInFlight = null;
+        var AXONOS_NEW_SESSION_REQUEST_PREFIX = 'axonos_new_session_request:';
         window.axonosSessionDetached = false;
         /** Profile/GPUs cached while a session is active (claim, heartbeat). */
         window.axonosOwnedSession = null;
         /** Active session GPUs/profile while detached (desktop still running). */
         window.axonosDetachedSession = null;
+
+        function axonosLaunchRequestStorageKey(wallet) {
+            var canonical = String(wallet || '').trim().toLowerCase();
+            return /^0x[a-f0-9]{40}$/.test(canonical)
+                ? AXONOS_NEW_SESSION_REQUEST_PREFIX + canonical : '';
+        }
+
+        function axonosPendingLaunchRequestId(wallet) {
+            var storageKey = axonosLaunchRequestStorageKey(wallet);
+            if (!storageKey) return '';
+            var existing = '';
+            try {
+                existing = String(window.sessionStorage.getItem(storageKey) || '').trim();
+            } catch (e) {
+                return '';
+            }
+            if (/^[A-Za-z0-9_-]{32,128}$/.test(existing)) return existing;
+            if (existing) {
+                try { window.sessionStorage.removeItem(storageKey); } catch (e) { }
+            }
+            var generated = '';
+            try {
+                if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
+                    var bytes = new Uint8Array(32);
+                    window.crypto.getRandomValues(bytes);
+                    generated = Array.from(bytes).map(function (value) {
+                        return value.toString(16).padStart(2, '0');
+                    }).join('');
+                }
+                if (!/^[a-f0-9]{64}$/.test(generated)) return '';
+                window.sessionStorage.setItem(storageKey, generated);
+                // Do not launch if the browser cannot durably retain the key for
+                // a response-loss/reload retry. In-memory fallback would permit
+                // an accidental second paid container after a reload.
+                return window.sessionStorage.getItem(storageKey) === generated
+                    ? generated : '';
+            } catch (e) {
+                return '';
+            }
+        }
+
+        function axonosForgetLaunchRequestId(wallet, expectedId) {
+            var storageKey = axonosLaunchRequestStorageKey(wallet);
+            if (!storageKey) return;
+            try {
+                var current = String(window.sessionStorage.getItem(storageKey) || '').trim();
+                // A late response from an older operation must not clear a newer
+                // intent stored for this wallet.
+                if (!expectedId || current === String(expectedId)) {
+                    window.sessionStorage.removeItem(storageKey);
+                }
+            } catch (e) { }
+        }
 
         function claimSession(options) {
             var claimOptions = options && typeof options === 'object' ? options : {};
@@ -4121,7 +4475,11 @@ Copyright (C) 2019 The noVNC Authors
                             walletPreflightDone: true
                         });
                         return claimSession(verifiedOptions);
-                    }).catch(function () {
+                    }, function () {
+                        // This rejection handler belongs only to the wallet
+                        // preflight. A timeout/reset from the recursive POST
+                        // must propagate so the caller runs uncertain-launch
+                        // reconciliation while retaining the same request id.
                         return {
                             granted: false,
                             wallet_preflight_failed: true,
@@ -4169,11 +4527,21 @@ Copyright (C) 2019 The noVNC Authors
             } else if (reattachSessionId !== null) {
                 payload.expected_session_id = reattachSessionId;
             } else {
-                if (newSessionRequested) payload.new_session = true;
+                if (newSessionRequested) {
+                    var launchRequestId = axonosPendingLaunchRequestId(wallet);
+                    if (!launchRequestId) {
+                        return Promise.resolve({
+                            granted: false,
+                            invalid_launch_request: true,
+                            reason: 'Secure session storage is required to launch an additional session safely.'
+                        });
+                    }
+                    payload.new_session = true;
+                    payload.launch_request_id = launchRequestId;
+                }
                 payload.requested_profile = getRequestedProfile({ ignorePinned: newSessionRequested });
-                // This claim can be the one that SPAWNS the session (it races the
-                // claim in ui.js), and templates only apply at spawn — so it must
-                // carry the selected template too.
+                // This sole claim can spawn the session, and templates apply
+                // only at spawn, so it must carry the selected template too.
                 if (window.axonosSelectedTemplateId) {
                     payload.requested_template = window.axonosSelectedTemplateId;
                 }
@@ -4187,24 +4555,49 @@ Copyright (C) 2019 The noVNC Authors
                     }
                 }
             }
-            // SSH intent must ride this claim too: it races (and may win) the ui.js
-            // claim, so if it omits requested_ssh it would spawn a desktop session
-            // and clobber the SSH one. Read the live checkbox/textarea directly.
+            // SSH intent must ride this sole claim. Read the live
+            // checkbox/textarea directly so it cannot spawn the wrong mode.
             var _sshToggle = document.getElementById('axonos_ssh_toggle');
             var _sshKey = document.getElementById('axonos_ssh_pubkey');
             if (_sshToggle && _sshToggle.checked) {
                 payload.requested_ssh = true;
                 payload.ssh_pubkey = ((_sshKey && _sshKey.value) || '').trim();
             }
-            return axonosFetch({
+            var claimKey = JSON.stringify(payload);
+            if (axonosSessionClaimPostInFlight) {
+                if (String(axonosSessionClaimPostInFlight.wallet || '').toLowerCase() ===
+                        String(wallet).toLowerCase() &&
+                    axonosSessionClaimPostInFlight.key === claimKey) {
+                    return axonosSessionClaimPostInFlight.promise;
+                }
+                // Never issue two semantically different spawn-capable claims
+                // concurrently. The active result is left untouched and the
+                // later caller can make an explicit retry after it settles.
+                return Promise.resolve({
+                    granted: false,
+                    claim_in_progress: true,
+                    reason: 'Another session request is still in progress. Wait for it to finish before retrying.'
+                });
+            }
+            var postPromise = axonosFetch({
                 method: 'POST',
                 url: new URL('/api/session/claim', window.location.origin).toString(),
                 body: JSON.stringify(payload),
+                // Reattach/resume/reconnect cannot create a conversion and do
+                // not receive the private attribution ticket unnecessarily.
+                includeAttribution: !resumeRequested && reattachSessionId === null,
                 timeoutMs: axonosSessionClaimTimeoutMs(resumeRequested),
                 timeoutMessage: resumeRequested
                     ? 'Resume request timed out. The retained session was left unchanged; retry safely.'
                     : 'Session launch timed out. The server may still have created a running session; checking the workspace now.'
             }).then(function (claim) {
+                if (newSessionRequested && claim &&
+                    String(claim.launch_request_id || '') === String(payload.launch_request_id || '') &&
+                    (claim.launch_request_consumed === true ||
+                        claim.launch_request_consumed === false) &&
+                    claim.retryable !== true) {
+                    axonosForgetLaunchRequestId(wallet, payload.launch_request_id);
+                }
                 // The session this tab was bound to is gone (ended elsewhere).
                 // Drop the stale binding so the next Launch is a clean claim;
                 // the denial reason is surfaced by the caller, never retried
@@ -4222,7 +4615,17 @@ Copyright (C) 2019 The noVNC Authors
                 }
                 return claim;
             });
+            axonosSessionClaimPostInFlight = {
+                wallet: wallet, key: claimKey, promise: postPromise
+            };
+            return postPromise.finally(function () {
+                if (axonosSessionClaimPostInFlight &&
+                    axonosSessionClaimPostInFlight.promise === postPromise) {
+                    axonosSessionClaimPostInFlight = null;
+                }
+            });
         }
+        window.axonosClaimSession = claimSession;
 
         function sessionStatus() {
             return sessionStatusForWallet(window.verifiedWalletAddress);
@@ -6201,10 +6604,26 @@ Copyright (C) 2019 The noVNC Authors
 
             var granted = claim && (claim.granted === true || claim.granted === 'true');
             if (granted && typeof window.axonosRememberOwnedSession === 'function') {
-                // Close the account-change race between this authoritative outer
-                // claim and UI.connect's desktop re-claim: the browser already owns
-                // billable compute even though its viewer is not attached yet.
+                // The browser already owns billable compute even though its
+                // viewer is not attached yet; bind that exact session before
+                // handing the same authoritative response to UI.connect.
                 window.axonosRememberOwnedSession(claim);
+            }
+
+            if (granted && claim.ssh_enabled !== true) {
+                var stagedSessionClaim = {
+                    wallet: String(window.verifiedWalletAddress || '').trim(),
+                    claim: claim,
+                    createdAt: Date.now()
+                };
+                window.axonosPendingSessionClaim = stagedSessionClaim;
+                setTimeout(function () {
+                    // Physically release the full response after its one-shot
+                    // eligibility window, without erasing a newer handoff.
+                    if (window.axonosPendingSessionClaim === stagedSessionClaim) {
+                        window.axonosPendingSessionClaim = null;
+                    }
+                }, 30001);
             }
 
             // The page-level launch/payment flows already hold the authoritative
@@ -6214,6 +6633,7 @@ Copyright (C) 2019 The noVNC Authors
             // session type returned by the server is authoritative.
             if (granted && claim.ssh_enabled === true) {
                 window.axonosPendingResumeClaim = null;
+                window.axonosPendingSessionClaim = null;
                 window.axonosPausedResume = null;
                 if (typeof UI !== 'undefined' &&
                     typeof UI.showAxonosSshCard === 'function' &&
@@ -8082,6 +8502,11 @@ Copyright (C) 2019 The noVNC Authors
 
         function runVerify(walletAddress, provider, options) {
             var verifyOptions = options && typeof options === 'object' ? options : {};
+            // Fence a previous wallet's attribution synchronously, before even
+            // the challenge request for this candidate can begin.  Call again
+            // at POST construction time so a completed first-wallet latch may
+            // be used without ever reading the unscoped public global.
+            axonosAttributionContextForWalletRequest(walletAddress);
             // A new authentication attempt supersedes any payment/test-credit work
             // captured under the previous wallet identity.
             axonosPaymentOperationGeneration += 1;
@@ -8147,9 +8572,18 @@ Copyright (C) 2019 The noVNC Authors
                 })
                 .then(function (_ref) {
                     axonosRequireWalletVerifyAttempt(verifyAttempt);
+                    var verifyHeaders = {
+                        'Content-Type': 'application/json',
+                        'X-Wallet-Address': walletAddress
+                    };
+                    var verifyAttribution =
+                        axonosAttributionContextForWalletRequest(walletAddress);
+                    if (verifyAttribution) {
+                        verifyHeaders['X-AxonOS-Attribution'] = verifyAttribution;
+                    }
                     return axonosWalletVerifyFetch(verifyApiUrl, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'X-Wallet-Address': walletAddress },
+                        headers: verifyHeaders,
                         credentials: 'include',
                         body: JSON.stringify({
                             wallet_address: walletAddress,
@@ -8183,6 +8617,11 @@ Copyright (C) 2019 The noVNC Authors
                         verifiedWalletAddress = walletAddress;
                         window.verifiedWalletAddress = walletAddress;
                         window.verifiedWalletAuthToken = data.auth_token || null;
+                        try {
+                            if (typeof window.axonosNotifyWalletVerified === 'function') {
+                                window.axonosNotifyWalletVerified(walletAddress);
+                            }
+                        } catch (e) { }
                         axonosSetTestCreditEligibility(data);
                         axonosSetGuestInviteEligibility(data);
                         window.axonosAllowVncConnect = true;
@@ -8277,6 +8716,11 @@ Copyright (C) 2019 The noVNC Authors
                     verifiedWalletAddress = walletAddress;
                     window.verifiedWalletAddress = walletAddress;
                     window.verifiedWalletAuthToken = data.auth_token;
+                    try {
+                        if (typeof window.axonosNotifyWalletVerified === 'function') {
+                            window.axonosNotifyWalletVerified(walletAddress);
+                        }
+                    } catch (e) { }
                     axonosSetTestCreditEligibility(data);
                     axonosSetGuestInviteEligibility(data);
                     window.axonosAllowVncConnect = false;
@@ -8611,14 +9055,19 @@ Copyright (C) 2019 The noVNC Authors
             var wallet = operation ? operation.wallet : verifiedWalletAddress;
             var tok = operation ? operation.token : window.verifiedWalletAuthToken;
             var endpoint = verifyEndpoint || AXONOS_VERIFY_DEPOSIT_ENDPOINT;
+            var verifyHeaders = {
+                'Content-Type': 'application/json',
+                'X-Wallet-Address': wallet,
+                'X-AXGT-Auth-Token': tok
+            };
+            var verifyAttribution = axonosAttributionContextForWalletRequest(wallet);
+            if (verifyAttribution) {
+                verifyHeaders['X-AxonOS-Attribution'] = verifyAttribution;
+            }
             return fetch(new URL(endpoint, window.location.origin).toString(), {
                 method: 'POST',
                 credentials: 'include',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Wallet-Address': wallet,
-                    'X-AXGT-Auth-Token': tok
-                },
+                headers: verifyHeaders,
                 body: JSON.stringify({ wallet_address: wallet, tx_hash: txHash })
             }).then(axonosReadFetchJson);
         }
@@ -9636,6 +10085,7 @@ Copyright (C) 2019 The noVNC Authors
             axonosSetGuestInviteEligibility(false);
             window.axonosAllowVncConnect = false;
             window.axonosPendingResumeClaim = null;
+            window.axonosPendingSessionClaim = null;
             window.axonosPausedResume = null;
             try { localStorage.removeItem('axonos_last_wallet'); } catch (e) { }
             try { localStorage.removeItem('axonos_wallet_provider_rdns'); } catch (e) { }
@@ -12498,6 +12948,15 @@ Copyright (C) 2019 The noVNC Authors
                     return Promise.resolve(false);
                 }
                 releaseBody.expected_session_id = expectedSessionId;
+                var pendingClaim = window.axonosPendingSessionClaim;
+                var pendingClaimSessionId = Number(
+                    pendingClaim && pendingClaim.claim && pendingClaim.claim.session_id
+                );
+                if (pendingClaimSessionId === expectedSessionId) {
+                    // Cancel only the handoff for the session being ended. A
+                    // later release completion must not erase a newer launch.
+                    window.axonosPendingSessionClaim = null;
+                }
             }
             var releaseOperation = {
                 source: 'dashboard-end',
@@ -14386,6 +14845,11 @@ Copyright (C) 2019 The noVNC Authors
                 verifiedWalletAddress = lastWallet;
                 window.verifiedWalletAddress = lastWallet;
                 window.verifiedWalletAuthToken = data.auth_token || null;
+                try {
+                    if (typeof window.axonosNotifyWalletVerified === 'function') {
+                        window.axonosNotifyWalletVerified(lastWallet);
+                    }
+                } catch (e) { }
                 window.axonosAllowVncConnect = data.verified === true;
                 axonosSetTestCreditEligibility(data);
                 if (typeof axonosOnWalletVerified === 'function') {

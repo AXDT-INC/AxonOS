@@ -110,6 +110,7 @@ def verify_usdc_deposit_is_pending(result: Dict[str, Any]) -> bool:
 def verify_usdc_deposit(
     authenticated_wallet: str,
     tx_hash: str,
+    attribution_context: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Verify tx_hash as a USDC transfer from authenticated_wallet to the revenue
@@ -169,6 +170,9 @@ def verify_usdc_deposit(
             confirmations=0,
             required=min_conf,
         )
+    observed_chain_id = _observed_usdc_chain_id(tx_obj)
+    if observed_chain_id is not None and observed_chain_id != _usdc_chain_id():
+        return fail("Transaction chain ID does not match USDC_CHAIN_ID")
 
     receipt = _dv._rpc(rpc_url, "eth_getTransactionReceipt", [tx])
     if not receipt:
@@ -303,6 +307,8 @@ def verify_usdc_deposit(
         credited_minutes,
         tx,
         block_number,
+        observed_chain_id,
+        attribution_context=attribution_context,
     )
     if not ok:
         return fail(err or "Failed to credit USDC deposit")
@@ -321,6 +327,7 @@ def verify_usdc_deposit(
         "credited_minutes": round(credited_minutes, 2),
         "remaining_minutes": round(remaining, 2),
         "confirmations": confirmations,
+        "chain_id": observed_chain_id,
     }
 
 
@@ -366,6 +373,11 @@ def _usdc_chain_id() -> int:
     except ValueError:
         pass
     return 8453  # Base mainnet
+
+
+def _observed_usdc_chain_id(transaction: Any) -> Optional[int]:
+    """Extract USDC chain provenance from the already-fetched transaction."""
+    return _dv._transaction_chain_id(transaction)
 
 
 def _usdc_eip712_name() -> str:
@@ -1110,7 +1122,11 @@ def _submit_transfer_with_authorization(
         return None, f"Settlement error: {exc}"
 
 
-def settle_x402_payment(authenticated_wallet: str, x_payment_header: str) -> Dict[str, Any]:
+def settle_x402_payment(
+    authenticated_wallet: str,
+    x_payment_header: str,
+    attribution_context: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Verify and settle an x402 X-PAYMENT (EIP-3009) payment, then credit minutes.
 
@@ -1136,7 +1152,6 @@ def settle_x402_payment(authenticated_wallet: str, x_payment_header: str) -> Dic
         return fail("USDC verification not configured (USDC_RPC_URL, USDC_CONTRACT_ADDRESS, AXGT_REVENUE_WALLET)")
     if not wallet:
         return fail("Wallet address required")
-
     payload = _decode_x402_header(x_payment_header)
     if not payload:
         return fail("Malformed X-PAYMENT header")
@@ -1287,7 +1302,11 @@ def settle_x402_payment(authenticated_wallet: str, x_payment_header: str) -> Dic
     _wait_for_confirmations(rpc_url, settle_tx, _min_confirmations())
 
     # Credit via the same tx-hash verifier (handles confirmations + replay guard).
-    result = verify_usdc_deposit(authenticated_wallet=wallet, tx_hash=settle_tx)
+    result = verify_usdc_deposit(
+        authenticated_wallet=wallet,
+        tx_hash=settle_tx,
+        attribution_context=attribution_context,
+    )
     result = dict(result)
     result["settlement_tx_hash"] = settle_tx
     result["x402"] = True

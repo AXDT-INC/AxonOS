@@ -2,6 +2,8 @@
 .env
 .env.*
 .git
+secrets/
+**/secrets/
 
 # Local interpreter/test artifacts must not invalidate application COPY layers.
 **/__pycache__/

@@ -20,12 +20,22 @@ class TestDepositVerifierParsing(unittest.TestCase):
             "AXGT_REVENUE_WALLET": "0xrevenue00000000000000000000000000000000001",
             "AXGT_CONTRACT_ADDRESS": "0xcontract0000000000000000000000000000000001",
             "AXGT_RPC_URL": "https://rpc.example.com",
+            "AXGT_CHAIN_ID": "1",
         }
         self.patcher = patch.dict(os.environ, self.env)
         self.patcher.start()
 
     def tearDown(self):
         self.patcher.stop()
+
+    def test_boolean_chain_ids_are_never_normalized_as_mainnet(self):
+        from axonos_gate.deposit_ledger import _positive_chain_id
+        from axonos_gate.deposit_verifier import _transaction_chain_id
+
+        self.assertIsNone(_transaction_chain_id({"chainId": True}))
+        self.assertIsNone(_transaction_chain_id({"chainId": False}))
+        self.assertIsNone(_positive_chain_id(True))
+        self.assertIsNone(_positive_chain_id(False))
 
     def test_parse_transfer_logs_empty(self):
         from deposit_verifier import _parse_transfer_logs
@@ -149,7 +159,10 @@ class TestDepositVerifierParsing(unittest.TestCase):
 
         def rpc_side_effect(url, method, params):
             if method == "eth_getTransactionByHash":
-                return {"from": wallet, "to": "0x" + "1" * 40, "value": "0x0"}
+                return {
+                    "from": wallet, "to": "0x" + "1" * 40,
+                    "value": "0x0", "chainId": "0x1",
+                }
             if method == "eth_getTransactionReceipt":
                 return {"status": "0x1", "blockNumber": "0x64"}
             if method == "eth_blockNumber":
@@ -165,6 +178,41 @@ class TestDepositVerifierParsing(unittest.TestCase):
         self.assertEqual(result.get("confirmations"), 2)
         self.assertEqual(result.get("required"), 6)
         self.assertIn("Insufficient confirmations", result.get("error", ""))
+
+    @patch("axonos_gate.deposit_verifier._rpc")
+    @patch("axonos_gate.deposit_ledger.tx_hash_already_credited")
+    def test_verify_deposit_rejects_transaction_chain_mismatch(
+        self, mock_already, mock_rpc
+    ):
+        from axonos_gate.deposit_verifier import verify_deposit
+
+        mock_already.return_value = False
+        mock_rpc.return_value = {"chainId": "0x5"}
+        result = verify_deposit(
+            authenticated_wallet="0x1234567890123456789012345678901234567890",
+            tx_hash="0xabcdef",
+        )
+        self.assertFalse(result["verified"])
+        self.assertIn("chain ID", result["error"])
+        self.assertEqual(mock_rpc.call_count, 1)
+
+    @patch("axonos_gate.deposit_verifier._rpc")
+    @patch("axonos_gate.deposit_ledger.tx_hash_already_credited")
+    def test_missing_chain_provenance_adds_no_rpc_and_does_not_block_payment_poll(
+        self, mock_already, mock_rpc
+    ):
+        from axonos_gate.deposit_verifier import verify_deposit
+
+        mock_already.return_value = False
+        mock_rpc.return_value = None
+        with patch.dict(os.environ, {"AXGT_CHAIN_ID": ""}, clear=False):
+            result = verify_deposit(
+                authenticated_wallet="0x1234567890123456789012345678901234567890",
+                tx_hash="0xabcdef",
+            )
+        self.assertTrue(result.get("pending"))
+        self.assertEqual(mock_rpc.call_count, 1)
+        self.assertEqual(mock_rpc.call_args.args[1], "eth_getTransactionByHash")
 
 
 if __name__ == "__main__":

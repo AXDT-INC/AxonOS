@@ -8,6 +8,7 @@ immediately (no waitlist).
 
 import logging
 import os
+import re
 import secrets
 import subprocess
 import time
@@ -33,7 +34,23 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+try:
+    from . import x_capi as _x_capi
+except ImportError:
+    try:
+        from axonos_gate import x_capi as _x_capi
+    except ImportError:
+        try:
+            import x_capi as _x_capi
+        except Exception:
+            _x_capi = None
+    except Exception:
+        _x_capi = None
+except Exception:
+    _x_capi = None
+
 _SESSION_TABLE = "axgt_sessions"
+_SESSION_LAUNCH_REQUEST_TABLE = "axgt_session_launch_requests"
 _STORAGE_VOLUME_TABLE = "axgt_storage_volumes"
 _GATE_LIVENESS_TABLE = "axgt_gate_liveness"
 _GATE_ABSENCE_TABLE = "axgt_gate_absence"
@@ -60,6 +77,16 @@ _CLAIM_ADVISORY_LOCK_NAMESPACE = 0x4158  # "AX"
 # the old runtime was still shutting down. The lock is released before external
 # container spawn, so launches for different users remain concurrent.
 _ALLOCATION_ADVISORY_LOCK_KEY = 0x41584750  # "AXGP"
+# Per-session launch/recovery lease. Unlike the global GPU scheduler lock this
+# remains held while Docker work runs, so a cleanup worker can distinguish a
+# slow live launch from a crashed process without serializing unrelated users.
+_ALLOCATION_RECONCILE_ADVISORY_NAMESPACE = 0x4152  # "AR"
+
+# An explicit additional-session launch is a side-effecting API operation. Its
+# caller supplies one high-entropy, opaque idempotency key and must reuse that
+# key after a timeout or lost response. The value is internal control-plane
+# metadata: it is never used as a CAPI source key or sent to X.
+_LAUNCH_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 
 _pg_init_done = False
 _pg_init_lock = Lock()
@@ -92,6 +119,16 @@ def _coerce_session_id(value: Any) -> Optional[int]:
     except (TypeError, ValueError):
         return None
     return parsed if parsed > 0 else None
+
+
+def validate_launch_request_id(value: Any) -> Optional[str]:
+    """Return a canonical explicit-launch idempotency key, else ``None``."""
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    if candidate != value:
+        return None
+    return candidate if _LAUNCH_REQUEST_ID_RE.fullmatch(candidate) else None
 
 
 def _multi_session_enabled() -> bool:
@@ -696,6 +733,40 @@ def _heartbeat_timeout_seconds() -> int:
     return 120  # default 2 min
 
 
+def _spawn_finalization_resolve_timeout_ms() -> int:
+    """Maximum row-lock wait while resolving an outcome-ambiguous COMMIT."""
+    raw = (
+        os.getenv("AXGT_SESSION_FINALIZATION_RESOLVE_TIMEOUT_MS") or "5000"
+    ).strip()
+    try:
+        return max(100, min(30_000, int(raw)))
+    except (TypeError, ValueError):
+        return 5000
+
+
+def _allocation_reconcile_after_seconds() -> int:
+    """Age after which an unfinished launch is safe to inspect/reconcile.
+
+    Reconciliation must not race the launcher's documented synchronous request
+    envelope. Operators may increase the delay for unusually slow storage or
+    image startup, but cannot shorten it below that safety floor.
+    """
+    try:
+        launch_envelope = int(
+            _import_session_launcher().session_claim_timeout_seconds()
+        )
+    except Exception:
+        launch_envelope = 150
+    floor = max(180, launch_envelope + 30)
+    raw = (
+        os.getenv("AXGT_SESSION_ALLOCATION_RECONCILE_SECONDS") or str(floor)
+    ).strip()
+    try:
+        return max(floor, min(86_400, int(raw)))
+    except (TypeError, ValueError):
+        return floor
+
+
 def _session_cooldown_seconds() -> int:
     """Grace period after session release before the same wallet can reclaim."""
     raw = (os.getenv("AXGT_SESSION_COOLDOWN_SECONDS") or "").strip()
@@ -794,6 +865,67 @@ def _import_session_launcher():
     return session_launcher
 
 
+def _emit_session_started_nonblocking(
+    context_token: Optional[str],
+    wallet_address: str,
+    session_id: int,
+    event_timestamp_ms: int,
+) -> bool:
+    """Notify the local worker after a real container allocation is durable."""
+    try:
+        launcher_mode = (
+            os.getenv("AXGT_SESSION_LAUNCHER_MODE") or "docker_cli"
+        ).strip().lower()
+        if (
+            _x_capi is None
+            or not context_token
+            or not _multi_session_enabled()
+            or launcher_mode == "noop"
+            or not _x_capi.wallet_is_campaign_eligible(wallet_address)
+        ):
+            return False
+        return bool(_x_capi.emit_event_nonblocking(
+            context_token=context_token,
+            wallet_address=wallet_address,
+            milestone=_x_capi.MILESTONE_SESSION_STARTED,
+            source_key=str(session_id),
+            event_timestamp_ms=event_timestamp_ms,
+            allow_context_binding=False,
+        ))
+    except Exception:
+        return False
+
+
+def _spawn_finalization_is_committed(cur, session_id: int, container_id: str) -> bool:
+    """Resolve an uncertain COMMIT using the exact durable allocation identity.
+
+    A plain MVCC read can observe the pre-finalization row while the other
+    backend is still deciding its COMMIT, then let the caller tear down a
+    container whose allocation becomes durable a moment later.  Lock the row so
+    PostgreSQL makes us observe the finalizer's post-commit/post-rollback state.
+    The local timeout keeps a wedged finalizer fail-safe: the caller treats the
+    result as unknown and leaves the runtime alone.
+    """
+    cur.execute(
+        "SELECT set_config('lock_timeout', %s, true)",
+        (f"{_spawn_finalization_resolve_timeout_ms()}ms",),
+    )
+    cur.execute(
+        f"""SELECT allocation_status, container_id
+            FROM {_SESSION_TABLE}
+            WHERE id = %s
+            FOR UPDATE""",
+        (session_id,),
+    )
+    row = cur.fetchone()
+    return bool(
+        isinstance(row, (tuple, list))
+        and len(row) >= 2
+        and row[0] == "allocated"
+        and row[1] == container_id
+    )
+
+
 def _import_guest_mode():
     """Works when loaded as package, as axonos_gate.*, or flat on sys.path."""
     try:
@@ -836,6 +968,24 @@ def _ensure_tables(conn) -> None:
                 files_key   TEXT,
                 ssh_enabled BOOLEAN NOT NULL DEFAULT FALSE,
                 credit_grace_started_at DOUBLE PRECISION
+            )
+        """)
+        # Idempotency metadata lives in a new, small table instead of adding an
+        # index to the hot production session table. This avoids a table scan or
+        # long-lived SHARE lock during rollout. No foreign key is intentional:
+        # a consumed request must remain consumed even if an old session row is
+        # later archived or removed.
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {_SESSION_LAUNCH_REQUEST_TABLE} (
+                wallet_address TEXT NOT NULL,
+                launch_request_id TEXT NOT NULL,
+                session_id BIGINT NOT NULL,
+                created_at DOUBLE PRECISION NOT NULL,
+                PRIMARY KEY (wallet_address, launch_request_id),
+                CHECK (wallet_address ~ '^0x[a-f0-9]{{40}}$'),
+                CHECK (launch_request_id ~ '^[A-Za-z0-9_-]{{32,128}}$'),
+                CHECK (session_id > 0),
+                CHECK (created_at > 0 AND created_at < 'Infinity'::DOUBLE PRECISION)
             )
         """)
         # Trusted launcher projection of physical ext4 capacity.  Session
@@ -1185,6 +1335,7 @@ def _expire_stale_session(
                     THEN CASE WHEN deadline_kind = 'scheduled' THEN 'scheduled_expiry' ELSE 'demo_expiry' END
                     ELSE 'heartbeat_timeout' END
                 WHERE status = 'active'
+                  AND allocation_status = 'allocated'
                   AND (expires_at <= %s
                        OR (hard_expires_at IS NOT NULL AND hard_expires_at + CASE WHEN deadline_kind = 'scheduled' THEN 0 ELSE %s END <= %s))
                 RETURNING wallet_address, id""",
@@ -1199,6 +1350,7 @@ def _expire_stale_session(
                     THEN CASE WHEN deadline_kind = 'scheduled' THEN 'scheduled_expiry' ELSE 'demo_expiry' END
                     ELSE 'heartbeat_timeout' END
                 WHERE status = 'active'
+                  AND allocation_status = 'allocated'
                   AND (last_heartbeat < %s
                        OR expires_at <= %s
                        OR (hard_expires_at IS NOT NULL AND hard_expires_at + CASE WHEN deadline_kind = 'scheduled' THEN 0 ELSE %s END <= %s))
@@ -1420,6 +1572,94 @@ def _active_sessions_for_wallet(cur, wallet: str) -> List[Dict[str, Any]]:
     return [_session_row_to_dict(row) for row in cur.fetchall() or []]
 
 
+def _session_for_launch_request(
+    cur, wallet: str, launch_request_id: str
+) -> Optional[Dict[str, Any]]:
+    """Return any durable row that consumed this wallet-scoped launch key.
+
+    Callers hold the same-wallet transaction lock across this lookup and the
+    possible INSERT. The small mapping table's primary key is the database
+    backstop; keeping it separate avoids a blocking index build on the existing
+    production session table.
+    """
+    cur.execute(
+        f"""SELECT request.session_id, request.wallet_address,
+                   session.requested_profile, session.gpu_ids, session.container_id,
+                   session.allocation_status, session.started_at, session.last_heartbeat,
+                   session.last_billed_at, session.expires_at, session.files_key,
+                   session.hard_expires_at, session.ssh_enabled,
+                   session.credit_grace_started_at, session.ssh_port,
+                   session.requested_template, session.title, session.notes,
+                   request.launch_request_id, session.status
+            FROM {_SESSION_LAUNCH_REQUEST_TABLE} AS request
+            LEFT JOIN {_SESSION_TABLE} AS session ON session.id = request.session_id
+            WHERE request.wallet_address = %s AND request.launch_request_id = %s
+            LIMIT 1""",
+        (wallet, launch_request_id),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    result = _session_row_to_dict(row)
+    result["launch_request_id"] = row[18]
+    result["status"] = row[19]
+    return result
+
+
+def _launch_request_replay_response(
+    session: Dict[str, Any], now: float
+) -> Dict[str, Any]:
+    """Describe the original launch without ever spawning or emitting again."""
+    session_id = int(session["id"])
+    launch_request_id = str(session.get("launch_request_id") or "")
+    allocation_status = str(session.get("allocation_status") or "allocated")
+    status = str(session.get("status") or "ended")
+    base: Dict[str, Any] = {
+        "session_id": session_id,
+        "launch_request_id": launch_request_id,
+        "idempotent_replay": True,
+        "launch_request_consumed": True,
+        "allocation_status": allocation_status,
+        "requested_profile": session.get("requested_profile") or "small",
+        "assigned_gpu_ids": session.get("gpu_ids", []),
+    }
+    if status == "active" and allocation_status == "allocated":
+        base.update({
+            "granted": True,
+            "already_active": True,
+            "container_id": session.get("container_id"),
+            "remaining_seconds": int(
+                max(0, (session.get("expires_at") or now) - now)
+            ),
+        })
+        hard_expires_at = session.get("hard_expires_at")
+        base.update(_deadline_fields(hard_expires_at, now))
+        if session.get("ssh_enabled"):
+            base.update(_ssh_connection_fields(session_id, session.get("ssh_port")))
+        return base
+    if status == "active" and allocation_status == "allocating":
+        base.update({
+            "granted": False,
+            "retryable": True,
+            "reason": (
+                "This exact launch is still being allocated. Retry with the same "
+                "launch_request_id; no second session was created."
+            ),
+        })
+        return base
+    base.update({
+        "granted": False,
+        "retryable": False,
+        "launch_request_terminal": True,
+        "session_state": status,
+        "reason": (
+            "This launch request was already consumed and cannot create another "
+            "session. Start a genuinely new launch to obtain a new request id."
+        ),
+    })
+    return base
+
+
 def _allocated_gpu_ids(rows: List[Dict[str, Any]]) -> Set[int]:
     out: Set[int] = set()
     for row in rows:
@@ -1591,6 +1831,29 @@ def _release_allocation_scheduler_lock(conn, cur) -> None:
         (_ALLOCATION_ADVISORY_LOCK_KEY,),
     )
     conn.commit()
+
+
+def _acquire_allocation_reconcile_lock(cur, session_id: int) -> None:
+    cur.execute(
+        "SELECT pg_advisory_lock(%s, %s)",
+        (_ALLOCATION_RECONCILE_ADVISORY_NAMESPACE, int(session_id)),
+    )
+
+
+def _try_acquire_allocation_reconcile_lock(cur, session_id: int) -> bool:
+    cur.execute(
+        "SELECT pg_try_advisory_lock(%s, %s)",
+        (_ALLOCATION_RECONCILE_ADVISORY_NAMESPACE, int(session_id)),
+    )
+    row = cur.fetchone()
+    return bool(row and row[0])
+
+
+def _release_allocation_reconcile_lock(cur, session_id: int) -> None:
+    cur.execute(
+        "SELECT pg_advisory_unlock(%s, %s)",
+        (_ALLOCATION_RECONCILE_ADVISORY_NAMESPACE, int(session_id)),
+    )
 
 
 def _run_stale_session_maintenance_locked(conn, cur) -> None:
@@ -1933,6 +2196,8 @@ def try_claim_session(
     expected_session_id: Optional[int] = None,
     requested_storage_gb: Optional[int] = None,
     new_session: bool = False,
+    launch_request_id: Optional[str] = None,
+    attribution_context: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Attempt to claim the desktop session for *wallet_address*.
 
@@ -1953,10 +2218,48 @@ def try_claim_session(
       page-level launch).
     * ``new_session=True`` — allocate an additional session even though the
       wallet already owns one; the ordinary credit and GPU capacity checks
-      apply. Ignored for demo identities, which stay single-session.
+      apply. A valid ``launch_request_id`` is mandatory and makes response-loss
+      retries return the original row without a second spawn or conversion.
     * neither — legacy: reattach to the newest owned session, else allocate.
     """
     wallet = wallet_address.lower()
+    if not isinstance(new_session, bool):
+        return {
+            "granted": False,
+            "invalid_launch_request": True,
+            "reason": "new_session must be a boolean",
+        }
+    if new_session and (resume_only or expected_session_id is not None):
+        return {
+            "granted": False,
+            "invalid_launch_request": True,
+            "reason": (
+                "new_session cannot be combined with resume_only or "
+                "expected_session_id"
+            ),
+        }
+    canonical_launch_request_id = validate_launch_request_id(launch_request_id)
+    if new_session and canonical_launch_request_id is None:
+        return {
+            "granted": False,
+            "invalid_launch_request": True,
+            "reason": (
+                "new_session requires a 32-128 character URL-safe "
+                "launch_request_id"
+            ),
+        }
+    if not new_session and launch_request_id is not None:
+        return {
+            "granted": False,
+            "invalid_launch_request": True,
+            "reason": "launch_request_id is only valid when new_session is true",
+        }
+    if new_session and not _multi_session_enabled():
+        return {
+            "granted": False,
+            "invalid_launch_request": True,
+            "reason": "Additional sessions are not enabled on this deployment",
+        }
     try:
         # Canonicalize once and pass this exact value through the guest
         # allowlist, runtime digest, launcher payload, and container env.
@@ -2002,6 +2305,12 @@ def try_claim_session(
     if guest_rejection is not None:
         return guest_rejection
     is_guest = guest_ctx is not None
+    if new_session and is_guest:
+        return {
+            "granted": False,
+            "invalid_launch_request": True,
+            "reason": "Demo identities cannot launch additional sessions",
+        }
 
     # A demo never provisions a per-wallet ext4 volume: one image per invite would
     # accumulate on disk forever. The container uses the image's own home instead.
@@ -2024,6 +2333,8 @@ def try_claim_session(
     if not conn:
         return {"granted": False, "reason": "Session DB unavailable"}
     allocation_lock_held = False
+    allocation_reconcile_lock_session_id: Optional[int] = None
+    launch_request_may_be_consumed = False
     try:
         with conn.cursor() as cur:
             # A session-level lock is required here because stale-session DB
@@ -2044,6 +2355,22 @@ def try_claim_session(
                 "SELECT pg_advisory_xact_lock(hashtext(%s), %s)",
                 (wallet, _CLAIM_ADVISORY_LOCK_NAMESPACE),
             )
+
+            # The transaction lock orders same-wallet requests across Flask and
+            # Websockify processes. The first request commits the reservation
+            # and key together before external Docker work; every later replay
+            # observes that row and returns here without credit checks, INSERT,
+            # launcher calls, or a second marketing event.
+            if canonical_launch_request_id is not None:
+                prior_launch = _session_for_launch_request(
+                    cur, wallet, canonical_launch_request_id
+                )
+                if prior_launch is not None:
+                    replay = _launch_request_replay_response(
+                        prior_launch, time.time()
+                    )
+                    conn.commit()
+                    return replay
 
             if is_guest:
                 # Close the preflight/revoke race. Revocation takes the same
@@ -2110,6 +2437,47 @@ def try_claim_session(
             active_rows = _get_active_rows(cur)
             grace_rows = _get_credit_grace_rows(cur, now)
             reserved_rows = active_rows + grace_rows
+            unresolved_allocations = [
+                row
+                for row in active_rows
+                if row.get("wallet_address") == wallet
+                and row.get("allocation_status") == "allocating"
+            ]
+            unresolved_allocation = (
+                unresolved_allocations[-1] if unresolved_allocations else None
+            )
+            unresolved_session_ids = {
+                int(row["id"]) for row in unresolved_allocations
+            }
+            if unresolved_allocation is not None and (
+                new_session
+                or expected_session_id is None
+                or int(expected_session_id) in unresolved_session_ids
+            ):
+                # The first request released its transaction lock before the
+                # external Docker call. Until that reservation is finalized or
+                # safely reconciled, any different launch intent could create a
+                # second paid container for the same user. The exact same key
+                # already returned through the mapping lookup above. An exact
+                # reattach/resume of a different, allocated sibling cannot spawn
+                # and remains available while reconciliation runs.
+                conn.commit()
+                blocked: Dict[str, Any] = {
+                    "granted": False,
+                    "retryable": True,
+                    "allocation_status": "allocating",
+                    "session_id": unresolved_allocation["id"],
+                    "reason": (
+                        "A prior session launch is still being reconciled. Retry "
+                        "after it reaches a terminal or allocated state."
+                    ),
+                }
+                if canonical_launch_request_id is not None:
+                    blocked.update({
+                        "launch_request_id": canonical_launch_request_id,
+                        "launch_request_consumed": False,
+                    })
+                return blocked
             active = active_rows[-1] if active_rows else None
             blocking = active if active else (grace_rows[-1] if grace_rows else None)
 
@@ -2129,7 +2497,7 @@ def try_claim_session(
 
             # Additional-session launch: only meaningful when each claim gets
             # its own container. A demo identity is always single-session.
-            spawn_additional = bool(new_session) and not is_guest and _multi_session_enabled()
+            spawn_additional = bool(new_session) and not is_guest
 
             # Exact reattach (non-resume): the caller is bound to one of the
             # wallet's sessions. It must get THAT row or a clean mismatch —
@@ -2463,6 +2831,23 @@ def try_claim_session(
                     ),
                 )
                 session_id = cur.fetchone()[0]
+                if canonical_launch_request_id is not None:
+                    cur.execute(
+                        f"""INSERT INTO {_SESSION_LAUNCH_REQUEST_TABLE}
+                            (wallet_address, launch_request_id, session_id, created_at)
+                            VALUES (%s, %s, %s, %s)""",
+                        (wallet, canonical_launch_request_id, session_id, now),
+                    )
+                    # From this point a failed/lost COMMIT can be
+                    # outcome-ambiguous. Force every caller to retain this key;
+                    # reusing a key that rolled back is safe, rotating one that
+                    # committed is not.
+                    launch_request_may_be_consumed = True
+                # Acquire the per-session recovery lease before making this row
+                # visible. It survives the reservation COMMIT and external
+                # Docker work; a crash releases it with the DB connection.
+                _acquire_allocation_reconcile_lock(cur, session_id)
+                allocation_reconcile_lock_session_id = int(session_id)
                 webrtc_agent_token = None
                 if not requested_ssh:
                     failure_reason = None
@@ -2496,6 +2881,14 @@ def try_claim_session(
                             "requested_profile": profile_name,
                             "requested_gpus": requested_gpus,
                             "reason": failure_reason,
+                            **(
+                                {
+                                    "launch_request_id": canonical_launch_request_id,
+                                    "launch_request_consumed": True,
+                                }
+                                if canonical_launch_request_id is not None
+                                else {}
+                            ),
                         }
                 conn.commit()
 
@@ -2539,6 +2932,9 @@ def try_claim_session(
                     allocation_lock_held = True
 
                 finalized = False
+                finalization_attempted = False
+                finalization_outcome_unknown = False
+                finalized_timestamp_ms: Optional[int] = None
                 try:
                     conn2 = _get_connection()
                 except Exception as exc:
@@ -2552,10 +2948,14 @@ def try_claim_session(
                     try:
                         with conn2.cursor() as cur2:
                             if spawned:
+                                finalization_attempted = True
                                 cur2.execute(
                                     f"""UPDATE {_SESSION_TABLE}
                                         SET container_id = %s, allocation_status = 'allocated'
-                                        WHERE id = %s AND status = 'active'""",
+                                        WHERE id = %s
+                                          AND status = 'active'
+                                          AND allocation_status = 'allocating'
+                                          AND container_id IS NULL""",
                                     (container_id, session_id),
                                 )
                                 if cur2.rowcount != 1:
@@ -2571,6 +2971,8 @@ def try_claim_session(
                                 )
                         conn2.commit()
                         finalized = True
+                        if spawned:
+                            finalized_timestamp_ms = int(time.time() * 1000)
                     except Exception as exc:
                         try:
                             conn2.rollback()
@@ -2582,7 +2984,63 @@ def try_claim_session(
                             exc,
                         )
                     finally:
-                        conn2.close()
+                        try:
+                            conn2.close()
+                        except Exception as exc:
+                            logger.warning(
+                                "Could not close spawn-finalization connection for session %s: %s",
+                                session_id,
+                                exc,
+                            )
+                if spawned and not finalized and finalization_attempted:
+                    # A PostgreSQL COMMIT error is outcome-ambiguous: the server
+                    # may have made the allocation durable before the connection
+                    # failed.  Resolve that exact state on the still-healthy
+                    # primary connection before deciding to tear down a live
+                    # container or report launch failure.
+                    try:
+                        finalized = _spawn_finalization_is_committed(
+                            cur, session_id, container_id
+                        )
+                        if finalized:
+                            finalized_timestamp_ms = int(time.time() * 1000)
+                    except Exception as exc:
+                        finalization_outcome_unknown = True
+                        logger.warning(
+                            "Could not resolve spawn-finalization state for session %s: %s",
+                            session_id,
+                            exc,
+                        )
+                    finally:
+                        try:
+                            conn.rollback()
+                        except Exception:
+                            pass
+                if finalization_outcome_unknown:
+                    # Do not destroy a container whose allocation may already
+                    # be committed. A retry can resolve/reattach the durable
+                    # row; background reconciliation can handle a truly stale
+                    # reservation. Marketing deliberately loses this event.
+                    return {
+                        "granted": False,
+                        "retryable": True,
+                        "allocation_status": "allocating",
+                        "session_id": session_id,
+                        "requested_profile": profile_name,
+                        "requested_gpus": requested_gpus,
+                        **(
+                            {
+                                "launch_request_id": canonical_launch_request_id,
+                                "launch_request_consumed": True,
+                            }
+                            if canonical_launch_request_id is not None
+                            else {}
+                        ),
+                        "reason": (
+                            "Session allocation outcome is being reconciled. "
+                            "Retry this exact launch shortly."
+                        ),
+                    }
                 if not finalized:
                     if not allocation_lock_held:
                         # A successful spawn whose DB finalization lost a race or
@@ -2629,7 +3087,22 @@ def try_claim_session(
                         "requested_gpus": requested_gpus,
                         "reason": "Failed to start user container",
                         "container_error": spawn_error,
+                        **(
+                            {
+                                "launch_request_id": canonical_launch_request_id,
+                                "launch_request_consumed": True,
+                            }
+                            if canonical_launch_request_id is not None
+                            else {}
+                        ),
                     }
+                if not is_guest and finalized_timestamp_ms is not None:
+                    _emit_session_started_nonblocking(
+                        attribution_context,
+                        wallet,
+                        session_id,
+                        finalized_timestamp_ms,
+                    )
                 granted = {
                     "granted": True,
                     "session_id": session_id,
@@ -2640,6 +3113,11 @@ def try_claim_session(
                     "remaining_seconds": max_secs,
                 }
                 granted.update(_deadline_fields(hard_expires_at, now))
+                if canonical_launch_request_id is not None:
+                    granted.update({
+                        "launch_request_id": canonical_launch_request_id,
+                        "launch_request_consumed": True,
+                    })
                 if is_guest:
                     granted.update(_guest_claim_fields(guest_ctx, now))
                 if requested_ssh:
@@ -2658,6 +3136,10 @@ def try_claim_session(
             session_id = cur.fetchone()[0]
         conn.commit()
         logger.info("session_manager: session granted to %s", _mask(wallet))
+        # The legacy shared-desktop row is not evidence of a newly spawned and
+        # durably finalized compute allocation. It intentionally has no CAPI
+        # ``session_started`` milestone; only the multi-session post-spawn
+        # finalizer above may produce that conversion.
         return {
             "granted": True,
             "session_id": session_id,
@@ -2666,6 +3148,22 @@ def try_claim_session(
     except Exception as exc:
         conn.rollback()
         logger.warning("try_claim_session failed: %s", exc)
+        if canonical_launch_request_id is not None:
+            # A PostgreSQL connection failure can make COMMIT outcome
+            # unknowable. Force the caller to retain and reuse this exact key;
+            # a fresh key could reserve a second paid container if the first
+            # transaction actually committed.
+            return {
+                "granted": False,
+                "retryable": True,
+                "launch_outcome_unknown": True,
+                "launch_request_id": canonical_launch_request_id,
+                "launch_request_consumed": launch_request_may_be_consumed,
+                "reason": (
+                    "Launch outcome could not be confirmed. Retry with the same "
+                    "launch_request_id."
+                ),
+            }
         return {"granted": False, "reason": "Internal error"}
     finally:
         if allocation_lock_held:
@@ -2677,6 +3175,20 @@ def try_claim_session(
                 # for any remaining session-level advisory lock.
                 logger.warning(
                     "try_claim_session: scheduler lock release failed: %s", exc
+                )
+        if allocation_reconcile_lock_session_id is not None:
+            try:
+                with conn.cursor() as unlock_cur:
+                    _release_allocation_reconcile_lock(
+                        unlock_cur,
+                        allocation_reconcile_lock_session_id,
+                    )
+            except Exception as exc:
+                # Connection close is PostgreSQL's backstop for session-level
+                # advisory locks after a transport failure.
+                logger.warning(
+                    "try_claim_session: allocation recovery lock release failed: %s",
+                    exc,
                 )
         conn.close()
 
@@ -2732,7 +3244,7 @@ def heartbeat(
                 hb_params = (wallet, bound_session_id)
             cur.execute(
                 f"""SELECT id, last_billed_at, expires_at, started_at, requested_profile, gpu_ids, container_id,
-                           hard_expires_at, ssh_enabled, ssh_present
+                           hard_expires_at, ssh_enabled, ssh_present, allocation_status
                     FROM {_SESSION_TABLE}
                     WHERE status = 'active' AND wallet_address = %s{hb_id_clause}
                     ORDER BY started_at DESC
@@ -2818,6 +3330,29 @@ def heartbeat(
             container_id = row[6]
             hard_expires_at = row[7]
             ssh_enabled = bool(row[8])
+            # The SELECT above always returns this column. The length guard keeps
+            # rolling in-process adapters/test doubles written against the older
+            # projection safely classified as legacy allocated rows.
+            allocation_status = str(row[10] if len(row) > 10 else "allocated")
+            if allocation_status != "allocated":
+                # A runtime can begin heartbeating after Docker succeeds but
+                # before the separate allocation-finalization COMMIT. It proves
+                # only that the container has a valid per-session key, not that
+                # the billable allocation is durable. Never advance its billing,
+                # liveness, or expiry checkpoints here; the cleanup worker must
+                # reconcile the exact runtime contract first.
+                conn.commit()
+                return {
+                    "ok": False,
+                    "retryable": allocation_status == "allocating",
+                    "session_id": session_id,
+                    "allocation_status": allocation_status or "unknown",
+                    "reason": (
+                        "Session allocation is still being reconciled"
+                        if allocation_status == "allocating"
+                        else "Session allocation is not billable"
+                    ),
+                }
             # Bill from last checkpoint, or from session start if never billed (e.g. pre-migration row)
             bill_from = last_billed_at if last_billed_at is not None else started_at
             elapsed_seconds = max(0.0, now - bill_from)
@@ -2852,7 +3387,9 @@ def heartbeat(
                                     last_heartbeat = %s,
                                     last_billed_at = %s,
                                     credit_grace_started_at = %s
-                                WHERE id = %s AND status = 'active'
+                                WHERE id = %s
+                                  AND status = 'active'
+                                  AND allocation_status = 'allocated'
                                 RETURNING wallet_address""",
                             (now, now, now, session_id),
                         )
@@ -2864,7 +3401,10 @@ def heartbeat(
                     else:
                         cur.execute(
                             f"""UPDATE {_SESSION_TABLE} SET status = 'ended', termination_reason = 'credit_exhaustion'
-                                WHERE id = %s AND status = 'active' RETURNING wallet_address""",
+                                WHERE id = %s
+                                  AND status = 'active'
+                                  AND allocation_status = 'allocated'
+                                RETURNING wallet_address""",
                             (session_id,),
                         )
                         ended_row = cur.fetchone()
@@ -2962,7 +3502,9 @@ def heartbeat(
             cur.execute(
                 f"""UPDATE {_SESSION_TABLE}
                     SET last_heartbeat = %s, last_billed_at = %s, expires_at = %s, hard_expires_at = %s
-                    WHERE status = 'active' AND wallet_address = %s AND id = %s
+                    WHERE status = 'active'
+                      AND allocation_status = 'allocated'
+                      AND wallet_address = %s AND id = %s
                     RETURNING expires_at""",
                 (now, last_billed_at_value, new_expires_at, hard_expires_at, wallet, session_id),
             )
@@ -3918,6 +4460,137 @@ def validate_session_files_key(wallet_address: str, files_key: str) -> bool:
     return session_id_for_files_key(wallet_address, files_key) is not None
 
 
+def _reconcile_stale_allocations(cur, now: float) -> None:
+    """Resolve crash-stranded reservations without guessing about Docker state.
+
+    The runtime's dedicated allocation-key label binds it to the row's random
+    ``files_key`` without placing that bearer in Docker metadata. Only an exact,
+    running match is promoted. Definite absence/stoppage is terminal. A mismatch,
+    unmanaged same-name object, or inspection error remains reserved and
+    unbilled for operator/retry visibility; none authorizes destructive cleanup.
+    """
+    cutoff = now - _allocation_reconcile_after_seconds()
+    cur.execute(
+        f"""SELECT id, wallet_address, files_key
+            FROM {_SESSION_TABLE}
+            WHERE status = 'active'
+              AND allocation_status = 'allocating'
+              AND started_at <= %s
+            ORDER BY started_at
+            -- Inspection is an external control-plane call.  Reconcile at most
+            -- one row per cleanup tick so an unavailable launcher cannot hold
+            -- the global GPU scheduler lock across a long batch of timeouts.
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED""",
+        (cutoff,),
+    )
+    rows = cur.fetchall() or []
+    if not rows:
+        return
+    launcher = _import_session_launcher()
+    for row in rows:
+        session_id = int(row[0])
+        files_key = str(row[2] or "")
+        if not files_key:
+            logger.error(
+                "Cannot reconcile allocating session %s: durable allocation identity is missing",
+                session_id,
+            )
+            continue
+        if not _try_acquire_allocation_reconcile_lock(cur, session_id):
+            # A live request still owns this lease across Docker launch and DB
+            # finalization. Its age alone is never authority to race or fail it.
+            continue
+        try:
+            try:
+                state, container_id, inspection_error = launcher.inspect_session_allocation(
+                    session_id,
+                    files_key,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Allocation inspection failed for session %s: %s",
+                    session_id,
+                    exc,
+                )
+                continue
+
+            if state == "match_running" and container_id:
+                recovered_expires_at = now + _session_max_seconds()
+                cur.execute(
+                    f"""UPDATE {_SESSION_TABLE}
+                        SET container_id = %s,
+                            allocation_status = 'allocated',
+                            last_heartbeat = %s,
+                            last_billed_at = %s,
+                            expires_at = CASE
+                                -- Demo deadlines are immutable; a recovered
+                                -- ordinary/SSH runtime gets a fresh idle TTL.
+                                WHEN hard_expires_at IS NOT NULL
+                                     AND ssh_enabled = FALSE
+                                THEN LEAST(hard_expires_at, %s)
+                                ELSE %s
+                            END
+                        WHERE id = %s
+                          AND status = 'active'
+                          AND allocation_status = 'allocating'
+                          AND container_id IS NULL""",
+                    (
+                        container_id,
+                        now,
+                        now,
+                        recovered_expires_at,
+                        recovered_expires_at,
+                        session_id,
+                    ),
+                )
+                if cur.rowcount == 1:
+                    # Attribution tickets are intentionally never persisted.
+                    # Recovery promotes availability but emits no marketing event.
+                    logger.warning(
+                        "Recovered running allocation for session %s without conversion emission",
+                        session_id,
+                    )
+                continue
+
+            if state in ("absent", "match_stopped"):
+                cur.execute(
+                    f"""UPDATE {_SESSION_TABLE}
+                        SET status = 'ended', allocation_status = 'failed'
+                        WHERE id = %s
+                          AND status = 'active'
+                          AND allocation_status = 'allocating'
+                          AND container_id IS NULL""",
+                    (session_id,),
+                )
+                if cur.rowcount == 1:
+                    logger.warning(
+                        "Terminalized stale allocation for session %s after exact state %s",
+                        session_id,
+                        state,
+                    )
+                continue
+
+            # Never turn a name-only/listing result into authority to stop or
+            # adopt a runtime. Keep these rows capacity-reserving until a later
+            # successful exact inspection or deliberate operator action.
+            logger.warning(
+                "Leaving stale allocation %s reserved after state %s: %s",
+                session_id,
+                state,
+                inspection_error or "identity could not be proven",
+            )
+        finally:
+            try:
+                _release_allocation_reconcile_lock(cur, session_id)
+            except Exception as exc:
+                logger.warning(
+                    "Could not release allocation reconciliation lock for session %s: %s",
+                    session_id,
+                    exc,
+                )
+
+
 def _reconcile_containers(cur, now: float) -> Tuple[List[int], List[Tuple[str, int]]]:
     """Query running session containers and reconcile them against their DB status.
 
@@ -3933,7 +4606,8 @@ def _reconcile_containers(cur, now: float) -> Tuple[List[int], List[Tuple[str, i
     grace = session_grace_seconds()
     for s_id in running_session_ids:
         cur.execute(
-            f"SELECT status, hard_expires_at, wallet_address, deadline_kind FROM {_SESSION_TABLE} WHERE id = %s",
+            f"""SELECT status, hard_expires_at, wallet_address, allocation_status, deadline_kind
+                FROM {_SESSION_TABLE} WHERE id = %s""",
             (s_id,),
         )
         row = cur.fetchone()
@@ -3942,7 +4616,7 @@ def _reconcile_containers(cur, now: float) -> Tuple[List[int], List[Tuple[str, i
             to_stop_ids.append(s_id)
             continue
 
-        status, hard_expires_at, wallet = row[0], row[1], row[2]
+        status, hard_expires_at, wallet, allocation_status, deadline_kind = row
         if status in ("ended", "expired", "released"):
             logger.info("reconcile: session %s is already %s, scheduling container stop retry", s_id, status)
             to_stop_ids.append(s_id)
@@ -3950,13 +4624,17 @@ def _reconcile_containers(cur, now: float) -> Tuple[List[int], List[Tuple[str, i
 
         if (
             status == "active"
+            and allocation_status == "allocated"
             and hard_expires_at is not None
-            and hard_expires_at + (0 if len(row) > 3 and row[3] == "scheduled" else grace) <= now
+            and hard_expires_at + (0 if deadline_kind == "scheduled" else grace) <= now
         ):
             logger.info("reconcile: session %s reached hard expiry, scheduling DB update to ended", s_id)
             cur.execute(
-                f"UPDATE {_SESSION_TABLE} SET status = 'ended', termination_reason = %s WHERE id = %s",
-                ("scheduled_expiry" if len(row) > 3 and row[3] == "scheduled" else "demo_expiry", s_id),
+                f"""UPDATE {_SESSION_TABLE} SET status = 'ended', termination_reason = %s
+                    WHERE id = %s
+                      AND status = 'active'
+                      AND allocation_status = 'allocated'""",
+                ("scheduled_expiry" if deadline_kind == "scheduled" else "demo_expiry", s_id),
             )
             to_expire.append((wallet, s_id))
 
@@ -4140,6 +4818,11 @@ def perform_session_cleanup() -> None:
             if not _try_acquire_allocation_scheduler_lock(cur):
                 return
             allocation_lock_held = True
+            # Crash recovery is separate from ordinary heartbeat/expiry. It
+            # requires an exact runtime identity and must commit any promotion
+            # before the usual sweep can treat that row as billable/expirable.
+            _reconcile_stale_allocations(cur, time.time())
+            conn.commit()
             _run_stale_session_maintenance_locked(conn, cur)
 
             now = time.time()

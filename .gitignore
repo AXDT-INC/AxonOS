@@ -61,6 +61,7 @@ coverage.xml
 .env
 .env.*
 !.env.example
+secrets/
 .venv
 env/
 venv/
@@ -104,4 +105,4 @@ AxonOS-Launcher-*.0-Windows/
 AxonOS-Launcher-*.0-macOS/
 
 # Coturn config
-turnserver.conf 
+turnserver.conf

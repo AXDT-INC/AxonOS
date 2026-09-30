@@ -18,6 +18,77 @@ Complete reference for every environment variable read or propagated by the Axon
 
 **Boolean convention:** Truthy values are `1`, `true`, `yes`, `on` (case-insensitive). Falsy for feature flags is often `0`, `false`, `no`, `off`.
 
+## X Ads Conversion API (optional)
+
+This integration is server-side only. The authenticated app contains no X
+pixel, advertising SDK, tracking image, advertising tag manager, or proxy for
+one. `off` is the default and creates neither attribution contexts nor an
+advertising backlog. `dry_run` stores isolated, non-sendable rows and performs
+no HTTP. `live` is intentionally producer-unready in this build and cannot be
+enabled by configuration; selecting it reports
+`live_delivery_blocked_untrusted_twclid_provenance` and collects no new click
+IDs. Only `off` and synthetic `dry_run` are stageable.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `X_CAPI_MODE` | `off` | `off` or synthetic `dry_run` are usable. `live` is accepted only to expose a fail-closed readiness error; it cannot collect or send. |
+| `X_CAPI_PIXEL_ID` | blank | Exact Events Manager event-source/Pixel ID; not a token. |
+| `X_CAPI_EVENT_WALLET_VERIFIED` | blank | Exact CAPI event ID; blank disables this milestone. |
+| `X_CAPI_EVENT_DEPOSIT_COMPLETED` | blank | Exact primary paid-conversion event ID. |
+| `X_CAPI_EVENT_SESSION_STARTED` | blank | Exact new-session activation event ID. |
+| `X_CAPI_ALLOWED_ORIGIN` | blank | One exact ASCII app origin, required outside `off`; HTTPS is required for `live`. |
+| `X_CAPI_DEPLOYMENT_ID` | blank | Explicit deployment namespace bound into every context; required outside `off`. |
+| `X_CAPI_CONSENT_POLICY_VERSION` | `x-capi-v1` | Version recorded with explicit consent. |
+| `X_CAPI_CONSENT_POLICY_EPOCH` | blank | Required positive monotonic generation. Never lower or reuse it for changed configuration/key material. |
+| `X_CAPI_ATTRIBUTION_TTL_DAYS` | `7` | Product retention default; configurable 1–90 days. |
+| `X_CAPI_MAX_EVENT_AGE_HOURS` | `24` | Product send-age default; configurable 1–720 hours. |
+| `X_CAPI_SEND_VALUES` | `false` | Must remain false in v1; no trustworthy typed USD field exists. |
+| `X_CAPI_QUEUE_LIMIT` | `10000` | Bounded pending queue, configurable 100–1,000,000. |
+| `X_CAPI_CONTEXT_LIMIT` | `10000` | Bounded durable-context capacity, configurable 100–1,000,000. |
+| `X_CAPI_PRODUCTION_CHAIN_IDS` | `1,8453` | Unique positive EVM chain IDs eligible for paid deposit signals. Missing/unknown verifier provenance is skipped. |
+| `X_CAPI_EXCLUDED_WALLETS` | blank | Additional comma-separated valid wallets excluded from binding/reporting. Invalid entries fail readiness. |
+| `X_CAPI_TWCLID_CONTRACT_VERSION` | blank | Operator identifier for the verified vendor click-ID contract; required in `live`. |
+| `X_CAPI_TWCLID_CHARSET` | `url_safe` | `lower_alnum`, `alnum`, or `url_safe`; must be explicitly pinned in `live`. |
+| `X_CAPI_TWCLID_MIN_LENGTH` / `X_CAPI_TWCLID_MAX_LENGTH` | `8` / `256` | Validated click-ID bounds; both must be explicitly pinned in `live`. |
+| `X_CAPI_RATE_LIMIT_PER_MIN` | `30` | Per-client status/ordinary-consent cap shared across processes. |
+| `X_CAPI_GLOBAL_RATE_LIMIT_PER_MIN` | `300` | Cross-process aggregate public attribution cap. |
+| `X_CAPI_PRIVACY_RATE_LIMIT_PER_MIN` | `60` | Advisory per-capability cap for redundant worker wake-up datagrams. It never gates the fixed privacy fence or durable explicit revoke; limiter collisions and faults can only suppress the hint. |
+| `X_CAPI_TRUSTED_PROXY_CIDRS` / `X_CAPI_TRUSTED_PROXY_HOPS` | blank / `0` | Explicit proxy trust boundary used for client IP and effective HTTPS. Do not trust forwarded headers without both. |
+| `X_CAPI_DB_URL_FILE` | `/run/secrets/x_capi_db_url` | Worker-only least-privilege PostgreSQL URL file. |
+| `X_CAPI_CONTEXT_KEY_FILE` | `/run/secrets/x_capi_context_key` | Fernet keyring shared only by gate and worker; line 1 is active and trailing keys are revoke-only. Rotation requires a policy-epoch advance. |
+| `X_CAPI_HASH_KEY_FILE` | `/run/secrets/x_capi_hash_key` | Worker-only immutable HMAC key for internal wallet/source hashes. Replacement is rejected while retained data exists. |
+| `X_CAPI_DB_URL_HOST_FILE` | `/etc/axonos/x-capi-db-url` | Overlay bind source for the worker-only DB URL. |
+| `X_CAPI_CONTEXT_KEY_HOST_FILE` | `/etc/axonos/x-capi-context-key` | Overlay bind source for the gate/worker context keyring. |
+| `X_CAPI_HASH_KEY_HOST_FILE` | `/etc/axonos/x-capi-hash-key` | Overlay bind source for the worker-only HMAC key. |
+| `X_CAPI_RUNTIME_HOST_DIR` | `/run/axonos-x-capi` | Worker-owned mode-0700 host directory for sockets and the canonical guard attestation. |
+| `X_CAPI_WORKER_DB_ROLE` | `axonos_x_capi_worker` | Exact unprivileged login expected in the worker DSN and migration grants. |
+| `X_CAPI_INGEST_SOCKET` / `X_CAPI_CONSENT_SOCKET` | `/run/axonos-x-capi/events.sock` / `.../consent.sock` | Internal bounded Unix sockets; Compose pins these paths. |
+| `X_CAPI_CONFIG_GUARD_FILE` | `/run/axonos-x-capi/config-guard.json` | Internal worker-owned high-water attestation; Compose pins the path. |
+| `X_CAPI_WORKER_UID` / `X_CAPI_INGEST_ALLOWED_UID` | `10001` / Compose `0` | Ownership/peer-credential checks for the isolated worker and gate datagrams. |
+
+The worker has an activation-blocked standard-library HTTPS adapter for the
+account's dedicated `X-Pixel-Token` contract, with no Internet-capable network
+or delivery credential mount. The three runtime integration secret files
+(DB URL, context keyring, and HMAC key) should be single-link regular files
+owned by the dedicated worker UID `10001` and mode `0400`/`0600`; never put
+them in the stack's shared `.env`. The database initializer separately uses
+two root-owned password files. `X_CAPI_ACCESS_TOKEN` is always prohibited.
+The adapter accepts only the protected `X_CAPI_ACCESS_TOKEN_FILE` path (default
+`/run/secrets/x_capi_access_token`); that file is not read until activation gates
+pass. Tests fake HTTP and secret reads; they never require a real token.
+No new activation switch or token mount is introduced. Direct
+`X_CAPI_DB_URL`, `X_CAPI_CONTEXT_KEY`, and `X_CAPI_HASH_KEY` values, custom socket/guard/rate
+paths, `X_CAPI_TEST_DB_URL`, `X_CAPI_TEST_DB_DISPOSABLE_CONFIRM`, and every
+`X_CAPI_ALLOW_TEST_*` switch exist only for isolated tests and must be absent in
+deployment. The PostgreSQL integration suite additionally requires the exact
+confirmation value documented in the test module and technically rejects
+anything except an empty, local, stock-PG15 `xcapitest` cluster before writing.
+`X_CAPI_TWCLID` and
+`X_CAPI_UNUSED_DB_SECRET_VALUE` are negative-test sentinels, not runtime input.
+Run `python3 axonos_gate/x_capi_cli.py validate` for secret-safe readiness,
+`... status` for aggregate-only queue/reason counts, or `... demo-payload` for
+a synthetic, offline payload.
+
 **Tenant boundary:** Launcher-managed `axgt-session-*` containers are data-plane
 workloads. Database, chain/RPC, payment, launcher, and fleet signing credentials
 remain in the control plane. The launcher injects only session-specific identity
@@ -470,6 +541,7 @@ and weakens the tenant boundary.
 | `GATE_HOST` | `127.0.0.1` | Bind address. Compose: `0.0.0.0` so browsers and session heartbeats reach the central gate. |
 | `GATE_PORT` | `8889` | Gate HTTP/WebSocket API port. |
 | `GATE_USE_GEVENT` | `1` | Use gevent WSGI server when truthy (`1`, `true`, `yes` — `on` is not accepted here). |
+| `GATE_ALLOW_UNSAFE_FLASK_DEVELOPMENT_SERVER` | unset | Development-only escape hatch if gevent is disabled or unavailable. Never enable on an exposed, staging, or live gate: Flask's builtin server lacks `/websockify` and the bounded X-attribution request handler. Production startup fails closed by default. |
 | `GATE_AGENT_API_ENABLED` | `false` | Enables WebRTC agent-only endpoints. Set only on the supervisor-managed internal `:8890` listener. |
 | `GATE_AGENT_ONLY` | `false` | Reject every non-agent path on that listener. Set with `GATE_AGENT_API_ENABLED`; do not enable on the public gate. |
 

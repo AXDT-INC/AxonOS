@@ -29,6 +29,10 @@ class TestPaidSessionExpiry(unittest.TestCase):
             patch("axonos_gate.deposit_ledger.get_remaining_minutes", return_value=10.0),
             patch("deposit_ledger.record_session_expiry"),
             patch("axonos_gate.deposit_ledger.record_session_expiry"),
+            # Crash-stranded allocation recovery has its own focused tests; keep
+            # these legacy cleanup-cursor fixtures scoped to ordinary expiry.
+            patch("session_manager._reconcile_stale_allocations"),
+            patch("axonos_gate.session_manager._reconcile_stale_allocations"),
         ]
         for p in self.patches:
             p.start()
@@ -58,7 +62,7 @@ class TestPaidSessionExpiry(unittest.TestCase):
         now = time.time()
         cur.fetchone.side_effect = [
             (True,),  # pg_try_advisory_lock scheduler/teardown lock
-            ("active", now - 100, "0xwallet"), # reconcile SELECT for 197
+            ("active", now - 100, "0xwallet", "allocated", None), # reconcile SELECT for 197
         ]
         cur.fetchall.side_effect = [
             [("0xwallet", 197)],  # _expire_stale_session
@@ -89,7 +93,7 @@ class TestPaidSessionExpiry(unittest.TestCase):
         
         cur.fetchone.side_effect = [
             (True,),  # pg_try_advisory_lock scheduler/teardown lock
-            ("ended", time.time() - 100, "0xwallet"), # reconcile SELECT for 197
+            ("ended", time.time() - 100, "0xwallet", "allocated", None), # reconcile SELECT for 197
         ]
         cur.fetchall.side_effect = [
             [],  # _expire_stale_session
@@ -123,7 +127,7 @@ class TestPaidSessionExpiry(unittest.TestCase):
         for _ in range(3):
             cur.fetchone.side_effect = [
                 (True,),  # pg_try_advisory_lock scheduler/teardown lock
-                ("ended", time.time() - 100, "0xwallet"), # reconcile SELECT
+                ("ended", time.time() - 100, "0xwallet", "allocated", None), # reconcile SELECT
             ]
             cur.fetchall.side_effect = [
                 [],  # _expire_stale_session
@@ -186,7 +190,7 @@ class TestPaidSessionExpiry(unittest.TestCase):
         now = time.time()
         cur.fetchone.side_effect = [
             (True,),  # pg_try_advisory_lock scheduler/teardown lock
-            ("active", now + 1000, "0xwallet"), # reconcile SELECT -> active and NOT expired
+            ("active", now + 1000, "0xwallet", "allocated", None), # reconcile SELECT -> active and NOT expired
         ]
         cur.fetchall.side_effect = [
             [],  # _expire_stale_session
@@ -216,6 +220,7 @@ class TestPaidSessionExpiry(unittest.TestCase):
         self.assertEqual(grace_transitions, [])
         sql, params = cur.execute.call_args.args
         self.assertIn("SET status = 'ended'", sql)
+        self.assertIn("allocation_status = 'allocated'", sql)
         self.assertNotIn("credit_grace", sql)
         self.assertEqual(params, (60, 1000.0, 880.0, 1000.0, 60, 1000.0))
 
@@ -259,7 +264,7 @@ class TestPaidSessionExpiry(unittest.TestCase):
         from axonos_gate import session_manager
 
         cur = MagicMock()
-        cur.fetchone.return_value = ("credit_grace", 100.0, "0xwallet")
+        cur.fetchone.return_value = ("credit_grace", 100.0, "0xwallet", "allocated", None)
         launcher = MagicMock()
         launcher.list_running_sessions.return_value = [197]
 
@@ -271,6 +276,49 @@ class TestPaidSessionExpiry(unittest.TestCase):
         self.assertEqual(to_stop, [])
         self.assertEqual(to_expire, [])
         self.assertEqual(cur.execute.call_count, 1)
+
+    def test_reconciliation_does_not_expire_an_allocating_session(self):
+        from axonos_gate import session_manager
+
+        cur = MagicMock()
+        cur.fetchone.return_value = ("active", 100.0, "0xwallet", "allocating", "scheduled")
+        launcher = MagicMock()
+        launcher.list_running_sessions.return_value = [197]
+
+        with patch.object(
+            session_manager, "_import_session_launcher", return_value=launcher
+        ), patch.object(session_manager, "session_grace_seconds", return_value=60):
+            to_stop, to_expire = session_manager._reconcile_containers(cur, 1000.0)
+
+        self.assertEqual(to_stop, [])
+        self.assertEqual(to_expire, [])
+        self.assertEqual(cur.execute.call_count, 1)
+
+    def test_reconciliation_preserves_deadline_kind_and_allocation_fence(self):
+        from axonos_gate import session_manager
+
+        for deadline_kind, should_expire in (("scheduled", True), ("demo", False)):
+            with self.subTest(deadline_kind=deadline_kind):
+                cur = MagicMock()
+                cur.fetchone.return_value = (
+                    "active", 990.0, "0xwallet", "allocated", deadline_kind
+                )
+                launcher = MagicMock()
+                launcher.list_running_sessions.return_value = [197]
+                with patch.object(
+                    session_manager, "_import_session_launcher", return_value=launcher
+                ), patch.object(session_manager, "session_grace_seconds", return_value=60):
+                    to_stop, to_expire = session_manager._reconcile_containers(cur, 1000.0)
+
+                self.assertEqual(to_stop, [])
+                self.assertEqual(to_expire, [("0xwallet", 197)] if should_expire else [])
+                if should_expire:
+                    sql, params = cur.execute.call_args.args
+                    self.assertIn("termination_reason = %s", sql)
+                    self.assertIn("allocation_status = 'allocated'", sql)
+                    self.assertEqual(params, ("scheduled_expiry", 197))
+                else:
+                    self.assertEqual(cur.execute.call_count, 1)
 
     @patch("gate_server.try_claim_session")
     @patch("axonos_gate.gate_server.try_claim_session")

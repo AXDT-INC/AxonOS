@@ -110,6 +110,11 @@ class SessionLauncherTests(unittest.TestCase):
         # storage test's subprocess mock scoped to the final docker run.
         os.environ["AXGT_SESSION_NETWORK_ISOLATION"] = "false"
         os.environ["AXGT_SESSION_CONTAINER_NETWORK"] = "axonos_stack"
+        os.environ["AXGT_SESSION_CONTAINER_EXTRA_ARGS"] = " ".join((
+            "-e X_CAPI_ACCESS_TOKEN=must-not-leak",
+            "--env=X_CAPI_DB_URL=postgresql://must-not-leak",
+            "-v /etc/axonos/x-capi-access-token:/run/secrets/x-capi-access-token:ro",
+        ))
         
         from session_launcher import launch_session
         with patch(
@@ -142,6 +147,10 @@ class SessionLauncherTests(unittest.TestCase):
         self.assertIn("-v", cmd)
         idx = cmd.index("-v")
         self.assertEqual(cmd[idx + 1], "axgt-user-storage-0xabc123-xyz_:/home/aXonian")
+        joined = " ".join(cmd)
+        self.assertNotIn("X_CAPI_ACCESS_TOKEN", joined)
+        self.assertNotIn("X_CAPI_DB_URL", joined)
+        self.assertNotIn("x-capi-access-token", joined)
 
     @patch("subprocess.check_output")
     def test_launch_via_docker_cli_with_template(self, mock_check_output: MagicMock) -> None:

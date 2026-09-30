@@ -1681,7 +1681,7 @@ const UI = {
         }
 
         try {
-            const terminalModule = await import('./terminal/axonos-terminal.js?v=20260925creditentry');
+            const terminalModule = await import('./terminal/axonos-terminal.js?v=20260929xcapiprivacy');
             const client = await terminalModule.openAxonosTerminal({
                 container: document.getElementById('noVNC_container'),
                 wallet,
@@ -2907,9 +2907,8 @@ const UI = {
         if (!confirmed) {
             return;
         }
-        // Set the shared launch intent BEFORE releasing: both claim builders
-        // (ui.js and the page's own) read the live toggle, and a stale value
-        // would relaunch the old mode.
+        // Set the shared launch intent before releasing. The page-owned claim
+        // builder reads the live toggle; a stale value would relaunch the old mode.
         const previousIntent = !!window.axonosSshEnabled;
         window.axonosSshEnabled = toSsh;
         UI.persistAxonosSshState();
@@ -2960,7 +2959,6 @@ const UI = {
         if (window.verifiedWalletAuthToken) {
             headers['X-AXGT-Auth-Token'] = window.verifiedWalletAuthToken;
         }
-
         fetch(url, {
             method: 'POST',
             credentials: 'include',
@@ -3355,95 +3353,16 @@ const UI = {
 
     /** POST /api/session/claim — required by AxonOS gate before WebSocket upgrade. */
     _axonosFetchSessionClaim(options) {
-        const claimOptions = options && typeof options === 'object' ? options : {};
-        const wallet = window.verifiedWalletAddress;
-        if (!wallet) {
-            return Promise.resolve({ granted: false, reason: 'No wallet' });
+        // The page owns the sole claim builder. Keeping one implementation
+        // prevents the viewer and page from racing two spawn-capable requests
+        // with different attribution, storage, profile, template, or SSH data.
+        if (typeof window.axonosClaimSession !== 'function') {
+            return Promise.resolve({
+                granted: false,
+                reason: 'Session claim service is not ready. Reload the workspace and retry.',
+            });
         }
-        const payload = { wallet_address: wallet };
-        const resumeMarker = window.axonosPausedResume;
-        const resumeRequested = claimOptions.resumeOnly === true || !!resumeMarker;
-        const expectedRaw = claimOptions.expectedSessionId != null
-            ? claimOptions.expectedSessionId
-            : (resumeMarker ? resumeMarker.sessionId : null);
-        const expectedSessionId = Number(expectedRaw);
-        // Exact reattach: a wallet may hold several concurrent sessions and this
-        // viewer is bound to one (the page-level launch that just ran, a detached
-        // desktop, a reload, a dashboard pick). Name it so this claim returns
-        // THAT row instead of the newest sibling — and never spawns a second
-        // container behind the page-level claim it races.
-        let reattachSessionId = null;
-        if (!resumeRequested) {
-            const boundRaw = claimOptions.expectedSessionId != null
-                ? claimOptions.expectedSessionId
-                : (typeof window.axonosCurrentSessionId === 'function'
-                    ? window.axonosCurrentSessionId() : null);
-            const boundId = Number(boundRaw);
-            if (Number.isSafeInteger(boundId) && boundId > 0) reattachSessionId = boundId;
-        }
-        if (resumeRequested) {
-            if (!Number.isSafeInteger(expectedSessionId) || expectedSessionId <= 0) {
-                return Promise.resolve({
-                    granted: false,
-                    resume_only: true,
-                    invalid_resume_request: true,
-                    reason: 'Retained session identity is unavailable. Refresh the workspace before reconnecting.',
-                });
-            }
-            payload.resume_only = true;
-            payload.expected_session_id = expectedSessionId;
-        } else if (reattachSessionId !== null) {
-            payload.expected_session_id = reattachSessionId;
-        } else if (!window.axonosDetachedSession) {
-            payload.requested_profile = (typeof window.axonosGetRequestedProfile === 'function')
-                ? window.axonosGetRequestedProfile()
-                : 'small';
-            if (window.axonosSelectedTemplateId) {
-                payload.requested_template = window.axonosSelectedTemplateId;
-            }
-            if (typeof window.axonosRequestedStorageGbForClaim === 'function') {
-                const requestedStorageGb = window.axonosRequestedStorageGbForClaim(wallet);
-                // null = capacity unknown: omit the field so the server keeps
-                // the provisioned volume instead of rejecting a fabricated shrink.
-                if (requestedStorageGb !== null) {
-                    payload.requested_storage_gb = requestedStorageGb;
-                }
-            }
-        }
-        // SSH intent is sent on every claim (including reload re-claims) so the
-        // gate can return the connect-string for an already-owned SSH session.
-        if (UI.axonosSshEnabled()) {
-            payload.requested_ssh = true;
-            payload.ssh_pubkey = UI.axonosSshPubkey();
-        }
-        const url = new URL('/api/session/claim', window.location.origin).toString();
-        const headers = {
-            'Content-Type': 'application/json',
-            'X-Wallet-Address': wallet,
-        };
-        if (window.verifiedWalletAuthToken) {
-            headers['X-AXGT-Auth-Token'] = window.verifiedWalletAuthToken;
-        }
-        const timeoutMs = typeof window.axonosSessionClaimTimeoutMs === 'function'
-            ? window.axonosSessionClaimTimeoutMs(resumeRequested)
-            : (resumeRequested ? 20000 : 150000);
-        return UI._axonosFetchJsonWithTimeout(url, {
-            method: 'POST',
-            credentials: 'include',
-            headers,
-            body: JSON.stringify(payload),
-        }, timeoutMs).then((result) => {
-            const claim = result.data || {};
-            // The bound session is gone (ended elsewhere): drop the stale binding
-            // so the next Launch is a clean claim. The denial is surfaced as-is;
-            // it is never retried into a silent new allocation.
-            if (claim.granted !== true && claim.session_mismatch === true &&
-                reattachSessionId !== null &&
-                typeof window.axonosForgetStaleSessionBinding === 'function') {
-                window.axonosForgetStaleSessionBinding(reattachSessionId);
-            }
-            return claim;
-        });
+        return Promise.resolve(window.axonosClaimSession(options));
     },
 
     /** Reconcile an ambiguous claim without ever releasing its server-side session. */
@@ -3942,7 +3861,12 @@ const UI = {
     },
 
     /** Server ended or released the session (heartbeat while detached or idle). */
-    _axonosOnServerSessionEnded() {
+    _axonosOnServerSessionEnded(expectedSessionId) {
+        const pending = window.axonosPendingSessionClaim;
+        if (pending && pending.claim && expectedSessionId != null &&
+            Number(pending.claim.session_id) === Number(expectedSessionId)) {
+            window.axonosPendingSessionClaim = null;
+        }
         if (!window.axonosSessionDetached && UI._axgtSessionDesktopActive()) {
             UI.disconnect();
             return;
@@ -4089,6 +4013,22 @@ const UI = {
         const walletAtConnectStart = String(window.verifiedWalletAddress || '').trim();
         const connectAttemptIsCurrent = () =>
             UI._axonosConnectAttemptIsCurrent(connectGeneration);
+        const pendingSessionClaim = window.axonosPendingSessionClaim;
+        const selectedSessionId = typeof window.axonosCurrentSessionId === 'function'
+            ? window.axonosCurrentSessionId() : null;
+        const pendingSessionMatchesWallet = !!(pendingSessionClaim &&
+            pendingSessionClaim.claim &&
+            (pendingSessionClaim.claim.granted === true ||
+                pendingSessionClaim.claim.granted === 'true') &&
+            Number.isFinite(Number(pendingSessionClaim.createdAt)) &&
+            (Date.now() - Number(pendingSessionClaim.createdAt)) >= 0 &&
+            (Date.now() - Number(pendingSessionClaim.createdAt)) <= 30000 &&
+            (selectedSessionId == null ||
+                Number(pendingSessionClaim.claim.session_id) === selectedSessionId) &&
+            String(pendingSessionClaim.wallet || '').toLowerCase() ===
+                walletAtConnectStart.toLowerCase());
+        const preclaimedSessionAtConnectStart = pendingSessionMatchesWallet
+            ? pendingSessionClaim.claim : null;
         const pendingResumeClaim = window.axonosPendingResumeClaim;
         const pendingResumeMatchesWallet = !!(pendingResumeClaim &&
             String(pendingResumeClaim.wallet || '').toLowerCase() ===
@@ -4209,6 +4149,30 @@ const UI = {
             if (!connectAttemptIsCurrent()) {
                 return;
             }
+            // Identity/session teardown can discard a response while wallet
+            // preflight is pending. Never revive that snapshot or turn its
+            // cancelled launch into a new spawn-capable claim.
+            const selectedSessionIdNow = typeof window.axonosCurrentSessionId === 'function'
+                ? window.axonosCurrentSessionId() : null;
+            if (preclaimedSessionAtConnectStart &&
+                (window.axonosPendingSessionClaim !== pendingSessionClaim ||
+                    Date.now() - Number(pendingSessionClaim.createdAt) < 0 ||
+                    Date.now() - Number(pendingSessionClaim.createdAt) > 30000 ||
+                    (selectedSessionIdNow != null &&
+                        Number(preclaimedSessionAtConnectStart.session_id) !== selectedSessionIdNow))) {
+                if (window.axonosPendingSessionClaim === pendingSessionClaim) {
+                    window.axonosPendingSessionClaim = null;
+                }
+                if (typeof window.axonosHideConnectionLoader === 'function') {
+                    window.axonosHideConnectionLoader(true);
+                } else if (typeof window.axonosSetLaunchBusy === 'function') {
+                    window.axonosSetLaunchBusy(false);
+                }
+                UI.updateVisualState('disconnected');
+                UI.showStatus(_('Connection handoff expired or was cancelled. Check the workspace before reconnecting.'), 'warn', 6000);
+                UI._axonosReturnToWorkspace({ refresh: true, reason: 'claim-handoff-cancelled' });
+                return;
+            }
             // Fail fast on a missing/invalid SSH key so the user gets a precise
             // message instead of a generic claim rejection round-trip.
             if (UI.axonosSshEnabled() && !UI.axonosSshKeyLooksValid(UI.axonosSshPubkey())) {
@@ -4239,12 +4203,18 @@ const UI = {
                 window.axonosPendingResumeClaim === pendingResumeClaim) {
                 window.axonosPendingResumeClaim = null;
             }
+            if (preclaimedSessionAtConnectStart &&
+                window.axonosPendingSessionClaim === pendingSessionClaim) {
+                window.axonosPendingSessionClaim = null;
+            }
             const claimRequest = preclaimedResumeAtConnectStart
                 ? Promise.resolve(preclaimedResumeAtConnectStart.claim)
-                : UI._axonosFetchSessionClaim(resumeIntentAtConnectStart ? {
-                    resumeOnly: true,
-                    expectedSessionId: expectedResumeSessionIdAtConnectStart,
-                } : undefined);
+                : (preclaimedSessionAtConnectStart
+                    ? Promise.resolve(preclaimedSessionAtConnectStart)
+                    : UI._axonosFetchSessionClaim(resumeIntentAtConnectStart ? {
+                        resumeOnly: true,
+                        expectedSessionId: expectedResumeSessionIdAtConnectStart,
+                    } : undefined));
             claimRequest.then((claim) => {
                 const granted = claim && (claim.granted === true || claim.granted === 'true');
                 if (!connectAttemptIsCurrent()) {
@@ -4389,7 +4359,7 @@ const UI = {
                         try {
                             // A stable module URL keeps negotiation generation/cancellation
                             // state shared across retries and rapid user reconnects.
-                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260925creditentry');
+                            webRtcModule = await import('./webrtc/axonos-webrtc.js?v=20260929xcapiprivacy');
                             if (!connectAttemptIsCurrent()) {
                                 return;
                             }
@@ -4631,6 +4601,9 @@ const UI = {
         // an intentional End/Detach with an automatic reconnect.
         UI.inhibitReconnect = true;
         const disconnectGeneration = UI._axonosInvalidateConnectAttempt();
+        // Discard synchronously, not in the eventual release callback: that
+        // callback can outlive a newer, unrelated launch response.
+        window.axonosPendingSessionClaim = null;
         // A terminal has no RFB disconnect event to finish this transition. Close
         // it synchronously before an End release, Detach, wallet cleanup, or credit
         // grace can leave an authenticated socket accepting input.
@@ -4922,6 +4895,7 @@ const UI = {
     cancelReconnect() {
         UI.inhibitReconnect = true;
         UI._axonosInvalidateConnectAttempt();
+        window.axonosPendingSessionClaim = null;
         UI._axonosCancelWebRtcClient();
         if (UI.reconnectCallback !== null) {
             clearTimeout(UI.reconnectCallback);
@@ -5266,6 +5240,7 @@ const UI = {
         }
         UI.inhibitReconnect = true;
         UI._axonosInvalidateConnectAttempt();
+        window.axonosPendingSessionClaim = null;
         UI._axonosCancelWebRtcClient();
         UI.updateVisualState('disconnected');
         UI.openControlbar();
@@ -5342,7 +5317,7 @@ const UI = {
                     } else if (/no active session|session ended/i.test(hbReason)) {
                         if (UI._scheduledSessions) UI._scheduledSessions.delete(Number(heartbeatSessionId));
                         UI._renderScheduledStopWarning();
-                        UI._axonosOnServerSessionEnded();
+                        UI._axonosOnServerSessionEnded(heartbeatSessionId);
                     }
                 }
             })
