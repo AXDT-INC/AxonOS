@@ -11,6 +11,7 @@ import base64
 import fcntl
 import hashlib
 import json
+import logging
 import os
 import re
 import secrets
@@ -3440,6 +3441,256 @@ class PostgresOutboxTests(unittest.TestCase):
             self.assertEqual(cur.fetchone()[0], 0)
         self.assertGreater(first_expiry, 0)
         conn.close()
+
+    @unittest.skipUnless(
+        os.getenv("AXONOS_RUN_BROWSER_TESTS") == "1",
+        "explicit browser integration opt-in is required",
+    )
+    def test_browser_initial_capture_to_real_dry_run_and_revocation(self):
+        """Real browser capture/consent plus PG, not marketing/auth E2E.
+
+        Browser API requests call the actual attribution functions; the consent
+        RPC adapter substitutes only IPC with a separate disposable connection.
+        The wallet milestone is a synthetic trusted-producer fixture, emitted
+        through the real credential-checked UNIX datagram listener. No click,
+        ticket, configuration, provenance, or live-mode validator is replaced.
+        """
+        from cryptography.fernet import Fernet
+        from axonos_gate import x_capi, x_capi_worker
+        from axonos_gate.tests.x_capi_capture_browser import run_capture_browser
+
+        marker = "SYNTHETIC_APP_CAPTURE_" + secrets.token_hex(12)
+        synthetic_wallet = "0x" + secrets.token_hex(20)
+        origin = "https://app.example"
+        observed = {"initial_ticket": None, "grant_ticket": None, "revoked": False}
+        log_messages = []
+
+        class CaptureLogs(logging.Handler):
+            def emit(self, record):
+                log_messages.append(record.getMessage())
+
+        with ExitStack() as stack:
+            runtime = stack.enter_context(
+                tempfile.TemporaryDirectory(prefix="xcapicapture-")
+            )
+            env = {
+                "X_CAPI_MODE": "dry_run",
+                "X_CAPI_PIXEL_ID": "synthetic-pixel",
+                "X_CAPI_EVENT_WALLET_VERIFIED": "synthetic-wallet-event",
+                "X_CAPI_EVENT_DEPOSIT_COMPLETED": "",
+                "X_CAPI_EVENT_SESSION_STARTED": "",
+                "X_CAPI_ALLOWED_ORIGIN": origin,
+                "X_CAPI_DEPLOYMENT_ID": "synthetic-browser-capture",
+                "X_CAPI_CONSENT_POLICY_VERSION": "synthetic-browser-v1",
+                "X_CAPI_CONSENT_POLICY_EPOCH": str(POLICY_EPOCH),
+                "X_CAPI_ATTRIBUTION_TTL_DAYS": "7",
+                "X_CAPI_TWCLID_CHARSET": "",  # Real default, not a test grammar.
+                "X_CAPI_TWCLID_MIN_LENGTH": "",
+                "X_CAPI_TWCLID_MAX_LENGTH": "",
+                "X_CAPI_TWCLID_CONTRACT_VERSION": "",
+                "X_CAPI_ALLOW_TEST_SECRETS": "1",
+                "X_CAPI_CONTEXT_KEY": Fernet.generate_key().decode("ascii"),
+                "X_CAPI_CONTEXT_KEY_FILE": "",
+                "X_CAPI_HASH_KEY": secrets.token_hex(32),
+                "X_CAPI_HASH_KEY_FILE": "",
+                "X_CAPI_DB_URL": "",
+                "X_CAPI_DB_URL_FILE": "",
+                "X_CAPI_ALLOW_TEST_CONFIG_GUARD_BYPASS": "0",
+                "X_CAPI_ALLOW_TEST_CONFIG_GUARD_FILE": "1",
+                "X_CAPI_CONFIG_GUARD_FILE": self.guard_path,
+                "X_CAPI_WORKER_UID": str(os.geteuid()),
+                "X_CAPI_ALLOW_TEST_SOCKET": "1",
+                "X_CAPI_INGEST_SOCKET": os.path.join(runtime, "events.sock"),
+                "X_CAPI_ALLOW_TEST_PRIVACY_FENCE": "1",
+                "X_CAPI_PRIVACY_FENCE_DIR": os.path.join(runtime, "privacy"),
+                "X_CAPI_ACCESS_TOKEN": "",
+                "X_CAPI_ACCESS_TOKEN_FILE": os.path.join(runtime, "absent-token"),
+            }
+            stack.enter_context(patch.dict(os.environ, env, clear=False))
+            transport_send = stack.enter_context(patch.object(
+                x_capi_worker.RequestsTransport, "send",
+                side_effect=AssertionError("dry-run must not call X transport"),
+            ))
+            http_post = stack.enter_context(patch.object(
+                x_capi_worker, "_post_conversion",
+                side_effect=AssertionError("dry-run must not open X HTTP"),
+            ))
+            token_read = stack.enter_context(patch.object(
+                x_capi_worker, "read_token",
+                side_effect=AssertionError("dry-run must not read an X token"),
+            ))
+            log_handler = CaptureLogs()
+            application_logger = logging.getLogger()
+            application_logger.addHandler(log_handler)
+            stack.callback(application_logger.removeHandler, log_handler)
+            conn = self.connect()
+            stack.callback(conn.close)
+            cfg = x_capi.load_config()
+            self.assertEqual(cfg.errors, ())
+            self.assertEqual(cfg.mode, "dry_run")
+            self.assertTrue(cfg.producer_ready)
+            self.assertEqual(cfg.twclid_charset, "url_safe")
+            self.assertEqual(x_capi.validate_twclid(marker, cfg), marker)
+            self.assertTrue(x_capi_worker.enforce_config_guard(conn, cfg))
+            self.assertTrue(x_capi.config_guard_current(cfg))
+            fence = x_capi_worker.PrivacyFence(env["X_CAPI_PRIVACY_FENCE_DIR"])
+            fence.open()
+            stack.callback(fence.close)
+            listener = x_capi_worker.IngestListener(
+                env["X_CAPI_INGEST_SOCKET"], allowed_uid=os.geteuid()
+            )
+            listener.open()
+            stack.callback(listener.close)
+
+            def consent_rpc(operation, context_token, csrf_token, now):
+                rpc_conn = self.connect()
+                try:
+                    return x_capi_worker.process_consent_request(rpc_conn, {
+                        "v": 1, "action": "consent", "operation": operation,
+                        "context_token": context_token, "csrf_token": csrf_token,
+                        "request_timestamp_ms": int(now * 1000),
+                    }, now)
+                finally:
+                    rpc_conn.close()
+
+            stack.enter_context(patch.object(
+                x_capi, "_request_worker_consent_blocking", side_effect=consent_rpc
+            ))
+
+            def api_handler(method, path, headers, body):
+                context = headers.get("x-axonos-attribution")
+                landing = headers.get("x-axonos-landing-click")
+                gpc = headers.get("sec-gpc") == "1"
+                if method == "GET" and path == "/api/x-attribution/status":
+                    result = x_capi.attribution_status(
+                        context, landing_twclid=landing, gpc=gpc
+                    )
+                    if landing == marker and not context:
+                        self.assertEqual(result["state"], "unset")
+                        ticket = x_capi.decode_context_ticket(result["context"])
+                        self.assertIsNone(ticket["twclid"])
+                        observed["initial_ticket"] = ticket
+                    return result, 200
+                self.assertEqual((method, path), ("POST", "/api/x-attribution/consent"))
+                data = json.loads(body)
+                self.assertEqual(set(data), {"action"})
+                self.assertEqual(headers.get("origin"), origin)
+                result, code = x_capi.update_consent(
+                    context_token=context, csrf_token=headers.get("x-axonos-csrf"),
+                    action=data["action"], landing_twclid=landing,
+                    origin=headers.get("origin"), gpc=gpc,
+                    offload_worker_rpc=False,
+                )
+                if data["action"] == "revoke":
+                    self.assertEqual((code, result.get("state")), (200, "revoked"))
+                    observed["revoked"] = True
+                return result, code
+
+            def assert_marker_absent_from_tables(exempt=()):
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT tablename FROM pg_tables WHERE schemaname=%s",
+                        (self.schema,),
+                    )
+                    tables = [row[0] for row in cur.fetchall()]
+                    for table in tables:
+                        if table in exempt:
+                            continue
+                        quoted = self.psycopg2.extensions.quote_ident(table, conn)
+                        cur.execute(
+                            "SELECT EXISTS (SELECT 1 FROM " + quoted +
+                            " AS r WHERE row_to_json(r)::TEXT LIKE %s)",
+                            ("%" + marker + "%",),
+                        )
+                        self.assertFalse(cur.fetchone()[0], table)
+                conn.commit()
+
+            def on_granted(context, csrf):
+                ticket = x_capi.decode_context_ticket(context, require_primary=True)
+                self.assertIsNotNone(ticket)
+                self.assertEqual(ticket["twclid"], marker)
+                self.assertTrue(secrets.compare_digest(ticket["csrf"], csrf))
+                self.assertEqual(ticket["mode_scope"], "dry_run")
+                initial = observed["initial_ticket"]
+                self.assertIsNotNone(initial)
+                for field in ("handle", "issued_at", "lifecycle_expires_at", "landing_commitment"):
+                    self.assertTrue(ticket[field] == initial[field], field)
+                self.assertEqual(ticket["expires_at"], initial["lifecycle_expires_at"])
+                observed["grant_ticket"] = ticket
+                with conn.cursor() as cur:
+                    for table in ("x_capi_attribution_contexts", "x_capi_outbox"):
+                        cur.execute("SELECT count(*) FROM " + table)
+                        self.assertEqual(cur.fetchone()[0], 0)
+                conn.commit()
+                event_ms = int(max(time.time(), ticket["consented_at"]) * 1000) + 1
+                for expected in ("dry_run", "duplicate"):
+                    self.assertTrue(x_capi.emit_event_nonblocking(
+                        context_token=context, wallet_address=synthetic_wallet,
+                        milestone=x_capi.MILESTONE_WALLET_VERIFIED,
+                        source_key=synthetic_wallet, event_timestamp_ms=event_ms,
+                        allow_context_binding=True,
+                    ))
+                    self.assertEqual(
+                        x_capi_worker.drain_ingest(listener, conn, time.time()),
+                        {expected: 1},
+                    )
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT status,mode_scope,twclid,conversion_timestamp_ms,"
+                        "attribution_expires_at FROM x_capi_outbox"
+                    )
+                    self.assertEqual(cur.fetchall(), [(
+                        "dry_run", "dry_run", marker, event_ms, ticket["expires_at"]
+                    )])
+                conn.commit()
+                self.assertIsNone(x_capi_worker.claim_job(conn, "synthetic-only", time.time()))
+                assert_marker_absent_from_tables((
+                    "x_capi_attribution_contexts", "x_capi_outbox",
+                ))
+                # Clock advancement tests the real lifecycle check, without
+                # forging a ticket or relaxing its original expiry.
+                with patch.object(x_capi.time, "time", return_value=ticket["expires_at"] + 1):
+                    expired = x_capi.attribution_status(context)
+                    self.assertEqual(expired["state"], "stale")
+                self.assertTrue(x_capi.emit_event_nonblocking(
+                    context_token=context, wallet_address=synthetic_wallet,
+                    milestone=x_capi.MILESTONE_WALLET_VERIFIED,
+                    source_key=synthetic_wallet, event_timestamp_ms=event_ms,
+                    allow_context_binding=True,
+                ))
+                self.assertEqual(x_capi_worker.drain_ingest(
+                    listener, conn, ticket["expires_at"] + 1
+                ), {"invalid_or_stale_ticket": 1})
+                return {
+                    "real_dry_run_row": True, "duplicate_suppressed": True,
+                    "fixed_expiry": True, "expired_ticket_rejected": True,
+                    "dry_run_not_leaseable": True,
+                }
+
+            report = run_capture_browser(marker, api_handler, on_granted=on_granted)
+            self.assertIsNotNone(observed["grant_ticket"])
+            self.assertTrue(observed["revoked"])
+            with conn.cursor() as cur:
+                cur.execute("SELECT consent_state,twclid FROM x_capi_attribution_contexts")
+                self.assertEqual(cur.fetchall(), [("revoked", None)])
+                cur.execute("SELECT status,mode_scope,twclid FROM x_capi_outbox")
+                self.assertEqual(cur.fetchall(), [("cancelled", "dry_run", None)])
+            conn.commit()
+            assert_marker_absent_from_tables()
+            self.assertFalse(any(marker in message for message in log_messages))
+            transport_send.assert_not_called()
+            http_post.assert_not_called()
+            token_read.assert_not_called()
+            print(json.dumps({
+                "synthetic_marker": marker,
+                "scope": "direct-app browser capture to isolated dry-run; simulated wallet milestone",
+                "browser": report,
+                "revocation_durable": True,
+                "raw_marker_removed_from_all_fixture_tables": True,
+                "application_logs_marker_free": True,
+                "x_transport_calls": 0,
+                "x_token_reads": 0,
+            }, sort_keys=True))
 
     def test_cleanup_retains_context_tombstones_for_full_ticket_lifetime(self):
         from axonos_gate import x_capi_worker
