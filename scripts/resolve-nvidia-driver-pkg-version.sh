@@ -68,7 +68,8 @@ if [ -n "$requested" ]; then
   fi
   base="$(echo "$requested" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || true)"
   if [ -n "$base" ]; then
-    resolved="$(pick_best "$base")"
+    # Match the complete host triplet, not e.g. 580.173.020 for 580.173.02.
+    resolved="$(pick_best "${base}-")"
     if [ -n "$resolved" ]; then
       echo "axonos: resolved NVIDIA_DRIVER_PKG_VERSION ${requested} -> ${resolved}" >&2
       echo "$resolved"

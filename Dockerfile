@@ -545,6 +545,7 @@ COPY xorg.conf.nvidia /etc/X11/xorg.conf.nvidia
 COPY scripts/start-xorg-nvidia.sh /usr/local/bin/start-xorg-nvidia.sh
 COPY scripts/resolve-nvidia-driver-pkg-version.sh /usr/local/bin/resolve-nvidia-driver-pkg-version.sh
 COPY scripts/install-nvidia-xorg-userspace.sh /usr/local/bin/install-nvidia-xorg-userspace.sh
+COPY scripts/plan-nvidia-userspace.py /usr/local/bin/plan-nvidia-userspace.py
 RUN chmod +x /usr/local/bin/start-xorg-nvidia.sh /usr/local/bin/resolve-nvidia-driver-pkg-version.sh /usr/local/bin/install-nvidia-xorg-userspace.sh && \
     echo 'export VGL_DISPLAY=:0' > /etc/profile.d/virtualgl.sh && \
     echo 'export __GLX_VENDOR_LIBRARY_NAME=nvidia' >> /etc/profile.d/virtualgl.sh && \
@@ -752,7 +753,11 @@ ARG NVIDIA_DRIVER_PKG_VERSION=
 # Only install the Xorg + GL userspace pieces needed for GPU-backed Xorg :0.
 # Avoid nvidia-utils to prevent overlayfs hardlink backup failures.
 # install-nvidia-xorg-userspace.sh resolves a 4/4-package version (see resolve-nvidia-driver-pkg-version.sh).
-RUN NVIDIA_DRIVER_VERSION="${NVIDIA_DRIVER_VERSION}" NVIDIA_DRIVER_PKG_VERSION="${NVIDIA_DRIVER_PKG_VERSION}" \
+# Native APT metadata supplies the complete pinned driver dependency closure.
+# python3-apt is already required by software-properties-common above. Assert
+# it here without invalidating the initial apt/heavy-science build layers.
+RUN /usr/bin/python3 -c 'import apt, apt_pkg' && \
+    NVIDIA_DRIVER_VERSION="${NVIDIA_DRIVER_VERSION}" NVIDIA_DRIVER_PKG_VERSION="${NVIDIA_DRIVER_PKG_VERSION}" \
     /usr/local/bin/install-nvidia-xorg-userspace.sh
 
 # Fail fast if the NVIDIA GLX server module never landed (fix-libglx would be pointless).
@@ -870,6 +875,9 @@ COPY pulse-default.pa /etc/pulse/axonos-default.pa
 COPY pulse-client.conf /etc/pulse/client.conf
 
 # Fail the full build if any later pip/apt layer broke the scientific contract.
+# Also attest NVIDIA coherence after the later ffmpeg/scientific/audio apt layers.
+RUN /usr/bin/python3 /usr/local/bin/plan-nvidia-userspace.py verify \
+        --manifest /usr/local/share/axonos/nvidia-userspace.txt
 # No global PIP_CONSTRAINT is left behind to constrain users' runtime installs.
 COPY scripts/check_scientific_python.py /opt/axonos-build/check_scientific_python.py
 RUN if [ "$AXONOS_SKIP_HEAVY" != "1" ]; then \

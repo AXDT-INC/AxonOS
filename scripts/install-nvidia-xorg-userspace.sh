@@ -12,69 +12,46 @@ NVIDIA_PKG_RESOLVED="$(
 )"
 echo "axonos: NVIDIA_PKG_RESOLVED=${NVIDIA_PKG_RESOLVED}"
 
-if echo "${NVIDIA_PKG_RESOLVED}" | grep -q '0ubuntu0.22.04'; then
-  printf '%s\n' \
-    'Package: libnvidia-* xserver-xorg-video-nvidia-* nvidia-kernel-common-* nvidia-firmware-*' \
-    'Pin: release o=Ubuntu' \
-    'Pin-Priority: 1001' \
-    '' \
-    'Package: libnvidia-* xserver-xorg-video-nvidia-* nvidia-kernel-common-* nvidia-firmware-*' \
-    'Pin: origin developer.download.nvidia.com' \
-    'Pin-Priority: 50' \
-    > /etc/apt/preferences.d/axonos-nvidia.pref
-else
-  printf '%s\n' \
-    'Package: libnvidia-* xserver-xorg-video-nvidia-* nvidia-kernel-common-* nvidia-firmware-*' \
-    'Pin: origin developer.download.nvidia.com' \
-    'Pin-Priority: 1001' \
-    '' \
-    'Package: libnvidia-* xserver-xorg-video-nvidia-* nvidia-kernel-common-* nvidia-firmware-*' \
-    'Pin: release o=Ubuntu' \
-    'Pin-Priority: 50' \
-    > /etc/apt/preferences.d/axonos-nvidia.pref
-fi
-
-apt-get update
-
-# Newer Ubuntu packaging makes every libnvidia-* depend on the versioned virtual
-# package nvidia-kernel-common-<major>-<triplet>, provided only by the exact
-# nvidia-kernel-common-<major> build, and libnvidia-gl pulls libnvidia-compute
-# (NVML: the library nvidia-smi and the container hook's ldconfig resolve). apt
-# never picks an older build of an unlisted dependency on its own, so pin those
-# too when the archive carries the resolved version; otherwise an older pin
-# fails with "unmet dependencies" and an unpinned one silently drifts past the
-# host kernel module (NVML "Driver/library version mismatch", Xorg skipped).
-extra_pins=()
-for extra in "nvidia-kernel-common-${ver_major}" "libnvidia-compute-${ver_major}"; do
-  if apt-cache madison "${extra}" 2>/dev/null | awk '{print $3}' | grep -Fxq "${NVIDIA_PKG_RESOLVED}"; then
-    extra_pins+=("${extra}=${NVIDIA_PKG_RESOLVED}")
-  else
-    echo "axonos: ${extra} has no ${NVIDIA_PKG_RESOLVED} build; leaving it to apt"
-  fi
-done
-
-apt-get -o Dpkg::Options::=--force-unsafe-io install -y --no-install-recommends --allow-downgrades \
-  "xserver-xorg-video-nvidia-${ver_major}=${NVIDIA_PKG_RESOLVED}" \
-  "libnvidia-gl-${ver_major}=${NVIDIA_PKG_RESOLVED}" \
-  "libnvidia-cfg1-${ver_major}=${NVIDIA_PKG_RESOLVED}" \
-  "libnvidia-common-${ver_major}=${NVIDIA_PKG_RESOLVED}" \
-  "${extra_pins[@]}" \
-  libglvnd0 libglx0 libegl1
-
+# Retain the four resolver roots plus NVML/compute and kernel-common. Ask APT
+# to derive their complete version-coherent dependency closure; pinning only
+# the roots or the repository origin leaves split driver packages free to drift.
+roots=(
+  "xserver-xorg-video-nvidia-${ver_major}"
+  "libnvidia-gl-${ver_major}"
+  "libnvidia-cfg1-${ver_major}"
+  "libnvidia-common-${ver_major}"
+  "libnvidia-compute-${ver_major}"
+  "nvidia-kernel-common-${ver_major}"
+)
 if apt-cache madison "libnvidia-egl-${ver_major}" 2>/dev/null | awk '{print $3}' | grep -Fxq "${NVIDIA_PKG_RESOLVED}"; then
-  apt-get -o Dpkg::Options::=--force-unsafe-io install -y --no-install-recommends --allow-downgrades \
-    "libnvidia-egl-${ver_major}=${NVIDIA_PKG_RESOLVED}"
+  roots+=("libnvidia-egl-${ver_major}")
 elif apt-cache madison "libnvidia-egl-${ver_major}-server" 2>/dev/null | awk '{print $3}' | grep -Fxq "${NVIDIA_PKG_RESOLVED}"; then
-  apt-get -o Dpkg::Options::=--force-unsafe-io install -y --no-install-recommends --allow-downgrades \
-    "libnvidia-egl-${ver_major}-server=${NVIDIA_PKG_RESOLVED}"
+  roots+=("libnvidia-egl-${ver_major}-server")
 fi
+
+manifest=/usr/local/share/axonos/nvidia-userspace.txt
+install -d /usr/local/share/axonos
+/usr/bin/python3 /usr/local/bin/plan-nvidia-userspace.py plan \
+  --version "${NVIDIA_PKG_RESOLVED}" \
+  --preferences /etc/apt/preferences.d/axonos-nvidia.pref \
+  --extra libglvnd0 --extra libglx0 --extra libegl1 \
+  --manifest "${manifest}" "${roots[@]}"
+mapfile -t pins < "${manifest}"
+[ "${#pins[@]}" -ge "${#roots[@]}" ]
+
+# Simulate the exact transaction before downloading/unpacking anything. Keep
+# the exact-version preferences for later apt layers; reject fallback versions.
+apt-get --simulate --no-remove install --no-install-recommends --allow-downgrades \
+  "${pins[@]}" libglvnd0 libglx0 libegl1
+apt-get -o Dpkg::Options::=--force-unsafe-io install -y --no-remove --no-install-recommends --allow-downgrades \
+  "${pins[@]}" libglvnd0 libglx0 libegl1
 
 if [ -d /usr/lib/x86_64-linux-gnu/nvidia ] && [ ! -d /usr/lib/x86_64-linux-gnu/nvidia/current ]; then
   ver="$(ls /usr/lib/x86_64-linux-gnu/nvidia | sort -V | tail -1)"
   ln -s "/usr/lib/x86_64-linux-gnu/nvidia/${ver}" /usr/lib/x86_64-linux-gnu/nvidia/current
 fi
 
-apt-get -o Dpkg::Options::=--force-unsafe-io install -y --reinstall --no-install-recommends --allow-downgrades \
+apt-get -o Dpkg::Options::=--force-unsafe-io install -y --no-remove --reinstall --no-install-recommends --allow-downgrades \
   "xserver-xorg-video-nvidia-${ver_major}=${NVIDIA_PKG_RESOLVED}"
 
 for pkg in \
@@ -91,4 +68,6 @@ for pkg in \
   }
 done
 
+# Attest every transitive driver component, not just the original five checks.
+/usr/bin/python3 /usr/local/bin/plan-nvidia-userspace.py verify --manifest "${manifest}"
 apt-get clean && rm -rf /var/lib/apt/lists/*
