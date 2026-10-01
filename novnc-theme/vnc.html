@@ -881,7 +881,10 @@ Copyright (C) 2019 The noVNC Authors
                     if (wrap) wrap.style.display = 'flex';
                     if (addr) addr.textContent = w.slice(0, 6) + '…' + w.slice(-4);
                     if (credits) credits.textContent = '—';
-                    if (hero) hero.textContent = 'Open workspace';
+                    if (hero) {
+                        hero.textContent = 'Restoring session…';
+                        hero.disabled = true;
+                    }
                 })();
             </script>
 
@@ -12386,6 +12389,7 @@ Copyright (C) 2019 The noVNC Authors
             var heroBtn = document.getElementById('axonos_hero_browse_btn');
             if (!heroBtn) return;
             heroBtn.textContent = wallet ? 'Open workspace' : 'Browse environments';
+            heroBtn.disabled = false;
         }
         window.axonosSyncHeroCta = axonosSyncHeroCta;
 
