@@ -66,10 +66,10 @@ class ScientificPythonImageTests(unittest.TestCase):
         source = (ROOT / ".github/workflows/validate.yaml").read_text()
         job = source.split("  scientific-python:\n", 1)[1].split("  dockerfile:", 1)[0]
         self.assertIn('python-version: "3.10"', job)
-        self.assertIn("timeout-minutes: 15", job)
+        self.assertIn("timeout-minutes: 25", job)
         self.assertIn("pip==22.0.2", job)
         self.assertLess(job.index("jupyterlab"), job.index("-r docker/scientific-python.txt"))
-        self.assertIn("timeout --kill-after=30s 10m", job)
+        self.assertIn("timeout --kill-after=30s 20m", job)
         self.assertIn("python scripts/check_scientific_python.py", job)
 
     @mock.patch.object(CHECK.importlib, "import_module")
