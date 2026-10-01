@@ -44,17 +44,22 @@ jobs:
     # The normal hosted image build skips heavy applications. Exercise the real
     # scientific dependency graph separately with the production pip resolver.
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 25
+    env:
+      # Allow slow PyPI transfers without changing the production resolver.
+      PIP_DEFAULT_TIMEOUT: "120"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.10"
+          cache: pip
+          cache-dependency-path: docker/scientific-python.txt
       - name: Resolve and validate the full scientific Python environment
         run: |
-          python -m pip install --no-cache-dir pip==22.0.2
-          python -m pip install --no-cache-dir jupyterlab
-          timeout --kill-after=30s 10m python -m pip install --no-cache-dir -r docker/scientific-python.txt
+          python -m pip install pip==22.0.2
+          python -m pip install jupyterlab
+          timeout --kill-after=30s 20m python -m pip install -r docker/scientific-python.txt
           python scripts/check_scientific_python.py docker/scientific-python.txt
 
   dockerfile:
