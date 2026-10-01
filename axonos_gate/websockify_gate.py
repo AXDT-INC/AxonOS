@@ -22,6 +22,7 @@ from urllib.parse import parse_qs, urlparse, urlsplit
 
 # Local security helpers (same directory)
 from security_utils import (
+    SimpleRateLimiter,
     client_ip_for_rate_limit,
     cors_origin_for_request,
     gpc_signal_active,

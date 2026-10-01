@@ -18,6 +18,7 @@ from flask import Flask, Response, request, jsonify, send_from_directory, stream
 from flask_cors import CORS
 
 from security_utils import (
+    SimpleRateLimiter,
     client_ip_for_rate_limit,
     cors_origin_for_request,
     gpc_signal_active,

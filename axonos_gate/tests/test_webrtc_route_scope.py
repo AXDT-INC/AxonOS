@@ -6,6 +6,10 @@ import ast
 from pathlib import Path
 import re
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from axonos_gate import security_utils
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -64,6 +68,31 @@ class WebRtcRouteScopeContractTests(unittest.TestCase):
         cls.websockify_source = _read("axonos_gate/websockify_gate.py")
         cls.flask_tree = ast.parse(cls.flask_source)
         cls.websockify_tree = ast.parse(cls.websockify_source)
+
+    def test_signaling_limiters_initialize_and_enforce_limit(self) -> None:
+        for tree, helper, state in (
+            (self.flask_tree, "_webrtc_sig_allow", "_webrtc_sig_limiter"),
+            (self.websockify_tree, "_webrtc_ws_rate_allow", "_webrtc_sig_ws"),
+        ):
+            with self.subTest(helper=helper):
+                # Execute the real security imports and helper without starting
+                # either server or requiring its database/container dependencies.
+                imports = [
+                    node for node in tree.body
+                    if isinstance(node, ast.ImportFrom)
+                    and node.module == "security_utils"
+                ]
+                module = ast.Module(body=[*imports, _function(tree, helper)], type_ignores=[])
+                namespace = {
+                    state: None,
+                    "webrtc_config": SimpleNamespace(rate_limit_per_minute=lambda: 1),
+                    "request": SimpleNamespace(headers={}, remote_addr="127.0.0.1"),
+                }
+                with patch.dict("sys.modules", {"security_utils": security_utils}):
+                    exec(compile(module, "<signaling limiter>", "exec"), namespace)
+                args = ("wallet",) if helper == "_webrtc_sig_allow" else ("wallet", {}, "127.0.0.1")
+                self.assertTrue(namespace[helper](*args))
+                self.assertFalse(namespace[helper](*args))
 
     def test_flask_browser_routes_forward_active_compute_identity(self) -> None:
         cases = (
