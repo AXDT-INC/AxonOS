@@ -1,8 +1,7 @@
 name: Build and Push to Harbor
 
+# Image builds are opt-in; routine pushes run the validation workflow only.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 env:
@@ -13,7 +12,7 @@ env:
 
 # The builder has under 50 GB of disk in total and even the minimal variant
 # (AXONOS_SKIP_HEAVY=1) needs a good share of it as scratch space. Two concurrent builds guarantee that both run out of
-# disk, so serialise them; a newer push simply waits for the current build.
+# disk, so serialise them; a manual run waits for the current build.
 concurrency:
   group: build-push-${{ github.ref }}
   cancel-in-progress: false

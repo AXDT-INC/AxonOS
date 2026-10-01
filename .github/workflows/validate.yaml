@@ -2,9 +2,8 @@ name: Validate
 
 # Fast checks that need neither the image nor the remote builder: the gate and
 # assistant unit tests, a Dockerfile lint/check, and shell syntax for the
-# scripts baked into the image. build-push.yaml still pushes the minimal image
-# variant for the registry's vulnerability scan; this job is what tells us a
-# push to main broke something, in minutes rather than after an hour.
+# scripts baked into the image. Image builds in build-push.yaml are manual;
+# this workflow provides automatic feedback on pushes and pull requests.
 
 on:
   pull_request:
