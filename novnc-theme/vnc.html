@@ -11687,34 +11687,11 @@ Copyright (C) 2019 The noVNC Authors
                     }
                     return;
                 }
-                setWalletUIState('axonos_wallet_state_disconnected');
-                var lastWallet = null;
-                try { lastWallet = localStorage.getItem('axonos_last_wallet'); } catch (e) { }
-                var reconnectEth = resolveEthereumProvider();
-                if (lastWallet && reconnectEth && typeof reconnectEth.request === 'function') {
-                    var autoConnectAttempt = ++axonosWalletConnectGeneration;
-                    axonosInvalidateWalletVerification();
-                    axonosWalletProviderRequest(
-                        reconnectEth,
-                        { method: 'eth_accounts' },
-                        'Wallet reconnect check timed out. Use Connect Wallet to retry.',
-                        15000
-                    ).then(function (accounts) {
-                        if (autoConnectAttempt !== axonosWalletConnectGeneration ||
-                            !dlg.classList.contains('noVNC_open') ||
-                            window.verifiedWalletAddress ||
-                            (typeof window.axonosGuestEntryPendingOrActive === 'function' &&
-                                window.axonosGuestEntryPendingOrActive()) ||
-                            (window.__axonosSelectedProvider &&
-                                window.__axonosSelectedProvider !== reconnectEth)) {
-                            return;
-                        }
-                        var account = Array.isArray(accounts) && accounts[0] ? String(accounts[0]).trim() : '';
-                        if (account && account.toLowerCase() === lastWallet.toLowerCase() && /^0x[a-fA-F0-9]{40}$/.test(account)) {
-                            runVerify(account, reconnectEth);
-                        }
-                    }).catch(function () { });
-                }
+                // Opening a dialog is not a new sign-in attempt. The silent
+                // cookie restore or the explicit Connect Wallet handler owns
+                // authentication. Starting runVerify here raced both paths,
+                // invalidated provider selection and requested another signature.
+                // Preserve their checking, picker, or error state as well.
             });
             obs.observe(dlg, { attributes: true, attributeFilter: ['class'] });
         })();
@@ -12120,6 +12097,15 @@ Copyright (C) 2019 The noVNC Authors
                 axonosUpdateActiveScreen('landing');
                 return Promise.resolve(null);
             }
+            // Catalog/details can still be open when wallet sign-in completes.
+            // Dismiss them with workspace entry so they cannot obscure the dashboard.
+            ['axonos_catalog_modal', 'axonos_template_modal'].forEach(function (id) {
+                const modal = document.getElementById(id);
+                if (modal) {
+                    modal.classList.remove('active');
+                    modal.setAttribute('aria-hidden', 'true');
+                }
+            });
             axonosUpdateActiveScreen('dashboard');
             // Some callers already hold a more specific recovery view. In
             // particular, terminal fallback renders the external SSH card and
@@ -12403,28 +12389,20 @@ Copyright (C) 2019 The noVNC Authors
             // Sync topbar
             axonosSyncTopbar(walletAddress, data ? data.remaining_minutes : null);
 
-            // Verification never yanks the user off the landing page: connect
-            // clicks and the silent reload restore both leave it showing in the
-            // connected state (topbar swap + hero "Open workspace" CTA), and
-            // the workspace is entered through that CTA or the dashboard
-            // Home/brand routes. A verify that fires while the dashboard or
-            // wizard is already active (wallet switch, top-up) keeps its
-            // screen. The dlg has no state class before the first screen
-            // switch; treat that as landing.
+            // Successful sign-in (including cookie restore) opens the workspace
+            // directly. Re-authentication during a launch or an active desktop
+            // must preserve that workflow while refreshing its wallet data.
             var connectDlgEl = document.getElementById('noVNC_connect_dlg');
-            var stayOnLanding = !!connectDlgEl &&
-                !connectDlgEl.classList.contains('axonos-state-dashboard') &&
-                !connectDlgEl.classList.contains('axonos-state-wizard');
+            var preserveActiveWorkflow =
+                document.documentElement.classList.contains('noVNC_connected') ||
+                (!!connectDlgEl && connectDlgEl.classList.contains('axonos-state-wizard'));
 
             // Enter the workspace synchronously. Session/credit reads can take tens
             // of seconds when the gate or its database is busy; they must not hold a
             // full-screen transition modal in front of an otherwise usable dashboard.
             // axonosLoadDashboard keeps its own wallet + generation guards, so this
             // refresh is safe to let finish in the background after a wallet switch.
-            // Staying on landing still runs the guarded dashboard/status refresh
-            // in the background so credits, session cards, and the credit-grace
-            // check are ready the moment the user opens the workspace.
-            var dashboardRefresh = stayOnLanding
+            var dashboardRefresh = preserveActiveWorkflow
                 ? axonosLoadDashboard()
                 : axonosReturnToWorkspace();
             var expectedDashboardGeneration = axonosDashboardRequestGeneration;
@@ -12510,7 +12488,7 @@ Copyright (C) 2019 The noVNC Authors
                 }
                 if (emptyEl) emptyEl.style.display = 'none';
                 if (window.UI && typeof UI.updateScheduledStopWarnings === 'function') {
-                    UI.updateScheduledStopWarnings(dashboardSessions, true);
+                    UI.updateScheduledStopWarnings([], true);
                 }
                 if (activeCountEl) activeCountEl.textContent = '0';
                 if (combinedRateEl) combinedRateEl.textContent = '—';
@@ -12549,6 +12527,9 @@ Copyright (C) 2019 The noVNC Authors
                 }
                 let dashboardSessions = axonosOwnedDashboardSessions(status || {}, wallet);
                 dashboardSessions = axonosWithoutEndingDashboardSessions(dashboardSessions);
+                if (window.UI && typeof UI.updateScheduledStopWarnings === 'function') {
+                    UI.updateScheduledStopWarnings(dashboardSessions, true);
+                }
                 const activeOwnedSessions = dashboardSessions.filter(function (session) {
                     return session.dashboard_state !== 'credit_grace' &&
                         session.allocation_status !== 'credit_grace';
@@ -14798,7 +14779,7 @@ Copyright (C) 2019 The noVNC Authors
         // Silent reload restore: the gate auth cookie is HttpOnly and survives
         // a page reload even though the JS token copy does not. If the cookie
         // still authenticates the last wallet (token TTL + keep-alive
-        // rotation), re-enter the connected landing state without a new
+        // rotation), open the workspace without a new
         // signature. An expired cookie responds 401 and the page simply stays
         // signed out — Connect wallet is then one signature away.
         (function () {
@@ -14812,6 +14793,8 @@ Copyright (C) 2019 The noVNC Authors
             // it (see the 300ms fallback below), and a dead cookie must
             // actively revert it.
             window.axonosWalletRestorePending = true;
+            var restoreConnectGeneration = axonosWalletConnectGeneration;
+            var restoreVerifyGeneration = axonosWalletVerifyGeneration;
             var revertOptimisticPaint = function () {
                 window.axonosWalletRestorePending = false;
                 if (typeof window.axonosGuestEntryPendingOrActive === 'function' &&
@@ -14824,14 +14807,20 @@ Copyright (C) 2019 The noVNC Authors
             };
             var url = new URL('/api/auth/wallet-status', window.location.origin);
             url.searchParams.set('wallet_address', lastWallet);
-            fetch(url.toString(), {
+            var restoreController = typeof AbortController !== 'undefined'
+                ? new AbortController() : null;
+            var restoreOptions = {
                 method: 'GET',
                 credentials: 'include',
                 headers: { 'X-Wallet-Address': lastWallet }
-            }).then(function (r) {
+            };
+            if (restoreController) restoreOptions.signal = restoreController.signal;
+            axonosPromiseWithTimeout(fetch(url.toString(), restoreOptions).then(function (r) {
                 // Any 200 means the cookie authenticated this wallet;
                 // verified:false on a 200 only reflects access/credit state.
                 return r.ok ? r.json() : null;
+            }), 15000, 'Session restore timed out. Connect Wallet to retry.', function () {
+                if (restoreController) restoreController.abort();
             }).then(function (data) {
                 // The probe may have started before a guest entry was observed by
                 // an older/cached startup path. Never let its stale wallet result
@@ -14841,7 +14830,11 @@ Copyright (C) 2019 The noVNC Authors
                     window.axonosWalletRestorePending = false;
                     return;
                 }
-                if (!data || window.verifiedWalletAddress) {
+                // A newer connect, wallet switch, or sign-out supersedes this
+                // read even if it has not installed a verified identity yet.
+                if (restoreConnectGeneration !== axonosWalletConnectGeneration ||
+                    restoreVerifyGeneration !== axonosWalletVerifyGeneration ||
+                    !data || !data.auth_token || window.verifiedWalletAddress) {
                     revertOptimisticPaint();
                     return;
                 }
@@ -14862,9 +14855,9 @@ Copyright (C) 2019 The noVNC Authors
             }).catch(revertOptimisticPaint);
         })();
 
-        // If the user reloads the page with an already connected wallet, show
-        // the landing page in its connected state (topbar swap + hero "Open
-        // workspace" CTA) — entering the workspace is always an explicit click.
+        // Keep the topbar and hero in sync with the authenticated identity.
+        // The restore completion above owns the initial workspace transition;
+        // this fallback must not override an in-flight restore or later navigation.
         setTimeout(() => {
             if (window.axonosGuestEntryPending === true) return;
             const wallet = window.verifiedWalletAddress || verifiedWalletAddress;

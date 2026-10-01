@@ -14,14 +14,17 @@ implemented by the gate.
 
 - **Landing page as home** (`vnc.html`): hero "A real GPU desktop, spun up in a
   minute", tagline "GPU-Native Scientific Computing", environment catalogue.
-  Wallet connect and page reload both stay on the landing page; the hero CTA
-  becomes "Open workspace" once a session exists.
+  Successful wallet sign-in with credit and valid saved-session restores open
+  the workspace directly. The brand button returns to the landing page, where
+  the hero CTA becomes "Open workspace" for signed-in wallets.
 - **Dashboard + Launch Wizard**: Quick Launch grid with a catalogue "View all"
   entry, GPU profile picker, storage sizing, payment rails (USDC / ETH / AXGT)
   with holder-discount quotes from `/api/discount/quote`.
 - **Wallet auth**: EIP-6963 provider discovery with a deduplicated picker,
   challenge/verify flow (`/api/auth/challenge`, `/api/auth/verify-wallet`),
-  short-lived auth tokens refreshed via `/api/auth/wallet-status`.
+  short-lived auth tokens refreshed via `/api/auth/wallet-status`. Opening the
+  wallet dialog does not request a signature; explicit sign-in and expired-token
+  recovery own that request. Reload restores a valid cookie without signing.
 - **Guest demo mode**: invite-code redemption and invite generation
   (`/api/auth/guest`, `/api/auth/guest-invite`), enabled when `/api/config`
   reports `guest_mode_enabled`.
