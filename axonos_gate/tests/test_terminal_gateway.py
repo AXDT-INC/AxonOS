@@ -846,12 +846,15 @@ class WebsockifyTerminalRouteTests(unittest.TestCase):
 
     def test_production_websockify_handler_contract_when_package_is_available(self):
         dist_packages = "/usr/lib/python3/dist-packages"
-        if dist_packages not in sys.path:
-            sys.path.insert(0, dist_packages)
-        try:
-            from websockify import websocketproxy, websockifyserver
-        except ImportError:
-            self.skipTest("production websockify package is not installed")
+        # Find distro websockify without shadowing the active environment's
+        # dependencies or leaking its import path into later tests (aiortc).
+        with patch.object(sys, "path", list(sys.path)):
+            if dist_packages not in sys.path:
+                sys.path.append(dist_packages)
+            try:
+                from websockify import websocketproxy, websockifyserver
+            except ImportError:
+                self.skipTest("production websockify package is not installed")
 
         handler = websocketproxy.ProxyRequestHandler
         mro = handler.__mro__

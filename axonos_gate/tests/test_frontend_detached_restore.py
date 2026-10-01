@@ -597,8 +597,8 @@ class FrontendSessionSemanticsContractTests(unittest.TestCase):
         self.assertIn("axonosGpuTelemetryLastSuccessAt = 0", telemetry)
         self.assertIn("axonosContainerTelemetryLastSuccessAt = 0", telemetry)
 
-        self.assertIn("cacheAge > 25", self.public_telemetry_source)
-        self.assertIn("GPU telemetry cache is stale", self.public_telemetry_source)
+        self.assertIn("Number(cacheAge) > 25", self.public_telemetry_source)
+        self.assertIn("throw new Error('Live data unavailable')", self.public_telemetry_source)
         self.assertIn(
             'viewer_only = bool(parse_qs(pu.query).get("viewer"))',
             self.proxy_source,
