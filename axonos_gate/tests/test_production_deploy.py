@@ -41,7 +41,7 @@ def volume(target, source, kind='volume', readonly=False):
 
 
 def configuration(root):
-    context = '/synthetic-only/secrets/context'
+    context = '/etc/axonos/x-capi-context-key'
     runtime = volume('/run/axonos-x-capi', 'x_capi_runtime')
     privacy = volume('/run/axonos-x-capi-privacy', 'x_capi_privacy_fence')
     key = volume('/run/secrets/x_capi_context_key', context, 'bind', True)
@@ -66,8 +66,8 @@ def configuration(root):
                   'x-capi-privacy-init': {'condition': 'service_completed_successfully'}}}
     for name in ('x_capi_db_url', 'x_capi_hash_key'):
         worker['volumes'].append(volume('/run/secrets/' + name,
-                                        '/synthetic-only/secrets/' + name, 'bind', True))
-    passwords = [volume('/run/secrets/' + name, '/synthetic-only/secrets/' + name,
+                                        '/etc/axonos/' + name.replace('_', '-'), 'bind', True))
+    passwords = [volume('/run/secrets/' + name, '/etc/axonos/' + name.replace('_', '-'),
                         'bind', True) for name in (
                             'x_capi_postgres_bootstrap_password', 'x_capi_postgres_worker_password')]
     return {'name': 'axonos', 'services': {'axonos': gate, 'x-capi-worker': worker,
@@ -122,7 +122,38 @@ def out(value):
 def fail():
     print('SYNTHETIC_SECRET_MUST_NOT_APPEAR', file=sys.stderr)
     sys.exit(7)
-if tool == 'git':
+if tool == 'metadata-helper':
+    assert not args
+    counter('secret_snapshots')
+    if state.get('rolled'): counter('secret_snapshots_after_rollout')
+    if scenario.get('secret_helper_failure') or (scenario.get('secret_helper_postflight_failure') and state.get('rolled')):
+        fail()
+    if scenario.get('secret_helper_malformed'):
+        out('INVALID_SNAPSHOT_SYNTHETIC_SECRET_MUST_NOT_APPEAR')
+    def record(ino, uid, mode, size, nlink=1):
+        return dict(dev=1, ino=ino, uid=uid, gid=uid, mode=mode, nlink=nlink,
+                    size=size, mtime_ns=3, ctime_ns=4)
+    names = ('x-capi-context-key', 'x-capi-db-url', 'x-capi-hash-key',
+             'x-capi-postgres-bootstrap-password', 'x-capi-postgres-worker-password')
+    snapshot = {'version': 1,
+        'directories': {path: record(number, 0, 0o40700 if path == '/etc/axonos' else 0o40755, 4096, 2)
+                        for number, path in enumerate(('/', '/etc', '/etc/axonos'), 1)},
+        'files': {'/etc/axonos/' + name: record(number, 0 if 'password' in name else 10001, 0o100600, 64)
+                  for number, name in enumerate(names, 10)}}
+    if scenario.get('secret_snapshot_extra_data'):
+        snapshot['files']['/etc/axonos/x-capi-context-key']['contents'] = 'SYNTHETIC_SECRET_MUST_NOT_APPEAR'
+    if scenario.get('secret_snapshot_missing_bootstrap'):
+        del snapshot['files']['/etc/axonos/x-capi-postgres-worker-password']
+    if scenario.get('secret_snapshot_substituted_path'):
+        snapshot['files']['/unapproved/secret'] = snapshot['files'].pop('/etc/axonos/x-capi-context-key')
+    for key, value in scenario.get('secret_file_metadata', {}).items():
+        snapshot['files']['/etc/axonos/x-capi-context-key'][key] = value
+    if scenario.get('secret_metadata_drift') and state.get('built'):
+        drift = scenario['secret_metadata_drift']
+        if drift == 'parent': snapshot['directories']['/etc/axonos']['ino'] += 100
+        else: snapshot['files']['/etc/axonos/x-capi-context-key'][drift] += 100
+    out(json.dumps(snapshot))
+elif tool == 'git':
     if args == ['rev-parse', '--show-toplevel']: out(str(root))
     if args[0] == 'status': out(' M dirty' if scenario.get('dirty') else '')
     if args[0] == 'symbolic-ref':
@@ -449,7 +480,7 @@ elif tool == 'docker':
             env['X_CAPI_MODE'] = 'live'
         mounts = [dict(Destination='/run/axonos-x-capi', Type='volume', Name='axonos_x_capi_runtime', RW=False),
             dict(Destination='/run/axonos-x-capi-privacy', Type='volume', Name='axonos_x_capi_privacy_fence', RW=True),
-            dict(Destination='/run/secrets/x_capi_context_key', Type='bind', Source='/synthetic-only/secrets/context', RW=False)]
+            dict(Destination='/run/secrets/x_capi_context_key', Type='bind', Source='/etc/axonos/x-capi-context-key', RW=False)]
         if scenario.get('post_mount') and state.get('rolled'): mounts[0]['RW'] = True
         image = 'sha256:' + ('b' if scenario.get('post_image') and state.get('rolled') else 'a') * 64
         configured = config['services'].get(service, {})
@@ -495,8 +526,16 @@ path, *args = sys.argv[1:]
 assert pathlib.Path(path).name in ('deploy_production.py', 'deploy_production_checks.py'), path
 sys.path.insert(0, str(pathlib.Path(path).parent))
 import deploy_production_checks as checks
-# Never inspect actual /synthetic-only files; all other checker logic is real.
-checks.secret_metadata = lambda path, root, uid, low, high: (str(path), uid, low, high)
+# All secret validation/fingerprinting is real. Only installation attestation
+# and the exact privileged command are substituted with synthetic boundaries.
+checks.metadata_helper_contract = lambda: None
+actual_secret_metadata = checks.secret_metadata
+def fixture_secret_metadata(path, root, uid, low, high, snapshot=None):
+    # An omitted controller snapshot must fail the test, never fall through to
+    # metadata access under the REAL protected production directory.
+    assert snapshot is not None, 'orchestration must supply synthetic secret metadata'
+    return actual_secret_metadata(path, root, uid, low, high, snapshot)
+checks.secret_metadata = fixture_secret_metadata
 spec = importlib.util.spec_from_file_location('deployment_checker', path)
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
@@ -506,6 +545,10 @@ if pathlib.Path(path).name == 'deploy_production.py':
     # neither environment timeout overrides nor alternate deployment lock paths.
     root = pathlib.Path(os.environ['FAKE_ROOT'])
     scenario = json.loads((root / 'scenario.json').read_text())
+    if scenario.get('secret_helper_contract_failure'):
+        def missing_helper_contract():
+            raise checks.Refusal('Secret metadata helper installation cannot be attested')
+        checks.metadata_helper_contract = missing_helper_contract
     module.LOCK_FILE = str(root / 'deploy.lock')
     module.LOCK_UID = os.getuid()
     module.COMMAND_TIMEOUT = 3
@@ -513,8 +556,15 @@ if pathlib.Path(path).name == 'deploy_production.py':
     module.KILL_GRACE = 1 if scenario.get('repeated_signals') else .15
     module.VALIDATOR_TIMEOUT = 20 if scenario.get('repeated_signals') else (.3 if scenario.get('validator_timeout') else 3)
     module.BUILD_TIMEOUT = 10
-else:
-    module.secret_metadata = checks.secret_metadata
+    actual_run = module.run
+    def fixture_run(command, env, checkout, **kwargs):
+        if tuple(command) == tuple(checks.SECRET_METADATA_COMMAND):
+            assert env == {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'}
+            assert kwargs.get('input_text') is None
+            command = [str(root / 'fake-bin' / 'metadata-helper')]
+            env = dict(env, FAKE_ROOT=str(root))
+        return actual_run(command, env, checkout, **kwargs)
+    module.run = fixture_run
 sys.argv = [path, *args]
 try:
     result = module.main()
@@ -547,7 +597,8 @@ class DeploymentOrchestrationTests(unittest.TestCase):
         (self.root / 'deploy.lock').chmod(0o444)
         self.bin = self.root / 'fake-bin'
         self.bin.mkdir()
-        for name, source in [('docker', FAKE), ('git', FAKE), ('curl', FAKE), ('python3', PYTHON_SHIM)]:
+        for name, source in [('docker', FAKE), ('git', FAKE), ('curl', FAKE),
+                             ('metadata-helper', FAKE), ('python3', PYTHON_SHIM)]:
             script = self.bin / name
             script.write_text('#!' + sys.executable + '\n' + source)
             script.chmod(0o700)
@@ -624,6 +675,56 @@ class DeploymentOrchestrationTests(unittest.TestCase):
         result = self.run_script('--check', '--with-capi-backend')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.mutations(), [])
+
+    def test_check_attests_all_protected_secrets_without_host_traversal_or_mutation(self):
+        result = self.run_script('--check')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertGreater(self.state().get('secret_snapshots', 0), 0)
+        helpers = [command for command in self.commands() if command[0] == 'metadata-helper']
+        self.assertTrue(helpers)
+        self.assertTrue(all(command == ['metadata-helper'] for command in helpers))
+        self.assertEqual(self.mutations(), [])
+
+    def test_unavailable_or_untrusted_secret_snapshot_refuses_before_build(self):
+        variants = ({'secret_helper_contract_failure': True}, {'secret_helper_failure': True},
+                    {'secret_helper_malformed': True}, {'secret_snapshot_extra_data': True},
+                    {'secret_snapshot_missing_bootstrap': True}, {'secret_snapshot_substituted_path': True})
+        for scenario in variants:
+            with self.subTest(scenario=scenario):
+                self.scenario = scenario
+                result = self.run_script('--with-capi-backend')
+                self.assert_failed(result)
+                self.assertIn('Secret metadata', result.stdout + result.stderr)
+                self.assertEqual(self.mutations(), [])
+                self.assertNotIn('built', self.state())
+                self.assertNotIn('stopped_worker', self.state())
+
+    def test_invalid_privileged_secret_metadata_cannot_bypass_client_attestation(self):
+        for metadata in ({'mode': stat.S_IFLNK | 0o600}, {'uid': 0}, {'gid': 0},
+                         {'mode': stat.S_IFREG | 0o644}, {'nlink': 2}, {'size': 0}, {'size': 4097}):
+            with self.subTest(metadata=metadata):
+                self.scenario = {'secret_file_metadata': metadata}
+                self.assert_failed(self.run_script('--check'))
+                self.assertEqual(self.mutations(), [])
+
+    def test_secret_and_parent_metadata_drift_after_build_blocks_promotion(self):
+        for field in ('ino', 'ctime_ns', 'parent'):
+            with self.subTest(field=field):
+                for name in ('commands.jsonl', 'fake-state.json'):
+                    (self.root / name).unlink(missing_ok=True)
+                self.scenario = {'secret_metadata_drift': field}
+                result = self.run_script()
+                self.assert_failed(result, 'Configuration/secret metadata changed')
+                self.assertTrue(self.state()['built'])
+                self.assertGreaterEqual(self.state()['secret_snapshots'], 2)
+                self.assertNotIn('promoted', self.state())
+                self.assertNotIn('rolled', self.state())
+
+    def test_gate_postflight_requires_fresh_secret_metadata_attestation(self):
+        self.scenario = {'secret_helper_postflight_failure': True}
+        self.assert_failed(self.run_script(), 'Secret metadata cannot be attested with current privileges')
+        self.assertTrue(self.state()['rolled'])
+        self.assertGreater(self.state().get('secret_snapshots_after_rollout', 0), 0)
 
     def test_check_inherits_null_startup_for_preserved_launcher_and_postgres(self):
         self.scenario = {'image_store': 'containerd', 'image_store_info': {'ServerVersion': '29.5.2'}}
@@ -1334,7 +1435,8 @@ class DeploymentMetadataTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('deployment_checks_test',
             REPO / 'scripts/deploy_production_checks.py')
         cls.checks = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(cls.checks)
+        with mock.patch.object(sys, 'path', [str(REPO / 'scripts'), *sys.path]):
+            spec.loader.exec_module(cls.checks)
 
     def metadata(self, **changes):
         values = dict(st_mode=stat.S_IFREG | 0o600, st_nlink=1, st_uid=10001,
@@ -1357,6 +1459,12 @@ class DeploymentMetadataTests(unittest.TestCase):
                     mock.patch.object(Path, 'lstat', return_value=self.metadata(**changes)):
                 with self.assertRaises(self.checks.Refusal):
                     self.checks.secret_metadata('/synthetic/secrets/key', REPO, 10001, 44, 4096)
+
+    def test_direct_secret_metadata_permission_error_has_sanitized_refusal(self):
+        with mock.patch.object(Path, 'resolve', lambda path: path), \
+                mock.patch.object(Path, 'lstat', side_effect=PermissionError(SECRET)):
+            with self.assertRaisesRegex(self.checks.Refusal, '^Secret metadata cannot be attested with current privileges$'):
+                self.checks.secret_metadata('/synthetic/secrets/key', REPO, 10001, 44, 4096)
 
     def test_secret_metadata_rejects_build_context_and_noncanonical_paths(self):
         with mock.patch.object(Path, 'resolve', lambda path: path):

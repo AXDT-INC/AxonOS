@@ -67,12 +67,159 @@ the file. No lock or administrative provisioning is performed by the script.
 The supported engine is Linux Docker at `unix:///var/run/docker.sock`. Alternate
 hosts/contexts and arbitrary Compose projects are refused. Docker Compose,
 Buildx with Compose `build --print` support, Python 3, Git, and curl are required.
-An operator needs Docker access and permission to inspect protected secret-file
-metadata. Keep secrets outside the checkout/build context.
+An operator needs Docker access and the narrowly provisioned metadata-helper
+authorization below, not permission to traverse the protected secret directory.
+Keep secrets outside the checkout/build context.
 Candidate-reference classification additionally requires a source-reviewed
 Engine/image-store combination and a compatible **effective client API**; see
 the explicit support matrices below. Read-only admission checks run in every
 preflight, including `--check`, even when no candidate images exist.
+
+## Protected secret metadata without directory access
+
+Keep `/etc/axonos` **root:root `0700`**. An unprivileged operator cannot `lstat()`
+a child through that directory even when requesting metadata only: Linux
+requires search permission on each parent, separately from permissions on the
+file itself. The previous host-side check could therefore raise `PermissionError`
+before validating an otherwise correct secret. This is a traversal problem,
+not evidence of incorrect secret contents or a reason to change directory mode.
+See Linux [stat](https://man7.org/linux/man-pages/man2/stat.2.html) and
+[path resolution](https://man7.org/linux/man-pages/man7/path_resolution.7.html).
+
+The deployment controller uses a fixed, root-owned helper installed separately
+from the writable checkout. It invokes only:
+
+```text
+/usr/bin/sudo -n -- /usr/bin/python3 -I -S -B /usr/local/libexec/axonos-deploy-secret-metadata.py
+```
+
+The helper accepts no caller arguments, paths, stdin configuration, or
+environment-selected policy. Its only secret targets are these five default
+host paths; custom locations require a separate reviewed policy change:
+
+| Fixed path beneath `/etc/axonos/` | Required UID:GID | Size in bytes |
+| --- | --- | --- |
+| `x-capi-context-key` | `10001:10001` | 44–4096 |
+| `x-capi-db-url` | `10001:10001` | 1–8192 |
+| `x-capi-hash-key` | `10001:10001` | 32–256 |
+| `x-capi-postgres-bootstrap-password` | `0:0` | 16–8192 |
+| `x-capi-postgres-worker-password` | `0:0` | 16–8192 |
+
+Every target must be a regular file, have exactly one hard link, and retain mode
+`0400` or `0600`. The helper checks root-owned, non-writable-by-others path
+components and the exact `0700` secret-parent boundary. Directory-relative
+`O_PATH`/`O_NOFOLLOW` descriptors and `fstat` inspect metadata without opening
+secret contents for reading. Each component is checked; a single final-component
+`O_NOFOLLOW` check would not protect against a symlinked parent. Leaf symlinks,
+unexpected types, substitutions, or inconsistent metadata are refused. Linux
+[O_PATH semantics](https://man7.org/linux/man-pages/man2/open.2.html) permit
+descriptor metadata checks but reject content reads on those descriptors.
+
+The bounded output contains only the reviewed metadata schema, including
+parent/file device and inode identity, UID/GID, type/mode, link count, size, and
+change/modification timestamps. All five files are attested on every relevant
+configuration fingerprint/recheck, safe-worker-restoration check, and gate
+postflight; results are not cached. These fingerprints detect changes, not
+secret contents. No secret is copied, hashed, printed, or saved in temporary
+files. The helper has its own five-second alarm in addition to controller command
+timeouts. Missing privilege, unavailable helper, access denial, or unverifiable
+metadata fails closed with a sanitized explanation; routine deployment does not
+prompt for a sudo password or require a preceding `sudo -v`.
+
+### One-time administrator provisioning
+
+This is a **separate administrator action**, not something the deployment tool
+performs. No production installation is implied by adding the source file.
+Provision during a serialized maintenance window after reviewing the committed
+`scripts/deploy_production_secret_metadata.py` source and sudo policy.
+
+1. Obtain the exact reviewed source in administrator-controlled staging and
+   verify it against the approved commit/release. Do not execute a script in the
+   operator-writable checkout as root. The helper is a separately installed copy,
+   not a symlink back to the repository.
+2. Inspect `/usr/local/libexec` and all its ancestors. They must be trusted,
+   root:root directories without special permission bits or group/other write access; reject symlinked
+   helper paths. Create a missing directory separately with reviewed ownership
+   and permissions. Inspect any existing helper and sudoers entry before
+   replacing either; do not blindly overwrite an installation or change parent
+   permissions to make a check pass.
+3. For a confirmed absent destination, install the reviewed copy as root:root,
+   mode `0444`, at `/usr/local/libexec/axonos-deploy-secret-metadata.py`. It needs
+   no executable bit because the exact system interpreter reads it. For example,
+   **only after the preceding trust/absence checks**, an administrator can use:
+
+   ```bash
+   sudo install -o root -g root -m 0444 /root/REVIEWED_RELEASE/scripts/deploy_production_secret_metadata.py /usr/local/libexec/axonos-deploy-secret-metadata.py
+   ```
+
+   `REVIEWED_RELEASE` denotes the administrator-verified staging copy, not a
+   literal directory to create or an instruction to trust arbitrary checkout
+   bytes. Serialize the absence check and installation; the example is not an
+   atomic multi-administrator provisioning protocol.
+4. Use `visudo` to install the following **exact** rule in a root:root `0440`
+   `/etc/sudoers.d/axonos-deploy-secret-metadata` file, reviewing any existing
+   policy first:
+
+   ```sudoers
+   cluadmin ALL=(root) NOPASSWD: NOSETENV: /usr/bin/python3 -I -S -B /usr/local/libexec/axonos-deploy-secret-metadata.py
+   ```
+
+   Validate the candidate policy with
+   `sudo visudo -cf /etc/sudoers.d/axonos-deploy-secret-metadata` and the complete
+   policy with `sudo visudo -c` before considering provisioning complete. Do not
+   grant arbitrary Python, shell, `stat`, user-supplied paths, wildcard arguments,
+   or extra trailing arguments. This fixed interpreter command is the whole
+   authorization, not broad passwordless sudo.
+5. Verify that `/usr/bin/python3`, its standard library, the helper, and their
+   installation paths remain administrator-controlled. Then run the normal
+   deployment `--check` as `cluadmin`. Routine invocations use a minimal
+   environment and closed stdin; `-I -S -B` disables user/environment import
+   influence, site initialization, and bytecode writes. Future helper updates
+   require the same separate review/provisioning process.
+
+The [sudo policy documentation](https://github.com/sudo-project/sudo/blob/main/docs/sudoers.man.in)
+describes exact argument matching and `NOSETENV`; the
+[sudo command documentation](https://github.com/sudo-project/sudo/blob/main/docs/sudo.man.in)
+defines noninteractive `-n`. Python's
+[interpreter options](https://docs.python.org/3/using/cmdline.html) explain the
+isolation flags. The helper performs no filesystem or service mutation; normal
+sudo audit records may still be generated by host policy, without secret bytes.
+
+The regression module `axonos_gate/tests/test_production_deploy_secret_metadata.py`
+has ordinary metadata/protocol tests and three explicitly root-only integration
+tests. The latter create only synthetic temporary trees under the test checkout,
+then chroot children before using the fixed `/etc/axonos` paths; one child drops
+to UID/GID `1000` to reproduce the original search denial. Run them only from
+an administrator-reviewed, administrator-controlled disposable source copy:
+
+```bash
+/usr/bin/python3 -I -S -B -m unittest discover -s /root/REVIEWED_RELEASE/axonos_gate/tests -p test_production_deploy_secret_metadata.py -v
+```
+
+Run this as root in the disposable test environment, not against production
+secret files. A single-UID rootless namespace cannot exercise the distinct
+`0`, `1000`, and `10001` ownership cases. An unprivileged run skips these three
+tests; passing mocks or the supplementary real search-denial test does **not**
+establish that the root-only integration tests ran successfully.
+
+### Why not change permissions or use another access path?
+
+| Alternative | Security/coverage limitation |
+| --- | --- |
+| Change the secret directory to `0711` | Allows everyone to probe known filenames and inspect metadata. File permissions still deny ordinary non-owner reads, but host processes with a secret's owner UID gain access to known files. This removes an existing directory boundary and is not adopted. |
+| Inspect existing running-container binds | Covers some files, but the worker bootstrap password is mounted only in the stopped DB initializer. Starting it is not a read-only check; inspect mount declarations alone do not attest host file metadata. Container bind metadata also need not describe a replaced host pathname. |
+| Grant directory-search ACLs | Narrows which users gain traversal compared with `0711`, but still changes the protected directory's access policy. Not needed for this solution. |
+| Grant a DAC-bypass capability | `CAP_DAC_READ_SEARCH` also permits content reads, not just metadata. `O_PATH` alone does not bypass parent search permissions. A capability on general Python or `stat` is not a fixed-path metadata service. |
+| Add a privileged metadata daemon/socket | Can implement a similar policy but adds lifecycle, authentication, and deployment infrastructure. A fixed one-shot helper suffices here. |
+
+Directory-FD anchoring and identity rechecks detect ordinary path substitution;
+they do not lock a pathname through a subsequent Docker bind-mount operation or
+prevent privileged administrators from replacing files between observations.
+Retain the maintenance window and do not rotate secrets concurrently with
+deployment. The existing Docker socket authorization is itself
+[root-equivalent](https://docs.docker.com/engine/install/linux-postinstall/): this
+design preserves ordinary filesystem unreadability and confines this helper,
+not secrecy against a deliberately malicious Docker-authorized operator or root.
 
 ## Docker API admission
 
@@ -276,7 +423,7 @@ git pull --ff-only
 
 | Option | Meaning |
 | --- | --- |
-| `--check` | Read-only preflight, including Engine/store/effective-API admission, existing-image/network capability probes, and metadata-only exec checks in the existing gate and dedicated PostgreSQL. No image build, candidate cleanup, validator container creation, service mutation, or initialization. |
+| `--check` | Read-only preflight, including the fixed privileged secret-metadata helper, Engine/store/effective-API admission, existing-image/network capability probes, and metadata-only exec checks in the existing gate and dedicated PostgreSQL. No image build, candidate cleanup, validator container creation, service mutation, or initialization. |
 | `--with-capi-backend` | Explicitly update the already provisioned CAPI initializers/worker before gate rollout. |
 | `--allow-active-sessions` | Conspicuous acceptance of possible viewer/control-plane interruption; does not stop or pause tenants. |
 | `--health-timeout SECONDS` | Health/init polling deadline; default 300, permitted range 1–1800. |

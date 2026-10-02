@@ -12,6 +12,16 @@ import re
 import stat
 import sys
 
+import deploy_production_secret_metadata as secret_attestation
+
+
+SECRET_METADATA_HELPER = '/usr/local/libexec/axonos-deploy-secret-metadata.py'
+SECRET_METADATA_COMMAND = ('/usr/bin/sudo', '-n', '--', '/usr/bin/python3', '-I', '-S', '-B',
+                           SECRET_METADATA_HELPER)
+SECRET_PATHS = {name.replace('-', '_'): '/etc/axonos/' + name for name in (
+    'x-capi-context-key', 'x-capi-db-url', 'x-capi-hash-key',
+    'x-capi-postgres-bootstrap-password', 'x-capi-postgres-worker-password')}
+
 
 class Refusal(Exception):
     pass
@@ -42,11 +52,61 @@ def env_mode(path):
     print(mode)
 
 
-def secret_metadata(path, root, uid, low, high):
+def metadata_helper_contract():
+    """Only a separately installed root-controlled script may run with sudo.
+
+    No contents are read. Root ownership of every non-writable, non-symlinked
+    ancestor prevents an unprivileged operator replacing the approved program.
+    Root/system interpreter integrity is an administrator trust prerequisite.
+    """
+    path = Path(SECRET_METADATA_HELPER)
+    try:
+        for parent in reversed(path.parents):
+            info = parent.lstat()
+            require(stat.S_ISDIR(info.st_mode) and info.st_uid == info.st_gid == 0 and
+                    stat.S_IMODE(info.st_mode) & 0o7022 == 0,
+                    'Secret metadata helper has an untrusted installation directory')
+        info = path.lstat()
+        require(stat.S_ISREG(info.st_mode) and info.st_uid == info.st_gid == 0 and info.st_nlink == 1 and
+                stat.S_IMODE(info.st_mode) == 0o444 and 0 < info.st_size <= 65536,
+                'Secret metadata helper requires reviewed root-owned 0444 installation')
+    except OSError:
+        raise Refusal('Secret metadata cannot be attested with current privileges; verify reviewed helper provisioning') from None
+
+
+def parse_secret_snapshot(text):
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            require(key not in result, 'Duplicate secret metadata fields refused')
+            result[key] = value
+        return result
+    try:
+        require(isinstance(text, str) and len(text) <= 16384, 'Invalid secret metadata response')
+        return secret_attestation.validate_snapshot(json.loads(text, object_pairs_hook=unique_object))
+    except Exception:
+        raise Refusal('Secret metadata helper returned an invalid or unattested snapshot') from None
+
+
+def secret_metadata(path, root, uid, low, high, snapshot=None):
     path = Path(path)
-    require(path.is_absolute() and str(path.resolve()) == str(path), 'Secret path must be absolute and canonical')
+    require(path.is_absolute() and '..' not in path.parts, 'Secret path must be absolute and canonical')
     require(root not in path.parents, 'Secret files must be outside the repository/build context')
-    info = path.lstat()  # Intentionally never open/read the secret.
+    if snapshot is not None:
+        # No host path traversal by the unprivileged operator. The helper has
+        # walked the fixed path components without following any symlinks.
+        require(secret_attestation.FILES.get(str(path)) == (uid, low, high), 'Secret is outside the reviewed helper allowlist')
+        info = snapshot['files'][str(path)]
+        return (str(path), *(info[field] for field in secret_attestation.FIELDS))
+    # Retained for direct, read-only diagnostic callers. Deployment itself
+    # always supplies a fresh privileged snapshot, including postflight.
+    try:
+        require(str(path.resolve()) == str(path), 'Secret path must be absolute and canonical')
+        info = path.lstat()  # Intentionally never open/read the secret.
+    except PermissionError:
+        raise Refusal('Secret metadata cannot be attested with current privileges') from None
+    except OSError:
+        raise Refusal('Secret metadata cannot be attested; file or path unavailable') from None
     require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1, 'Secret must be a single-link regular file')
     require(info.st_uid == uid and info.st_gid == uid, 'Secret ownership does not match the reviewed CAPI contract')
     require(stat.S_IMODE(info.st_mode) in (0o400, 0o600), 'Secret permissions must be 0400 or 0600')
@@ -68,7 +128,7 @@ def volume(service, target, kind, source=None, readonly=False):
     return item['source']
 
 
-def config_check(document, root, mode):
+def config_check(document, root, mode, snapshot=None):
     root = Path(root).resolve()
     require(document.get('name') == 'axonos', 'Unexpected Compose project')
     services = document['services']
@@ -98,14 +158,14 @@ def config_check(document, root, mode):
         volume(services['x-capi-privacy-init'], target, 'volume', name)
         require(document['volumes'][name]['name'] == 'axonos_' + name, 'Unexpected persistent CAPI volume name')
     require(len(gate.get('volumes', [])) == 3, 'Unreviewed central mounts; review the production contract')
-    context = volume(gate, '/run/secrets/x_capi_context_key', 'bind', readonly=True)
+    context = volume(gate, '/run/secrets/x_capi_context_key', 'bind', SECRET_PATHS['x_capi_context_key'], True)
     require(volume(worker, '/run/secrets/x_capi_context_key', 'bind', readonly=True) == context, 'Gate/worker context keys differ')
     specs = [(context, 10001, 44, 4096)]
     for target, low, high in (('x_capi_db_url', 1, 8192), ('x_capi_hash_key', 32, 256)):
-        specs.append((volume(worker, '/run/secrets/' + target, 'bind', readonly=True), 10001, low, high))
+        specs.append((volume(worker, '/run/secrets/' + target, 'bind', SECRET_PATHS[target], True), 10001, low, high))
     db_init = services['x-capi-db-init']
     for target in ('x_capi_postgres_bootstrap_password', 'x_capi_postgres_worker_password'):
-        path = volume(db_init, '/run/secrets/' + target, 'bind', readonly=True)
+        path = volume(db_init, '/run/secrets/' + target, 'bind', SECRET_PATHS[target], True)
         specs.append((path, 0, 16, 8192))
         if target.endswith('bootstrap_password'):
             volume(services['x-capi-postgres'], '/run/secrets/' + target, 'bind', path, True)
@@ -122,7 +182,15 @@ def config_check(document, root, mode):
     require(document['volumes']['x_capi_postgres_data']['name'] == 'axonos_x_capi_postgres_data', 'Unexpected dedicated DB volume')
     # Runtime metadata is rechecked after the potentially long build. This is a
     # change detector, not a digest of secret contents (none are read).
-    metadata = [secret_metadata(path, root, uid, low, high) for path, uid, low, high in specs]
+    if snapshot is not None:
+        # Validate even when called independently of the controller parser.
+        try:
+            secret_attestation.validate_snapshot(snapshot)
+        except secret_attestation.MetadataRefusal:
+            raise Refusal('Secret metadata snapshot does not satisfy the reviewed contract') from None
+    metadata = [secret_metadata(path, root, uid, low, high, snapshot) for path, uid, low, high in specs]
+    if snapshot is not None:
+        metadata.append(snapshot['directories'])
     digest = hashlib.sha256(json.dumps([document, metadata], sort_keys=True).encode()).hexdigest()
     print(digest)
 
@@ -211,7 +279,7 @@ def worker_check(document, mode, expected):
             'Worker configuration/mounts differ; coordinated backend deployment required')
 
 
-def gate_check(document, root, mode, image):
+def gate_check(document, root, mode, image, snapshot=None):
     item = inspected(document, 'axonos')
     require(item['Image'] == image, 'Central container does not run the validated image')
     env = environment(item)
@@ -230,7 +298,13 @@ def gate_check(document, root, mode, image):
                 'Central CAPI volume/access mismatch')
     key = mounts.get('/run/secrets/x_capi_context_key', {})
     require(key.get('Type') == 'bind' and key.get('RW') is False, 'Context key read-only bind missing')
-    secret_metadata(key['Source'], Path(root).resolve(), 10001, 44, 4096)
+    require(key['Source'] == SECRET_PATHS['x_capi_context_key'], 'Context key source is outside the reviewed helper allowlist')
+    if snapshot is not None:
+        try:
+            secret_attestation.validate_snapshot(snapshot)
+        except secret_attestation.MetadataRefusal:
+            raise Refusal('Secret metadata snapshot does not satisfy the reviewed contract') from None
+    secret_metadata(key['Source'], Path(root).resolve(), 10001, 44, 4096, snapshot)
     print('Central image, mode and required CAPI mounts verified')
 
 

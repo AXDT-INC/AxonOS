@@ -394,9 +394,21 @@ class Deployment:
 
     def load_config(self):
         config = json.loads(self.compose_run('config', '--format', 'json', capture=True, label='Combined Compose configuration'))
-        fingerprint = checked_output(checks.config_check, config, self.root, self.mode)
+        fingerprint = checked_output(checks.config_check, config, self.root, self.mode, self.secret_snapshot())
         resources.validate_shared(config, self.root)
         return config, fingerprint
+
+    def secret_snapshot(self):
+        checks.metadata_helper_contract()
+        try:
+            # No operator-controlled helper, arguments, Python import paths,
+            # sudo prompts or secret contents. Installation is admin-only.
+            text = run(list(checks.SECRET_METADATA_COMMAND),
+                       {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'}, self.root,
+                       capture=True, label='Privileged secret metadata attestation')
+        except Refusal:
+            raise Refusal('Secret metadata cannot be attested with current privileges; verify reviewed helper provisioning') from None
+        return checks.parse_secret_snapshot(text)
 
     def probe_image_api(self, identifier, store):
         # The existing gate is already mandatory. Inspect its immutable image,
@@ -690,7 +702,7 @@ class Deployment:
                 override=override, timeout=120, label='Roll out immutable central gate')
         self.wait('axonos', 'healthy')
         document = self.inspect_service('axonos')
-        checked_output(checks.gate_check, document, self.root, self.mode, self.image_id)
+        checked_output(checks.gate_check, document, self.root, self.mode, self.image_id, self.secret_snapshot())
         self.docker('exec', '-i', document[0]['Id'], '/usr/bin/python3', '-',
             input_text=(self.root / 'scripts/deploy_production_mount_check.py').read_text(), label='CAPI mount postflight')
         for endpoint in ('http://127.0.0.1:6080/vnc.html', 'http://127.0.0.1:8889/'):
