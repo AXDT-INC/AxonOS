@@ -212,6 +212,22 @@ Docker resources, not just the desired Compose file:
   container's declared credentials/database. Core startup, storage, networks,
   and relevant environment must match too. Healthy containers alone do not
   satisfy this contract.
+
+  Startup attestation resolves omitted or `null` command/entrypoint fields using
+  the reviewed service-specific image defaults, not literal JSON equality with
+  the container's inherited argv. These defaults are fixed review assumptions,
+  not inferred from the existing container or a mutable image tag. Resolved
+  Compose values must be `null` or argv lists; explicit argv is compared exactly.
+  Explicit `[]` (including a source-level empty string normalized by Compose)
+  remains an empty override, never an inheritance request. A non-null entrypoint
+  suppresses the image's default command under the
+  [declared Compose contract](https://docs.docker.com/reference/compose-file/services/#entrypoint).
+  The reviewed Engine's
+  [config merge](https://github.com/moby/moby/blob/docker-v29.5.2/daemon/commit.go#L69-L76)
+  can nevertheless inherit image CMD in some explicit-empty cases. If actual
+  startup then differs from the declared intent, preflight refuses it rather
+  than accepting that fallback or weakening the startup check. This normalization
+  does not authorize a launcher/database startup change.
 - Gate and worker shared CAPI configuration is normalized using the application
   configuration loader and compared before mutation, including revenue-wallet
   and each exclusion source, audience/policy/deployment settings, privacy

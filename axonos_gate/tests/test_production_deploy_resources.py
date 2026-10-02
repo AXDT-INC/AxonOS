@@ -110,6 +110,99 @@ class ResourceAttestationTests(unittest.TestCase):
     def test_reviewed_resources_and_dependencies_pass(self):
         self.validate()
 
+    def test_real_host_null_startup_inherits_reviewed_image_defaults(self):
+        services = self.payload['config']['services']
+        services['axonos-launcher']['command'] = None
+        services['postgres'].update(command=None, entrypoint=None)
+        # Actual Config is deliberately independent of the desired nulls.
+        self.validate()
+        services['axonos-launcher']['entrypoint'] = None
+        self.validate()
+
+    def test_null_inheritance_does_not_accept_actual_startup_drift(self):
+        for service in ('axonos-launcher', 'postgres'):
+            for field in ('Cmd', 'Entrypoint'):
+                for actual in (None, [], ['unexpected', '--argument']):
+                    if service == 'axonos-launcher' and field == 'Entrypoint' and actual in (None, []):
+                        continue  # Both represent the reviewed absence of an entrypoint.
+                    with self.subTest(service=service, field=field, actual=actual):
+                        self.payload = fixture()
+                        self.payload['config']['services'][service].update(command=None, entrypoint=None)
+                        self.payload['dependencies'][service][0]['Config'][field] = actual
+                        self.rejected()
+
+    def test_explicit_empty_command_never_inherits_image_command(self):
+        for service in ('axonos-launcher', 'postgres'):
+            with self.subTest(service=service):
+                self.payload = fixture()
+                self.payload['config']['services'][service]['command'] = []
+                # Even if Engine's len-zero merge restores the image CMD, it
+                # must not satisfy the explicitly empty Compose contract.
+                self.rejected()
+                for actual in ([], None):
+                    self.payload['dependencies'][service][0]['Config']['Cmd'] = actual
+                    self.validate()
+
+    def test_explicit_empty_entrypoint_never_inherits_image_entrypoint(self):
+        desired = self.payload['config']['services']['postgres']
+        desired.update(command=['postgres'], entrypoint=[])
+        self.rejected()
+        for actual in ([], None):
+            self.payload['dependencies']['postgres'][0]['Config']['Entrypoint'] = actual
+            self.validate()
+
+    def test_explicit_entrypoint_suppresses_inherited_command(self):
+        for entrypoint in ([], ['/reviewed-wrapper', '--flag']):
+            for command in ({}, {'command': None}):
+                with self.subTest(entrypoint=entrypoint, command=command):
+                    self.payload = fixture()
+                    desired = self.payload['config']['services']['postgres']
+                    desired.update(entrypoint=entrypoint, **command)
+                    actual = self.payload['dependencies']['postgres'][0]['Config']
+                    actual['Entrypoint'] = entrypoint
+                    # An image-default CMD is not an explicit command override.
+                    self.rejected()
+                    for empty in (None, []):
+                        actual['Cmd'] = empty
+                        self.validate()
+
+    def test_explicit_startup_overrides_require_exact_argv(self):
+        for service in ('axonos-launcher', 'postgres'):
+            with self.subTest(service=service):
+                self.payload = fixture()
+                desired = self.payload['config']['services'][service]
+                desired.update(command=['reviewed-command', 'one argument'],
+                               entrypoint=['/reviewed-wrapper', '--flag'])
+                self.rejected()
+                actual = self.payload['dependencies'][service][0]['Config']
+                actual.update(Cmd=list(desired['command']), Entrypoint=list(desired['entrypoint']))
+                self.validate()
+                for field in ('Cmd', 'Entrypoint'):
+                    saved = actual[field]
+                    for value in (None, [], [*saved, 'extra'], list(reversed(saved))):
+                        actual[field] = value
+                        self.rejected()
+                    actual[field] = saved
+
+    def test_non_normalized_startup_metadata_refused(self):
+        for field, inspect_field in (('command', 'Cmd'), ('entrypoint', 'Entrypoint')):
+            for value in ('', 'postgres', False, 0, {}, [None], [False]):
+                with self.subTest(field=field, value=value):
+                    self.payload = fixture()
+                    self.payload['config']['services']['postgres'][field] = value
+                    self.payload['dependencies']['postgres'][0]['Config'][inspect_field] = value
+                    self.rejected()
+
+    def test_missing_actual_startup_metadata_refused_even_when_empty_expected(self):
+        for field in ('Cmd', 'Entrypoint'):
+            with self.subTest(field=field):
+                self.payload = fixture()
+                self.payload['config']['services']['axonos-launcher'].update(command=[], entrypoint=[])
+                actual = self.payload['dependencies']['axonos-launcher'][0]['Config']
+                actual.update(Cmd=[], Entrypoint=[])
+                del actual[field]
+                self.rejected()
+
     def test_compose_hash_wire_representation(self):
         import hashlib
         # Fixed expected byte representations, not hashes self-generated from
@@ -181,6 +274,11 @@ class ResourceAttestationTests(unittest.TestCase):
             output([*combined, 'config', '--quiet'])
             document = json.loads(output([*combined, 'config', '--format', 'json']))
             resources.validate_shared(document, ROOT)
+            for service in ('axonos-launcher', 'postgres'):
+                for field in ('command', 'entrypoint'):
+                    self.assertIsNone(document['services'][service].get(field))
+                    self.payload['config']['services'][service][field] = document['services'][service].get(field)
+            self.validate()  # Real rendered nulls against image-default inspect fixtures.
             for kind in ('network', 'volume'):
                 for desired in document[kind + 's'].values():
                     if not desired.get('external'):
@@ -188,6 +286,40 @@ class ResourceAttestationTests(unittest.TestCase):
             plan = json.loads(output([*combined, 'build', '--print', '--build-arg', 'AXONOS_SKIP_HEAVY=0', 'axonos']))
             self.assertEqual((project / plan['target']['axonos']['context']).resolve(), project)
             self.assertEqual(plan['target']['axonos']['args']['AXONOS_SKIP_HEAVY'], '0')
+
+    @unittest.skipUnless(shutil.which('docker'), 'requires offline Compose CLI')
+    def test_real_compose_startup_null_empty_and_override_rendering_no_daemon(self):
+        variants = ({}, {'value': None}, {'value': []}, {'value': ''},
+                    {'value': ['executable', 'one argument']}, {'value': 'executable "one argument"'})
+        normalized = (None, None, [], [], ['executable', 'one argument'], ['executable', 'one argument'])
+        with tempfile.TemporaryDirectory(prefix='.deploy-startup-compose-', dir=ROOT) as directory:
+            project = Path(directory)
+            (project / 'docker-config').mkdir()
+            services = {}
+            for cmd_index, command in enumerate(variants):
+                for ep_index, entrypoint in enumerate(variants):
+                    service = {'image': 'synthetic-never-pulled:local'}
+                    if command:
+                        service['command'] = command['value']
+                    if entrypoint:
+                        service['entrypoint'] = entrypoint['value']
+                    services[f'case-{cmd_index}-{ep_index}'] = service
+            source = project / 'compose.json'
+            source.write_text(json.dumps({'services': services}))
+            result = subprocess.run(
+                ['docker', '--host', 'unix:///DO_NOT_CONTACT_DAEMON.sock', 'compose',
+                 '--project-directory', str(project), '--project-name', 'startup-contract',
+                 '--env-file', '/dev/null', '-f', str(source), 'config', '--format', 'json'],
+                env={'PATH': os.environ['PATH'], 'DOCKER_CONFIG': str(project / 'docker-config')},
+                cwd=project, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, 'Offline startup Compose rendering failed')
+            rendered = json.loads(result.stdout)['services']
+            for cmd_index in range(len(variants)):
+                for ep_index in range(len(variants)):
+                    actual = rendered[f'case-{cmd_index}-{ep_index}']
+                    self.assertEqual(actual['command'], normalized[cmd_index])
+                    self.assertEqual(actual['entrypoint'], normalized[ep_index])
+
     def test_network_drift_rejected(self):
         for field, value in (('Driver', 'overlay'), ('Scope', 'swarm'), ('Internal', False),
                              ('Attachable', True), ('EnableIPv6', True), ('EnableIPv4', False),

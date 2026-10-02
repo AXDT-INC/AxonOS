@@ -463,11 +463,24 @@ elif tool == 'docker':
         if scenario.get('core_db_drift') and service == 'postgres': env[scenario['core_db_drift']] = 'different'
         defaults = {'postgres': (['postgres'], ['docker-entrypoint.sh']),
                     'axonos-launcher': (['python3', '/app/session_launcher_service.py'], None)}
-        command, entrypoint = defaults.get(service, (None, None))
+        image_command, image_entrypoint = defaults.get(service, (None, None))
+        command, entrypoint = configured.get('command'), configured.get('entrypoint')
+        # Model Engine's actual image-config merge independently of the
+        # validator's declared Compose intent, including Moby's len-zero CMD
+        # fallback. Null is NOT the literal runtime argv returned by inspect.
+        if not entrypoint:
+            if not command:
+                command = image_command
+            if entrypoint is None:
+                entrypoint = image_entrypoint
+        if entrypoint == ['']:
+            entrypoint = None
+        startup = scenario.get('actual_startup', {}).get(service, {})
+        command = startup.get('Cmd', command)
+        entrypoint = startup.get('Entrypoint', entrypoint)
         networks = {config['networks'][name]['name']: {} for name in configured.get('networks', {})}
         out(json.dumps([{'Id': args[1], 'Config': {'Labels': labels, 'Env': [k + '=' + v for k, v in env.items()],
-                         'Image': configured.get('image', ''), 'Cmd': configured.get('command', command),
-                         'Entrypoint': configured.get('entrypoint', entrypoint),
+                         'Image': configured.get('image', ''), 'Cmd': command, 'Entrypoint': entrypoint,
                          'User': configured.get('user', '' if service in ('postgres', 'axonos-launcher') else '10001:10001')},
                          'HostConfig': {'ReadonlyRootfs': configured.get('read_only', False),
                                         'Privileged': configured.get('privileged', False)},
@@ -611,6 +624,41 @@ class DeploymentOrchestrationTests(unittest.TestCase):
         result = self.run_script('--check', '--with-capi-backend')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.mutations(), [])
+
+    def test_check_inherits_null_startup_for_preserved_launcher_and_postgres(self):
+        self.scenario = {'image_store': 'containerd', 'image_store_info': {'ServerVersion': '29.5.2'}}
+        for service in ('axonos-launcher', 'postgres'):
+            self.config['services'][service].update(command=None, entrypoint=None)
+        result = self.run_script('--check')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('CHECK PASSED', result.stdout)
+        self.assertEqual(self.mutations(), [])
+        self.assertNotIn('built', self.state())
+
+    def test_null_declared_startup_still_rejects_actual_preserved_dependency_drift(self):
+        for service in ('axonos-launcher', 'postgres'):
+            self.config['services'][service].update(command=None, entrypoint=None)
+        cases = (('axonos-launcher', {'Cmd': None}), ('axonos-launcher', {'Cmd': []}),
+                 ('axonos-launcher', {'Cmd': ['python3', '/app/unreviewed.py']}),
+                 ('axonos-launcher', {'Entrypoint': ['/unreviewed-entrypoint']}),
+                 ('postgres', {'Cmd': ['postgres', '-c', 'log_statement=all']}),
+                 ('postgres', {'Entrypoint': None}), ('postgres', {'Entrypoint': []}),
+                 ('postgres', {'Entrypoint': ['/unreviewed-entrypoint']}))
+        for service, startup in cases:
+            with self.subTest(service=service, startup=startup):
+                self.scenario = {'actual_startup': {service: startup}}
+                self.assert_failed(self.run_script('--with-capi-backend'))
+                self.assertEqual(self.mutations(), [])
+                self.assertNotIn('built', self.state())
+                self.assertNotIn('stopped_worker', self.state())
+
+    def test_explicit_empty_startup_does_not_attest_runtime_image_default(self):
+        for field in ('command', 'entrypoint'):
+            with self.subTest(field=field):
+                self.config['services']['postgres'].update(command=None, entrypoint=None)
+                self.config['services']['postgres'][field] = []
+                self.assert_failed(self.run_script('--check'))
+                self.assertEqual(self.mutations(), [])
 
     def test_missing_docker_cli_refuses_without_any_external_command(self):
         (self.bin / 'docker').unlink()

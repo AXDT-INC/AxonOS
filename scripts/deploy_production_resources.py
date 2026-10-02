@@ -234,12 +234,31 @@ def mount_contract(document, service, item):
     require(sorted(expected) == sorted(actual), 'Preserved dependency mount configuration differs')
 
 
+def startup_argv(value):
+    # `compose config --format json` normalizes shell-form strings (including
+    # "") to argv lists. Do not guess at unnormalized or malformed metadata.
+    require(value is None or (isinstance(value, list) and all(isinstance(arg, str) for arg in value)),
+            'Unsupported dependency startup metadata')
+    return [] if value is None else value
+
+
 def dependency_structure(document, service, item, command, entrypoint):
     desired = document['services'][service]
     require(item['Config'].get('Image') == desired.get('image', 'axonos-' + service),
             'Preserved dependency image configuration differs')
-    require(item['Config'].get('Cmd') == desired.get('command', command) and
-            (item['Config'].get('Entrypoint') or []) == (desired.get('entrypoint', entrypoint) or []),
+    desired_command = desired.get('command')
+    desired_entrypoint = desired.get('entrypoint')
+    # Only absent/null means inheritance. Non-null entrypoint suppresses image
+    # CMD under the Compose contract; an explicit command still overrides it.
+    # Keep [] distinct until inheritance is resolved. If Engine restores image
+    # CMD for an explicit-empty override, refuse that mismatch rather than
+    # silently accepting startup different from the declared Compose intent.
+    expected_command = desired_command
+    if desired_command is None:
+        expected_command = command if desired_entrypoint is None else []
+    expected_entrypoint = entrypoint if desired_entrypoint is None else desired_entrypoint
+    require(startup_argv(item['Config']['Cmd']) == startup_argv(expected_command) and
+            startup_argv(item['Config']['Entrypoint']) == startup_argv(expected_entrypoint),
             'Preserved dependency startup configuration differs')
     expected_networks = {document['networks'][name]['name'] for name in desired.get('networks', {})}
     require(set(item['NetworkSettings']['Networks']) == expected_networks,
