@@ -86,7 +86,7 @@ maximum, not proof of the API actually used.
 | Reviewed Linux Engine | Permitted effective API |
 | --- | --- |
 | **28.5.2** | **1.48–1.51**, also within the client's supported maximum and the server's declared minimum |
-| **29.5.1** | **1.48–1.54**, with the same client/server bounds |
+| **29.5.1 or 29.5.2** | **1.48–1.54**, with the same client/server bounds |
 
 The server version must agree with `docker info`; its advertised API maximum
 must match the reviewed release. Missing, malformed, inconsistent, or unsupported
@@ -130,6 +130,46 @@ and [container inspection handlers](https://github.com/moby/moby/blob/docker-v29
 Docker's [API versioning overview](https://docs.docker.com/reference/api/engine/)
 describes negotiation and environment overrides; explicit agreement is checked
 rather than assuming every CLI release handles overrides identically.
+
+### Exact 29.5.2 compatibility review
+
+Admission of **29.5.2** follows a pinned upstream source comparison, not an
+assumption that patch releases are interchangeable. The reviewed Moby comparison
+is [`docker-v29.5.1` → `docker-v29.5.2`](https://github.com/moby/moby/compare/dd24a3adc1db4c762fb1b26b35c08ffd936f2d8f...568f755ebeb1ac9c6a8febbda6cd371ea0a9630b)
+(`dd24a3adc1db4c762fb1b26b35c08ffd936f2d8f` →
+`568f755ebeb1ac9c6a8febbda6cd371ea0a9630b`); the CLI comparison is
+[`v29.5.1` → `v29.5.2`](https://github.com/docker/cli/compare/2518b52d948a0cbee071d394c03c86a3005636ba...79eb04c7d8e1d73247cb7fe011eecc645063e0f0)
+(`2518b52d948a0cbee071d394c03c86a3005636ba` →
+`79eb04c7d8e1d73247cb7fe011eecc645063e0f0`).
+
+| Contract | Comparison result |
+| --- | --- |
+| Engine API admission and inspect metadata | `daemon/config/config.go`, `daemon/server/middleware/version.go`, and image/network/container/volume inspect routes are byte-identical. Maximum API remains **1.54**; descriptor, network IPv4, and legacy-field behavior are unchanged. |
+| Image-store/reference handling | Reviewed `daemon/containerd/` and `daemon/images/` inspect/delete/tag implementations, containerd listing/store metadata, and daemon info/list code are byte-identical. Derived digest versus stored canonical-reference handling and last-same-repository-tag protection remain unchanged. |
+| CLI effective API, inspection, and removal | `cli/command/system/version.go`, `cli/command/cli.go`, context loading, image inspect/remove and inspection helper, vendored SDK client/ping/image inspect/remove, and `vendor/modules.txt` are byte-identical. |
+
+The full Engine delta contains an unrelated `docker cp` mount/symlink fix and
+AWS CloudWatch dependency updates, not image-store/reference or API-contract
+changes. The CLI delta changes release/CI/documentation files and Buildx versions
+used in its upstream development/end-to-end-test Dockerfiles, not the inspected
+CLI/SDK implementation. This review does not separately certify arbitrary
+Compose/Buildx plugin upgrades.
+
+The 29.5.2 source anchors include its
+[API constants](https://github.com/moby/moby/blob/docker-v29.5.2/daemon/config/config.go),
+[image response handler](https://github.com/moby/moby/blob/docker-v29.5.2/daemon/server/router/image/image_routes.go),
+[containerd inspection](https://github.com/moby/moby/blob/docker-v29.5.2/daemon/containerd/image_inspect.go),
+[containerd deletion](https://github.com/moby/moby/blob/docker-v29.5.2/daemon/containerd/image_delete.go),
+[classic inspection](https://github.com/moby/moby/blob/docker-v29.5.2/daemon/images/image_inspect.go),
+[classic deletion](https://github.com/moby/moby/blob/docker-v29.5.2/daemon/images/image_delete.go),
+and [CLI version output](https://github.com/docker/cli/blob/v29.5.2/cli/command/system/version.go).
+Synthetic regression fixtures model the supplied host profile: Linux
+client/server **29.5.2**, effective/maximum API **1.54**, server minimum **1.40**,
+containerd `overlayfs` with `driver-type=io.containerd.snapshotter.v1`, and no
+`DOCKER_API_VERSION` override. Source review and these synthetic tests are **not
+production execution**: they do not establish that a real host passes all
+deployment checks. Both supported storage modes retain their existing reference
+and capability checks; no `29.5.x` wildcard or broader release range is admitted.
 
 ## Preflight contracts
 
@@ -327,8 +367,8 @@ whether `RepoDigests` is nonempty:
 
 | Engine/storage combination | Reference contract used by retention |
 | --- | --- |
-| Linux Engine **28.5.2 or 29.5.1**, classic `overlay2`, no `driver-type` snapshotter marker | `RepoTags` contains actual tag references; `RepoDigests` contains stored canonical references. |
-| Linux Engine **28.5.2 or 29.5.1**, `overlayfs`, `driver-type=io.containerd.snapshotter.v1` | `RepoTags` exposes actual stored names, including explicit canonical names containing `@`; `RepoDigests` also includes derived repository/digest names for ordinary tags. |
+| Linux Engine **28.5.2, 29.5.1, or 29.5.2**, classic `overlay2`, no `driver-type` snapshotter marker | `RepoTags` contains actual tag references; `RepoDigests` contains stored canonical references. |
+| Linux Engine **28.5.2, 29.5.1, or 29.5.2**, `overlayfs`, `driver-type=io.containerd.snapshotter.v1` | `RepoTags` exposes actual stored names, including explicit canonical names containing `@`; `RepoDigests` also includes derived repository/digest names for ordinary tags. |
 | Other version, storage driver, conflicting/missing mode evidence, or unsupported metadata | Refuse before building; do not guess reference/deletion semantics. |
 
 These are exact version/mode limits, not a blanket approval of future patch or

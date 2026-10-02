@@ -139,7 +139,7 @@ elif tool == 'docker':
     args = args[2:]
     engine_version = scenario.get('image_store_info', {}).get('ServerVersion',
         '29.5.1' if scenario.get('image_store') == 'containerd' else '28.5.2')
-    maximum_api = '1.54' if engine_version == '29.5.1' else '1.51'
+    maximum_api = '1.54' if engine_version in ('29.5.1', '29.5.2') else '1.51'
     effective_api = os.environ.get('DOCKER_API_VERSION') or scenario.get('negotiated_api', maximum_api)
     if args[:1] == ['info']:
         if scenario.get('daemon_fail'): fail()
@@ -157,7 +157,7 @@ elif tool == 'docker':
         document = {'Client': {'Version': engine_version, 'Os': 'linux', 'ApiVersion': effective_api,
                     'DefaultAPIVersion': scenario.get('client_default_api', maximum_api)},
                     'Server': {'Version': engine_version, 'Os': 'linux', 'ApiVersion': maximum_api,
-                    'MinAPIVersion': '1.40' if engine_version == '29.5.1' else '1.24'}}
+                    'MinAPIVersion': '1.40' if engine_version in ('29.5.1', '29.5.2') else '1.24'}}
         document['Client'].update(scenario.get('version_client', {}))
         document['Server'].update(scenario.get('version_server', {}))
         out(json.dumps(scenario.get('version_metadata', document)))
@@ -904,7 +904,7 @@ class DeploymentOrchestrationTests(unittest.TestCase):
 
     def test_unreviewed_or_contradictory_image_store_refuses_before_build_or_backend_mutation(self):
         cases = (
-            {'ServerVersion': '29.5.2'},
+            {'ServerVersion': '29.5.3'},
             {'ServerVersion': None},
             {'OSType': 'windows'},
             {'Driver': 'unreviewed'},
@@ -953,6 +953,44 @@ class DeploymentOrchestrationTests(unittest.TestCase):
                 self.assertLess(commands.index(probe), commands.index(build))
                 self.assertEqual(self.state()['deployed_image'], IMAGE)
                 self.assertEqual(self.state()['candidate_images'], {})
+
+    def test_actual_host_2952_containerd_api154_admits_without_override_or_candidates(self):
+        self.scenario = {'image_store': 'containerd', 'image_store_info': {'ServerVersion': '29.5.2'}}
+        _, environment = self.prepare_run('--check')
+        self.assertNotIn('DOCKER_API_VERSION', environment)
+        self.assertEqual(self.state().get('candidate_images', {}), {})
+        result = self.run_script('--check')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Docker API 1.54:', result.stdout)
+        self.assertEqual(self.mutations(), [])
+        self.assertEqual(self.state().get('candidate_images', {}), {})
+
+        offset = len(self.commands())
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        commands = self.commands()[offset:]
+        version = next(command for command in commands
+                       if command[0] == 'docker' and command[3:] == ['version', '--format', '{{json .}}'])
+        probe = next(command for command in commands
+                     if command[0] == 'docker' and command[3:] == ['image', 'inspect', IMAGE])
+        build = next(command for command in commands
+                     if command[0] == 'docker' and command[3:5] == ['buildx', 'bake'])
+        self.assertLess(commands.index(version), commands.index(probe))
+        self.assertLess(commands.index(probe), commands.index(build))
+        self.assertEqual(self.state()['deployed_image'], IMAGE)
+        self.assertEqual(self.state()['candidate_images'], {})
+
+    def test_containerd_2952_rejects_api147_and155_before_mutation(self):
+        for version in ('1.47', '1.55'):
+            with self.subTest(version=version):
+                self.scenario = {'image_store': 'containerd', 'image_store_info': {'ServerVersion': '29.5.2'},
+                                 'docker_api_version': version}
+                self.assert_failed(self.run_script('--with-capi-backend'))
+                self.assertEqual(self.mutations(), [])
+                self.assertEqual(self.state().get('candidate_images', {}), {})
+                self.assertNotIn('built', self.state())
+                self.assertNotIn('promoted', self.state())
+                self.assertNotIn('stopped_worker', self.state())
 
     def test_negotiated_api_downgrade_refuses_even_with_new_client_and_engine(self):
         self.scenario = {'image_store': 'containerd', 'image_store_info': {'ServerVersion': '28.5.2'},

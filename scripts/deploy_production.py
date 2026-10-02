@@ -47,9 +47,9 @@ CANDIDATE_CLEANUP_TIMEOUT = 60
 # Reference enumeration/deletion semantics verified in these upstream releases.
 # Do not widen to a version range: RepoTags' canonical-name behavior is not an
 # Engine API guarantee. See the versioned Moby sources in the runbook.
-CANDIDATE_ENGINE_VERSIONS = {'28.5.2', '29.5.1'}
+CANDIDATE_ENGINE_VERSIONS = {'28.5.2', '29.5.1', '29.5.2'}
 DOCKER_API_MIN = (1, 48)
-DOCKER_API_MAX = {'28.5.2': (1, 51), '29.5.1': (1, 54)}
+DOCKER_API_MAX = {'28.5.2': (1, 51), '29.5.1': (1, 54), '29.5.2': (1, 54)}
 Refusal = checks.Refusal
 require = checks.require
 

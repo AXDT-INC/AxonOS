@@ -24,14 +24,16 @@ class DockerApiAdmissionTests(unittest.TestCase):
                             'MinAPIVersion': '1.24' if engine == '28.5.2' else '1.40', 'Os': 'linux'}})
 
     def test_api_147_is_rejected_even_when_engine_and_client_default_support_newer(self):
-        info, version = self.versions(effective='1.47')
-        for override in ('', '1.47'):
-            with self.subTest(override=override), self.assertRaises(deploy.Refusal):
-                deploy.docker_api_contract(info, version, override)
+        for engine in ('28.5.2', '29.5.1', '29.5.2'):
+            info, version = self.versions(engine, effective='1.47')
+            for override in ('', '1.47'):
+                with self.subTest(engine=engine, override=override), self.assertRaises(deploy.Refusal):
+                    deploy.docker_api_contract(info, version, override)
 
     def test_reviewed_engines_accept_supported_effective_apis_with_or_without_override(self):
         for engine, versions in (('28.5.2', ('1.48', '1.49', '1.50', '1.51')),
-                                 ('29.5.1', ('1.48', '1.49', '1.50', '1.51', '1.52', '1.53', '1.54'))):
+                                 ('29.5.1', ('1.48', '1.49', '1.50', '1.51', '1.52', '1.53', '1.54')),
+                                 ('29.5.2', ('1.48', '1.49', '1.50', '1.51', '1.52', '1.53', '1.54'))):
             for api in versions:
                 for override in ('', api):
                     with self.subTest(engine=engine, api=api, override=override):
@@ -66,6 +68,16 @@ class DockerApiAdmissionTests(unittest.TestCase):
         version['Server']['MinAPIVersion'] = '1.49'
         with self.assertRaises(deploy.Refusal):
             deploy.docker_api_contract(info, version, '')
+
+    def test_2952_support_does_not_admit_newer_api_or_unreviewed_patch_versions(self):
+        info, version = self.versions('29.5.2', '1.55')
+        version['Client']['DefaultAPIVersion'] = '1.55'
+        with self.assertRaises(deploy.Refusal):
+            deploy.docker_api_contract(info, version, '1.55')
+        for engine in ('29.5.3', '29.5.99', '29.5.2-custom'):
+            info, version = self.versions(engine, '1.54')
+            with self.subTest(engine=engine), self.assertRaises(deploy.Refusal):
+                deploy.docker_api_contract(info, version, '')
 
     def test_missing_malformed_or_unknown_version_metadata_fails_closed(self):
         info, baseline = self.versions()

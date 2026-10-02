@@ -1,6 +1,6 @@
 """Candidate policy with classic/containerd-shaped metadata; no Docker daemon.
 
-Containerd fixtures model Moby v28.5.2/docker-v29.5.1 image_inspect.go:
+Containerd fixtures model Moby v28.5.2/docker-v29.5.1/docker-v29.5.2 image_inspect.go:
 RepoTags contains actual stored names (including canonical names); RepoDigests
 also includes repo@target for each tag. Classic digests are actual records.
 """
@@ -157,11 +157,11 @@ class CandidateRetentionTests(unittest.TestCase):
         self.assertEqual(item['RepoTags'], ['axonos:latest', 'retention:keep'])
 
     def test_only_reference_of_container_image_is_preserved_on_both_stores(self):
-        for store in ('classic', 'containerd'):
+        for store in ('classic', '29.5.1', '29.5.2'):
             with self.subTest(store=store):
                 self.setUp()
-                if store == 'containerd':
-                    self.use_containerd()
+                if store != 'classic':
+                    self.use_containerd(store)
                 tag, item = self.candidate(1)
                 self.references.add(item['Id'])
                 for number in range(2, 5):
@@ -173,7 +173,7 @@ class CandidateRetentionTests(unittest.TestCase):
                     self.controller.maintain_candidates(strict=True)
 
     def test_containerd_derived_digests_do_not_block_four_to_three_or_next_admission(self):
-        for version in ('28.5.2', '29.5.1'):
+        for version in ('28.5.2', '29.5.1', '29.5.2'):
             with self.subTest(version=version):
                 self.setUp()
                 self.use_containerd(version)
@@ -212,12 +212,12 @@ class CandidateRetentionTests(unittest.TestCase):
                 self.assertEqual(len(self.images), 3)
 
     def test_same_repository_canonical_protected_even_with_unrelated_tag_on_both_stores(self):
-        for store in ('classic', 'containerd'):
+        for store in ('classic', '29.5.1', '29.5.2'):
             for anchors in ((), ('axonos:latest',), ('retention:rollback',)):
                 with self.subTest(store=store, anchors=anchors):
                     self.setUp()
-                    if store == 'containerd':
-                        self.use_containerd()
+                    if store != 'classic':
+                        self.use_containerd(store)
                     tag, item = self.candidate(1, other_tags=anchors)
                     digest = self.canonical(item, 'axonos-deploy-candidate')
                     for number in range(2, 5):
@@ -230,11 +230,11 @@ class CandidateRetentionTests(unittest.TestCase):
                         self.controller.maintain_candidates(strict=True)
 
     def test_same_repository_canonical_survives_when_another_same_repository_tag_remains(self):
-        for store in ('classic', 'containerd'):
+        for store in ('classic', '29.5.1', '29.5.2'):
             with self.subTest(store=store):
                 self.setUp()
-                if store == 'containerd':
-                    self.use_containerd()
+                if store != 'classic':
+                    self.use_containerd(store)
                 anchor = 'axonos-deploy-candidate:manual-retention'
                 tag, item = self.candidate(1, other_tags=(anchor,))
                 digest = self.canonical(item, 'axonos-deploy-candidate')
@@ -246,11 +246,11 @@ class CandidateRetentionTests(unittest.TestCase):
                 self.assertIn(digest, item['RepoDigests'])
 
     def test_different_repository_canonical_survives_and_does_not_block_cleanup(self):
-        for store in ('classic', 'containerd'):
+        for store in ('classic', '29.5.1', '29.5.2'):
             with self.subTest(store=store):
                 self.setUp()
-                if store == 'containerd':
-                    self.use_containerd()
+                if store != 'classic':
+                    self.use_containerd(store)
                 tag, item = self.candidate(1)
                 digest = self.canonical(item, 'registry.example:5000/retention/image')
                 self.references.add(item['Id'])
@@ -259,7 +259,7 @@ class CandidateRetentionTests(unittest.TestCase):
                 self.maintain(strict=True)
                 self.assertEqual(self.removals(), [tag])
                 self.assertIn(digest, item['RepoDigests'])
-                if store == 'containerd':
+                if store != 'classic':
                     self.assertEqual(item['RepoTags'], [digest])
 
     def test_docker_hub_repository_aliases_cannot_bypass_canonical_protection(self):
@@ -287,7 +287,7 @@ class CandidateRetentionTests(unittest.TestCase):
         self.assertEqual(self.removals(), [])
 
     def test_unknown_backend_or_version_refuses_even_empty_inventory(self):
-        cases = ({'ServerVersion': '29.5.2'}, {'ServerVersion': '28.5.2-custom'}, {'OSType': 'windows'},
+        cases = ({'ServerVersion': '29.5.3'}, {'ServerVersion': '28.5.2-custom'}, {'OSType': 'windows'},
                  {'Driver': 'btrfs'}, {'Driver': 'overlayfs'}, {'DriverStatus': None},
                  {'DriverStatus': [['driver-type', 'io.containerd.snapshotter.v1']]},
                  {'DriverStatus': [['driver-type', 'unknown']]})
