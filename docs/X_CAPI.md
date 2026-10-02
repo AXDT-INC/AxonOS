@@ -1,12 +1,29 @@
 # Privacy-minimized X Conversion API
 
+This is the X CAPI architecture, security, privacy, activation, and configuration
+reference. See the [historical off-mode guide](X_CAPI_OFF_Mode_First_Deployment_Guide_Updated.md)
+for the actual first production preparation/deployment and troubleshooting, and
+the [production deployment runbook](PRODUCTION_DEPLOYMENT.md) for current routine
+updates, verified host prerequisites, and the post-reboot checklist.
+
 ## Status and protocol decision
+
+**Original staging status (retained for context):**
 
 The implementation is staged and defaults to `X_CAPI_MODE=off`. It has not
 been migrated, deployed, activated, or tested against X. The operator must create a
 new conversion source and supply the exact Events Manager source/Pixel ID and
 exact IDs for `wallet_verified`, `deposit_completed`, and `session_started`.
 IDs are copied verbatim; code never creates or rewrites them.
+
+**2026-10-02 current-state note:** The not-yet-migrated/deployed statement above
+predates the completed production preparation. Dedicated CAPI bootstrap and the
+off-mode gate/worker deployment subsequently completed successfully, as recorded
+in the [historical guide](X_CAPI_OFF_Mode_First_Deployment_Guide_Updated.md#26-completed-off-mode-production-state).
+The [real-host baseline](PRODUCTION_DEPLOYMENT.md#first-time-host-provisioning-and-verified-production-baseline)
+records a successful deployment-script `--check` with CAPI `off`. This updates
+infrastructure status only; it does not establish activation or testing against
+X, and the live block below remains in force.
 
 **Real live collection and delivery are structurally disabled.** The reviewed official X
 materials provide no normative mechanism for proving the authenticity or
@@ -374,6 +391,15 @@ validated scope; a rejected rollback still republishes the durable high-water.
 
 ## Operator runbook (do not execute without approval)
 
+**2026-10-02 workflow note:** The manual sequence below covers initial CAPI
+provisioning and subsystem configuration/activation constraints. For an already
+provisioned healthy production host, use the [routine production runbook](PRODUCTION_DEPLOYMENT.md):
+`./scripts/deploy-production.sh --check`, then `./scripts/deploy-production.sh`
+after a passing preflight and within the operator maintenance window. Its
+explicit backend option has a separately checked initializer/worker sequence.
+The [historical off-mode guide](X_CAPI_OFF_Mode_First_Deployment_Guide_Updated.md)
+preserves the actual first deployment commands and recovery chronology.
+
 1. This overlay uses a new, dedicated PostgreSQL data volume and database; it
    never migrates or joins the existing AxonOS production database/network.
    Back up the dedicated volume before every later schema/image change and keep
@@ -545,13 +571,18 @@ validated scope; a rejected rollback still republishes the durable high-water.
      x-capi-postgres x-capi-privacy-init x-capi-db-init x-capi-worker
    ```
 
-   Do not use `--no-deps` for the worker: it must wait for database health,
+   During manual first provisioning, do not use `--no-deps` for the worker:
+   it must wait for database health,
    successful schema/role initialization, and privacy-volume provisioning.
    Enabling the feature also requires a separately scheduled central-gate
-   recreation to add only its context-key/runtime/privacy mounts. Use the
-   normal gate rollout command with the same two Compose files and
-   `--no-deps axonos`; the gate has no dependency on worker/database readiness,
-   so a failed optional CAPI deployment cannot prevent core startup.
+   recreation to add only its context-key/runtime/privacy mounts. Current
+   routine gate updates use `./scripts/deploy-production.sh` under the
+   [production runbook](PRODUCTION_DEPLOYMENT.md), which owns the two-file
+   Compose invocation and targeted rollout. Its
+   [backend sequence](PRODUCTION_DEPLOYMENT.md#explicit-capi-backend-sequence-and-mutation-boundary)
+   uses worker `--no-deps` only after attesting fresh successful initializers
+   and database readiness. The gate has no Compose dependency on worker/database
+   readiness, so a failed optional CAPI deployment cannot prevent core startup.
    This is intentionally one host and one `x-capi-worker`; do not use Compose
    scaling, another project/host against the same database, or independent
    runtime/privacy volumes.

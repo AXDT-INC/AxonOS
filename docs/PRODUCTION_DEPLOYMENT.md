@@ -12,6 +12,159 @@ deployment**, not a fresh installer, repair tool, PostgreSQL upgrader, or
 unattended release system. It does not promise zero downtime or transactional
 rollback. Establish an external maintenance/admission window before deployment.
 
+Use [X CAPI](X_CAPI.md) for subsystem architecture, security, privacy, activation,
+and configuration. The [historical off-mode guide](X_CAPI_OFF_Mode_First_Deployment_Guide_Updated.md)
+records the actual first production preparation, deployment, and troubleshooting;
+its manual Compose commands remain a historical record. This runbook owns the
+current routine production workflow.
+
+**Routine read-only preflight:** run from the authorized, clean production
+checkout:
+
+```bash
+cd ~/AxonOS
+./scripts/deploy-production.sh --check
+```
+
+**Routine production deployment:** only after preflight passes and the operator
+maintenance/admission window is in place, run:
+
+```bash
+cd ~/AxonOS
+./scripts/deploy-production.sh
+```
+
+The script owns the base-plus-CAPI Compose files, profile, and targeted gate
+rollout; operators do not need to reconstruct the long central-gate Compose
+command. See [commands and options](#commands-and-options) for release preparation
+and explicitly requested backend updates.
+
+## First-time host provisioning and verified production baseline
+
+The operator-verified real-host `--check` on **2026-10-02** passed with the
+following baseline. This records that completed verification; the documentation
+update did not rerun deployment tooling or privileged tests.
+
+| Item | Verified value |
+| --- | --- |
+| Production checkout / operator | `/home/cluadmin/AxonOS` / `cluadmin` |
+| Branch / Git commit | `main` / `0c49ad8875428beb444058038ad31a3b6bbd3d45` (`origin/main` at the same commit) |
+| CAPI mode | `off` |
+| Docker client / server | `29.5.2` / `29.5.2` |
+| Effective API / server minimum API | `1.54` / `1.40` |
+| Storage driver | `overlayfs` |
+| `DOCKER_API_VERSION` | unset |
+
+After the [runtime lock](#authorized-checkout-and-shared-lock),
+[persistent helper and sudoers policy](#one-time-administrator-provisioning)
+were correctly provisioned, the actual final real-host command was:
+
+```bash
+cd ~/AxonOS
+./scripts/deploy-production.sh --check
+```
+
+The successful check concluded with:
+
+```text
+Docker API 1.54: read-only image/resource capability checks passed.
+Active tenant sessions: none
+Deployment summary: branch=main commit=0c49ad8875428beb444058038ad31a3b6bbd3d45 CAPI=off backend=False
+Target: local Docker/project axonos, authorized checkout; shared project lock held.
+Build private full candidate; validate immutable ID; promote afterward; roll out pinned ID.
+Launcher/core DB are preserved. Admissions still require an operator maintenance window.
+CHECK PASSED: read-only Docker/metadata checks; no build, service mutation or initialization.
+```
+
+`--check` itself did not build an image, mutate services, or run initialization;
+the build/promotion/rollout line describes the normal deployment plan only.
+
+This success required the already provisioned healthy services, authorized clean
+checkout, Docker access, supported tools, and [preflight contracts](#preflight-contracts)
+described below, plus these separately provisioned host prerequisites:
+
+| Host path | Required installation | Reboot behavior |
+| --- | --- | --- |
+| `/run/lock/axonos-production-deploy.lock` | `root:root`, `0444`, regular empty file, exactly one hard link | Normally volatile; must be safely reprovisioned if absent |
+| `/usr/local/libexec/axonos-deploy-secret-metadata.py` | `root:root`, `0444`, regular file | Persistent host configuration |
+| `/etc/sudoers.d/axonos-deploy-secret-metadata` | `root:root`, `0440`, exact fixed helper authorization below | Persistent host configuration |
+| `/etc/axonos` and its five protected CAPI secret files | Directory `root:root`, `0700`; files retain the [reviewed metadata contract](#protected-secret-metadata-without-directory-access) | Persistent host configuration and secrets |
+
+The installed helper's reviewed SHA-256 at commit `0c49ad8` was:
+
+```text
+d8d996ecdee014f33a87f3886da6f4b52142c79eaf4c69964d43caa32140ee3c
+```
+
+Follow the existing [shared-lock procedure](#authorized-checkout-and-shared-lock)
+and [administrator helper/sudoers procedure](#one-time-administrator-provisioning);
+the deployment tool installs neither. `cluadmin` intentionally cannot directly
+traverse `/etc/axonos` or read its CAPI secrets through ordinary filesystem
+access. The fixed helper attests metadata of exactly the five reviewed paths,
+without reading secret contents, preserving the read-only `--check` contract.
+Its authorization does not grant general access to the secrets.
+
+### First real-host compatibility findings
+
+- **Exact Docker 29.5.2 support:** the initial reviewed versions were 28.5.2 and
+  29.5.1; the production host exposed 29.5.2. That exact release's image
+  inspection/deletion, containerd/overlayfs, API 1.54, Descriptor/RepoDigest, and
+  network metadata semantics were independently reviewed before admission was
+  extended. See the [pinned compatibility review](#exact-2952-compatibility-review).
+  Arbitrary `29.5.x` versions are not supported.
+- **Compose startup inheritance:** real rendering uses JSON `null` for inherited
+  image command/entrypoint values. Treating a present `null` differently from an
+  omitted key falsely reported startup drift. The corrected validator treats
+  omitted/null fields as inheritance of reviewed image defaults, explicit empty
+  values as overrides, and explicit nonempty values as startup argv to normalize
+  and compare exactly. Empty overrides must never silently become inheritance;
+  the [startup contract](#preflight-contracts) also covers entrypoint/CMD interaction.
+- **Protected-secret metadata:** direct `Path.resolve()`/`lstat()` by `cluadmin`
+  could not traverse root:root `0700` `/etc/axonos`. The reviewed fixed privileged
+  metadata helper resolved this preflight failure while retaining directory
+  confinement and leaving secret contents unread. Do not weaken the directory
+  to `0711`. The [privileged validation record](#privileged-helper-validation-record)
+  documents the subsequent synthetic integration run.
+
+### Reboot behavior and post-reboot checklist
+
+**`/run` is normally volatile.** The shared deployment lock normally disappears
+after a host reboot unless a separate boot-time mechanism recreates it. The
+helper, sudoers policy, and `/etc/axonos` with its protected secrets are persistent
+and normally survive reboot. The helper and sudoers policy do not normally need
+reinstalling or recreating after an ordinary reboot. **Do not use deployment
+tooling after reboot until the lock has again been safely provisioned under its
+reviewed ownership, mode, type, and link contract.**
+
+Separately reviewed boot-time provisioning remains required before deployment
+tooling is used after reboot. An automatic mechanism would be preferable to
+relying on operator memory; this record does not establish that one is installed.
+No systemd-tmpfiles rule, service, cron task, or startup script was installed or
+configured as part of this documentation update.
+The reviewed absent-path procedure below provides manual provisioning after
+reboot; any automatic mechanism requires separate review.
+
+1. Confirm `/run/lock/axonos-production-deploy.lock` meets the
+   [reviewed lock procedure](#authorized-checkout-and-shared-lock); if absent,
+   have an administrator safely provision it during a serialized maintenance
+   window. Inspect any existing file; never replace or truncate it.
+2. Verify the persistent helper and sudoers installation at
+   `/usr/local/libexec/axonos-deploy-secret-metadata.py` and
+   `/etc/sudoers.d/axonos-deploy-secret-metadata` still meets the ownership/mode,
+   reviewed helper hash, trusted-path, and exact-authorization requirements.
+   Follow the [administrator validation procedure](#one-time-administrator-provisioning),
+   including `sudo visudo -cf /etc/sudoers.d/axonos-deploy-secret-metadata` and
+   `sudo visudo -c`. Keep `/etc/axonos` root:root `0700`.
+3. As `cluadmin`, run:
+
+   ```bash
+   cd ~/AxonOS
+   ./scripts/deploy-production.sh --check
+   ```
+
+4. Do not perform a production deployment unless `--check` passes. Then use
+   `./scripts/deploy-production.sh` within the operator maintenance window.
+
 ## Authorized checkout and shared lock
 
 Use the reviewed, committed script in the actual production checkout. The script
@@ -32,34 +185,48 @@ All invocations, including `--check`, acquire an exclusive nonblocking lock on:
 /run/lock/axonos-production-deploy.lock
 ```
 
-The existing lock must be a canonical, regular, root:root-owned file with mode
+The provisioned lock must be a canonical, regular empty, root:root-owned file with mode
 `0444` and exactly one hard link. The controller opens it without following
 symlinks, verifies its identity, and holds the same inode throughout the run.
 It does not create, truncate, replace, or repair the lock. The shared path
 serializes cooperating operators across checkouts targeting the supported
 local Docker daemon/project; a worktree-local lock would not.
 
-An administrator must provision this file **once**, during a maintenance window
-when no deploy invocation is running. Inspect any existing file first. Never
-replace or truncate an existing lock: doing so could create two lock inodes and
-allow concurrent deployment. For an absent path only, one possible operator
-procedure is:
+**Volatile `/run` lock provisioning:** an administrator must provision this file
+only when absent, during a maintenance window when no deployment invocation is
+running. Inspect any existing file first. Never replace or truncate an existing
+lock: doing so could create two lock inodes and
+allow concurrent deployment while another process still holds the old inode.
+During the verified **2026-10-02** setup, the path was confirmed absent and the
+following reviewed command was used:
 
 ```bash
 sudo sh -eu -c '
-  lock=/run/lock/axonos-production-deploy.lock
-  if [ -e "$lock" ] || [ -L "$lock" ]; then
-    printf "%s\n" "Lock already exists; inspect it, do not replace it." >&2
-    exit 1
-  fi
-  install -o root -g root -m 0444 /dev/null "$lock"
+lock=/run/lock/axonos-production-deploy.lock
+if [ -e "$lock" ] || [ -L "$lock" ]; then
+printf "%s\n" "Lock already exists; inspect it, do not replace it." >&2
+exit 1
+fi
+install -o root -g root -m 0444 /dev/null "$lock"
 '
-sudo stat -c '%U:%G %a %h %F' /run/lock/axonos-production-deploy.lock
 ```
 
-Expect `root:root 444 1 regular empty file` (wording can vary with locale).
+The verification command was:
+
+```bash
+sudo stat -c '%U:%G %a %h %F' \
+/run/lock/axonos-production-deploy.lock
+```
+
+Observed verified state:
+
+```text
+root:root 444 1 regular empty file
+```
+
+Expect the same metadata on reprovisioning (wording can vary with locale).
 The absent-path check and `install` are not an atomic multi-administrator
-provisioning protocol: serialize this one-time administrative action separately.
+provisioning protocol: serialize this administrative action separately.
 Since `/run` is normally volatile, arrange separately reviewed boot-time
 provisioning before deployment is used after reboot. Do not periodically replace
 the file. No lock or administrative provisioning is performed by the script.
@@ -128,6 +295,11 @@ prompt for a sudo password or require a preceding `sudo -v`.
 
 ### One-time administrator provisioning
 
+**One-time / persistent host provisioning:** the helper and sudoers policy
+normally survive reboot; this installation is separate from provisioning the
+volatile `/run` lock. The dated commands below record the verified 2026-10-02
+setup, with future installation/upgrade requirements retained in each step.
+
 This is a **separate administrator action**, not something the deployment tool
 performs. No production installation is implied by adding the source file.
 Provision during a serialized maintenance window after reviewing the committed
@@ -143,33 +315,103 @@ Provision during a serialized maintenance window after reviewing the committed
    and permissions. Inspect any existing helper and sudoers entry before
    replacing either; do not blindly overwrite an installation or change parent
    permissions to make a check pass.
-3. For a confirmed absent destination, install the reviewed copy as root:root,
-   mode `0444`, at `/usr/local/libexec/axonos-deploy-secret-metadata.py`. It needs
-   no executable bit because the exact system interpreter reads it. For example,
-   **only after the preceding trust/absence checks**, an administrator can use:
+
+   During the verified 2026-10-02 setup, the trusted destination/ancestors and
+   destination absence were checked before installation. The missing trusted
+   libexec directory was created with:
 
    ```bash
-   sudo install -o root -g root -m 0444 /root/REVIEWED_RELEASE/scripts/deploy_production_secret_metadata.py /usr/local/libexec/axonos-deploy-secret-metadata.py
+   sudo install -d -o root -g root -m 0755 /usr/local/libexec
    ```
 
-   `REVIEWED_RELEASE` denotes the administrator-verified staging copy, not a
-   literal directory to create or an instruction to trust arbitrary checkout
-   bytes. Serialize the absence check and installation; the example is not an
-   atomic multi-administrator provisioning protocol.
-4. Use `visudo` to install the following **exact** rule in a root:root `0440`
-   `/etc/sudoers.d/axonos-deploy-secret-metadata` file, reviewing any existing
-   policy first:
+3. For a confirmed absent destination, install the reviewed copy as root:root,
+   mode `0444`, at `/usr/local/libexec/axonos-deploy-secret-metadata.py`. It needs
+   no executable bit because the exact system interpreter reads it. On
+   **2026-10-02**, only after the preceding trust/absence checks, the already
+   reviewed/tested helper was installed from the administrator-controlled
+   disposable source copy with:
 
-   ```sudoers
-   cluadmin ALL=(root) NOPASSWD: NOSETENV: /usr/bin/python3 -I -S -B /usr/local/libexec/axonos-deploy-secret-metadata.py
+   ```bash
+   sudo install -o root -g root -m 0444 \
+   /root/axonos-deploy-privtest/source/scripts/deploy_production_secret_metadata.py \
+   /usr/local/libexec/axonos-deploy-secret-metadata.py
    ```
 
-   Validate the candidate policy with
-   `sudo visudo -cf /etc/sudoers.d/axonos-deploy-secret-metadata` and the complete
-   policy with `sudo visudo -c` before considering provisioning complete. Do not
-   grant arbitrary Python, shell, `stat`, user-supplied paths, wildcard arguments,
-   or extra trailing arguments. This fixed interpreter command is the whole
-   authorization, not broad passwordless sudo.
+   `/root/axonos-deploy-privtest/source` was a disposable validation copy for
+   this setup, not permanent infrastructure or a future provisioning source.
+   Its creation and tests are recorded [below](#privileged-helper-validation-record).
+   For future installation or helper upgrades, use an administrator-controlled
+   copy of the exact reviewed commit/release under step 1 and substitute that
+   source path. Serialize the absence check and installation; this is not an
+   atomic multi-administrator provisioning protocol. Do not reinstall the helper
+   merely because the host rebooted.
+
+   The installed helper and libexec metadata, then the helper hash, were verified
+   with:
+
+   ```bash
+   sudo stat -c '%U:%G %a %h %F %n' \
+   /usr/local/libexec \
+   /usr/local/libexec/axonos-deploy-secret-metadata.py
+
+   sudo sha256sum \
+   /usr/local/libexec/axonos-deploy-secret-metadata.py
+   ```
+
+   The helper was root:root, mode `0444`, a regular file with one hard link. Its
+   SHA-256 matched the [verified baseline](#first-time-host-provisioning-and-verified-production-baseline):
+   `d8d996ecdee014f33a87f3886da6f4b52142c79eaf4c69964d43caa32140ee3c`.
+4. Review any existing policy first. The actual **2026-10-02** sudoers procedure
+   created this exact candidate rule and validated it **before installation**:
+
+   ```bash
+   printf '%s\n' \
+   'cluadmin ALL=(root) NOPASSWD: NOSETENV: /usr/bin/python3 -I -S -B /usr/local/libexec/axonos-deploy-secret-metadata.py' \
+   > /tmp/axonos-deploy-secret-metadata.sudoers
+
+   sudo visudo -cf /tmp/axonos-deploy-secret-metadata.sudoers
+   ```
+
+   Observed:
+
+   ```text
+   /tmp/axonos-deploy-secret-metadata.sudoers: parsed OK
+   ```
+
+   After successful candidate validation, it was installed and both the installed
+   policy and complete sudo configuration were validated:
+
+   ```bash
+   sudo install -o root -g root -m 0440 \
+   /tmp/axonos-deploy-secret-metadata.sudoers \
+   /etc/sudoers.d/axonos-deploy-secret-metadata
+
+   sudo visudo -cf /etc/sudoers.d/axonos-deploy-secret-metadata
+   sudo visudo -c
+
+   sudo stat -c '%U:%G %a %h %F %n' \
+   /etc/sudoers.d/axonos-deploy-secret-metadata
+   ```
+
+   Observed installed state:
+
+   ```text
+   root:root 440 1 regular file
+   ```
+
+   The temporary candidate was removed afterward:
+
+   ```bash
+   rm /tmp/axonos-deploy-secret-metadata.sudoers
+   ```
+
+   This authorizes **only**
+   `/usr/bin/python3 -I -S -B /usr/local/libexec/axonos-deploy-secret-metadata.py`.
+   Do not grant arbitrary passwordless Python, arbitrary scripts, shell, `stat`,
+   user-supplied paths, wildcard arguments, or extra trailing arguments. This
+   fixed interpreter command is the whole authorization, not broad passwordless
+   sudo. The installed policy persists across ordinary reboot and does not
+   normally need to be recreated.
 5. Verify that `/usr/bin/python3`, its standard library, the helper, and their
    installation paths remain administrator-controlled. Then run the normal
    deployment `--check` as `cluadmin`. Routine invocations use a minimal
@@ -190,17 +432,78 @@ has ordinary metadata/protocol tests and three explicitly root-only integration
 tests. The latter create only synthetic temporary trees under the test checkout,
 then chroot children before using the fixed `/etc/axonos` paths; one child drops
 to UID/GID `1000` to reproduce the original search denial. Run them only from
-an administrator-reviewed, administrator-controlled disposable source copy:
+an administrator-reviewed, administrator-controlled disposable source copy as
+root, not against production secret files. The exact historical invocation is
+recorded [below](#privileged-helper-validation-record); future releases require
+review and validation of their own source copy. A single-UID rootless namespace
+cannot exercise the distinct `0`, `1000`, and `10001` ownership cases. An
+unprivileged run skips these three tests; passing mocks or the supplementary
+real search-denial test does **not**
+establish that the root-only integration tests ran successfully.
+
+### Privileged helper validation record
+
+**Historical validation record — 2026-10-02:** following the first real-host
+compatibility fixes, the root-only synthetic integration tests were run from an
+administrator-controlled disposable source copy. From the reviewed worktree,
+the administrator created and restricted that copy with:
 
 ```bash
-/usr/bin/python3 -I -S -B -m unittest discover -s /root/REVIEWED_RELEASE/axonos_gate/tests -p test_production_deploy_secret_metadata.py -v
+sudo mkdir -m 0700 /root/axonos-deploy-privtest
+sudo cp -a . /root/axonos-deploy-privtest/source
+sudo chown -R root:root /root/axonos-deploy-privtest
+sudo chmod -R go-w /root/axonos-deploy-privtest
 ```
 
-Run this as root in the disposable test environment, not against production
-secret files. A single-UID rootless namespace cannot exercise the distinct
-`0`, `1000`, and `10001` ownership cases. An unprivileged run skips these three
-tests; passing mocks or the supplementary real search-denial test does **not**
-establish that the root-only integration tests ran successfully.
+The source helper and disposable copy were compared by SHA-256:
+
+```bash
+sha256sum scripts/deploy_production_secret_metadata.py
+
+sudo sha256sum \
+  /root/axonos-deploy-privtest/source/scripts/deploy_production_secret_metadata.py
+```
+
+Both produced the reviewed implementation hash:
+
+```text
+d8d996ecdee014f33a87f3886da6f4b52142c79eaf4c69964d43caa32140ee3c
+```
+
+The privileged synthetic suite was then run from the root-controlled copy:
+
+```bash
+sudo /usr/bin/python3 -I -S -B -m unittest discover \
+  -s /root/axonos-deploy-privtest/source/axonos_gate/tests \
+  -p 'test_production_deploy_secret_metadata.py' \
+  -v
+```
+
+Observed result:
+
+```text
+Ran 20 tests in 0.541s
+OK (skipped=1)
+```
+
+All three previously unavailable root-only integration tests executed and passed:
+
+- `test_real_invalid_leaf_metadata_is_refused`
+- `test_real_parent_substitution_and_metadata_change_during_collection_refuse`
+- `test_uid_1000_reproduces_resolve_and_lstat_denial_then_root_collects`
+
+The sole skip, `test_real_unprivileged_search_denial_has_sanitized_refusal`,
+intentionally requires an unprivileged context. That DAC/search-denial scenario
+had separately been exercised as `cluadmin` and produced the expected sanitized
+refusal. These tests used synthetic temporary/chroot fixtures; they did not
+operate on production CAPI secret contents. This is a record of completed
+validation, not a request to run privileged tests on the production checkout.
+
+This historical validation is **not a routine deployment or reboot prerequisite**.
+Do not recreate `/root/axonos-deploy-privtest` for every deployment or reboot;
+the disposable path is not permanent host infrastructure. Future helper releases
+must be reviewed and validated from an administrator-controlled copy of the exact
+approved commit/release under the [current provisioning procedure](#one-time-administrator-provisioning).
 
 ### Why not change permissions or use another access path?
 
@@ -317,6 +620,8 @@ containerd `overlayfs` with `driver-type=io.containerd.snapshotter.v1`, and no
 production execution**: they do not establish that a real host passes all
 deployment checks. Both supported storage modes retain their existing reference
 and capability checks; no `29.5.x` wildcard or broader release range is admitted.
+The separate [2026-10-02 real-host baseline](#first-time-host-provisioning-and-verified-production-baseline)
+above records the subsequent successful production `--check`.
 
 ## Preflight contracts
 
