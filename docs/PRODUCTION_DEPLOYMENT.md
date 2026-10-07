@@ -1118,8 +1118,8 @@ session stop, database write, image rebuild, or production rollout.
    COMMIT;
    ```
 
-   Preserve credit balances, deposit records, and audit history. This procedure
-   revokes credentials without reversing credits.
+   Preserve credit balances, funding/payment records, and audit history. This is
+   credential remediation, not a credit reversal or Migration 005 operation.
 4. End potentially unauthorized active/credit-grace sessions through the
    existing operator/session lifecycle and confirm their runtime containers,
    SSH connections, terminal streams, and agents have stopped. Do not merely
@@ -1136,12 +1136,12 @@ session stop, database write, image rebuild, or production rollout.
 5. Start the patched listeners together using the deployment's established
    manual Compose procedure (the deployment controller and CAPI are not
    prerequisites). With controlled test access, verify that old tokens fail on
-   **both** listeners, address-only and payment-signature-only claims
+   **both** listeners and CARD, address-only and payment-signature-only claims
    fail without launching or minting a token, and a fresh signed challenge permits
    normal prepaid claim, x402 payment, and reconnect. Resume public traffic only
    after those checks and runtime/home review are complete.
 6. Users reconnect their wallet and sign a new challenge; agents do the same
-   programmatically. Existing balances and deposit history remain available.
+   programmatically. Existing balances and funding history remain available.
    Stop/recreate remediation can interrupt jobs, so coordinate recovery with
    owners. Clients must retain the returned auth token and renew it through the
    existing authentication flow; a public deposit hash or old payment signature
@@ -1149,4 +1149,154 @@ session stop, database write, image rebuild, or production rollout.
 
 Do not restore pre-fix auth/session tables from backup as an application rollback
 step: that would restore revoked access. Keep patched ownership checks in place
-or keep admissions/ingress closed if rolling back other changes.
+or keep admissions/ingress closed if rolling back other changes. CARD's separate
+pending-payment and webhook reconciliation requirements still apply.
+
+## Optional CARD payments
+
+CARD is an additional payment rail. Wallet signatures remain the technical
+identity, Stripe represents the fiat payer, and the existing minute/credit
+balance pays for compute and storage. The feature does not require CAPI or
+adoption of the deployment controller described above. A deployment that still
+uses manual Compose with `X_CAPI_MODE=off` can use its existing reviewed rollout
+procedure; do not change its deployment topology as part of enabling CARD.
+The following are operator steps after implementation review, not actions
+performed by adding this documentation.
+
+1. Back up PostgreSQL and review
+   [`005_hybrid_funding.sql`](../axonos_gate/migrations/005_hybrid_funding.sql).
+   The existing ledger initializer applies it automatically on first use after
+   update; its role needs the same schema permissions as existing ledger
+   initialization. It may also be applied manually after the existing ledger
+   tables exist, using a single transaction (`psql --single-transaction`).
+   Bootstrap and the migration use a transaction advisory lock so concurrent
+   updated gate processes cannot race schema creation. Failed initialization
+   rolls back its schema and backfill changes; the next attempt retries.
+   This migration is independent of the optional X CAPI migration
+   script and database. Allow a maintenance window for schema creation and the
+   legacy-history backfill; existing spendable balances are unchanged.
+   CARD requires the existing per-wallet container mode
+   (`AXGT_USER_CONTAINER_ENABLED=true`) with a central gate separate from tenant
+   desktops. Shared desktop users have passwordless sudo; that mode cannot
+   safely hold Stripe secrets. Startup refuses to boot if any nonempty Stripe
+   credential reaches a shared/tenant container or a central container with
+   `AXGT_SSH_ENABLED=true`. Remove the credentials and recreate that container:
+   `unset` and Supervisor restarts do not erase Docker's saved environment, which
+   healthchecks and `docker exec` inherit. On a CARD gate, startup keeps the
+   desktop disabled and idles central Jupyter, OpenCode, Ollama, and IPFS even
+   when old bind overrides exist; these services remain available in tenant
+   containers. Do not bypass the reviewed startup/Supervisor isolation policy.
+2. In a Stripe test environment, obtain an API secret and register a webhook
+   destination at `https://YOUR-AXONOS-HOST/api/payments/stripe/webhook`. Set its
+   API version to **2025-08-27.basil**, matching the explicitly pinned backend
+   API version. Subscribe to `checkout.session.completed`,
+   `checkout.session.async_payment_succeeded`,
+   `checkout.session.async_payment_failed`, `checkout.session.expired`,
+   `charge.refunded`, `charge.dispute.created`, `charge.dispute.updated`, and
+   `charge.dispute.closed`. Use snapshot events. Copy that destination's signing
+   secret into the private operator configuration.
+3. Set `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and the fixed HTTPS origin
+   `AXGT_PUBLIC_BASE_URL`. Optionally set `STRIPE_MIN_AMOUNT_USD` (default `1`)
+   and `STRIPE_MAX_AMOUNT_USD` (default `1000`). Review the existing
+   `AXGT_USD_PER_HOUR`: CARD grants `60 / AXGT_USD_PER_HOUR` credits per USD,
+   with no AXGT bonus or holder discount. A $50 purchase at $1/hour grants
+   3,000 credits, including when dynamic crypto pricing is off. Checkout creation
+   is capped at 10 requests per verified wallet per minute in the central gate.
+   There is no separate frontend price, Stripe product setup,
+   publishable key, or browser card SDK.
+4. Rebuild the application image with the updated gate dependencies, then roll
+   out the reviewed gate image and Compose/supervisor configuration through the
+   deployment's established procedure. Both 6080 and 8889 serve these routes;
+   public 6080 proxies payments to 8889 inside the central container. Keep both
+   gate programs running and allow outbound HTTPS to Stripe. Preserve the raw
+   webhook request body and `Stripe-Signature` at ingress; no browser login or
+   interactive proxy challenge may block this exact endpoint. Apply the new
+   launcher environment overrides whenever recreating the launcher; it must
+   not inherit Stripe secrets from the shared `.env`.
+5. In test mode, verify an unfunded wallet, select CARD in both the launch and
+   top-up UI, complete hosted Checkout, and wait for webhook-confirmed credits.
+   Repeat delivery of the same event and confirm only one credit entry; also
+   check cancellation, failed payment, sign-in renewal after token expiry, and
+   refund/dispute review state. Exercise ETH, USDC, and AXGT using their existing
+   test procedures. A browser success URL alone must never change balance.
+6. After reviewing test results, configure matching live API/webhook secrets
+   and a live webhook destination. Keep test and live identifiers separate.
+   Monitor failed webhook deliveries and the reconciliation queue. Disabling
+   Checkout by removing credentials also disables webhook processing, so drain
+   or reconcile outstanding payments before disabling the rail.
+
+Stripe's [hosted Checkout fulfillment guidance](https://docs.stripe.com/checkout/fulfillment)
+and [webhook destination documentation](https://docs.stripe.com/events/manage-webhook-endpoints)
+describe provider delivery and retry behavior. AxonOS stores the wallet, cents,
+currency, credits and pricing snapshot before creating Checkout; provider
+metadata is traceability only. The webhook must match that record and prove a
+completed, paid session before the database can issue credits. The transaction
+locks the funding record and writes the common balance and audit entry together.
+Payment/event identifiers are unique, so return-page refreshes, duplicate events,
+and concurrent retries cannot issue the same purchase twice.
+
+### Funding history and refund reconciliation
+
+`axonos_funding_transactions` records fiat and crypto purchases separately from
+the spendable balance, including wallet, payment method, actual amount, credits,
+USD valuation/rate snapshot, and applicable crypto discount/bonus. Fiat records
+also retain Checkout Session, PaymentIntent, customer and invoice references for
+later billing integrations. No PAN, CVC or full webhook payload is stored.
+`axonos_funding_events` records processed provider events and sanitized details.
+Historical crypto records without recorded prices/amounts are marked incomplete;
+the migration does not reconstruct them from today's rates. Existing
+`axgt_deposits` and `axgt_ledger` remain the accounting authority.
+
+Migration 005 is additive and safely repeatable; it does not use a separate
+version registry or destructive down migration. Previously upgraded applications
+can still read the original tables, and old crypto writers can use them, but
+old writers do not populate the new funding ledger. A subsequent updated ledger
+bootstrap backfills those transactions as incomplete legacy history; their
+unrecorded rates and ETH/USDC amounts cannot be recovered from these tables.
+Use a coordinated restart and avoid a prolonged mix of versions. Rolling back
+application code after accepting CARD payments requires disabling new Checkout,
+draining or manually reconciling pending Stripe payments/webhooks, and retaining
+both funding tables. Old code cannot process CARD webhook retries. Do not drop
+funding history or reverse already issued balances when rolling back.
+
+Purchase quotes and funding records use Decimal/NUMERIC. The preexisting
+spendable compute balance and credit audit deltas use DOUBLE PRECISION. CARD
+converts the quoted amount conservatively (never increasing the nominal delta)
+and records that exact delta separately from `expected_credits`. Existing
+floating point balance addition still has finite precision: around 60,000
+credits one step is approximately 0.0000000000073 credits; near the supported
+extreme of 10^15 credits it is 0.125 credits. A future migration of the common
+credit ledger would be needed for exact decimal accumulation at every scale.
+
+Confirmed refunds record the cumulative refunded fiat amount; disputes record
+their lifecycle. Both flag `reconciliation_required`, with no automatic debit of
+compute credits. This prevents a refund of already consumed compute from
+silently creating storage debt or pruning a wallet's data. It also means an
+operator must assess outstanding credit and payment exposure promptly. If a
+refund/dispute is known before credit issuance, the pending purchase is held for
+reconciliation and receives no automatic credits. Review
+the queue using the existing protected database access:
+
+```sql
+SELECT id, wallet_address, payment_method, status, credits_added,
+       refunded_amount, stripe_payment_intent_id, updated_at
+FROM axonos_funding_transactions
+WHERE reconciliation_required = TRUE
+ORDER BY updated_at;
+```
+
+After checking the Stripe record, funded credit, consumed compute, and current
+wallet balance, reconcile deliberately through the existing authenticated admin
+credit/balance adjustment APIs with an audit note referencing the funding ID.
+Do not blindly debit the original purchase amount. Record the review outcome
+and clear the flag through the protected operator database workflow; there is
+no automated refund debit or new reconciliation dashboard in this change.
+Pending/failed refunds do not count as refunded settled funds. Conventional tax
+calculation, invoice issuance and institutional payer management remain future
+work; customer and invoice references provide the integration points.
+
+Stripe secrets are server-only, absent from public configuration and responses,
+and explicitly cleared from launcher, desktop and assistant environments. Keep
+`.env` private; do not print resolved Compose configuration or secret values.
+CARD disappears cleanly if required configuration is absent, while existing
+crypto rails remain available.

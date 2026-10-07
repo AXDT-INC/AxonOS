@@ -221,6 +221,47 @@ credit-grace session only; it never silently starts a new compute session.
 | `AXGT_CREDIT_PER_100_AXGT_MINUTES` | `60` | Fixed-rate fallback: minutes per 100 AXGT when dynamic pricing is off or the price feed is stale. |
 | `AXGT_USD_BONUS_PERCENT` | `25` | Extra minutes (%) granted vs. the plain USD-equivalent when paying in AXGT (the "best deal" incentive). Applies only with `AXGT_DYNAMIC_PRICING=true`. |
 
+### CARD payments (Stripe-hosted Checkout)
+
+CARD requires both Stripe secrets, PostgreSQL (`AXGT_CHALLENGE_DB_URL`), and an
+explicit HTTPS `AXGT_PUBLIC_BASE_URL`. It also requires
+`AXGT_USER_CONTAINER_ENABLED=true` on the central gate, with no `AXGT_SESSION_ID`,
+`AXGT_DESKTOP_ENABLED=false`, and SSH disabled:
+legacy shared desktops have passwordless sudo and cannot isolate server secrets.
+Missing or invalid configuration hides
+CARD through `/api/config`; crypto payment configuration remains independent.
+Users still prove ownership of their wallet before starting Checkout. Card
+details are entered only on Stripe's hosted page.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `STRIPE_SECRET_KEY` | *(none)* | Backend-only Stripe API key. Use a test key during validation and a live key only after review. Never expose it in JavaScript, logs, or API responses. |
+| `STRIPE_WEBHOOK_SECRET` | *(none)* | Signing secret for the registered `/api/payments/stripe/webhook` endpoint. Test/live endpoints and Stripe CLI forwarding each have their own secret. |
+| `STRIPE_MIN_AMOUNT_USD` | `1` | Smallest accepted CARD amount, in USD with at most two decimal places. |
+| `STRIPE_MAX_AMOUNT_USD` | `1000` | Largest accepted CARD amount, in USD with at most two decimal places. |
+| `AXGT_PUBLIC_BASE_URL` | *(none)* | Fixed HTTPS public origin used for Checkout return URLs; never supplied by the browser. |
+| `AXGT_USD_PER_HOUR` | `1.0` | Existing compute USD price: CARD grants `amount_usd × 60 / AXGT_USD_PER_HOUR` credits. The server snapshots the rate at purchase; CARD receives no AXGT bonus or holder discount. |
+
+No publishable key, browser Stripe SDK, separate product/Price ID, or additional
+database is needed. The central gate receives Stripe credentials from `.env`;
+Compose explicitly removes them from the launcher and supervisord removes them
+from desktop, assistant, and other child processes. Tenant containers use the
+existing media-only environment allowlist. Startup refuses to boot if either
+Stripe credential is nonempty in a tenant/shared container or a central gate
+with SSH enabled. Remove credentials and recreate that container; Docker retains
+the original environment for healthchecks/exec even after a shell unsets it.
+Startup recomputes the internal `AXGT_CARD_GATE_ONLY` process policy, disabling
+central Jupyter, OpenCode, Ollama, and IPFS whenever processor credentials are
+present. Those user services run only in the separate tenant containers.
+Keep `.env` private and out of git
+and Docker build contexts. See [CARD deployment](PRODUCTION_DEPLOYMENT.md#optional-card-payments)
+for endpoint events and reconciliation behavior.
+
+Checkout creation is limited to 10 requests per verified wallet per minute by
+the central gate. This limit is shared by the two public entry points through
+their common handler; it resets when that gate process restarts. CARD always
+uses `60 / AXGT_USD_PER_HOUR`, including when dynamic crypto pricing is disabled.
+
 ### USDC deposits (stablecoin rail)
 
 Self-verified on-chain (no facilitator) into the same deposit ledger. USDC lands in `AXGT_REVENUE_WALLET` **on the USDC chain (Base by default)**, which is independent of `AXGT_CHAIN_ID`. The in-page "Pay with USDC" button appears only when `USDC_CONTRACT_ADDRESS` is set. Read by [`axonos_gate/x402_verifier.py`](../axonos_gate/x402_verifier.py); exposed via `GET /api/config`.

@@ -53,6 +53,14 @@ _pg_init_done = False
 _pg_init_lock = Lock()
 
 
+def _funding_ledger():
+    try:
+        from . import funding_ledger
+    except ImportError:
+        import funding_ledger
+    return funding_ledger
+
+
 def _db_url() -> Optional[str]:
     return os.getenv("AXGT_CHALLENGE_DB_URL") or None
 
@@ -71,6 +79,11 @@ def _get_connection():
 
 def _ensure_tables(conn) -> None:
     with conn.cursor() as cur:
+        # The Python initializer lock only protects one process. PostgreSQL's
+        # IF NOT EXISTS DDL can still race between the two gate processes (or
+        # application workers), including on first deployment of funding tables.
+        # Use the same transaction-scoped lock as the standalone migration.
+        cur.execute("SELECT pg_advisory_xact_lock(1096306510, hashtext(current_schema()))")
         cur.execute(f"""
             CREATE TABLE IF NOT EXISTS {_DEPOSITS_TABLE} (
                 wallet_address TEXT PRIMARY KEY,
@@ -152,6 +165,7 @@ def _ensure_tables(conn) -> None:
             f"CREATE INDEX IF NOT EXISTS idx_verified_credit_source "
             f"ON {_VERIFIED_TABLE}(credit_source)"
         )
+        _funding_ledger().ensure_tables(cur)
     conn.commit()
 
 
@@ -403,6 +417,7 @@ def credit_deposit(
     block_number: int,
     observed_chain_id: Optional[int],
     attribution_context: Optional[str] = None,
+    pricing_snapshot: Optional[Dict[str, Any]] = None,
 ) -> Tuple[bool, Optional[float], Optional[str]]:
     """
     In one transaction: insert verified deposit, upsert deposits, write ledger.
@@ -467,6 +482,10 @@ def credit_deposit(
                 remaining,
                 reference_tx_hash=tx_hash_norm,
                 created_by="deposit_verifier",
+            )
+            _funding_ledger().record_crypto_on_cursor(
+                cur, wallet, "axgt", axgt_amount, credited_minutes, tx_hash_norm,
+                block_number, chain_id, pricing_snapshot, observed_at=now,
             )
         conn.commit()
         completed_at = time.time()
@@ -759,6 +778,7 @@ def credit_eth_deposit(
     block_number: int,
     observed_chain_id: Optional[int],
     attribution_context: Optional[str] = None,
+    pricing_snapshot: Optional[Dict[str, Any]] = None,
 ) -> Tuple[bool, Optional[float], Optional[str]]:
     """
     Credit minutes from a verified native ETH deposit (replay-safe).
@@ -824,6 +844,10 @@ def credit_eth_deposit(
                 notes=f"ETH deposit {eth_amount}",
                 created_by="deposit_verifier",
             )
+            _funding_ledger().record_crypto_on_cursor(
+                cur, wallet, "eth", eth_amount, credited_minutes, tx_hash_norm,
+                block_number, chain_id, pricing_snapshot, observed_at=now,
+            )
         conn.commit()
         completed_at = time.time()
     except Exception as exc:
@@ -855,6 +879,7 @@ def credit_usdc_deposit(
     block_number: int,
     observed_chain_id: Optional[int],
     attribution_context: Optional[str] = None,
+    pricing_snapshot: Optional[Dict[str, Any]] = None,
 ) -> Tuple[bool, Optional[float], Optional[str]]:
     """
     Credit minutes from a verified USDC (x402 rail) deposit (replay-safe).
@@ -919,6 +944,10 @@ def credit_usdc_deposit(
                 reference_tx_hash=tx_hash_norm,
                 notes=f"USDC deposit {usdc_amount}",
                 created_by="x402_verifier",
+            )
+            _funding_ledger().record_crypto_on_cursor(
+                cur, wallet, "usdc", usdc_amount, credited_minutes, tx_hash_norm,
+                block_number, chain_id, pricing_snapshot, observed_at=now,
             )
         conn.commit()
         completed_at = time.time()

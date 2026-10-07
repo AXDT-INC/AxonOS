@@ -1,15 +1,17 @@
 """Ownership regressions for both public x402 session listeners.
 
-Execute Flask's routes and websockify's actual handler/auth functions. Only
+Execute Flask's routes and websockify's actual handler/auth/proxy functions. Only
 external storage, the session launcher, and payment settlement are replaced;
 authentication decisions use the production token-verification implementation.
-No live server, blockchain payment, or compute session is used.
+No live server, blockchain payment, compute session, or Stripe request is made.
 """
 
 import ast
 import base64
 from contextlib import ExitStack, contextmanager
 from http.cookies import SimpleCookie
+import http.client
+import io
 import json
 import logging
 import os
@@ -19,7 +21,7 @@ from pathlib import Path
 import struct
 import sys
 import time
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlsplit
@@ -96,17 +98,22 @@ class _OwnershipCases:
             "settlement_tx_hash": "0x" + "f" * 64,
         })
         self.prepaid = MagicMock(return_value={"verified": True, "remaining_minutes": 120})
+        self.create_checkout = MagicMock(return_value={
+            "checkout_url": "https://checkout.stripe.com/fixture", "payment_id": "fixture",
+        })
         self.stack.enter_context(patch.dict(os.environ, {
             "AXGT_AGENTLINK_ENABLED": "false", "AXGT_PUBLIC_BASE_URL": "https://app.example.test",
             "AXGT_AUTH_COOKIE_NAME": "axgt_auth_token",
         }))
         self.stack.enter_context(patch.object(gate, "_gate_pg_init_once", return_value=True))
         self.stack.enter_context(patch.object(gate, "_gate_pg_get_connection", side_effect=self.database.connect))
+        self.stack.enter_context(patch.object(gate.stripe_payments, "public_config", return_value={"card_payments_enabled": True}))
+        self.stack.enter_context(patch.object(gate.stripe_payments, "create_checkout", self.create_checkout))
         gate.app.testing = True
         self.client = gate.app.test_client(use_cookies=False)
         self.prepare_listener()
 
-    def test_funded_address_and_attacker_ssh_cannot_claim_or_mint_token(self):
+    def test_funded_address_and_attacker_ssh_cannot_claim_mint_token_or_access_card(self):
         # Everything here is public or attacker-owned, including a visible tx hash.
         body = dict(BODY, tx_hash="0x" + "f" * 64, auth_token="invented-proof")
         status, result = self.post("/api/x402/session", body)
@@ -116,6 +123,11 @@ class _OwnershipCases:
         self.claim.assert_not_called()
         self.issue.assert_not_called()
         self.settle.assert_not_called()
+        for headers in ({}, {"X-AXGT-Auth-Token": body["tx_hash"]}):
+            status, card = self.post("/api/payments/stripe/checkout", {"amount_usd": "50.00"}, headers)
+            self.assertEqual(status, 401)
+            self.assertNotIn("checkout_url", card)
+        self.create_checkout.assert_not_called()
 
     def test_invalid_expired_revoked_or_other_wallet_tokens_cannot_claim(self):
         for token in ("invented-proof", "owner-expired", "owner-expired-grace", "owner-revoked", "attacker-current"):
@@ -156,6 +168,10 @@ class _OwnershipCases:
                 self.assertEqual(self.claim.call_args.args[0], WALLET)
                 self.assertEqual(self.claim.call_args.kwargs["ssh_pubkey"], SSH_KEY)
                 self.assertTrue(self.claim.call_args.kwargs["requested_ssh"])
+                status, card = self.post("/api/payments/stripe/checkout", {"amount_usd": "50.00"},
+                                         {"X-AXGT-Auth-Token": result["auth_token"]})
+                self.assertEqual(status, 200)
+                self.create_checkout.assert_called_with(WALLET, "50.00")
         self.settle.assert_not_called()
 
     def test_mixed_case_wallet_is_matched_to_normalized_token_identity(self):
@@ -219,6 +235,9 @@ class _OwnershipCases:
         self.settle.assert_not_called()
         self.claim.assert_not_called()
         self.issue.assert_not_called()
+        status, result = self.post("/api/payments/stripe/checkout", {"amount_usd": "50.00"})
+        self.assertEqual(status, 401)
+        self.create_checkout.assert_not_called()
 
     def test_token_revoked_or_expired_during_settlement_cannot_claim_or_mint(self):
         settlement = dict(self.settle.return_value)
@@ -325,12 +344,12 @@ class TestFlaskX402Ownership(_OwnershipCases, unittest.TestCase):
 class TestWebsockifyX402Ownership(_OwnershipCases, unittest.TestCase):
     def prepare_listener(self):
         tree = ast.parse((ROOT / "axonos_gate/websockify_gate.py").read_text())
-        names = {"do_POST", "_is_auth_token_valid", "_auth_cookie_name",
+        names = {"do_POST", "_proxy_stripe_request", "_is_auth_token_valid", "_auth_cookie_name",
                  "_auth_token_candidates_from_path_and_headers", "_extract_auth_token_from_path_and_headers",
                  "_valid_auth_token_from_path_and_headers", "_x402_402_body", "_x402_v2_headers"}
         functions = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name in names]
         self.namespace = {
-            "os": os, "time": time, "json": json, "logger": logging.getLogger(__name__),
+            "os": os, "time": time, "json": json, "http": http, "logger": logging.getLogger(__name__),
             "urlsplit": urlsplit, "parse_qs": parse_qs, "SimpleCookie": SimpleCookie,
             "_AUTH_TABLE": gate._AUTH_TABLE, "_auth_pg_init_once": lambda: True,
             "_auth_pg_get_connection": self.database.connect, "_is_guest_shaped": gate._is_guest_shaped,
@@ -348,7 +367,22 @@ class TestWebsockifyX402Ownership(_OwnershipCases, unittest.TestCase):
         }
         exec(compile(ast.Module(body=functions, type_ignores=[]), "websockify_gate.py", "exec"), self.namespace)
 
-    def test_checksummed_issued_identity_reconnects_rotates_and_validates_on_both_listeners(self):
+        # In-process transport bridge: the actual proxy forwards to the actual
+        # Flask CARD route, including its production token-verification logic.
+        class Loopback:
+            def request(inner, method, path, body=None, headers=None):
+                response = self.client.open(path, method=method, data=body, headers=headers)
+                inner.response = SimpleNamespace(status=response.status_code, read=io.BytesIO(response.data).read)
+
+            def getresponse(inner):
+                return inner.response
+
+            def close(inner):
+                pass
+
+        self.stack.enter_context(patch.object(http.client, "HTTPConnection", side_effect=lambda *_args, **_kwargs: Loopback()))
+
+    def test_checksummed_issued_identity_reconnects_rotates_and_reaches_flask_card(self):
         # Exercise the actual helpers' SQL against a relational store. SQLite
         # needs only PostgreSQL's placeholder/GREATEST spellings adapted here;
         # wallet equality, status transitions and expiry queries remain real.
@@ -420,6 +454,10 @@ class TestWebsockifyX402Ownership(_OwnershipCases, unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(result["granted"])
         self.assertEqual(result["session_id"], 42)
+        status, card = self.post("/api/payments/stripe/checkout", {"amount_usd": "50.00"},
+                                 {"X-AXGT-Auth-Token": rotated})
+        self.assertEqual(status, 200)
+        self.create_checkout.assert_called_once_with(WALLET, "50.00")
 
         raw_db.execute(f"UPDATE {gate._AUTH_TABLE} SET status = 'revoked' WHERE token = ?", (rotated,))
         raw_db.commit()
@@ -457,9 +495,11 @@ class TestWebsockifyX402Ownership(_OwnershipCases, unittest.TestCase):
         raw = json.dumps(body).encode()
         handler = SimpleNamespace(
             path=path, headers={"Content-Type": "application/json", "Content-Length": str(len(raw)), **(headers or {})},
-            client_address=("192.0.2.1", 10000),
+            client_address=("192.0.2.1", 10000), connection=MagicMock(), rfile=io.BytesIO(raw),
             _read_json_body=lambda: body, _observe_request_gpc_early=lambda *_args: None,
             _send_json=lambda status, payload, **_kwargs: (status, payload),
             send_error=lambda status, message: (status, {"error": message}),
         )
+        handler.connection.gettimeout.return_value = None
+        handler._proxy_stripe_request = MethodType(self.namespace["_proxy_stripe_request"], handler)
         return self.namespace["do_POST"](handler)

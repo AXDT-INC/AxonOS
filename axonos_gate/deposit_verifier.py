@@ -515,13 +515,17 @@ def verify_deposit(
             # Base minutes: live USD-equivalent pricing when the oracle is enabled
             # and a fresh price is available; otherwise the fixed ETH rate.
             base_minutes = None
+            pricing_snapshot = {"holder_tier": tier_info, "holder_discount_percent": str(discount_pct * 100),
+                                "axgt_bonus_percent": "0"}
             _oracle = _import_price_oracle()
             if _oracle is not None and _oracle.oracle_enabled():
-                m = _oracle.minutes_for_eth(eth_amount)
+                m = _oracle.minutes_for_eth(eth_amount, pricing_snapshot=pricing_snapshot)
                 if m is not None:
                     base_minutes = Decimal(str(m))
             if base_minutes is None:
-                base_minutes = eth_amount * Decimal(str(_eth_credit_per_eth_minutes()))
+                fixed_rate = Decimal(str(_eth_credit_per_eth_minutes()))
+                base_minutes = eth_amount * fixed_rate
+                pricing_snapshot.update(source="fixed_eth_rate", base_credits_per_token=str(fixed_rate))
             # AXGT-holder discount still applies on the ETH rail: a d discount means
             # the same ETH buys 1/(1-d) more minutes.
             if discount_pct >= 1:
@@ -536,6 +540,7 @@ def verify_deposit(
                 block_number,
                 observed_chain_id,
                 attribution_context=attribution_context,
+                pricing_snapshot=pricing_snapshot,
             )
             if not ok:
                 return fail(err or "Failed to credit ETH deposit")
@@ -602,18 +607,21 @@ def verify_deposit(
     # (so the user pays the USD-equivalent); otherwise the fixed per-100 rate.
     bonus_pct = Decimal("0")
     credited_minutes = None
+    pricing_snapshot = {"holder_discount_percent": "0"}
     _oracle = _import_price_oracle()
     if _oracle is not None and _oracle.oracle_enabled():
-        m = _oracle.minutes_for_axgt(axgt_amount)  # already includes the bonus
+        m = _oracle.minutes_for_axgt(axgt_amount, pricing_snapshot=pricing_snapshot)  # already includes the bonus
         if m is not None:
             credited_minutes = float(m)
-            bonus_pct = _oracle.axgt_bonus_pct()
+            bonus_pct = Decimal(pricing_snapshot["axgt_bonus_percent"])
     if credited_minutes is None:
         # Fixed-rate fallback: (axgt_amount/100)*credit_per_100, then apply bonus.
         credit_per_100 = _credit_per_100_minutes()
         bonus_pct = _axgt_bonus_pct_fixed()
         base = axgt_amount / Decimal("100") * Decimal(str(credit_per_100))
         credited_minutes = float(base * (Decimal("1") + bonus_pct / Decimal("100")))
+        pricing_snapshot.update(source="fixed_axgt_rate", base_credits_per_100_tokens=str(credit_per_100),
+                                axgt_bonus_percent=str(bonus_pct))
 
     ok, remaining, err = deposit_ledger.credit_deposit(
         wallet,
@@ -623,6 +631,7 @@ def verify_deposit(
         block_number,
         observed_chain_id,
         attribution_context=attribution_context,
+        pricing_snapshot=pricing_snapshot,
     )
     if not ok:
         return fail(err or "Failed to credit deposit")

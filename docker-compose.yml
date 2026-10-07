@@ -24,6 +24,9 @@ services:
       AXGT_SESSION_LAUNCHER_BIND_HOST: 0.0.0.0
       AXGT_SESSION_LAUNCHER_BIND_PORT: ${AXGT_SESSION_LAUNCHER_BIND_PORT:-8090}
       AXGT_SESSION_LAUNCHER_TOKEN: ${AXGT_SESSION_LAUNCHER_TOKEN:-change-me-launcher-token}
+      # Card processing credentials belong only to the central public gate.
+      STRIPE_SECRET_KEY: ""
+      STRIPE_WEBHOOK_SECRET: ""
       # Explicitly erase the entire optional X integration namespace inherited
       # from the shared .env. The privileged Docker-socket launcher neither
       # needs nor receives its configuration, identifiers, paths, or secrets.
@@ -215,6 +218,10 @@ services:
     environment:
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: utility
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_MIN_AMOUNT_USD: ${STRIPE_MIN_AMOUNT_USD:-1}
+      STRIPE_MAX_AMOUNT_USD: ${STRIPE_MAX_AMOUNT_USD:-1000}
       AXGT_CHALLENGE_DB_URL: postgresql://${POSTGRES_USER:-axonos_gate}:${POSTGRES_PASSWORD:-axonos_gate_secret}@postgres:5432/${POSTGRES_DB:-axonos_gate}
       # Non-secret producer mapping. The dedicated access token is never given
       # to this gate; only the isolated worker reads its secret file.

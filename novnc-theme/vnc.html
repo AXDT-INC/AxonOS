@@ -442,6 +442,14 @@ Copyright (C) 2019 The noVNC Authors
 </head>
 
 <body>
+    <div id="axonos_card_return_banner" role="status" aria-live="polite" hidden
+        style="position:fixed;bottom:1rem;left:1rem;right:1rem;z-index:12000;max-width:42rem;margin:auto;padding:1rem;border:1px solid #6959b3;border-radius:12px;background:#161528;color:#ece8ff;box-shadow:0 6px 24px #0008;">
+        <span id="axonos_card_return_message"></span>
+        <button type="button" id="axonos_card_return_retry" class="axonos-connect-wallet-btn"
+            style="margin:0.5rem 0 0;display:none;" hidden>Check payment status</button>
+        <button type="button" id="axonos_card_return_dismiss" aria-label="Dismiss payment status"
+            style="float:right;border:0;background:none;color:inherit;cursor:pointer;">×</button>
+    </div>
 
     <!-- Prerequisites: fixed label + marquee body (mirror synced after /api/config) -->
     <div id="axonos_prerequisites_ticker_banner" class="axonos-prerequisites-ticker" role="region"
@@ -1528,11 +1536,13 @@ Copyright (C) 2019 The noVNC Authors
                                     <button type="button" class="axonos-wizard-token-tab" data-token="eth">ETH</button>
                                     <button type="button" class="axonos-wizard-token-tab" data-token="axgt">AXGT <span
                                             class="axonos-wizard-token-tab__badge">+25%</span></button>
+                                    <button type="button" id="axonos_wizard_card_tab" class="axonos-wizard-token-tab"
+                                        data-token="card" style="display:none;">CARD</button>
                                 </div>
 
                                 <!-- Deposit Input Card -->
                                 <div class="axonos-deposit-input-card">
-                                    <div class="axonos-deposit-input-label">Amount to deposit</div>
+                                    <div id="axonos_wizard_pay_label" class="axonos-deposit-input-label">Amount to deposit</div>
                                     <div class="axonos-deposit-input-field-wrap">
                                         <input type="text" id="axonos_wizard_pay_amount"
                                             class="axonos-deposit-input-field" inputmode="decimal" value="5">
@@ -1570,7 +1580,7 @@ Copyright (C) 2019 The noVNC Authors
                                             <span class="axonos-deposit-calc-row__val" style="color: inherit;">+25%
                                                 credits included</span>
                                         </div>
-                                        <div class="axonos-deposit-calc-row">
+                                        <div class="axonos-deposit-calc-row" id="axonos_wizard_pay_tier_row">
                                             <span>AXGT holder tier</span>
                                             <span id="axonos_wizard_pay_tier" class="axonos-deposit-calc-row__val">None
                                                 (0% discount)</span>
@@ -1587,9 +1597,12 @@ Copyright (C) 2019 The noVNC Authors
                                             <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.5" />
                                         </svg>
                                     </div>
-                                    <p class="axonos-pay-banner__text">Ready to pay <span id="axonos_wizard_pay_desc"
+                                    <p id="axonos_wizard_crypto_banner" class="axonos-pay-banner__text">Ready to pay <span id="axonos_wizard_pay_desc"
                                             class="axonos-pay-banner__highlight">~5 USDC</span> from your wallet.
                                         Already holding AXGT? Your discount is applied automatically.</p>
+                                    <p id="axonos_wizard_card_banner" class="axonos-pay-banner__text" style="display:none;">
+                                        Pay with card at standard USD pricing. Payments processed securely by Stripe.
+                                        Credits go to your verified AxonOS wallet after payment confirmation.</p>
                                 </div>
 
                                 <div id="axonos_wizard_test_credit_panel" class="axonos-test-credit-panel" hidden>
@@ -1851,6 +1864,9 @@ Copyright (C) 2019 The noVNC Authors
                             <button type="button" id="axonos_pay_rail_axgt" role="tab"
                                 class="axonos-connect-wallet-btn axonos-pay-rail-btn" data-rail="axgt"
                                 style="margin:0;padding:0.4rem 1rem;font-size:0.85rem;display:none;">AXGT</button>
+                            <button type="button" id="axonos_pay_rail_card" role="tab"
+                                class="axonos-connect-wallet-btn axonos-pay-rail-btn" data-rail="card"
+                                style="margin:0;padding:0.4rem 1rem;font-size:0.85rem;display:none;">CARD</button>
                         </div>
 
                         <!-- AXGT holder discount panel: server-quoted; client cannot manipulate. -->
@@ -2015,6 +2031,17 @@ Copyright (C) 2019 The noVNC Authors
                             </ul>
                         </div>
 
+                        <div id="axonos_card_payment_panel" style="display:none;max-width:28rem;margin:0.8rem auto;text-align:left;">
+                            <strong>Pay with card</strong>
+                            <label for="axonos_pay_card_amount" style="display:block;margin-top:0.6rem;">Amount (USD)</label>
+                            <input type="text" id="axonos_pay_card_amount" inputmode="decimal" autocomplete="off"
+                                class="axonos-pay-amount-input" value="50.00" aria-describedby="axonos_pay_card_credits" />
+                            <p id="axonos_pay_card_credits">— credits</p>
+                            <button type="button" id="axonos_pay_card_btn" class="axonos-connect-wallet-btn">
+                                Continue to secure checkout</button>
+                            <p style="font-size:0.82rem;opacity:0.85;">Payments processed securely by Stripe.
+                                Standard USD pricing; credits go to your verified AxonOS wallet.</p>
+                        </div>
                         <div class="axonos-pay-deposit-rows"
                             style="margin:0.5rem 0;width:100%;max-width:28rem;margin-left:auto;margin-right:auto;">
                             <div class="axonos-pay-deposit-row" id="axonos_pay_axgt_row" style="display:none;">
@@ -2059,7 +2086,7 @@ Copyright (C) 2019 The noVNC Authors
                                 class="axonos-test-credit-btn">Use test credit</button>
                         </div>
                         <p id="axonos_pay_hint" class="axonos-pay-eth-hint" role="status" aria-live="polite"></p>
-                        <p
+                        <p id="axonos_crypto_deposit_claim"
                             style="margin:0.5rem 0;display:flex;gap:0.5rem;align-items:center;justify-content:center;flex-wrap:nowrap;">
                             <input type="text" id="axonos_tx_hash_input" placeholder="0x… transaction hash"
                                 autocomplete="off" spellcheck="false"
@@ -2896,7 +2923,7 @@ Copyright (C) 2019 The noVNC Authors
 
 <script>
     // Must be declared before DOMContentLoaded handlers (axonosUpdateProfileBurnHint reads it).
-    window.axonosConfig = { axgt_contract_address: '', axgt_revenue_wallet: '', axgt_chain_id: null, axgt_min_deposit: '100', eth_deposits_enabled: true, eth_min_deposit: '0.0005', axgt_token_decimals: 18, credit_per_100_axgt: 60, eth_credit_per_eth: 120000, min_axgt_minutes: 60, min_eth_minutes: 60, axgt_direct_deposits_enabled: false, usdc_deposits_enabled: true, usdc_contract_address: '', usdc_chain_id: 8453, usdc_min_deposit: '1', usdc_credit_per_usdc: 60, min_usdc_minutes: 60, axgt_bonus_percent: 25, dynamic_pricing_enabled: false, usd_per_hour: 1, axgt_discount_tiers: [], gpu_profiles: { small: 1, medium: 2, large: 4, max: 8 }, gpu_weighted_billing_enabled: false, persistent_storage_enabled: true, persistent_storage_gb_hour_cost_minutes: 0.05, persistent_storage_min_balance_limit_minutes: -1440.0, session_launcher_timeout_seconds: 90, session_launch_verify_attempts: 5, session_launch_verify_interval_seconds: 2, session_claim_timeout_seconds: null, session_claim_timeout_ms: null };
+    window.axonosConfig = { card_payments_enabled: false, card_min_amount_usd: null, card_max_amount_usd: null, card_credits_per_usd: null, axgt_contract_address: '', axgt_revenue_wallet: '', axgt_chain_id: null, axgt_min_deposit: '100', eth_deposits_enabled: true, eth_min_deposit: '0.0005', axgt_token_decimals: 18, credit_per_100_axgt: 60, eth_credit_per_eth: 120000, min_axgt_minutes: 60, min_eth_minutes: 60, axgt_direct_deposits_enabled: false, usdc_deposits_enabled: true, usdc_contract_address: '', usdc_chain_id: 8453, usdc_min_deposit: '1', usdc_credit_per_usdc: 60, min_usdc_minutes: 60, axgt_bonus_percent: 25, dynamic_pricing_enabled: false, usd_per_hour: 1, axgt_discount_tiers: [], gpu_profiles: { small: 1, medium: 2, large: 4, max: 8 }, gpu_weighted_billing_enabled: false, persistent_storage_enabled: true, persistent_storage_gb_hour_cost_minutes: 0.05, persistent_storage_min_balance_limit_minutes: -1440.0, session_launcher_timeout_seconds: 90, session_launch_verify_attempts: 5, session_launch_verify_interval_seconds: 2, session_claim_timeout_seconds: null, session_claim_timeout_ms: null };
     var axonosConfig = window.axonosConfig;
     let axonosLastDiscountQuote = null;
     let axonosLastDiscountMinQuote = null;
@@ -6889,6 +6916,11 @@ Copyright (C) 2019 The noVNC Authors
             var walletLine = document.getElementById('axonos_wallet_network_line');
             if (!walletLine) return;
             var selected = String(rail || '').toLowerCase();
+            if (selected === 'card') {
+                walletLine.textContent = 'Card payment in USD — your verified wallet receives the compute credits.';
+                walletLine.classList.remove('axonos-wallet-network-line--hidden');
+                return;
+            }
             var chainId = selected === 'usdc'
                 ? String(axonosConfig.usdc_chain_id || '8453')
                 : String(axonosConfig.axgt_chain_id || '1');
@@ -7409,6 +7441,12 @@ Copyright (C) 2019 The noVNC Authors
                     axonosConfig.usdc_chain_id = (cfg && cfg.usdc_chain_id) ? String(cfg.usdc_chain_id) : '8453';
                     axonosConfig.usdc_min_deposit = (cfg && cfg.usdc_min_deposit != null) ? String(cfg.usdc_min_deposit) : '1';
                     axonosConfig.usdc_credit_per_usdc = (cfg && cfg.usdc_credit_per_usdc_minutes != null) ? Number(cfg.usdc_credit_per_usdc_minutes) : 60;
+                    axonosConfig.card_payments_enabled = !!(cfg && cfg.card_payments_enabled);
+                    axonosConfig.card_min_amount_usd = cfg ? Number(cfg.card_min_amount_usd) : null;
+                    axonosConfig.card_max_amount_usd = cfg ? Number(cfg.card_max_amount_usd) : null;
+                    axonosConfig.card_credits_per_usd = cfg ? Number(cfg.card_credits_per_usd) : null;
+                    var cardTab = document.getElementById('axonos_wizard_card_tab');
+                    if (cardTab) cardTab.style.display = axonosConfig.card_payments_enabled ? '' : 'none';
                     axonosConfig.axgt_bonus_percent = (cfg && cfg.axgt_bonus_percent != null) ? Number(cfg.axgt_bonus_percent) : 25;
                     axonosConfig.dynamic_pricing_enabled = !!(cfg && cfg.dynamic_pricing_enabled);
                     axonosConfig.usd_per_hour = (cfg && cfg.usd_per_hour != null) ? Number(cfg.usd_per_hour) : 1;
@@ -7566,6 +7604,9 @@ Copyright (C) 2019 The noVNC Authors
                             ? 'Pay with ETH or USDC, save with AXGT'
                             : 'Pay with ETH, save with AXGT';
                     }
+                    if (axonosConfig.card_payments_enabled && insufficientCreditTitle) {
+                        insufficientCreditTitle.textContent = 'Add credits with crypto or CARD';
+                    }
                     if (revenueDepositLabel) {
                         revenueDepositLabel.textContent = usdcEnabledCopy
                             ? 'Pay ETH / USDC here · AXGT for discounts'
@@ -7580,6 +7621,9 @@ Copyright (C) 2019 The noVNC Authors
                             : (usdcEnabledCopy
                                 ? ('ETH payments are currently disabled. Pay in <strong>USDC</strong> on <strong>Base</strong> instead (min ' + (axonosConfig.usdc_min_deposit || '1') + ' USDC → ' + formatCreditMinutes(axonosConfig.min_usdc_minutes || 60) + ' desktop time) using the Pay with USDC button.')
                                 : 'ETH payments are currently disabled. Contact the operator for a manual top-up path.');
+                    }
+                    if (axonosConfig.card_payments_enabled && prereqDepositLine) {
+                        prereqDepositLine.innerHTML += ' Or select <strong>CARD</strong> to pay in USD with your verified wallet as the credit recipient.';
                     }
                     var payAxgtIn = document.getElementById('axonos_pay_axgt_amount');
                     var payEthIn = document.getElementById('axonos_pay_eth_amount');
@@ -7751,7 +7795,7 @@ Copyright (C) 2019 The noVNC Authors
                 if (typeof axonosSelectPayRail === 'function') {
                     var toggleEl = document.getElementById('axonos_pay_rail_toggle');
                     var avail = axonosPayRailAvailability();
-                    var nRails = (avail.eth ? 1 : 0) + (avail.usdc ? 1 : 0) + (avail.axgt ? 1 : 0);
+                    var nRails = (avail.eth ? 1 : 0) + (avail.usdc ? 1 : 0) + (avail.axgt ? 1 : 0) + (avail.card ? 1 : 0);
                     // Only show the toggle when there's a real choice (>1 rail).
                     if (toggleEl) toggleEl.style.display = nRails > 1 ? 'flex' : 'none';
                     var saved = null;
@@ -8369,6 +8413,10 @@ Copyright (C) 2019 The noVNC Authors
         }
 
         function updateTokenPayHint(rail) {
+            if (rail === 'card') {
+                axonosUpdateCardCalculator();
+                return;
+            }
             if (rail === 'eth') {
                 var ethInput = document.getElementById('axonos_pay_eth_amount');
                 updateEthPayHint(ethInput ? ethInput.value : '');
@@ -8795,7 +8843,7 @@ Copyright (C) 2019 The noVNC Authors
 
         function setPayDepositButtonsBusy(busy) {
             var ids = [
-                'axonos_pay_axgt_btn', 'axonos_pay_eth_btn', 'axonos_pay_usdc_btn',
+                'axonos_pay_axgt_btn', 'axonos_pay_eth_btn', 'axonos_pay_usdc_btn', 'axonos_pay_card_btn',
                 'axonos_pay_axgt_min_btn', 'axonos_test_credit_btn',
                 'axonos_wizard_test_credit_btn', 'axonos_wizard_primary_btn',
                 'axonos_verify_deposit_btn', 'axonos_dashboard_topup_btn'
@@ -8809,7 +8857,7 @@ Copyright (C) 2019 The noVNC Authors
             });
             [
                 'axonos_pay_axgt_amount', 'axonos_pay_eth_amount',
-                'axonos_pay_usdc_amount', 'axonos_tx_hash_input'
+                'axonos_pay_usdc_amount', 'axonos_pay_card_amount', 'axonos_tx_hash_input'
             ].forEach(function (id) {
                 var el = document.getElementById(id);
                 if (el) el.disabled = !!busy;
@@ -9890,7 +9938,7 @@ Copyright (C) 2019 The noVNC Authors
         if (wizardTestCreditBtn) wizardTestCreditBtn.addEventListener('click', function () {
             axonosRequestTestCredit(axonosSelectedPaymentToken || 'usdc', document.getElementById('axonos_wizard_test_credit_msg'), { amountButtonId: 'axonos_wizard_test_credit_btn' });
         });
-        ['axonos_pay_rail_eth', 'axonos_pay_rail_usdc', 'axonos_pay_rail_axgt'].forEach(function (id) {
+        ['axonos_pay_rail_eth', 'axonos_pay_rail_usdc', 'axonos_pay_rail_axgt', 'axonos_pay_rail_card'].forEach(function (id) {
             var pill = document.getElementById(id);
             if (pill) pill.addEventListener('click', function () { axonosSelectPayRail(pill.getAttribute('data-rail')); });
         });
@@ -9902,6 +9950,254 @@ Copyright (C) 2019 The noVNC Authors
                 updateTokenPayHint('axgt');
             }
         });
+        // CARD is another funding rail. This browser never grants credits: checkout
+        // and reconciliation are authenticated backend requests; only webhooks fund.
+        var axonosCardCheckoutBusy = false;
+        var axonosCardReturnRunning = false;
+        var axonosCardReturnWallet = null;
+        var axonosCardReturnRestored = false;
+        var axonosCardWizardFunded = false;
+        var axonosCardReturnGeneration = 0;
+
+        function axonosCardAmountUsd(value) {
+            var raw = String(value || '').trim();
+            if (!/^\d+(?:\.\d{1,2})?$/.test(raw)) return null;
+            var amount = Number(raw);
+            var minimum = Number(axonosConfig.card_min_amount_usd);
+            var maximum = Number(axonosConfig.card_max_amount_usd);
+            return Number.isFinite(amount) && minimum > 0 && maximum >= minimum &&
+                amount >= minimum && amount <= maximum ? amount : null;
+        }
+
+        function axonosCardEstimatedCredits(value) {
+            var amount = axonosCardAmountUsd(value);
+            var rate = Number(axonosConfig.card_credits_per_usd);
+            // Public config supplies the standard USD rate. Holder discounts and
+            // the AXGT bonus deliberately do not participate in this estimate.
+            return amount !== null && rate > 0 && Number.isFinite(rate) ? amount * rate : null;
+        }
+
+        function axonosUpdateCardCalculator() {
+            var input = document.getElementById('axonos_pay_card_amount');
+            var credits = axonosCardEstimatedCredits(input ? input.value : '');
+            var estimate = document.getElementById('axonos_pay_card_credits');
+            if (estimate) estimate.textContent = credits === null ? '— credits' : '≈ ' + Math.round(credits) + ' credits';
+            var hint = document.getElementById('axonos_pay_hint');
+            if (hint && axonosActivePayRail === 'card') {
+                hint.className = 'axonos-pay-eth-hint';
+                hint.textContent = credits === null
+                    ? 'Enter a USD amount from $' + axonosConfig.card_min_amount_usd + ' to $' + axonosConfig.card_max_amount_usd + ', with at most two decimal places.'
+                    : 'Your verified wallet receives the credits after payment confirmation.';
+            }
+        }
+
+        function axonosShowCardStatus(message, retry) {
+            var banner = document.getElementById('axonos_card_return_banner');
+            var text = document.getElementById('axonos_card_return_message');
+            var button = document.getElementById('axonos_card_return_retry');
+            if (banner) banner.hidden = false;
+            if (text) text.textContent = message;
+            if (button) {
+                button.hidden = !retry;
+                button.style.display = retry ? '' : 'none';
+            }
+        }
+
+        function axonosCardCheckoutContext(wallet, fromWizard) {
+            var context = { wallet: wallet.toLowerCase(), fromWizard: !!fromWizard };
+            if (fromWizard) {
+                context.template = window.axonosSelectedTemplateId || null;
+                context.profile = axonosSelectedGpuProfile;
+                var storage = document.getElementById('axonos_wizard_storage_slider');
+                context.storageGb = storage ? Number(storage.value) : null;
+                var ssh = document.getElementById('axonos_ssh_toggle');
+                var key = document.getElementById('axonos_ssh_pubkey');
+                context.ssh = !!(ssh && ssh.checked);
+                context.sshPublicKey = key ? key.value : '';
+            }
+            return context;
+        }
+
+        async function axonosStartCardCheckout(amountValue, fromWizard) {
+            if (axonosCardCheckoutBusy) return;
+            var wallet = String(window.verifiedWalletAddress || '').trim();
+            var token = window.verifiedWalletAuthToken;
+            if (!axonosConfig.card_payments_enabled) {
+                axonosShowCardStatus('Card payments are currently unavailable.', false);
+                return;
+            }
+            if (!/^0x[a-fA-F0-9]{40}$/.test(wallet) || !token ||
+                (typeof axonosGuestActive === 'function' && axonosGuestActive())) {
+                axonosShowCardStatus('Connect and verify your wallet before paying by card.', false);
+                return;
+            }
+            var amount = axonosCardAmountUsd(amountValue);
+            if (amount === null) {
+                axonosShowCardStatus('Enter a USD amount from $' + axonosConfig.card_min_amount_usd +
+                    ' to $' + axonosConfig.card_max_amount_usd + ', with at most two decimal places.', false);
+                return;
+            }
+            var operation = axonosBeginPaymentOperation(wallet, token);
+            axonosCardCheckoutBusy = true;
+            setPayDepositButtonsBusy(true);
+            axonosShowCardStatus('Preparing secure card checkout…', false);
+            try {
+                var response = await axonosPromiseWithTimeout(fetch('/api/payments/stripe/checkout', {
+                    method: 'POST', credentials: 'include',
+                    headers: { 'Content-Type': 'application/json', 'X-AXGT-Auth-Token': token },
+                    body: JSON.stringify({ amount_usd: amount.toFixed(2) })
+                }), 30000, 'Checkout could not be confirmed. Please retry.');
+                var data = await response.json();
+                if (!axonosPaymentOperationIsCurrent(operation)) return;
+                if (!response.ok || !data.checkout_url || !data.payment_id) {
+                    throw new Error(data.error || 'Unable to create secure checkout. Verify your wallet and try again.');
+                }
+                var checkout = new URL(data.checkout_url);
+                if (checkout.origin !== 'https://checkout.stripe.com' || checkout.username || checkout.password) {
+                    throw new Error('Invalid secure checkout destination.');
+                }
+                var context = axonosCardCheckoutContext(wallet, fromWizard);
+                context.paymentId = data.payment_id;
+                context.amount = amount.toFixed(2);
+                try { window.sessionStorage.setItem('axonos_card_checkout', JSON.stringify(context)); } catch (e) { }
+                window.location.assign(checkout.href);
+            } catch (error) {
+                if (axonosPaymentOperationIsCurrent(operation)) {
+                    axonosShowCardStatus(error.message || 'Unable to open secure checkout. Please retry.', false);
+                }
+            } finally {
+                axonosCardCheckoutBusy = false;
+                if (axonosPaymentOperationIsCurrent(operation)) setPayDepositButtonsBusy(false);
+            }
+        }
+
+        function axonosRestoreCardWizard(paymentId, wallet) {
+            if (axonosCardReturnRestored) return;
+            axonosCardReturnRestored = true;
+            var context;
+            try { context = JSON.parse(window.sessionStorage.getItem('axonos_card_checkout') || 'null'); } catch (e) { }
+            if (!context || context.paymentId !== paymentId || context.wallet !== wallet.toLowerCase() || !context.fromWizard) return;
+            if (context.template) window.axonosSelectedTemplateId = context.template;
+            axonosStartWizard();
+            var profile = document.getElementById('axonos_profile_select');
+            if (['small', 'medium', 'large', 'max'].indexOf(context.profile) !== -1) {
+                axonosSelectedGpuProfile = context.profile;
+                if (profile) {
+                    profile.value = context.profile;
+                    profile.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            }
+            if (Number.isFinite(context.storageGb)) axonosApplyStorageSelection(context.storageGb);
+            var ssh = document.getElementById('axonos_ssh_toggle');
+            if (ssh) { ssh.checked = !!context.ssh; ssh.dispatchEvent(new Event('change', { bubbles: true })); }
+            ['axonos_ssh_pubkey', 'axonos_wizard_ssh_pubkey'].forEach(function (id) {
+                var key = document.getElementById(id);
+                if (key) key.value = context.sshPublicKey || '';
+            });
+            axonosSelectedPaymentToken = axonosConfig.card_payments_enabled ? 'card' : 'usdc';
+            document.querySelectorAll('.axonos-wizard-token-tab').forEach(function (tab) {
+                tab.classList.toggle('active', tab.getAttribute('data-token') === axonosSelectedPaymentToken);
+            });
+            var amount = document.getElementById('axonos_wizard_pay_amount');
+            if (amount) amount.value = context.amount;
+            axonosGoToWizardStep(3);
+        }
+
+        function axonosHandleCardReturn() {
+            var url = new URL(window.location.href);
+            var result = url.searchParams.get('card_payment');
+            var paymentId = url.searchParams.get('payment_id');
+            if (!result || !/^[a-f0-9-]{36}$/i.test(paymentId || '')) return;
+            var wallet = String(window.verifiedWalletAddress || '').trim();
+            if (!wallet || !window.verifiedWalletAuthToken) {
+                axonosShowCardStatus('Connect and verify the wallet used at checkout to check your payment. Credits arrive after server confirmation.', false);
+                return;
+            }
+            if (axonosCardReturnRunning && axonosCardReturnWallet === wallet.toLowerCase()) return;
+            axonosCardReturnWallet = wallet.toLowerCase();
+            axonosCardReturnRunning = true;
+            var generation = ++axonosCardReturnGeneration;
+            var attempts = 0;
+            axonosShowCardStatus(result === 'cancel' ? 'Checkout closed. Checking payment status…' : 'Checking your card payment…', false);
+            async function poll() {
+                if (generation !== axonosCardReturnGeneration) return;
+                if (!axonosPaymentIdentityIsCurrent(wallet)) {
+                    axonosCardReturnRunning = false;
+                    return;
+                }
+                try {
+                    var response = await axonosPromiseWithTimeout(fetch('/api/payments/stripe/status?payment_id=' + encodeURIComponent(paymentId), {
+                        credentials: 'include', headers: { 'X-AXGT-Auth-Token': window.verifiedWalletAuthToken }
+                    }), 15000, 'Payment status is unavailable.');
+                    var data = await response.json();
+                    if (!axonosPaymentIdentityIsCurrent(wallet) || generation !== axonosCardReturnGeneration) return;
+                    if (!response.ok) throw new Error('Verify the wallet used at checkout, then check payment status again.');
+                    axonosRestoreCardWizard(paymentId, wallet);
+                    if (data.credited === true) {
+                        axonosCardWizardFunded = true;
+                        axonosShowCardStatus(data.reconciliation_required
+                            ? 'Payment has an adjustment under review. Your credit balance is shown in your workspace.'
+                            : 'Payment confirmed. Your credits are ready; you can launch your workspace.', false);
+                        // Fetch the existing authoritative credit balance. Never derive
+                        // spendable balance from query parameters or this payment amount.
+                        var access = await axonosFetchWalletAccessStatus(wallet);
+                        if (!axonosPaymentIdentityIsCurrent(wallet) || generation !== axonosCardReturnGeneration) return;
+                        if (access && access.ok && access.data) {
+                            axonosSyncTopbar(wallet, access.data.remaining_minutes);
+                            var balance = document.getElementById('axonos_wizard_rail_balance');
+                            if (balance) balance.textContent = Math.round(access.data.remaining_minutes) + ' cr';
+                        }
+                        axonosUpdatePayCalculator();
+                        url.searchParams.delete('card_payment');
+                        url.searchParams.delete('payment_id');
+                        window.history.replaceState(null, '', url.toString());
+                        try { window.sessionStorage.removeItem('axonos_card_checkout'); } catch (e) { }
+                        axonosCardReturnRunning = false;
+                        return;
+                    }
+                    if (data.reconciliation_required === true) {
+                        axonosShowCardStatus('This payment needs operator review. Contact AxonOS support; no card credits have been confirmed.', true);
+                        axonosCardReturnRunning = false;
+                        return;
+                    }
+                    if (['failed', 'expired', 'cancelled'].indexOf(data.status) !== -1 || result === 'cancel') {
+                        axonosShowCardStatus('Checkout was not completed. No confirmed card payment has been credited. You can try checkout again.', true);
+                        axonosCardReturnRunning = false;
+                        return;
+                    }
+                    if (++attempts >= 30) {
+                        axonosShowCardStatus('Payment confirmation is still pending. Credits will arrive automatically after confirmation; check again shortly.', true);
+                        axonosCardReturnRunning = false;
+                        return;
+                    }
+                    axonosShowCardStatus('Waiting for secure payment confirmation…', false);
+                    setTimeout(poll, 2000);
+                } catch (error) {
+                    if (generation === axonosCardReturnGeneration) {
+                        if (axonosPaymentIdentityIsCurrent(wallet)) axonosShowCardStatus(error.message, true);
+                        axonosCardReturnRunning = false;
+                    }
+                } finally {
+                    if (generation === axonosCardReturnGeneration && !axonosPaymentIdentityIsCurrent(wallet)) axonosCardReturnRunning = false;
+                }
+            }
+            poll();
+        }
+
+        var cardInput = document.getElementById('axonos_pay_card_amount');
+        if (cardInput) cardInput.addEventListener('input', axonosUpdateCardCalculator);
+        var cardButton = document.getElementById('axonos_pay_card_btn');
+        if (cardButton) cardButton.addEventListener('click', function () {
+            axonosStartCardCheckout(cardInput ? cardInput.value : '', false);
+        });
+        var cardRetry = document.getElementById('axonos_card_return_retry');
+        if (cardRetry) cardRetry.addEventListener('click', axonosHandleCardReturn);
+        var cardDismiss = document.getElementById('axonos_card_return_dismiss');
+        if (cardDismiss) cardDismiss.addEventListener('click', function () {
+            document.getElementById('axonos_card_return_banner').hidden = true;
+        });
+        setTimeout(axonosHandleCardReturn, 0);
+
         // Segmented payment-rail selector. Shows ONLY the chosen rail's discount
         // panel + input row; hides the others entirely. Persists the choice.
         var axonosActivePayRail = null;
@@ -9911,13 +10207,14 @@ Copyright (C) 2019 The noVNC Authors
                 usdc: axonosConfig.usdc_deposits_enabled
                     && /^0x[a-fA-F0-9]{40}$/.test(String(axonosConfig.usdc_contract_address || '')),
                 axgt: !!axonosConfig.axgt_direct_deposits_enabled,
+                card: axonosConfig.card_payments_enabled === true,
             };
         }
         function axonosSelectPayRail(rail) {
             var avail = axonosPayRailAvailability();
             if (!avail[rail]) {
-                // Fall back to first available rail (USDC preferred, then ETH, then AXGT).
-                rail = avail.usdc ? 'usdc' : (avail.eth ? 'eth' : (avail.axgt ? 'axgt' : 'eth'));
+                // Fall back to the first available rail (USDC, ETH, AXGT, CARD).
+                rail = avail.usdc ? 'usdc' : (avail.eth ? 'eth' : (avail.axgt ? 'axgt' : (avail.card ? 'card' : 'eth')));
             }
             axonosActivePayRail = rail;
             axonosUpdateWalletNetworkLineForRail(rail);
@@ -9928,9 +10225,10 @@ Copyright (C) 2019 The noVNC Authors
             var map = {
                 eth: { row: ethRowEl, panel: document.getElementById('axonos_discount_panel'), pill: document.getElementById('axonos_pay_rail_eth') },
                 usdc: { row: document.getElementById('axonos_pay_usdc_row'), panel: document.getElementById('axonos_usdc_discount_panel'), pill: document.getElementById('axonos_pay_rail_usdc') },
-                axgt: { row: document.getElementById('axonos_pay_axgt_row'), panel: document.getElementById('axonos_axgt_discount_panel'), pill: document.getElementById('axonos_pay_rail_axgt') }
+                axgt: { row: document.getElementById('axonos_pay_axgt_row'), panel: document.getElementById('axonos_axgt_discount_panel'), pill: document.getElementById('axonos_pay_rail_axgt') },
+                card: { row: null, panel: document.getElementById('axonos_card_payment_panel'), pill: document.getElementById('axonos_pay_rail_card') }
             };
-            ['eth', 'usdc', 'axgt'].forEach(function (r) {
+            ['eth', 'usdc', 'axgt', 'card'].forEach(function (r) {
                 var m = map[r];
                 var active = (r === rail);
                 var shown = avail[r];
@@ -9944,6 +10242,10 @@ Copyright (C) 2019 The noVNC Authors
                 if (m.row) m.row.style.display = (active && shown) ? '' : 'none';
                 if (m.panel) m.panel.style.display = (active && shown) ? '' : 'none';
             });
+            var claimRow = document.getElementById('axonos_crypto_deposit_claim');
+            if (claimRow) claimRow.style.display = rail === 'card' ? 'none' : 'flex';
+            var claimMessage = document.getElementById('axonos_verify_deposit_msg');
+            if (claimMessage) claimMessage.style.display = rail === 'card' ? 'none' : '';
             updateTokenPayHint(rail);
         }
 
@@ -12023,7 +12325,7 @@ Copyright (C) 2019 The noVNC Authors
 
         let axonosCurrentWizardStep = 1;
         let axonosSelectedGpuProfile = 'small'; // small, medium, large, max
-        let axonosSelectedPaymentToken = 'usdc'; // usdc, eth, axgt
+        let axonosSelectedPaymentToken = 'usdc'; // usdc, eth, axgt, card
         let axonosTelemetryInterval = null;
         let axonosGpuTelemetryInterval = null;
         let axonosTelemetryGeneration = 0;
@@ -12383,6 +12685,7 @@ Copyright (C) 2019 The noVNC Authors
         function axonosOnWalletVerified(walletAddress, data) {
             console.log('[AxonOS] Wallet verified:', walletAddress);
             axonosSetGuestInviteEligibility(data);
+            if (typeof axonosHandleCardReturn === 'function') axonosHandleCardReturn();
             var credentialsDialog = document.getElementById('noVNC_credentials_dlg');
             if (credentialsDialog) credentialsDialog.classList.remove('noVNC_open');
 
@@ -13498,6 +13801,11 @@ Copyright (C) 2019 The noVNC Authors
                         tokenTabs.forEach(t => t.classList.remove('active'));
                         tab.classList.add('active');
                         axonosSelectedPaymentToken = tab.getAttribute('data-token') || 'usdc';
+                        axonosCardWizardFunded = false;
+                        if (axonosSelectedPaymentToken === 'card') {
+                            var cardAmount = document.getElementById('axonos_wizard_pay_amount');
+                            if (cardAmount) cardAmount.value = '50.00';
+                        }
 
                         // Update pay calculator UI
                         axonosUpdatePayCalculator();
@@ -13508,6 +13816,7 @@ Copyright (C) 2019 The noVNC Authors
                 const amountInput = document.getElementById('axonos_wizard_pay_amount');
                 if (amountInput) {
                     amountInput.addEventListener('input', () => {
+                        axonosCardWizardFunded = false;
                         axonosUpdatePayCalculator();
                     });
                 }
@@ -13820,11 +14129,27 @@ Copyright (C) 2019 The noVNC Authors
 
             // Set up ticker and values based on selected token
             const token = axonosSelectedPaymentToken;
-            if (tickerEl) tickerEl.textContent = token.toUpperCase();
+            if (tickerEl) tickerEl.textContent = token === 'card' ? 'USD' : token.toUpperCase();
+            var cardSelected = token === 'card';
+            var payLabel = document.getElementById('axonos_wizard_pay_label');
+            if (payLabel) payLabel.textContent = cardSelected ? 'Pay with card · amount (USD)' : 'Amount to deposit';
+            ['axonos_wizard_pay_tier_row', 'axonos_wizard_crypto_banner'].forEach(function (id) {
+                var el = document.getElementById(id);
+                if (el) el.style.display = cardSelected ? 'none' : '';
+            });
+            var cardBanner = document.getElementById('axonos_wizard_card_banner');
+            if (cardBanner) cardBanner.style.display = cardSelected ? '' : 'none';
+            if (axonosCurrentWizardStep === 3) {
+                var primaryText = document.querySelector('#axonos_wizard_primary_btn span');
+                var isSsh = document.getElementById('axonos_ssh_toggle');
+                if (primaryText) primaryText.textContent = cardSelected && !axonosCardWizardFunded
+                    ? 'Continue to secure checkout'
+                    : (isSsh && isSsh.checked ? 'Launch Direct SSH Session' : 'Launch GPU Desktop');
+            }
 
             // Setup quick amounts buttons
             if (quickGrid) {
-                if (token === 'usdc') {
+                if (token === 'usdc' || token === 'card') {
                     quickGrid.innerHTML = `
                         <button type="button" class="axonos-deposit-quick-btn" data-value="5">+5</button>
                         <button type="button" class="axonos-deposit-quick-btn" data-value="20">+20</button>
@@ -13848,6 +14173,7 @@ Copyright (C) 2019 The noVNC Authors
                 quickGrid.querySelectorAll('.axonos-deposit-quick-btn').forEach(btn => {
                     btn.addEventListener('click', () => {
                         amountInput.value = btn.getAttribute('data-value');
+                        axonosCardWizardFunded = false;
                         axonosUpdatePayCalculator();
                     });
                 });
@@ -13870,7 +14196,9 @@ Copyright (C) 2019 The noVNC Authors
                 // Showing the base conversion here made eligible holders appear
                 // to be Tier 0 even though deposit verification credited the
                 // discount correctly.
-                if (token === 'axgt' && !dyn) {
+                if (token === 'card') {
+                    receivedCredits = axonosCardEstimatedCredits(amountInput.value);
+                } else if (token === 'axgt' && !dyn) {
                     receivedCredits = amount / 100 * Number(axonosConfig.credit_per_100_axgt || 60)
                         * (1 + Number(axonosConfig.axgt_bonus_percent || 25) / 100);
                 }
@@ -13888,7 +14216,7 @@ Copyright (C) 2019 The noVNC Authors
             // Always quote ETH/USDC because holder discounts apply even when
             // dynamic USD pricing is disabled. AXGT only needs a quote when its
             // live-price mode is enabled.
-            if (amount > 0 && (token !== 'axgt' || dyn)) {
+            if (token !== 'card' && amount > 0 && (token !== 'axgt' || dyn)) {
                 axonosWizardScheduleQuote(token, amount);
             }
         }
@@ -13900,7 +14228,7 @@ Copyright (C) 2019 The noVNC Authors
             const runtimeVal = document.getElementById('axonos_wizard_pay_runtime');
             if (creditsVal) {
                 creditsVal.textContent = (receivedCredits == null)
-                    ? '—' : Math.round(receivedCredits) + ' credits';
+                    ? '—' : (axonosSelectedPaymentToken === 'card' ? '≈ ' : '') + Math.round(receivedCredits) + ' credits';
             }
             if (runtimeVal) {
                 if (receivedCredits == null) {
@@ -13990,6 +14318,10 @@ Copyright (C) 2019 The noVNC Authors
             if (!wallet) return;
             if (typeof axonosGuestActive === 'function' && axonosGuestActive()) {
                 return axonosTriggerGuestLaunchFromWizard(wallet);
+            }
+            if (axonosSelectedPaymentToken === 'card' && !axonosCardWizardFunded) {
+                var cardAmountInput = document.getElementById('axonos_wizard_pay_amount');
+                return axonosStartCardCheckout(cardAmountInput ? cardAmountInput.value : '', true);
             }
             const storageGeneration = axonosWizardStorageGeneration;
 
@@ -14100,6 +14432,10 @@ Copyright (C) 2019 The noVNC Authors
                         }
                         const ethBtn = document.getElementById('axonos_pay_eth_btn');
                         if (ethBtn) ethBtn.click();
+                    } else if (token === 'card') {
+                        axonosCardWizardFunded = false;
+                        axonosUpdatePayCalculator();
+                        axonosStartCardCheckout(amount, true);
                     } else if (token === 'axgt') {
                         const originalInput = document.getElementById('axonos_pay_axgt_amount');
                         if (originalInput) {

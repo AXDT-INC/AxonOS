@@ -17,6 +17,12 @@ from urllib.parse import parse_qs, urlparse
 from flask import Flask, Response, request, jsonify, send_from_directory, stream_with_context
 from flask_cors import CORS
 
+try:
+    from . import stripe_payments, funding_ledger
+except ImportError:
+    import stripe_payments
+    import funding_ledger
+
 from security_utils import (
     SimpleRateLimiter,
     client_ip_for_rate_limit,
@@ -409,6 +415,7 @@ def _restrict_internal_agent_listener():
     return None
 
 _rate_limiter = get_rate_limiter_from_env()
+_card_checkout_limiter = SimpleRateLimiter(limit=10, window_seconds=60)
 _x_capi_rate_limiter = get_x_capi_rate_limiter()
 _x_capi_status_global_limiter = get_x_capi_global_rate_limiter("status")
 _x_capi_consent_global_limiter = get_x_capi_global_rate_limiter("consent")
@@ -790,7 +797,7 @@ def after_request(response):
     ):
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     # WebRTC status must never be cached (CDN/browser); stale JSON caused endless polling on wrong state.
-    if is_x_capi or request.path.startswith("/api/webrtc/status") or request.path.startswith(
+    if request.path.startswith("/api/payments/") or is_x_capi or request.path.startswith("/api/webrtc/status") or request.path.startswith(
         "/api/terminal/"
     ):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
@@ -1602,6 +1609,138 @@ def api_verify_deposit_auto():
     return jsonify(result), 400
 
 
+_CARD_BODY_DEADLINE_SECONDS = 5.0
+
+
+def _card_request_body(limit):
+    """Bound body bytes and read time on the production gevent transport."""
+    try:
+        from gevent import Timeout
+    except ImportError:
+        # Production already refuses to start without gevent. This fallback is
+        # only for the explicitly enabled development WSGI server/unit tests.
+        return request.stream.read(limit + 1)
+    with Timeout(_CARD_BODY_DEADLINE_SECONDS, TimeoutError("Payment body read timed out")):
+        return request.stream.read(limit + 1)
+
+
+def _card_authenticated_wallet():
+    """Resolve identity from the existing signed-wallet bearer, never a body field.
+
+    An explicit header is required: cookies alone cannot create a cross-site
+    Checkout Session. Guests and unverified browser wallet hints are excluded.
+    """
+    token = (request.headers.get("X-AXGT-Auth-Token") or "").strip()
+    if not token or len(token) > 512:
+        return None, (jsonify({"error": "Verify your wallet before paying by card"}), 401)
+    if not _gate_pg_init_once():
+        return None, (jsonify({"error": "Identity database unavailable"}), 503)
+    conn = _gate_pg_get_connection()
+    if conn is None:
+        return None, (jsonify({"error": "Identity database unavailable"}), 503)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT wallet_address, status, expires_at, grace_until FROM {_AUTH_TABLE} WHERE token = %s",
+                (token,),
+            )
+            row = cur.fetchone()
+        if row:
+            wallet, status, expires, grace = row
+            valid_until = expires if status == "current" else grace if status == "grace" else 0
+            if (time.time() < float(valid_until) and validate_wallet_address(wallet)
+                    and not _is_guest_shaped(wallet)):
+                return wallet.strip().lower(), None
+    except Exception:
+        return None, (jsonify({"error": "Identity database unavailable"}), 503)
+    finally:
+        conn.close()
+    return None, (jsonify({"error": "Verify your wallet before paying by card"}), 401)
+
+
+@app.route('/api/payments/stripe/checkout', methods=['POST', 'OPTIONS'])
+def api_stripe_checkout():
+    if request.method == 'OPTIONS':
+        return '', 200
+    if not stripe_payments.public_config().get("card_payments_enabled"):
+        return jsonify({"error": "Card payments are unavailable"}), 503
+    wallet, auth_error = _card_authenticated_wallet()
+    if auth_error:
+        return auth_error
+    if not _card_checkout_limiter.allow(wallet):
+        return jsonify({"error": "Too many checkout requests; retry shortly"}), 429
+    try:
+        raw = _card_request_body(4096)
+    except (TimeoutError, OSError):
+        return jsonify({"error": "Request body timed out"}), 408
+    if len(raw) > 4096:
+        return jsonify({"error": "Request too large"}), 413
+    try:
+        # Preserve the exact decimal token for quote()'s Decimal validation.
+        # Binary float parsing could turn 1.00000000000000001 into an accepted
+        # 1.0; Decimal parsing alone would normalize scientific notation.
+        data = json.loads(raw, parse_float=str, parse_constant=str) if request.is_json else None
+    except (ValueError, UnicodeError):
+        data = None
+    if not isinstance(data, dict) or set(data) != {"amount_usd"}:
+        return jsonify({"error": "Provide amount_usd only"}), 400
+    try:
+        return jsonify(stripe_payments.create_checkout(wallet, data["amount_usd"]))
+    except stripe_payments.InvalidAmount as exc:
+        return jsonify({"error": str(exc)}), 400
+    except (stripe_payments.CardUnavailable, funding_ledger.FundingUnavailable):
+        return jsonify({"error": "Secure checkout is temporarily unavailable"}), 503
+    except funding_ledger.PaymentMismatch:
+        return jsonify({"error": "Payment could not be reconciled"}), 409
+    except Exception:
+        # Provider exceptions can contain request bodies; never log or return them.
+        logger.warning("Card checkout failed")
+        return jsonify({"error": "Secure checkout is temporarily unavailable"}), 503
+
+
+@app.route('/api/payments/stripe/status', methods=['GET', 'OPTIONS'])
+def api_stripe_status():
+    if request.method == 'OPTIONS':
+        return '', 200
+    wallet, auth_error = _card_authenticated_wallet()
+    if auth_error:
+        return auth_error
+    payment_id = request.args.get("payment_id", "")
+    if not re.fullmatch(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}", payment_id):
+        return jsonify({"error": "Invalid payment_id"}), 400
+    try:
+        payment = funding_ledger.get_card_payment(payment_id, wallet)
+    except funding_ledger.FundingUnavailable:
+        return jsonify({"error": "Payment status temporarily unavailable"}), 503
+    if payment is None:
+        return jsonify({"error": "Payment not found"}), 404
+    return jsonify(payment)
+
+
+@app.route('/api/payments/stripe/webhook', methods=['POST'])
+def api_stripe_webhook():
+    # Read the exact wire bytes; parsing/re-serializing would break the signature.
+    try:
+        payload = _card_request_body(stripe_payments.MAX_WEBHOOK_BYTES)
+    except (TimeoutError, OSError):
+        return jsonify({"error": "Request body timed out"}), 408
+    if len(payload) > stripe_payments.MAX_WEBHOOK_BYTES:
+        return jsonify({"error": "Request too large"}), 413
+    try:
+        stripe_payments.handle_webhook(payload, request.headers.get("Stripe-Signature", ""))
+    except stripe_payments.InvalidWebhook:
+        return jsonify({"error": "Invalid webhook"}), 400
+    except funding_ledger.PaymentMismatch:
+        logger.warning("Card webhook payment mismatch")
+        return jsonify({"error": "Payment mismatch"}), 400
+    except (stripe_payments.CardUnavailable, funding_ledger.FundingUnavailable):
+        return jsonify({"error": "Payment reconciliation temporarily unavailable"}), 503
+    except Exception:
+        logger.warning("Card webhook reconciliation failed")
+        return jsonify({"error": "Payment reconciliation temporarily unavailable"}), 503
+    return jsonify({"received": True})
+
+
 @app.route('/.well-known/x402', methods=['GET', 'OPTIONS'])
 def api_x402_discovery():
     """x402 discovery descriptor for agents."""
@@ -2053,6 +2192,7 @@ def api_config():
         min_balance_limit = -1440.0
 
     return jsonify({
+        **stripe_payments.public_config(),
         'guest_mode_enabled': _guest_mode_ready(),
         'axgt_contract_address': (os.getenv("AXGT_CONTRACT_ADDRESS") or "").strip() or None,
         'axgt_chain_id': (os.getenv("AXGT_CHAIN_ID") or "").strip() or None,

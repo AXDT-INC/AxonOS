@@ -522,23 +522,35 @@ def get_usd_price(asset: str) -> Optional[Decimal]:
 
 # --- Conversions: USD-priced minutes <-> crypto amounts ---
 
-def minutes_for_eth(eth_amount: Decimal) -> Optional[float]:
+def minutes_for_eth(eth_amount: Decimal, pricing_snapshot: Optional[dict] = None) -> Optional[float]:
     """Minutes credited for an ETH deposit at the live USD price ($/hour baseline)."""
     price = get_usd_price("ETH")
     if price is None:
         return None
     usd_value = eth_amount * price
-    return float(usd_value / usd_per_minute())
+    minute_price = usd_per_minute()
+    if pricing_snapshot is not None:
+        pricing_snapshot.update(source="price_oracle", token_usd_price=str(price),
+                                usd_value=str(usd_value), usd_per_minute=str(minute_price),
+                                credits_per_usd=str(Decimal("1") / minute_price),
+                                price_captured_at=time.time())
+    return float(usd_value / minute_price)
 
 
-def minutes_for_axgt(axgt_amount: Decimal) -> Optional[float]:
+def minutes_for_axgt(axgt_amount: Decimal, pricing_snapshot: Optional[dict] = None) -> Optional[float]:
     """Minutes for an AXGT deposit at live USD price, plus the AXGT bonus (+25%)."""
     price = get_usd_price("AXGT")
     if price is None:
         return None
     usd_value = axgt_amount * price
-    base_minutes = usd_value / usd_per_minute()
-    boosted = base_minutes * (Decimal("1") + axgt_bonus_pct() / Decimal("100"))
+    minute_price, bonus = usd_per_minute(), axgt_bonus_pct()
+    base_minutes = usd_value / minute_price
+    boosted = base_minutes * (Decimal("1") + bonus / Decimal("100"))
+    if pricing_snapshot is not None:
+        pricing_snapshot.update(source="price_oracle", token_usd_price=str(price),
+                                usd_value=str(usd_value), usd_per_minute=str(minute_price),
+                                credits_per_usd=str(Decimal("1") / minute_price),
+                                axgt_bonus_percent=str(bonus), price_captured_at=time.time())
     return float(boosted)
 
 

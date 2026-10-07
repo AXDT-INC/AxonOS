@@ -22,6 +22,32 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+# Stripe credentials belong only to the isolated central gate. Refuse to boot a
+# user runtime with processor secrets, even if CARD itself would be disabled.
+# Docker retains Config.Env after unset/re-exec; healthchecks and docker exec
+# would reintroduce the secrets where a desktop user with sudo can read /proc.
+_stripe_gate_mode="${AXGT_USER_CONTAINER_ENABLED:-}"
+_stripe_central_gate=false
+# Internal process policy, recomputed even if an operator supplied this name.
+export AXGT_CARD_GATE_ONLY=false
+case "${_stripe_gate_mode,,}" in
+    1|true|yes|on)
+        if [ -z "${AXGT_SESSION_ID:-}" ]; then _stripe_central_gate=true; fi
+        ;;
+esac
+case "${AXGT_SSH_ENABLED,,}" in
+    1|true|yes|on) _stripe_central_gate=false ;;
+esac
+if [ "$_stripe_central_gate" != true ] && \
+   { [ -n "${STRIPE_SECRET_KEY:-}" ] || [ -n "${STRIPE_WEBHOOK_SECRET:-}" ]; }; then
+    echo "Refusing unsafe Stripe configuration: payment credentials require a central per-wallet gate with SSH disabled. Remove the credentials and recreate this container." >&2
+    exit 1
+fi
+if [ -n "${STRIPE_SECRET_KEY:-}" ] || [ -n "${STRIPE_WEBHOOK_SECRET:-}" ]; then
+    export AXGT_CARD_GATE_ONLY=true
+fi
+unset _stripe_gate_mode _stripe_central_gate
+
 # Set hostname at runtime
 hostname AxonOS
 if ! grep -q "AxonOS" /etc/hosts; then
@@ -49,8 +75,10 @@ fi
 # Initialize IPFS for aXonian user.  Supervisord owns the daemon process;
 # keeping startup limited to repository/config preparation lets desktop services
 # begin without an unrelated fixed IPFS readiness delay.
-echo "Initializing IPFS..."
-su - aXonian -c 'ipfs init --profile=server' || echo "IPFS already initialized or failed to initialize"
+if [ "$AXGT_CARD_GATE_ONLY" != true ]; then
+    echo "Initializing IPFS..."
+    su - aXonian -c 'ipfs init --profile=server' || echo "IPFS already initialized or failed to initialize"
+fi
 
 # Configure IPFS bind addresses (runtime-configurable via env). Tenant sessions
 # and the multi-user central container default to loopback so their unauthenticated
@@ -73,9 +101,11 @@ fi
 IPFS_API_PORT="${IPFS_API_PORT:-5001}"
 IPFS_GATEWAY_PORT="${IPFS_GATEWAY_PORT:-8080}"
 
-echo "Configuring IPFS bind addresses..."
-su - aXonian -c "ipfs config Addresses.API \"/ip4/${IPFS_API_BIND}/tcp/${IPFS_API_PORT}\""
-su - aXonian -c "ipfs config Addresses.Gateway \"/ip4/${IPFS_GATEWAY_BIND}/tcp/${IPFS_GATEWAY_PORT}\""
+if [ "$AXGT_CARD_GATE_ONLY" != true ]; then
+    echo "Configuring IPFS bind addresses..."
+    su - aXonian -c "ipfs config Addresses.API \"/ip4/${IPFS_API_BIND}/tcp/${IPFS_API_PORT}\""
+    su - aXonian -c "ipfs config Addresses.Gateway \"/ip4/${IPFS_GATEWAY_BIND}/tcp/${IPFS_GATEWAY_PORT}\""
+fi
 
 # Per-session desktops (axgt-session-*): base axonos is gate-only — no Xorg on GPU 0.
 # Session runtimes set AXGT_SESSION_ID; respect explicit overrides if already set.

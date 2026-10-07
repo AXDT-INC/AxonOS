@@ -1,6 +1,6 @@
 # AXGT Gate for AxonOS
 
-This module implements **prepaid deposit-credit billing** for AxonOS remote desktop access. Users pay with **ETH** (primary), **USDC** (fixed-$1 stablecoin rail), or **AXGT** (Model B, +bonus) to a revenue wallet, submit the transaction hash for verification, and receive usage minutes. Autonomous agents can pay via the **x402** HTTP-402 rail (gate pays gas) and provision headless SSH sessions. Sessions consume minutes via heartbeat-based incremental billing. See [`docs/TOKENOMICS.md`](../docs/TOKENOMICS.md) for the full payment model and [`docs/ENVIRONMENT_VARIABLES.md`](../docs/ENVIRONMENT_VARIABLES.md) for every config var.
+This module implements **prepaid deposit-credit billing** for AxonOS remote desktop access. Users pay with **ETH**, **USDC** (fixed-$1 stablecoin rail), or **AXGT** (Model B, +bonus) to a revenue wallet, submit the transaction hash for verification, and receive usage minutes. Optional **CARD** payments use Stripe-hosted Checkout and credit the same verified wallet after a signed successful-payment webhook. Autonomous agents can pay via the **x402** HTTP-402 rail (gate pays gas) and provision headless SSH sessions. Sessions consume minutes via heartbeat-based incremental billing. See [`docs/TOKENOMICS.md`](../docs/TOKENOMICS.md) for the crypto payment model and [`docs/ENVIRONMENT_VARIABLES.md`](../docs/ENVIRONMENT_VARIABLES.md) for every config var.
 
 ## Official References
 
@@ -132,6 +132,20 @@ Event types: `deposit_credit`, `test_credit`, `guest_credit`, `usage_deduction`,
 
 - `tx_hash` (PK), `wallet_address`, `sender_wallet`, `recipient_wallet`, `axgt_amount`, `credited_minutes`, `block_number`, `credit_source` (default `onchain`; test-credit provenance otherwise), `payment_rail` (default `unknown`), `created_at`
 
+### Funding history (all payment rails)
+
+`axonos_funding_transactions` records fiat/crypto amounts, immutable pricing
+snapshots, wallet recipient, expected/issued credits, provider identifiers and
+refund/dispute review state. `axonos_funding_events` records Stripe event IDs and
+sanitized reconciliation details. `migrations/005_hybrid_funding.sql` is applied
+by the existing ledger initializer and backfills legacy on-chain funding without
+inventing missing historical prices. Spendable credits remain authoritative in
+`axgt_deposits`; all actual credit issuance also writes the existing audit ledger.
+
+Refunds and disputes flag the funding record for operator reconciliation. They
+do not automatically subtract credits or trigger storage-debt pruning. See the
+[CARD deployment and reconciliation guide](../docs/PRODUCTION_DEPLOYMENT.md#optional-card-payments).
+
 ### Session table
 
 - `id`, `wallet_address`, `requested_profile`, `gpu_ids`, `container_id`, `allocation_status`, `started_at`, `last_heartbeat`, `last_billed_at`, `expires_at` (sliding), `status`, `files_key`, `ssh_enabled`, `credit_grace_started_at`
@@ -214,6 +228,30 @@ Returns contract address, chain ID, revenue wallet, min deposit (AXGT and ETH), 
 ### GET /api/discount/quote?wallet_address=0x...&currency=eth|axgt|usdc
 
 Returns the AXGT-holder discount tier, base/final amount and `estimated_minutes` for a wallet based on its on-chain AXGT balance. Never hardcode price→minutes in clients; use this quote.
+
+### CARD payments
+
+- `POST /api/payments/stripe/checkout`: JSON `{"amount_usd":"50.00"}` and
+  `X-AXGT-Auth-Token` from wallet verification. The gate derives the wallet from
+  the authenticated token, calculates credits server-side, persists a pending
+  funding record, and returns only `checkout_url` and `payment_id`.
+- `GET /api/payments/stripe/status?payment_id=...`: the same authenticated header
+  is required; payment records are scoped to that wallet. Returns payment state
+  and credits issued. This read never grants credits.
+- `POST /api/payments/stripe/webhook`: public provider endpoint authenticated by
+  Stripe's signature over the raw request bytes. Verified successful payments
+  atomically update the funding record, existing balance, and existing audit
+  ledger. Retries and concurrent delivery cannot duplicate credits.
+
+These routes work through both public listeners. The 6080 handler forwards only
+the exact three paths to the local Flask gate, preserving signed webhook bytes.
+Payment authentication, pricing, provider reconciliation and credit issuance
+have one implementation in the gate and shared payment modules. CARD requires
+the central gate's per-wallet container mode; shared desktops cannot safely hold
+Stripe secrets because their user has passwordless sudo.
+Return-page visits have no payment authority. A wallet signature may need to be
+renewed after a long Checkout because ordinary wallet auth tokens still expire.
+No crypto payment or existing positive credit balance is required to use CARD.
 
 ### Session
 

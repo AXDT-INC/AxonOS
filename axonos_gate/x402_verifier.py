@@ -309,6 +309,12 @@ def verify_usdc_deposit(
         block_number,
         observed_chain_id,
         attribution_context=attribution_context,
+        pricing_snapshot={
+            "source": "fixed_usdc_rate", "token_usd_price": "1", "usd_value": str(usdc_amount),
+            "credits_per_usd": str(credit_per_usdc), "base_credits_per_token": str(credit_per_usdc),
+            "effective_credits_per_token": str(effective_rate), "holder_tier": tier_info,
+            "holder_discount_percent": str(discount_pct * 100), "axgt_bonus_percent": "0",
+        },
     )
     if not ok:
         return fail(err or "Failed to credit USDC deposit")

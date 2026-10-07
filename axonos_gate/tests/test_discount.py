@@ -356,6 +356,10 @@ class TestVerifyDepositEthFirst(unittest.TestCase):
         credited_call = mock_credit.call_args
         credited_minutes = float(credited_call.args[2])
         self.assertAlmostEqual(credited_minutes, 60.0, places=4)
+        snapshot = credited_call.kwargs["pricing_snapshot"]
+        self.assertEqual(snapshot["holder_tier"]["tier_index"], 4)
+        self.assertEqual(Decimal(snapshot["holder_discount_percent"]), Decimal("25"))
+        self.assertEqual(snapshot["axgt_bonus_percent"], "0")
 
     @patch("axonos_gate.deposit_verifier._import_discount")
     @patch("axonos_gate.deposit_ledger.tx_hash_already_credited")

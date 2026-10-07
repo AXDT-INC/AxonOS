@@ -16,6 +16,7 @@ import time
 import secrets
 import select
 import socket
+import http.client
 from http.cookies import SimpleCookie
 from threading import Lock
 from urllib.parse import parse_qs, urlparse, urlsplit
@@ -148,6 +149,14 @@ except ImportError:
         from axonos_gate.deposit_router import verify_deposit_auto
     except ImportError:
         verify_deposit_auto = None
+
+try:
+    import stripe_payments
+except ImportError:
+    try:
+        from axonos_gate import stripe_payments
+    except ImportError:
+        stripe_payments = None
 
 try:
     import guest_mode
@@ -1425,6 +1434,9 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             '/.well-known/x402',
             '/openapi.json',
             '/api/config',
+            '/api/payments/stripe/checkout',
+            '/api/payments/stripe/status',
+            '/api/payments/stripe/webhook',
             '/api/discount/quote',
             '/api/auth/verify-wallet',
             '/api/auth/guest-invite',
@@ -1508,6 +1520,8 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
 
         request_path = _up_cfg(self.path).path
         self._observe_request_gpc_early(request_path)
+        if request_path.startswith('/api/payments/stripe/'):
+            return self._proxy_stripe_request('GET')
         if request_path == '/api/x-attribution/status':
             peer_ip = self.client_address[0] if getattr(self, "client_address", None) else None
             client_ip = client_ip_for_rate_limit(peer_ip, self.headers.get("X-Forwarded-For"))
@@ -1729,6 +1743,10 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                     not in ("0", "false", "no", "off")
                 ),
             }
+            payload.update(
+                stripe_payments.public_config()
+                if stripe_payments is not None else {"card_payments_enabled": False}
+            )
             if webrtc_config is not None:
                 payload.update(webrtc_config.public_config())
             else:
@@ -2161,6 +2179,93 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
 
         return super().do_GET()
 
+    def _proxy_stripe_request(self, method: str):
+        """Forward bounded payment requests to the public local Flask gate.
+
+        Stripe signatures cover the exact body bytes. Do not parse or reserialize
+        webhook JSON, follow redirects, or accept a caller-selected upstream.
+        Wallet authentication and all payment authority remain in the gate.
+        """
+        parsed = urlsplit(self.path)
+        allowed = {
+            '/api/payments/stripe/checkout': 'POST',
+            '/api/payments/stripe/status': 'GET',
+            '/api/payments/stripe/webhook': 'POST',
+        }
+        if parsed.path not in allowed:
+            return self._send_json(404, {"error": "Not found"}, no_cache=True)
+        if allowed[parsed.path] != method:
+            return self._send_json(405, {"error": "Method not allowed"}, no_cache=True)
+        if len(self.path) > 2048 or self.headers.get('Transfer-Encoding'):
+            return self._send_json(400, {"error": "Invalid payment request"}, no_cache=True)
+        raw = b''
+        if method == 'POST':
+            limit = 262144 if parsed.path.endswith('/webhook') else 4096
+            try:
+                length = int(self.headers.get('Content-Length') or '0')
+            except ValueError:
+                length = -1
+            content_type = str(self.headers.get('Content-Type') or '').split(';', 1)[0].strip().lower()
+            if length <= 0 or content_type != 'application/json':
+                return self._send_json(400, {"error": "Invalid payment request"}, no_cache=True)
+            if length > limit:
+                return self._send_json(413, {"error": "Payment request too large"}, no_cache=True)
+            previous_timeout = self.connection.gettimeout()
+            try:
+                deadline = time.monotonic() + 5.0
+                chunks = []
+                remaining = length
+                while remaining:
+                    read_timeout = deadline - time.monotonic()
+                    if read_timeout <= 0:
+                        raise TimeoutError('Payment body read timed out')
+                    self.connection.settimeout(read_timeout)
+                    # read1 performs at most one underlying read. A buffered
+                    # read(length) can reset the socket timeout for every byte
+                    # supplied by a slow client and exceed the total deadline.
+                    chunk = self.rfile.read1(min(remaining, 65536))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                raw = b''.join(chunks)
+            except (OSError, ValueError):
+                return self._send_json(400, {"error": "Invalid payment request"}, no_cache=True)
+            finally:
+                try:
+                    self.connection.settimeout(previous_timeout)
+                except OSError:
+                    self.close_connection = True
+            if len(raw) != length:
+                return self._send_json(400, {"error": "Incomplete payment request"}, no_cache=True)
+        headers = {'Content-Type': 'application/json'}
+        for name in ('X-AXGT-Auth-Token', 'Stripe-Signature', 'Origin', 'Host'):
+            value = self.headers.get(name)
+            if value:
+                if len(value) > 8192:
+                    return self._send_json(400, {"error": "Invalid payment headers"}, no_cache=True)
+                headers[name] = value
+        upstream = None
+        try:
+            port = int(os.getenv('GATE_PORT') or '8889')
+            upstream = http.client.HTTPConnection('127.0.0.1', port, timeout=30)
+            target = parsed.path + ('?' + parsed.query if parsed.query else '')
+            upstream.request(method, target, body=raw if method == 'POST' else None, headers=headers)
+            response = upstream.getresponse()
+            body = response.read(65537)
+            if len(body) > 65536:
+                raise ValueError('oversized upstream response')
+            payload = json.loads(body)
+            if not isinstance(payload, dict) or not 200 <= response.status <= 599:
+                raise ValueError('invalid upstream response')
+            return self._send_json(response.status, payload, no_cache=True)
+        except (OSError, ValueError, http.client.HTTPException):
+            # Never include credentials, request bodies or provider diagnostics.
+            return self._send_json(503, {"error": "Card payments temporarily unavailable"}, no_cache=True)
+        finally:
+            if upstream is not None:
+                upstream.close()
+
     def _read_json_body(self) -> dict:
         try:
             content_length = int(self.headers.get('Content-Length') or '0')
@@ -2325,6 +2430,8 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         pu = urlsplit(self.path)
         ponly = pu.path
         self._observe_request_gpc_early(ponly)
+        if ponly.startswith('/api/payments/stripe/'):
+            return self._proxy_stripe_request('POST')
         peer_ip = self.client_address[0] if getattr(self, "client_address", None) else None
         client_ip = client_ip_for_rate_limit(peer_ip, self.headers.get("X-Forwarded-For"))
 

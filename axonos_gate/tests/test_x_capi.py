@@ -3867,7 +3867,14 @@ class PrivacyBoundaryTests(unittest.TestCase):
             str(call.args[0]) for call in cursor.execute.call_args_list
         ).lower()
 
-        self.assertNotIn("chain_id", statements)
+        # Payment funding provenance now includes the observed chain. The
+        # original replay table remains unchanged and CAPI adds no schema.
+        verified_schema = "\n".join(
+            str(call.args[0]) for call in cursor.execute.call_args_list
+            if "axgt_verified_deposits" in str(call.args[0])
+            and "axonos_funding_transactions" not in str(call.args[0])
+        ).lower()
+        self.assertNotIn("chain_id", verified_schema)
         self.assertNotIn("x_capi", statements)
         conn.commit.assert_called_once_with()
 

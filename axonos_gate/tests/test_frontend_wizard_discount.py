@@ -12,7 +12,7 @@ class WizardDiscountFrontendTests(unittest.TestCase):
 
     def test_holder_rails_always_request_authoritative_quote(self) -> None:
         self.assertIn(
-            "if (amount > 0 && (token !== 'axgt' || dyn))",
+            "if (token !== 'card' && amount > 0 && (token !== 'axgt' || dyn))",
             self.page,
         )
         self.assertIn("axonosWizardScheduleQuote(token, amount);", self.page)

@@ -13,6 +13,7 @@ import os
 import sys
 import time
 import unittest
+from decimal import Decimal
 from unittest.mock import patch
 
 _tests_dir = os.path.dirname(os.path.abspath(__file__))
@@ -287,6 +288,11 @@ class TestUsdcVerifierChainProvenance(unittest.TestCase):
         self.assertTrue(result["verified"])
         self.assertEqual(result["chain_id"], _CHAIN_ID)
         self.assertEqual(credit.call_args.args[5], _CHAIN_ID)
+        snapshot = credit.call_args.kwargs["pricing_snapshot"]
+        self.assertEqual(snapshot["source"], "fixed_usdc_rate")
+        self.assertEqual(Decimal(snapshot["usd_value"]), Decimal("1"))
+        self.assertEqual(Decimal(snapshot["credits_per_usd"]), Decimal("60"))
+        self.assertEqual(snapshot["axgt_bonus_percent"], "0")
 
     def test_missing_chain_provenance_does_not_block_core_credit(self):
         result, credit = self._verify_with_transaction({"hash": "0x" + "ab" * 32})
