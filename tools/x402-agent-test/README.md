@@ -1,10 +1,10 @@
 # AxonOS x402 agent test harness
 
-Drives a **generic x402 agent** against a **testnet** AxonOS gate and walks the
+Uses official x402 payment SDKs against a **testnet** AxonOS gate and walks the
 full agentic loop:
 
 ```
-pay (x402 / EIP-3009)  ->  claim SSH session  ->  run commands  ->  heartbeat  ->  release
+verify wallet  ->  pay (x402 / EIP-3009)  ->  claim SSH  ->  heartbeat  ->  release
 ```
 
 Two interchangeable agents are provided, one per official Coinbase SDK:
@@ -16,7 +16,15 @@ Two interchangeable agents are provided, one per official Coinbase SDK:
 
 The gate always emits both (v1 body + v2 header), so each stock SDK finds the
 shape it expects. The harness confirms that either agent can parse the 402,
-settle USDC gaslessly, and get a usable SSH endpoint back in one call.
+settle USDC gaslessly, and get a usable SSH endpoint back in one authenticated
+payment/session call. First, each harness requests `/api/auth/challenge`, signs
+that one-time challenge locally with the agent wallet, and posts it to
+`/api/auth/verify-wallet`. It retains the returned token in memory and supplies
+`X-AXGT-Auth-Token` on the SDK request and its payment retry. An unfunded wallet
+can obtain this ownership token: `verified: false` refers to credit availability.
+Both listeners require ownership proof for every session claim, including
+requests carrying signed x402 payments and prepaid reconnects. A payment
+signature, public transaction hash, or wallet address alone is insufficient.
 
 ---
 
@@ -90,7 +98,9 @@ AGENT_PRIVATE_KEY=0xYOUR_BASE_SEPOLIA_KEY AXONOS_BASE_URL=http://localhost:6080 
 ```
 
 Env knobs:
-- `X402_NETWORK` (`agent.mjs` only) — `base-sepolia` (default) or `base` for mainnet.
+- `X402_NETWORK` (`agent.mjs` only) — `base-sepolia`; other values are refused.
+  Both harnesses also check `/api/config` for USDC chain `84532` before signing
+  the wallet challenge or submitting a payment.
 - `MAX_USDC_BASE_UNITS` — SDK spend cap, default `5000000` (5 USDC). The SDK's own
   default is only 0.10 USDC, which is below a session's ~1 USDC — keep this set.
 - `SSH_KEY` — path, default `~/.ssh/axonos_x402_test` (generated if absent).
@@ -103,13 +113,28 @@ Fund the agent wallet with **≥ ~2 Base Sepolia USDC** so one session (~1 USDC)
 with headroom.
 
 ### Expected output (happy path)
-- `[x402] HTTP 200` with `granted: true`, `ssh_host/ssh_port/ssh_user`, `auth_token`,
-  `remaining_minutes`, and a `payment.settlement_tx_hash`.
+- `[auth]` confirms ownership verification without displaying the bearer.
+- `[x402] HTTP 200` with `granted: true`, `ssh_host/ssh_port/ssh_user`, and
+  `remaining_minutes`. Authentication tokens and private keys are never printed.
 - `[ssh]` prints `whoami`, `uname -a`, `nvidia-smi -L`, `hello-from-x402-agent`.
 - `[heartbeat] HTTP 200`, `[release] HTTP 200`.
 
 ## Troubleshooting
 
+- **401 / expired authentication:** obtain a fresh challenge and ownership token.
+  Do not replay an old challenge or payment signature to sign in. Preserve any
+  `payment.settlement_tx_hash` before retrying.
+- **Pending or successful payment but no session:** do not rerun the paying SDK
+  call automatically. With a current ownership token, POST
+  `/api/auth/verify-usdc-deposit` with `{"wallet_address":"0x…","tx_hash":"0x…"}`
+  and the `X-AXGT-Auth-Token` header. Poll only while `pending: true`; if the
+  transaction is already credited, confirm the balance using authenticated
+  `/api/auth/wallet-status`. Then POST the original SSH body to
+  `/api/x402/session` with that token and **without** a payment header, using
+  ordinary `requests.post` / `fetch` rather than the automatic-payment wrapper.
+  A new 402 means insufficient credit; stop and inspect before authorizing any
+  additional payment. The harness exits with the transaction hash on failure
+  rather than automatically creating a second payment.
 - **402 keeps repeating / SDK can't pay:** the agent wallet has no test USDC, or the
   SDK couldn't parse the requirements — re-check step 2. The gate logs the settle reason.
 - **`granted: false` with a settlement error:** usually the **settlement wallet** is out of

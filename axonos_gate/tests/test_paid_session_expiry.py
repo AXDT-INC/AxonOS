@@ -330,6 +330,7 @@ class TestPaidSessionExpiry(unittest.TestCase):
         
         gate_server.app.testing = True
         client = gate_server.app.test_client()
+        wallet = "0x" + "a" * 40
         
         mock_claim1.return_value = {
             "granted": True,
@@ -343,14 +344,16 @@ class TestPaidSessionExpiry(unittest.TestCase):
         mock_issue2.return_value = ("fake_token", 7260)
         
         with patch.object(gate_server, "validate_ssh_public_key", return_value="ssh-ed25519 AAAA"), \
-             patch.object(gate_server, "validate_wallet_address", return_value=True), \
+             patch.object(gate_server, "_is_gate_auth_token_valid", return_value=True) as authenticate, \
              patch.object(gate_server, "get_wallet_access_status", return_value={"verified": True, "remaining_minutes": 120.0}):
             
             resp = client.post(
                 "/api/x402/session",
-                json={"wallet_address": "0x123", "ssh_pubkey": "ssh-ed25519 AAAA"}
+                json={"wallet_address": wallet, "ssh_pubkey": "ssh-ed25519 AAAA"},
+                headers={"X-AXGT-Auth-Token": "existing-owner-token"},
             )
             
         self.assertEqual(resp.status_code, 200)
-        mock_issue1.assert_called_once_with("0x123", custom_ttl=7200 + 60)
+        authenticate.assert_called_once_with("existing-owner-token", wallet)
+        mock_issue1.assert_called_once_with(wallet, custom_ttl=7200 + 60)
         self.assertEqual(resp.get_json().get("auth_token"), "fake_token")

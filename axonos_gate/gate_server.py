@@ -1846,19 +1846,19 @@ def api_x402_session():
     """
     One-shot agent loop: pay via x402 (if needed) and claim an SSH session.
 
-    This is the agent-native path — an x402 client can go from "needs compute" to
-    "has an SSH endpoint" in a single call, WITHOUT the browser wallet-signature
-    sign-in: the EIP-3009 payment signature in X-PAYMENT is the authorization.
+    After signing the ordinary wallet challenge, an x402 client can pay and
+    provision in one call. The EIP-3009 signature authorizes the payment only;
+    the existing wallet token authorizes the session and its SSH public key.
 
     Body: { wallet_address, ssh_pubkey, requested_profile? }
-    Header: X-PAYMENT (x402 EIP-3009 payload) — required unless the wallet already
-            has prepaid minutes.
+    Header: existing wallet auth token, plus X-PAYMENT (x402 EIP-3009 payload)
+            if funding is needed. A funded address is not ownership proof.
 
     Flow:
-      1. If X-PAYMENT present → settle it (credits minutes, mints an auth token).
-      2. Else require existing prepaid minutes (top-up-free reclaim).
+      1. Authenticate the requested wallet with the existing token mechanism.
+      2. If X-PAYMENT present → verify and settle it; else use prepaid minutes.
       3. Claim an SSH session with the agent's pubkey.
-      4. Return { granted, ssh_host, ssh_port, remaining_minutes, auth_token, ... }.
+      4. Only after a granted claim, issue and return the wallet auth token.
 
     On insufficient funds and no payment → HTTP 402 with x402 payment requirements.
     """
@@ -1868,8 +1868,8 @@ def api_x402_session():
     # sanitized, GPC-aware browser attribution capability. Headless agents
     # simply omit the header and remain unattributed.
     request_attribution_context = _request_attribution_context()
-    # This endpoint intentionally permits a wallet-name-only prepaid reclaim.
-    # That legacy path is not ownership proof and must never bind attribution.
+    # Browser attribution becomes authoritative only after wallet ownership is
+    # established by the existing token verifier, independently of payment.
     attribution_context = None
     if not _session_mgr_available:
         return jsonify({"granted": False, "error": "Session manager unavailable"}), 503
@@ -1920,10 +1920,16 @@ def api_x402_session():
             return jsonify({"granted": False, "error": "Payment required"}), 402
         return _x402_payment_required(0.0, "Payment required: include an X-PAYMENT header or pre-fund the wallet")
 
-    # Past the gate: a payment is present, or the wallet is prepaid. Now validate
-    # the request inputs (return 400 only for an authorized-but-malformed request).
+    # Balance availability is not identity. Reuse the ordinary wallet-bound
+    # bearer checks before a prepaid request can supply a session SSH key.
     if not wallet_address or not validate_wallet_address(wallet_address):
         return jsonify({"granted": False, "error": "Valid wallet_address required"}), 400
+    wallet_address = wallet_address.lower()
+    auth_error = _require_auth_token(wallet_address)
+    if auth_error:
+        response, status_code = auth_error
+        return jsonify({**response.get_json(), "granted": False}), status_code
+    attribution_context = request_attribution_context
     # SSH is the agent-usable session type (text I/O). A pubkey is mandatory.
     ssh_pubkey = validate_ssh_public_key(data.get('ssh_pubkey'))
     if not ssh_pubkey:
@@ -1946,9 +1952,16 @@ def api_x402_session():
                     resp.headers[k] = v
             resp.status_code = 400
             return resp
-        # A successfully verified x402 authorization proves the paying wallet;
-        # only that branch may carry browser attribution into session binding.
-        attribution_context = request_attribution_context
+        # Confirmation can take long enough for a token to expire or be revoked.
+        # Preserve any completed payment, but do not claim with stale authority.
+        auth_error = _require_auth_token(wallet_address)
+        if auth_error:
+            response, status_code = auth_error
+            failure = response.get_json()
+            if status_code == 503:
+                message = "Identity database unavailable after payment verification; retry session claim after recovery"
+                failure.update(error=message, reason=message)
+            return jsonify({**failure, "granted": False, "payment": settle_result}), status_code
 
     claim = try_claim_session(
         wallet_address,
@@ -3759,7 +3772,12 @@ def _handle_websockify_proxy(environ, start_response):
     try:
         import gevent
         from websocket import create_connection
-        backend = create_connection(backend_url)
+        # Loopback is a transport boundary, not wallet ownership proof. The
+        # noVNC listener revalidates the same wallet-bound bearer even when a
+        # local ingress or this authenticated proxy opens the connection.
+        backend = create_connection(
+            backend_url, header={"X-AXGT-Auth-Token": auth_token}
+        )
     except Exception as e:
         logger.error("WebSocket proxy backend connect failed: %s", e, exc_info=True)
         try:

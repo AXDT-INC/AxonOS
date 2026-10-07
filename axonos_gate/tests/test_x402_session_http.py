@@ -6,11 +6,13 @@ Verifies the x402 Bazaar / Agentic Market contract end-to-end:
     wallet_address / ssh_pubkey validation, with a PAYMENT-REQUIRED header whose
     decoded PaymentRequired carries the Bazaar extension at the root;
   - the paid path still validates wallet_address before settling;
-  - the prepaid path still validates ssh_pubkey before granting.
+  - authenticated prepaid reclaim still validates ssh_pubkey before granting.
+  - a funded wallet name without ownership proof cannot authorize a claim.
 
 Flask is a runtime dependency of the gate server but not of the unit-test
 environment, so the whole module skips cleanly when it (or the server) can't be
-imported. No paid / on-chain calls are made — settlement is never reached.
+imported. Settlement and session launches are mocked; no paid/on-chain calls
+are made.
 """
 
 import base64
@@ -55,10 +57,16 @@ class TestX402SessionHttp(unittest.TestCase):
         # marked available; force it on so the request reaches the x402 gate.
         self.mgr = patch.object(gate_server, "_session_mgr_available", True)
         self.mgr.start()
+        self.auth = patch.object(
+            gate_server, "_is_gate_auth_token_valid",
+            side_effect=lambda token, wallet: token == "verified-owner-token" and wallet == _WALLET,
+        )
+        self.auth.start()
         gate_server.app.testing = True
         self.client = gate_server.app.test_client()
 
     def tearDown(self):
+        self.auth.stop()
         self.mgr.stop()
         self.env.stop()
 
@@ -97,7 +105,10 @@ class TestX402SessionHttp(unittest.TestCase):
         with patch.object(gate_server, "get_wallet_access_status", return_value=prepaid), \
              patch.object(gate_server, "_issue_gate_auth_token", return_value=("tok", 3600)), \
              patch.object(gate_server, "try_claim_session", MagicMock()) as claim:
-            resp = self.client.post("/api/x402/session", json={"wallet_address": _WALLET})
+            resp = self.client.post(
+                "/api/x402/session", json={"wallet_address": _WALLET},
+                headers={"X-AXGT-Auth-Token": "verified-owner-token"},
+            )
         self.assertEqual(resp.status_code, 400)
         self.assertIn("ssh_pubkey", resp.get_json().get("error", "").lower())
         claim.assert_not_called()
@@ -125,6 +136,7 @@ class TestX402SessionHttp(unittest.TestCase):
                 json={"wallet_address": _WALLET, "ssh_pubkey": "ssh-ed25519 AAAA"},
                 headers={
                     "X-PAYMENT": "dGVzdA==",
+                    "X-AXGT-Auth-Token": "verified-owner-token",
                     "X-AxonOS-Attribution": "opaque-browser-ticket",
                 },
             )
@@ -151,8 +163,10 @@ class TestX402SessionHttp(unittest.TestCase):
                 json={"wallet_address": _WALLET, "ssh_pubkey": "ssh-ed25519 AAAA"},
                 headers={"X-AxonOS-Attribution": "attacker-context"},
             )
-        self.assertEqual(response.status_code, 200)
-        self.assertIsNone(claim.call_args.kwargs["attribution_context"])
+        self.assertEqual(response.status_code, 401)
+        self.assertNotIn("auth_token", response.get_json())
+        self.assertFalse(response.get_json().get("granted", False))
+        claim.assert_not_called()
 
     @patch("axonos_gate.gate_server.verify_agentlink_header")
     @patch("gate_server.verify_agentlink_header")
@@ -180,7 +194,7 @@ class TestX402SessionHttp(unittest.TestCase):
             resp = self.client.post(
                 "/api/x402/session",
                 json={"wallet_address": _WALLET, "ssh_pubkey": "ssh-ed25519 AAAA"},
-                headers={"agentlink": "valid_base64_payload"}
+                headers={"agentlink": "valid_base64_payload", "X-AXGT-Auth-Token": "verified-owner-token"}
             )
             
         self.assertEqual(resp.status_code, 200)
@@ -217,7 +231,7 @@ class TestX402SessionHttp(unittest.TestCase):
             resp = self.client.post(
                 "/api/x402/session",
                 json={"wallet_address": _WALLET, "ssh_pubkey": "ssh-ed25519 AAAA"},
-                headers={"agentlink": "expired_base64_payload"}
+                headers={"agentlink": "expired_base64_payload", "X-AXGT-Auth-Token": "verified-owner-token"}
             )
             
         self.assertEqual(resp.status_code, 200)
@@ -243,7 +257,7 @@ class TestX402SessionHttp(unittest.TestCase):
             resp = self.client.post(
                 "/api/x402/session",
                 json={"wallet_address": _WALLET, "ssh_pubkey": "ssh-ed25519 AAAA"},
-                headers={"agentlink": "some_payload"}
+                headers={"agentlink": "some_payload", "X-AXGT-Auth-Token": "verified-owner-token"}
             )
             
         self.assertEqual(resp.status_code, 200)
@@ -271,7 +285,7 @@ class TestX402SessionHttp(unittest.TestCase):
             self.client.post(
                 "/api/x402/session",
                 json={"wallet_address": _WALLET, "ssh_pubkey": "ssh-ed25519 AAAA"},
-                headers={"agentlink": "valid_payload"}
+                headers={"agentlink": "valid_payload", "X-AXGT-Auth-Token": "verified-owner-token"}
             )
         
         mock_verify.assert_called_once_with("valid_payload", "https://custom.axonos.io/api/x402/session")
@@ -289,7 +303,7 @@ class TestX402SessionHttp(unittest.TestCase):
             
             self.client.get(
                 "/api/x402/access?minutes=10",
-                headers={"agentlink": "valid_payload"}
+                headers={"agentlink": "valid_payload", "X-AXGT-Auth-Token": "verified-owner-token"}
             )
             
         mock_verify.assert_called_once_with("valid_payload", "https://custom.axonos.io/custom-access-endpoint")

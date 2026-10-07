@@ -80,6 +80,8 @@ class TestDiscoveryExtension(unittest.TestCase):
         self.assertEqual(bazaar.get("info", {}).get("input", {}).get("method"), "POST")
         self.assertEqual(bazaar.get("info", {}).get("input", {}).get("bodyType"), "json")
         self.assertEqual(bazaar.get("schema", {}).get("$schema"), "https://json-schema.org/draft/2020-12/schema")
+        self.assertIn("X-AXGT-Auth-Token", bazaar["info"]["input"]["body"]["wallet_address"]["description"])
+        self.assertIn("/api/auth/verify-wallet", bazaar["info"]["input"]["body"]["wallet_address"]["description"])
 
 
 class TestVerifySettleParsing(unittest.TestCase):

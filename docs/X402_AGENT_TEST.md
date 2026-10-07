@@ -1,14 +1,16 @@
 # x402 Agent Test — verify from your local machine
 
-Confirm a **generic, off-the-shelf x402 agent** can discover and pay AxonOS over
+Confirm an **off-the-shelf x402 payment SDK** can discover and pay AxonOS over
 the **public URL** (`https://app.axonos.io`), using the official Coinbase
-`x402` Python SDK with **no AxonOS-specific code**.
+`x402` Python SDK. Discovery and payment settlement follow x402; obtaining an
+AxonOS session additionally requires the existing wallet ownership challenge.
 
 Everything runs in throwaway Docker containers — nothing installed on your host.
 
 - **Test 1** (no money): discovery + 402 — proves the public endpoints work.
 - **Test 2** (spends ~1 USDC): full SDK payment end-to-end.
-- **Test 3** (optional): agent pays AND gets an SSH GPU session in one call.
+- **Test 3** (optional): agent verifies ownership, then pays and gets an SSH GPU
+  session in one authenticated call (or reclaims already-purchased credit).
 - **Test 4**: verification — SSH in & run GPU commands, confirm the tx on-chain,
   re-check credit, and view live pricing.
 
@@ -47,12 +49,13 @@ If you get those, the public ingress is serving x402 correctly.
 ### a) Create + fund a throwaway wallet
 
 ```bash
-# Generate a throwaway EVM wallet (prints address + private key — keep it low-value)
-docker run --rm python:3.11-slim sh -c \
-  "pip install -q eth-account >/dev/null 2>&1; python -c 'from eth_account import Account; a=Account.create(); print(a.address); print(a.key.hex())'"
+# Generate a throwaway wallet; print only its address. Keep the key file private.
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" -w /work python:3.11-slim sh -c \
+  "pip install -q --target /tmp/agent-deps eth-account >/dev/null 2>&1 && PYTHONPATH=/tmp/agent-deps python -c 'import os; from eth_account import Account; a=Account.create(); f=os.open(\"agent-private-key.txt\", os.O_WRONLY|os.O_CREAT|os.O_EXCL, 0o600); os.write(f, a.key.hex().encode()); os.close(f); print(a.address)'"
 ```
 
-Copy the **address** (line 1) and **private key** (line 2). Send **~1–2 USDC on
+Save the displayed **address** and protect `agent-private-key.txt` (never commit
+or log its contents). Send **~1–2 USDC on
 Base mainnet** to the address (from an exchange or another wallet). No ETH(Base)
 needed — AxonOS pays gas.
 
@@ -109,7 +112,9 @@ Python `x402` SDK 2.13.x; if a newer release renames these imports, compare with
 `tools/x402-agent-test/agent.py`, which is kept in step with the SDK:
 
 ```bash
-docker run --rm -e EVM_PRIVKEY=0xYOUR_THROWAWAY_KEY \
+read -r EVM_PRIVKEY < agent-private-key.txt || test -n "$EVM_PRIVKEY"
+export EVM_PRIVKEY
+docker run --rm -e EVM_PRIVKEY \
   -v "$PWD/x402_agent_test.py:/t.py:ro" \
   python:3.11-slim sh -c "pip install -q 'x402[evm]' requests >/dev/null 2>&1; python /t.py"
 
@@ -134,35 +139,75 @@ https://basescan.org (or https://sepolia.basescan.org for a testnet stack).
 
 ## Test 3 — Agent pays AND gets an SSH GPU session (optional)
 
-The AxonOS-native one-shot: pay + claim SSH in one call. Needs an SSH keypair.
+The AxonOS-native flow: verify wallet ownership, then pay and claim SSH in one
+authenticated call. It requires an SSH keypair. The payment authorization alone
+does not authenticate the SSH requester: EIP-3009 signatures become public on
+chain and do not bind the SSH key. A funded wallet address is never sufficient.
 
 ```bash
 # SSH keypair for the agent
 ssh-keygen -t ed25519 -f ./agent_key -N "" -q
 
-# Pay + claim SSH (uses the same funded throwaway EVM key as Test 2). This signs
-# the x402 payment with curl-friendly tooling via a small python one-liner, then
-# claims SSH. Simplest: reuse the SDK to mint the X-PAYMENT, then POST it.
+# The Python example below uses the same wallet account and SDK client as Test 2.
 ```
 
-For Test 3, the easiest path is the SDK again — build the payment header as in
-Test 2, then POST it to `/api/x402/session` with your `agent_key.pub`:
+Use the existing challenge API to prove ownership. The signed challenge is
+one-time and wallet-bound; keep the resulting bearer in memory. An unfunded
+wallet can authenticate: a response with `verified: false` can still contain
+the ownership token. Both Flask and websockify enforce the same requirement.
+
+Then request a session with the token. If Test 2 already funded the wallet, this
+reclaims its credit without another payment. Only a new 402 response should
+cause a fresh payment authorization; do not reuse Test 2's submitted signature.
 
 ```python
-# ...after add_headers from handle_402_response (Test 2)...
-pay = list(add_headers.values())[0]
+from eth_account.messages import encode_defunct
+
+challenge_response = requests.get(f"{GATE}/api/auth/challenge",
+    params={"wallet_address": acct.address}, timeout=30)
+challenge_response.raise_for_status()
+challenge = challenge_response.json()["challenge"]
+assert challenge.startswith(f"AxonOS verify\nWallet: {acct.address.lower()}\nNonce: ")
+signature = acct.sign_message(encode_defunct(text=challenge)).signature.hex()
+if not signature.startswith("0x"):
+    signature = "0x" + signature
+verified_response = requests.post(f"{GATE}/api/auth/verify-wallet",
+    json={"wallet_address": acct.address, "message": challenge, "signature": signature}, timeout=30)
+verified = verified_response.json()
+assert verified_response.status_code in (200, 403) and verified.get("auth_token")
+assert verified["wallet_address"].lower() == acct.address.lower()
+auth_headers = {"X-AXGT-Auth-Token": verified["auth_token"]}
+
 ssh_pub = open("agent_key.pub").read().strip()
-# The gate derives the paying wallet from the payment's authorization.from;
-# wallet_address in the body must match it.
-r = requests.post(f"{GATE}/api/x402/session",
-    headers={"PAYMENT-SIGNATURE": pay},
-    json={"wallet_address": acct.address, "ssh_pubkey": ssh_pub}, timeout=180)
-d = r.json(); print(d)
+session_body = {"wallet_address": acct.address, "ssh_pubkey": ssh_pub}
+session_url = f"{GATE}/api/x402/session"
+r = requests.post(session_url, headers=auth_headers, json=session_body, timeout=180)
+if r.status_code == 402:
+    payment_headers, _ = http.handle_402_response(dict(r.headers), r.content)
+    r = requests.post(session_url, headers={**payment_headers, **auth_headers},
+        json=session_body, timeout=180)
+d = r.json()
+# Never print the whole response: it can contain a refreshed authentication token.
+print({k: d[k] for k in ("granted", "ssh_host", "ssh_port", "ssh_user") if k in d})
+if d.get("auth_token"):
+    auth_headers["X-AXGT-Auth-Token"] = d["auth_token"]
+if not d.get("granted"):
+    tx_hash = (d.get("payment") or {}).get("settlement_tx_hash")
+    print("Session not granted; reconcile payment before retrying. Transaction:", tx_hash)
 # then: ssh -i agent_key -p <d['ssh_port']> <d['ssh_user']>@<d['ssh_host']>
 ```
 
 **Expect:** `granted: true` with `ssh_host` / `ssh_port` / `ssh_user`, then you can
 `ssh` in and run commands on the GPU box.
+
+If authentication expires during settlement, get a new challenge/token first.
+For a pending payment, POST `/api/auth/verify-usdc-deposit` with that token and
+`{"wallet_address": acct.address, "tx_hash": tx_hash}` until it is confirmed;
+do not resubmit the payment signature. If verification says already credited,
+check authenticated `/api/auth/wallet-status`. Retry `/api/x402/session` with
+the SSH body and token **without** a payment header or automatic-payment retry.
+Do not authorize another payment merely because a session was denied or a
+response was lost. A transaction hash permits reconciliation, never login.
 
 ---
 
@@ -243,8 +288,9 @@ AXGT will also show a non-zero `discount_percent` on the ETH/USDC quotes.
 
 ## Notes
 
-- **Costs:** Test 1 = free. Test 2 = ~1 USDC (AxonOS pays the gas). Test 3 =
-  another ~1 USDC and starts a real (billable, by the minute) GPU session.
+- **Costs:** Test 1 = free. Test 2 = ~1 USDC (AxonOS pays the gas). Test 3 uses
+  existing prepaid credit, or pays if none remains, and starts a real billable
+  GPU session. Wallet verification itself does not cost cryptocurrency.
 - **Default pricing:** 1 USDC ≈ 60 minutes ($1/hour). AXGT holders get a discount
   on ETH/USDC; paying in AXGT gets a +25% bonus.
 - **Security:** use a *throwaway* wallet with only a little USDC. The private

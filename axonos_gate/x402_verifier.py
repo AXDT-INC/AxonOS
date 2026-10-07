@@ -764,7 +764,8 @@ def discovery_document() -> Dict[str, Any]:
     Machine-readable x402 discovery descriptor (served at /.well-known/x402).
 
     Tells an agent what AxonOS sells, how to pay, and the agent-native endpoint
-    that goes from payment → a usable SSH session in one call. The desktop (GUI)
+    that goes from authenticated payment → an SSH session in one call, after
+    the existing signed-wallet challenge. The desktop (GUI)
     rail is intentionally NOT advertised to agents: it's a pixel stream and needs
     a computer-use bridge to be agent-usable.
     """
@@ -783,8 +784,9 @@ def discovery_document() -> Dict[str, Any]:
             {
                 "resource": "/api/x402/settle",
                 "method": "POST",
-                "description": "Settle an x402 EIP-3009 payment (X-PAYMENT header); credits minutes.",
+                "description": "With a verified wallet token, settle an x402 EIP-3009 payment; credits minutes.",
                 "headers": {
+                    "X-AXGT-Auth-Token": "required wallet ownership token from /api/auth/verify-wallet",
                     "X-PAYMENT": "base64 x402 payload",
                     "PAYMENT-SIGNATURE": "accepted alias for compatible x402 clients"
                 },
@@ -792,15 +794,24 @@ def discovery_document() -> Dict[str, Any]:
             {
                 "resource": "/api/x402/session",
                 "method": "POST",
-                "description": "Agent-native one-shot: pay and claim an SSH compute session. Returns ssh_host, ssh_port, auth_token, and remaining minutes.",
+                "description": "After wallet challenge verification, pay and claim an SSH compute session. Ownership token is required even with signed payment or prepaid credit. Returns ssh_host, ssh_port, auth_token, and remaining minutes.",
                 "headers": {
-                    "X-PAYMENT": "base64 x402 payment payload",
+                    "X-AXGT-Auth-Token": "required wallet ownership token from /api/auth/verify-wallet",
+                    "X-PAYMENT": "base64 x402 payment payload; optional when already funded",
                     "PAYMENT-SIGNATURE": "accepted alias for compatible x402 clients"
                 },
                 "body": {"wallet_address": "0x...", "ssh_pubkey": "ssh-ed25519 ...", "requested_profile": "optional"},
                 "returns": {"granted": "bool", "ssh_host": "str", "ssh_port": "int", "remaining_minutes": "float", "auth_token": "str"},
             },
         ],
+        "authentication": {
+            "challenge": {"resource": "/api/auth/challenge", "method": "GET", "query": {"wallet_address": "0x..."}},
+            "verify": {"resource": "/api/auth/verify-wallet", "method": "POST", "body": {
+                "wallet_address": "0x...", "message": "exact challenge", "signature": "personal_sign signature"
+            }},
+            "header": "X-AXGT-Auth-Token",
+            "note": "Retain returned auth_token even if verified is false because the wallet is unfunded. Payment signatures and public transaction hashes are not login credentials.",
+        },
         "session_lifecycle": {
             "heartbeat": {"resource": "/api/session/heartbeat", "method": "POST", "note": "send periodically with auth_token to keep the session alive"},
             "release": {"resource": "/api/session/release", "method": "POST"},
@@ -861,9 +872,14 @@ def openapi_document() -> Dict[str, Any]:
         "info": {
             **info,
             "x-guidance": (
-                "To rent an AxonOS GPU Linux compute session, call POST /api/x402/session "
+                "First GET /api/auth/challenge?wallet_address=0x..., personal-sign the exact "
+                "challenge locally, and POST wallet_address, message and signature to "
+                "/api/auth/verify-wallet. Retain auth_token even when verified=false "
+                "because the wallet is unfunded. To rent an AxonOS GPU Linux compute "
+                "session, call POST /api/x402/session "
                 "with a JSON body containing your wallet_address and ssh_pubkey (an SSH "
-                "public key, e.g. 'ssh-ed25519 AAAA...'). Include an X-PAYMENT header "
+                "public key, e.g. 'ssh-ed25519 AAAA...'). Always include X-AXGT-Auth-Token "
+                "with the ownership token, including paid and prepaid requests. Include an X-PAYMENT header "
                 "carrying the x402 (EIP-3009 USDC-on-Base) payment authorization, or "
                 "pre-fund the wallet. On success you receive ssh_host, ssh_port, "
                 "remaining_minutes and an auth_token; if payment is required you receive "
@@ -871,15 +887,26 @@ def openapi_document() -> Dict[str, Any]:
             ),
         },
         "servers": [{"url": _public_base_url()}],
+        "components": {
+            "securitySchemes": {
+                "WalletAuth": {
+                    "type": "apiKey", "in": "header", "name": "X-AXGT-Auth-Token",
+                    "description": "Wallet-bound bearer obtained by personal-signing /api/auth/challenge and submitting it to /api/auth/verify-wallet. Required independently of x402 payment.",
+                }
+            }
+        },
         "paths": {
             "/api/x402/session": {
                 "post": {
                     "operationId": "rentGpuSession",
                     "summary": "Pay via x402 and claim an AxonOS GPU Linux SSH compute session",
+                    "security": [{"WalletAuth": []}],
                     "description": (
                         "Agent-native one-shot: settle an x402 USDC payment (or use the "
                         "wallet's prepaid minutes) and claim an SSH compute session in a "
-                        "single call."
+                        "single authenticated call. X-AXGT-Auth-Token is required even "
+                        "when an EIP-3009 payment signature is present. Public payment "
+                        "information never proves ownership of the session wallet."
                     ),
                     "x-payment-info": {
                         "price": _OPENAPI_FIXED_USD_PRICE,
@@ -896,7 +923,7 @@ def openapi_document() -> Dict[str, Any]:
                                     "properties": {
                                         "wallet_address": {
                                             "type": "string",
-                                            "description": "EVM wallet address that pays for and owns the session (0x...).",
+                                            "description": "EVM wallet address that must match the verified ownership token (0x...).",
                                         },
                                         "ssh_pubkey": {
                                             "type": "string",
@@ -935,6 +962,15 @@ def openapi_document() -> Dict[str, Any]:
                                 "the wallet. The body and PAYMENT-REQUIRED header carry the "
                                 "x402 payment requirements."
                             ),
+                        },
+                        "401": {
+                            "description": "Missing, invalid, expired or wrong-wallet ownership token. Obtain a fresh wallet challenge; do not replay a payment to authenticate.",
+                        },
+                        "409": {
+                            "description": "Session not granted. If payment was submitted, reconcile its transaction before retrying the session without another payment.",
+                        },
+                        "503": {
+                            "description": "Authentication or session service unavailable; no unauthenticated claim is permitted.",
                         },
                     },
                 }

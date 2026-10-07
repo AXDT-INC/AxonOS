@@ -4,7 +4,7 @@ AxonOS x402 agent harness — Python Coinbase x402 SDK (the v2 PAYMENT-REQUIRED 
 
 Mirror of agent.mjs but using the official Python `x402` SDK (PyPI 2.13.0), which
 detects v2 from the `PAYMENT-REQUIRED` response header and pays via PAYMENT-SIGNATURE.
-Walks: pay (x402 v2) -> claim SSH session -> run commands -> heartbeat -> release.
+Walks: verify wallet -> pay (x402 v2) -> claim SSH -> heartbeat -> release.
 
 Testnet only. Needs:  pip install 'x402[evm]' requests
   AGENT_PRIVATE_KEY   Base Sepolia EOA holding test USDC, with NO prepaid minutes
@@ -13,6 +13,7 @@ Testnet only. Needs:  pip install 'x402[evm]' requests
 import os, sys, json, subprocess, time, pathlib
 
 from eth_account import Account
+from eth_account.messages import encode_defunct
 from x402 import x402ClientSync, max_amount
 from x402.mechanisms.evm.signers import EthAccountSigner
 from x402.mechanisms.evm.exact import register_exact_evm_client
@@ -37,8 +38,44 @@ def log(step, msg, obj=None):
         print(json.dumps(obj, indent=2))
 
 
+def verify_wallet(http, base_url, account):
+    """Use AxonOS's existing one-time personal-sign challenge, without payment."""
+    challenge_response = http.get(
+        f"{base_url}/api/auth/challenge", params={"wallet_address": account.address}, timeout=30
+    )
+    if challenge_response.status_code != 200:
+        raise RuntimeError("Wallet challenge unavailable")
+    challenge = challenge_response.json().get("challenge")
+    expected_prefix = f"AxonOS verify\nWallet: {account.address.lower()}\nNonce: "
+    if not isinstance(challenge, str) or not challenge.startswith(expected_prefix):
+        raise RuntimeError("Unexpected wallet challenge")
+    signature = account.sign_message(encode_defunct(text=challenge)).signature.hex()
+    if not signature.startswith("0x"):
+        signature = "0x" + signature
+    response = http.post(f"{base_url}/api/auth/verify-wallet", json={
+        "wallet_address": account.address, "message": challenge, "signature": signature,
+    }, timeout=30)
+    result = response.json()
+    # Access/credit denial does not negate successfully proven ownership. Older
+    # gates may return 403 with the token; current gates return 200, verified=false.
+    token = result.get("auth_token")
+    if response.status_code not in (200, 403) or not isinstance(token, str) or not token:
+        raise RuntimeError("Wallet ownership verification failed")
+    if str(result.get("wallet_address", "")).lower() != account.address.lower():
+        raise RuntimeError("Wallet verification identity mismatch")
+    return token
+
+
 acct = Account.from_key(PRIVATE_KEY)
 log("identity", f"agent wallet = {acct.address}")
+config_response = requests.get(f"{BASE_URL}/api/config", timeout=30)
+if config_response.status_code != 200 or str(config_response.json().get("usdc_chain_id")) != "84532":
+    sys.exit("FATAL: this harness requires a Base Sepolia testnet gate (USDC chain 84532).")
+try:
+    bootstrap_token = verify_wallet(requests, BASE_URL, acct)
+except (RuntimeError, requests.RequestException, ValueError):
+    sys.exit("FATAL: wallet verification failed; no payment or session request was made.")
+log("auth", "wallet ownership verified (bearer retained in memory)")
 
 # SSH keypair to inject into the session
 if not os.path.exists(SSH_KEY):
@@ -53,14 +90,23 @@ session = x402_requests(client)  # requests.Session that auto-handles 402
 
 url = f"{BASE_URL}/api/x402/session"
 log("x402", f"POST {url} (Python SDK auto-pays on 402 via PAYMENT-REQUIRED header)")
-res = session.post(url, json={"wallet_address": acct.address, "ssh_pubkey": ssh_pubkey, "requested_profile": PROFILE}, timeout=180)
+res = session.post(url, headers={"X-AXGT-Auth-Token": bootstrap_token},
+                   json={"wallet_address": acct.address, "ssh_pubkey": ssh_pubkey, "requested_profile": PROFILE}, timeout=180)
 sess = res.json() if res.content else {}
-log("x402", f"HTTP {res.status_code}", sess)
+log("x402", f"HTTP {res.status_code}", {key: sess[key] for key in (
+    "granted", "ssh_host", "ssh_port", "ssh_user", "remaining_minutes"
+) if key in sess})
 if not res.ok or not sess.get("granted"):
-    sys.exit("FATAL: session not granted. Check funds (test USDC + settlement gas) and gate logs.")
+    payment = sess.get("payment") or {}
+    if payment.get("settlement_tx_hash"):
+        log("recovery", "Save this transaction hash; do not submit another payment", {
+            "settlement_tx_hash": payment["settlement_tx_hash"]
+        })
+    sys.exit("FATAL: session not granted. Reverify expired auth and reconcile any pending transaction before retrying without payment; see README.")
 
 ssh_host = SSH_HOST_OVERRIDE or sess["ssh_host"]
-ssh_port, ssh_user, auth_token = sess["ssh_port"], sess["ssh_user"], sess["auth_token"]
+ssh_port, ssh_user = sess["ssh_port"], sess["ssh_user"]
+auth_token = sess.get("auth_token") or bootstrap_token
 auth_headers = {"X-AXGT-Auth-Token": auth_token}
 
 remote = "whoami; uname -a; (nvidia-smi -L || echo 'no gpu in container'); echo 'hello-from-x402-agent-py'"

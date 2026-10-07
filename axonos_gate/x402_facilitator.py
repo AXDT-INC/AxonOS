@@ -95,7 +95,7 @@ def bazaar_discovery_extension() -> Optional[Dict[str, Any]]:
                     "body": {
                         "wallet_address": {
                             "type": "string",
-                            "description": "EVM wallet address paying for or claiming the AxonOS compute session.",
+                            "description": "EVM wallet matching the required X-AXGT-Auth-Token header. Obtain the token by GET /api/auth/challenge, locally personal-signing its challenge, and POST /api/auth/verify-wallet. Every session claim requires this proof, including paid and prepaid requests; a payment signature alone is insufficient.",
                             "required": True
                         },
                         "ssh_pubkey": {
@@ -137,6 +137,7 @@ def bazaar_discovery_extension() -> Optional[Dict[str, Any]]:
                 "properties": {
                     "input": {
                         "type": "object",
+                        "description": "The HTTP request additionally requires X-AXGT-Auth-Token from existing wallet challenge verification, independently of x402 payment headers.",
                         "required": ["type", "method", "bodyType", "body"],
                         "properties": {
                             "type": { "const": "http", "type": "string" },

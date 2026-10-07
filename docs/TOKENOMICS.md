@@ -186,6 +186,21 @@ in one call) — broadcasting the transfer itself so **the gate pays the gas** f
 dedicated low-balance settlement wallet (`X402_SETTLEMENT_PRIVATE_KEY`). The
 verified payment credits minutes exactly like the USDC tx-hash rail.
 
+`POST /api/x402/settle` and every `POST /api/x402/session` claim also require a
+wallet-bound ownership token. Request `/api/auth/challenge`, sign its exact
+message locally, submit it to `/api/auth/verify-wallet`, and send the returned
+token in `X-AXGT-Auth-Token`. An unfunded wallet can obtain this token without
+paying. The requirement applies through both public listeners, with either a
+signed x402 payment or existing prepaid credit. A funded wallet address, SSH
+public key, transaction hash, or publicly observable payment signature never
+establishes wallet ownership. Generic `/api/x402/access` payment settlement
+continues to follow the x402 protocol; its access response is not a login token.
+
+If settlement is pending or authentication expires during payment processing,
+reverify ownership and reconcile the original transaction using authenticated
+`/api/auth/verify-usdc-deposit`. Retry the session without a payment header once
+credit is available; do not send another payment merely to regain access.
+
 Optional extensions (all off by default):
 
 - **CDP facilitator rail** (`AXGT_X402_FACILITATOR_ENABLED=true`,
@@ -377,8 +392,8 @@ the discount applied at credit time:
 
 - `POST /api/auth/verify-usdc-deposit` — verify a USDC transfer by tx hash (USDC rail).
 - `GET /api/x402/access` — returns HTTP 402 with payment requirements (v1 body + v2 header); a retry carrying `X-PAYMENT` settles inline and returns access.
-- `POST /api/x402/settle` — explicitly settles an EIP-3009 `transferWithAuthorization` (gate pays gas).
-- `POST /api/x402/session` — pays (if needed) and claims a headless SSH compute session in one call.
+- `POST /api/x402/settle` — requires a wallet ownership token and explicitly settles an EIP-3009 `transferWithAuthorization` (gate pays gas).
+- `POST /api/x402/session` — requires a wallet ownership token, pays if needed, and claims a headless SSH session in one authenticated call.
 - `GET /.well-known/x402` — x402 discovery document.
 - `GET /api/config` additionally exposes the USDC contract/chain and dynamic-pricing flags when configured.
 

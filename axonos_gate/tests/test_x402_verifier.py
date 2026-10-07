@@ -539,6 +539,28 @@ class TestOpenApiDocument(unittest.TestCase):
         self.assertEqual(xpi["currency"], "USD")
         self.assertEqual(xpi["protocols"], [{"x402": {}}])
 
+    def test_session_requires_wallet_auth_independently_of_payment(self):
+        import x402_verifier as x
+        doc = x.openapi_document()
+        op = doc["paths"]["/api/x402/session"]["post"]
+        self.assertEqual(op["security"], [{"WalletAuth": []}])
+        scheme = doc["components"]["securitySchemes"]["WalletAuth"]
+        self.assertEqual((scheme["type"], scheme["in"], scheme["name"]),
+                         ("apiKey", "header", "X-AXGT-Auth-Token"))
+        self.assertIn("401", op["responses"])
+        for route in ("/api/auth/challenge", "/api/auth/verify-wallet"):
+            self.assertIn(route, doc["info"]["x-guidance"])
+        self.assertIn("including paid and prepaid requests", doc["info"]["x-guidance"])
+
+    def test_discovery_advertises_ownership_bootstrap_and_session_header(self):
+        import x402_verifier as x
+        doc = x.discovery_document()
+        session = next(ep for ep in doc["endpoints"] if ep["resource"] == "/api/x402/session")
+        self.assertIn("X-AXGT-Auth-Token", session["headers"])
+        self.assertEqual(doc["authentication"]["challenge"]["resource"], "/api/auth/challenge")
+        self.assertEqual(doc["authentication"]["verify"]["resource"], "/api/auth/verify-wallet")
+        self.assertEqual(doc["authentication"]["header"], "X-AXGT-Auth-Token")
+
     def test_info_x_guidance_mentions_session_call(self):
         import x402_verifier as x
         guidance = x.openapi_document()["info"]["x-guidance"]

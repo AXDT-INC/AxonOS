@@ -1053,3 +1053,100 @@ roll back a multi-service deployment. Verify backups/compatibility before backen
 changes. After successful local postflight, perform separately approved
 application/ingress smoke tests before reopening admissions. Retain the safe
 branch/commit/mode/stage summary without adding secret-bearing diagnostics.
+
+## Wallet ownership security update
+
+This release removes wallet-address-only prepaid reclaim through both public
+listeners. Every ordinary-wallet session claim now requires the existing
+wallet-bound auth token, including `/api/x402/session` with a signed x402 payment.
+The EIP-3009 signature authorizes the USDC transfer; it does not authorize an SSH
+key or session request and becomes publicly observable on-chain. Agents must
+first use `/api/auth/challenge` and `/api/auth/verify-wallet`, then include
+`X-AXGT-Auth-Token`. This sign-in works before funding. Payment pricing,
+settlement, and credit accounting are unchanged. Unpaid discovery still returns
+402, and authenticated clients can pay and claim in one subsequent request.
+
+Both listeners authenticate before settlement/claim, recheck the token after a
+long settlement wait, and issue a new token only after a granted claim. VNC
+upgrades require authentication even from loopback; Flask forwards its validated
+bearer on the internal connection. No new auth system or database migration is
+introduced by this fix.
+
+### Required remediation for an existing installation
+
+Installing the code alone does **not** invalidate credentials obtained before
+the fix. `axgt_auth_tokens` records wallet, issue/expiry times, status, and grace
+expiry, but no ownership-proof or issuing-route provenance. An unsafe token may
+already have been refreshed into a newer token through wallet-status. An
+`issued_at` cutoff therefore cannot identify all affected descendants, and
+ordinary token rotation leaves older credentials usable in grace. Existing
+SSH/VNC/terminal sessions can outlive the wallet token used to establish them.
+
+The following is an operator procedure requiring a separately approved
+maintenance window. Adding this documentation does not execute any revocation,
+session stop, database write, image rebuild, or production rollout.
+
+1. Back up PostgreSQL and preserve protected audit evidence and wallet volumes.
+   Do not print/export plaintext auth tokens or session secrets into logs.
+   Explain the required sign-in renewal and possible session interruption to
+   users. Unless reliable independent evidence narrows exposure, treat all
+   existing ordinary-wallet tokens and sessions as potentially affected.
+2. Block public traffic to **both 6080 and 8889**, including any alternate
+   ingress. Pause session admissions, then stop/drain every old public gate
+   worker so no in-flight request can issue or refresh a token after revocation.
+   An admissions-only pause is insufficient: wallet-status can refresh tokens.
+   Terminate established VNC and terminal connections by restarting the relevant
+   gateway workers during this maintenance window. Keep both listeners closed
+   until their patched versions and remediation are complete.
+3. Through protected operator database access, revoke **all current and grace
+   tokens**, not just recently issued tokens. The broad procedure also signs out
+   guest/demo users; provision replacement guest access as needed. Clear unused
+   terminal tickets when that table exists. Example SQL, for deliberate operator
+   execution only after step 2:
+
+   ```sql
+   BEGIN;
+   UPDATE axgt_auth_tokens
+   SET status = 'revoked', expires_at = 0, grace_until = 0
+   WHERE status IN ('current', 'grace');
+   DO $$
+   BEGIN
+       IF to_regclass('axgt_terminal_tickets') IS NOT NULL THEN
+           DELETE FROM axgt_terminal_tickets;
+       END IF;
+   END $$;
+   COMMIT;
+   ```
+
+   Preserve credit balances, deposit records, and audit history. This procedure
+   revokes credentials without reversing credits.
+4. End potentially unauthorized active/credit-grace sessions through the
+   existing operator/session lifecycle and confirm their runtime containers,
+   SSH connections, terminal streams, and agents have stopped. Do not merely
+   change a session's database status while leaving its runtime alive. Per-session
+   `files_key` credentials authorize agents independently of wallet tokens;
+   provision fresh runtime/session credentials when legitimate owners relaunch.
+   Review/quarantine affected persistent homes before mounting them into a new
+   runtime. Inspect SSH authorized keys, other login trust, startup hooks, and
+   exposed application secrets. SSH host keys also persist under
+   `~/.config/axonos/ssh`. A fresh wallet signature or overwriting
+   `~/.ssh/authorized_keys` cannot undo other modifications to a compromised home.
+   Rotate exposed credentials and restore trusted data according to the incident
+   findings; do not automatically delete user volumes.
+5. Start the patched listeners together using the deployment's established
+   manual Compose procedure (the deployment controller and CAPI are not
+   prerequisites). With controlled test access, verify that old tokens fail on
+   **both** listeners, address-only and payment-signature-only claims
+   fail without launching or minting a token, and a fresh signed challenge permits
+   normal prepaid claim, x402 payment, and reconnect. Resume public traffic only
+   after those checks and runtime/home review are complete.
+6. Users reconnect their wallet and sign a new challenge; agents do the same
+   programmatically. Existing balances and deposit history remain available.
+   Stop/recreate remediation can interrupt jobs, so coordinate recovery with
+   owners. Clients must retain the returned auth token and renew it through the
+   existing authentication flow; a public deposit hash or old payment signature
+   is never a substitute for signing in.
+
+Do not restore pre-fix auth/session tables from backup as an application rollback
+step: that would restore revoked access. Keep patched ownership checks in place
+or keep admissions/ingress closed if rolling back other changes.

@@ -858,6 +858,10 @@ def _x402_402_body(explicit_version=None, minutes_wanted: float = 0.0, error: st
 
 
 def _issue_auth_token(wallet_address: str, custom_ttl=None) -> tuple[str, int]:
+    # Both listeners share the token table and must use the same wallet key.
+    wallet_address = (wallet_address or "").strip().lower()
+    if not wallet_address:
+        raise RuntimeError("Wallet address required")
     now_ts = time.time()
     if _is_guest_shaped(wallet_address):
         guest_ttl = _guest_auth_ttl_seconds(wallet_address, now_ts=now_ts)
@@ -915,6 +919,7 @@ def _issue_auth_token(wallet_address: str, custom_ttl=None) -> tuple[str, int]:
 
 
 def _current_wallet_token_and_remaining(wallet_address: str) -> tuple[str | None, int | None]:
+    wallet_address = (wallet_address or "").strip().lower()
     now_ts = time.time()
     guest_ttl = None
     if _is_guest_shaped(wallet_address):
@@ -948,6 +953,7 @@ def _current_wallet_token_and_remaining(wallet_address: str) -> tuple[str | None
 
 
 def _auth_token_remaining_seconds(token: str, wallet_address: str) -> int | None:
+    wallet_address = (wallet_address or "").strip().lower()
     now_ts = time.time()
     if not _auth_pg_init_once():
         return None
@@ -980,6 +986,9 @@ def _is_auth_token_valid(token: str, wallet_address: str) -> bool | None:
     claim path) test ``is None`` and answer 503 instead of 401.
     """
     if not token:
+        return False
+    wallet_address = (wallet_address or "").strip().lower()
+    if not wallet_address:
         return False
     now_ts = time.time()
     guest_deadline = None
@@ -1022,6 +1031,7 @@ def _is_auth_token_valid(token: str, wallet_address: str) -> bool | None:
 
 
 def _rotate_auth_token(existing_token: str, wallet_address: str) -> tuple[str | None, int]:
+    wallet_address = (wallet_address or "").strip().lower()
     now_ts = time.time()
     guest_ttl = None
     if _is_guest_shaped(wallet_address):
@@ -1146,17 +1156,22 @@ def _valid_auth_token_from_path_and_headers(
     path: str,
     headers,
     wallet_address: str,
-) -> str | None:
+) -> str | None | bool:
     """Choose the first candidate valid for this exact wallet.
 
     A stale JS header must not shadow a newer same-wallet HttpOnly cookie, while
     an old cookie from a different identity must not shadow an explicit guest
     bearer. Every fallback candidate is independently wallet-bound before use.
+    False distinguishes an unavailable auth DB from invalid credentials (None).
     """
+    db_unreachable = False
     for token in _auth_token_candidates_from_path_and_headers(path, headers):
-        if _is_auth_token_valid(token, wallet_address):
+        verdict = _is_auth_token_valid(token, wallet_address)
+        if verdict:
             return token
-    return None
+        if verdict is None:
+            db_unreachable = True
+    return False if db_unreachable else None
 
 
 def _terminal_origin_for_handler(handler) -> str | None:
@@ -3261,15 +3276,15 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
 
         if ponly == '/api/x402/session':
             # One-shot agent loop: pay via x402 (if needed) + claim an SSH session.
-            # The EIP-3009 payment signature is the authorization — no prior
-            # browser wallet sign-in required. SSH is the agent-usable session type.
+            # EIP-3009 authorizes payment, not the caller's SSH key or session.
+            # Every claim requires the existing verified wallet bearer as well.
             if not _session_mgr_available:
                 return self._send_json(503, {"granted": False, "error": "Session manager unavailable"})
             # Use one sanitized, GPC-aware capability for both authoritative
             # effects created by this browser request.
             request_attribution_context = _request_attribution_context(self.headers)
-            # Prepaid reclaim accepts only a wallet string in this legacy API,
-            # so it is not strong enough to authorize an attribution binding.
+            # A prepaid balance does not prove ownership. Bind attribution only
+            # after token authentication, independently of payment.
             attribution_context = None
             data = self._read_json_body() or {}
             wallet_address = (data.get("wallet_address") or self.headers.get('X-Wallet-Address') or '').strip()
@@ -3299,10 +3314,18 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 return self._send_json(402, _x402_402_body(_xv, 0.0, _err),
                                        extra_headers=_x402_v2_headers(0.0, _err))
 
-            # Past the gate: a payment is present, or the wallet is prepaid. Now
-            # validate inputs (400 only for an authorized-but-malformed request).
+            # Reuse the existing wallet-bound bearer verifier for prepaid
+            # reclaim, before any session/SSH state or token can be changed.
             if not wallet_address or not validate_wallet_address(wallet_address):
                 return self._send_json(400, {"granted": False, "error": "Valid wallet_address required"})
+            wallet_address = wallet_address.lower()
+            token = _valid_auth_token_from_path_and_headers(self.path, self.headers, wallet_address)
+            if token is False:
+                return self._send_json(503, {"granted": False, "retryable": True,
+                                            "error": "Session DB unavailable. Nothing was changed; retry in a moment."})
+            if not token:
+                return self._send_json(401, {"granted": False, "error": "Valid auth token required"})
+            attribution_context = request_attribution_context
             ssh_pubkey = validate_ssh_public_key(data.get('ssh_pubkey'))
             if not ssh_pubkey:
                 return self._send_json(400, {"granted": False, "error": "A valid ssh_pubkey is required for an agent SSH session"})
@@ -3320,17 +3343,16 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 )
                 if not (settle_result.get("verified") or verify_usdc_deposit_is_pending(settle_result)):
                     return self._send_json(400, {"granted": False, "error": settle_result.get("error") or "Payment failed", "payment": settle_result})
-                attribution_context = request_attribution_context
-                try:
-                    auth_token, auth_ttl = _issue_auth_token(wallet_address)
-                except Exception as ex:
-                    logger.warning("x402/session token issue failed: %s", ex)
-            else:
-                # Prepaid (the gate above already confirmed remaining minutes).
-                try:
-                    auth_token, auth_ttl = _issue_auth_token(wallet_address)
-                except Exception as ex:
-                    logger.warning("x402/session token issue failed: %s", ex)
+                # Recheck after the potentially long confirmation wait. A paid
+                # result cannot refresh an expired/revoked login credential.
+                token = _valid_auth_token_from_path_and_headers(self.path, self.headers, wallet_address)
+                if token is False:
+                    return self._send_json(503, {"granted": False, "retryable": True,
+                                                "error": "Identity database unavailable after payment verification; retry session claim after recovery",
+                                                "payment": settle_result})
+                if not token:
+                    return self._send_json(401, {"granted": False, "error": "Valid auth token required",
+                                                "payment": settle_result})
             claim = try_claim_session(
                 wallet_address,
                 requested_profile=requested_profile,
@@ -3339,6 +3361,11 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 attribution_context=attribution_context,
             )
             out = dict(claim)
+            if claim.get("granted"):
+                try:
+                    auth_token, auth_ttl = _issue_auth_token(wallet_address)
+                except Exception:
+                    logger.warning("x402/session token issue failed")
             if settle_result is not None:
                 out["payment"] = {
                     "verified": settle_result.get("verified"),
@@ -3607,23 +3634,8 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             self.send_error(403, "Invalid wallet address format")
             return
 
-        # Allow internal proxy from gate_server (127.0.0.1 only; tunnel points at GATE_PORT)
-        client_address = self.client_address[0] if getattr(self, "client_address", None) else None
-        if client_address == "127.0.0.1":
-            status = get_wallet_access_status(wallet_address, consume_usage=False)
-            if not status.get("verified"):
-                reason = status.get("reason") or "Access denied for this wallet"
-                self.send_error(403, reason)
-                return
-            if _session_mgr_available and not is_session_owner(wallet_address):
-                self.send_error(403, "Session not owned by this wallet")
-                return
-            logger.info(
-                "WebSocket upgrade approved (internal proxy): %s",
-                mask_wallet_address(wallet_address),
-            )
-            return super().handle_upgrade()
-
+        # A local reverse proxy is not proof of wallet ownership. Flask passes
+        # its already-validated bearer here; every peer must still authenticate.
         auth_token = _extract_auth_token_from_path_and_headers(self.path, self.headers)
         if not auth_token:
             self.send_error(403, "AXGT auth token required")

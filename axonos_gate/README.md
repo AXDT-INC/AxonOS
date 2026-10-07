@@ -178,8 +178,34 @@ Issue bounded, auditable test credit to an authenticated eligible wallet (ledger
 
 - `GET /api/x402/access` — returns **HTTP 402** with payment requirements (v1 body with absolute `resource` URL + v2 `PAYMENT-REQUIRED` header, so both JS `x402-fetch` and Python `x402` SDKs work).
 - `POST /api/x402/settle` — settles an EIP-3009 `transferWithAuthorization`; the gate broadcasts and pays gas, then credits minutes.
-- `POST /api/x402/session` — pay-and-provision a headless SSH session in one call (agent flow).
+- `POST /api/x402/session` — after wallet sign-in, pay-and-provision a headless
+  SSH session in one call (agent flow). **Every claim requires an existing auth
+  token for the exact wallet**, including prepaid reclaim and requests carrying
+  `X-PAYMENT` / `PAYMENT-SIGNATURE`. A wallet address, balance, transaction hash,
+  or EIP-3009 payment signature alone never authorizes a session.
 - `GET /.well-known/x402` — discovery document.
+
+Agents use the same `GET /api/auth/challenge` and signed
+`POST /api/auth/verify-wallet` flow as the browser, then send
+`X-AXGT-Auth-Token` with their session request. An unfunded wallet can obtain an
+auth token when sign-in returns `verified: false` for insufficient compute credit
+(HTTP 200 on current listeners; legacy clients may also accept HTTP 403 carrying
+that wallet's token). The token proves ownership. Empty/unpaid discovery still
+returns HTTP 402. Requests with invalid ownership proof return HTTP 401 before
+payment settlement or session mutation; an unavailable auth database fails
+closed. Payment signatures retain their existing USDC authorization semantics,
+but are public on-chain and do not sign the session's SSH key.
+
+The gate rechecks authentication after a potentially long settlement wait and
+issues a replacement token only after the session claim succeeds. A denied claim
+does not mint a token or undo an independently completed payment. Renew wallet
+authentication and verify any pending settlement transaction through the existing
+authenticated deposit endpoint before retrying a prepaid claim; do not blindly
+pay again. Both public listeners enforce these rules. VNC upgrades also require
+the wallet token for every peer, including loopback; Flask forwards its validated
+bearer to websockify. See the
+[required legacy-token deployment procedure](../docs/PRODUCTION_DEPLOYMENT.md#wallet-ownership-security-update)
+before upgrading an existing installation.
 
 ### GET /api/config
 
