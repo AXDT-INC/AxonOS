@@ -65,6 +65,7 @@ for migration behavior, warning limitations, and termination diagnostics.
 ### Persistent storage
 
 - `AXGT_PERSISTENT_STORAGE_ENABLED`: Enable user persistent named volumes (default `true`).
+- `AXGT_STORAGE_MAINTENANCE_ENABLED`: Launcher-only automatic storage maintenance (default `true`). Set `false` to skip startup capacity reconciliation and all periodic size-probe mounts, storage charges and debt pruning, while keeping authenticated home recovery/provisioning available. This is independent of `AXGT_PERSISTENT_STORAGE_ENABLED`.
 - `AXGT_PERSISTENT_STORAGE_DIR`: Directory on Docker host for backing `.ext4` sparse image files (default `/var/lib/docker/axonos_storage`).
 - `AXGT_PERSISTENT_STORAGE_VOLUME_PREFIX`: Docker volume prefix (default `axgt-user-storage-`).
 - `AXGT_PERSISTENT_STORAGE_MOUNT_PATH`: Mount path inside desktop sessions (default `/home/aXonian`).
@@ -72,6 +73,29 @@ for migration behavior, warning limitations, and termination diagnostics.
 - `AXGT_PERSISTENT_STORAGE_MIN_BALANCE_LIMIT_MINUTES`: Max negative credit debt allowed before volume pruning (default `-1440.0`).
 - `AXGT_PERSISTENT_STORAGE_GB_HOUR_COST_MINUTES`: Offline storage charge rate per GB/hour (default `0.05` compute minutes).
 - **Storage Slider & Dynamic Resizing**: Users configure requested capacity (10 GB – 500 GB, default 100 GB) in the launch wizard. The backend automatically initializes sparse `.ext4` loop images and expands existing volumes online (`truncate` + `losetup -c` + `resize2fs`). Billing is based on actual data stored (`du -s`), not virtual capacity.
+
+The maintenance policy accepts `true/1/yes/on` and `false/0/no/off`, ignoring
+case and surrounding whitespace. Only an **absent** setting defaults to true;
+empty or unrecognized values fail launcher startup and configuration checks.
+Configure it in the operator-controlled launcher environment, not a session
+payload or tenant environment. Compose preserves explicit empty values so they
+cannot silently enable maintenance.
+
+With maintenance disabled, startup does not scan backing images or update
+capacity mappings. An authorized session still operates on its own home: loop
+attachment, capacity recording, creation or explicitly requested growth, and
+normal tenant startup writes remain enabled. Other inactive homes are not
+enumerated or mounted. Session compute accounting and existing capacity floors
+remain unchanged. Re-enabling maintenance resumes the existing billing rules,
+which may charge elapsed storage time (up to the existing seven-day cap) and
+prune at the unchanged debt threshold; review this before enabling it again.
+
+This launcher policy does not constrain manual administrator tools.
+`scripts/prune_user_volumes.py` must not run during a storage-preserving cutover:
+even its `--dry-run` mounts volumes read-write to measure usage. Legacy volume
+definitions without their expected backing images, or with mismatched devices,
+need operator review before their owner's next launch; the existing explicit
+provisioning path may create an image and replace that wallet's volume definition.
 
 ### USDC / x402 (stablecoin + agent rail)
 

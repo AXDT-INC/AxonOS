@@ -811,6 +811,77 @@ It does not rebuild the launcher or replace existing tenant containers. Changes
 to launcher code/dependencies/configuration or the gate/launcher protocol require
 a separately reviewed coordinated procedure; see [Host Launcher](HOST_LAUNCHER.md).
 
+## Preserving inactive homes during a coordinated launcher upgrade
+
+Persistent-home availability and automatic launcher maintenance have separate
+controls. For a cutover that must preserve inactive homes, explicitly set the
+replacement launcher's operator-controlled configuration to:
+
+```text
+AXGT_PERSISTENT_STORAGE_ENABLED=true
+AXGT_STORAGE_MAINTENANCE_ENABLED=false
+```
+
+The maintenance setting defaults to **true when absent**, preserving existing
+behavior. It accepts `true/1/yes/on` or `false/0/no/off` (case-insensitive, trimmed).
+Empty/invalid values fail startup and configuration checks. Compose deliberately
+uses `${AXGT_STORAGE_MAINTENANCE_ENABLED-true}`, without `:`, so an explicit empty
+value reaches that validation. This policy is launcher-only; tenants and session
+payloads cannot override it. Older launcher images do not implement the setting
+and must not be used for a storage-preserving cutover.
+
+Disabled maintenance skips both startup capacity reconciliation (backing-image
+scan, ext4 metadata probes and capacity-record upserts) and the periodic storage
+billing/pruning worker, including its initial sweep, read-write size-probe
+mounts and debt-triggered Docker-volume removals. Those background paths do not
+delete backing images or resize filesystems; filesystem creation/growth and
+loop attachment belong to the explicitly authorized session launch path.
+An authenticated owner can still recover/use their matching home, record its
+capacity, or request provisioning/growth. Startup does not rewrite inactive
+wallets' storage mappings merely because maintenance is disabled. Session
+compute accounting, capacity floors, pricing and debt thresholds are unchanged.
+
+Do not run `scripts/prune_user_volumes.py` or independent storage jobs during
+this cutover. That separate manual administrator utility is outside the launcher
+policy, and its `--dry-run` still mounts volumes read-write. Session/network
+cleanup removes containers/networks without deleting named wallet volumes and
+remains enabled. Tenant startup/file operations affect only the selected home
+under the existing session authorization rules.
+
+Before shutdown, verify the **rendered** Compose configuration explicitly has
+maintenance `false` and persistence `true` for the launcher. Record all wallet
+volume names, driver/options/creation metadata, backing-image paths and
+device/inode identity, logical/allocated sizes, ownership and timestamps, loop
+associations and database storage mappings. Inventory unmatched/legacy entries
+too; do not mount them or copy every inactive home. Before the launcher-start
+checkpoint, repeat the configuration assertion and refuse startup on absence,
+drift or invalid values. After startup verify its effective environment, without
+printing secrets, and compare storage identities against the saved inventory.
+Do not automatically re-enable maintenance after deployment.
+
+The existing explicit provisioning path can create a missing backing image and
+replace a mismatched volume definition. Review legacy/unmatched entries before
+their owners launch; this policy preserves inactive homes but does not repair or
+certify legacy storage. Disabling the worker also pauses sweep-based storage
+charges. Explicitly re-enabling it can bill elapsed time under the existing
+seven-day cap and prune at the unchanged debt limit; review balances and storage
+before doing so.
+
+Build and validate a new gate/launcher pair from the committed storage fix before
+cutover. Keep private immutable image identities and production-equivalent full
+builds (`AXONOS_SKIP_HEAVY=0`); do not substitute an older launcher merely because
+its gate is secured. A security-only fallback should be a separately recorded
+source ref containing the wallet-ownership security baseline plus only this
+storage change, with its own matched image pair and isolated validation.
+
+Prepare images, regression checks and inventories before the outage. The outage
+should contain only authority shutdown verification, final database backup and
+isolated restore verification, any experiment-home preservation that cannot be
+finalized consistently beforehand, approved credential remediation/migrations,
+pinned launcher/gate startup and minimum security/health checks. Continue broader
+validation after service restoration; approximately 5–10 minutes remains a target
+only when mandatory backup/preservation timings permit it.
+
 ## Private candidate retention
 
 The candidate namespace is `axonos-deploy-candidate:<24-lowercase-hex-run-id>`.

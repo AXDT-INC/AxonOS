@@ -129,6 +129,7 @@ _FORBIDDEN_SESSION_ENV_NAMES = {
     "AXGT_SESSION_FILES_KEY",
     "AXGT_SESSION_ID",
     "AXGT_SESSION_LAUNCHER_TOKEN",
+    "AXGT_STORAGE_MAINTENANCE_ENABLED",
     "AXGT_WALLET_ADDRESS",
     "AXGT_WEBRTC_AGENT_TOKEN",
     "CDP_API_KEY_ID",
@@ -359,6 +360,19 @@ def _persistent_storage_enabled() -> bool:
     return raw in ("1", "true", "yes", "on")
 
 
+def _storage_maintenance_enabled() -> bool:
+    """Operator policy for automatic maintenance, independent of home access."""
+    raw = os.getenv("AXGT_STORAGE_MAINTENANCE_ENABLED")
+    if raw is None:
+        return True
+    value = raw.strip().lower()
+    if value in ("1", "true", "yes", "on"):
+        return True
+    if value in ("0", "false", "no", "off"):
+        return False
+    raise ValueError("AXGT_STORAGE_MAINTENANCE_ENABLED must be true or false")
+
+
 def _persistent_storage_volume_prefix() -> str:
     raw = (os.getenv("AXGT_PERSISTENT_STORAGE_VOLUME_PREFIX") or "axgt-user-storage-").strip()
     return "".join(c for c in raw if c.isalnum() or c in ("-", "_"))
@@ -415,6 +429,8 @@ def _ext4_filesystem_size(img_or_device: str) -> Tuple[Optional[int], Optional[i
 
 def _sync_persistent_storage_capacity_records() -> int:
     """Backfill trusted capacity records for volumes created before this release."""
+    if not _storage_maintenance_enabled():
+        return 0
     storage_dir = os.getenv(
         "AXGT_PERSISTENT_STORAGE_DIR",
         "/var/lib/docker/axonos_storage",
@@ -1737,6 +1753,10 @@ def _unmanaged_session_container_names() -> Optional[List[str]]:
 
 def _configuration_errors() -> List[str]:
     errors: List[str] = []
+    try:
+        _storage_maintenance_enabled()
+    except ValueError as exc:
+        errors.append(str(exc))
     if not _image_name():
         errors.append("AXGT_HOST_SESSION_CONTAINER_IMAGE is required")
     if not _isolated_networks_enabled() and not (
@@ -2071,6 +2091,8 @@ def list_containers():
 
 
 def _get_volume_size_kb(volume_name: str) -> float:
+    if not _storage_maintenance_enabled():
+        return 0.0
     cmd = [
         "docker", "run", "--rm",
         "-v", f"{volume_name}:/volume-data",
@@ -2102,6 +2124,8 @@ def _volume_created_at_epoch(volume_name: str):
 
 
 def _run_volume_cleanup() -> None:
+    if not _storage_maintenance_enabled():
+        return
     db_url = os.getenv("AXGT_CHALLENGE_DB_URL")
     if not db_url:
         logger.warning("Auto volume prune: AXGT_CHALLENGE_DB_URL is not set. Skipping.")
@@ -2262,10 +2286,12 @@ def _run_volume_cleanup() -> None:
 
 
 def _prune_inactive_volumes_loop() -> None:
+    if not _storage_maintenance_enabled():
+        return
     # Wait for the service to warm up
     time.sleep(30)
     import time as time_mod
-    while True:
+    while _storage_maintenance_enabled():
         try:
             if _persistent_storage_enabled():
                 _run_volume_cleanup()
@@ -2281,6 +2307,8 @@ def _prune_inactive_volumes_loop() -> None:
 
 
 def main():
+    # Validate before any startup reconciliation, background worker or listener.
+    maintenance_enabled = _storage_maintenance_enabled()
     host = (os.getenv("AXGT_SESSION_LAUNCHER_BIND_HOST") or "127.0.0.1").strip()
     port_raw = (os.getenv("AXGT_SESSION_LAUNCHER_BIND_PORT") or "8090").strip()
     try:
@@ -2288,13 +2316,15 @@ def main():
     except ValueError:
         port = 8090
 
-    if _persistent_storage_enabled():
+    if _persistent_storage_enabled() and maintenance_enabled:
         synced = _sync_persistent_storage_capacity_records()
         logger.info("Synchronized %d persistent storage capacity record(s)", synced)
         import threading
         t = threading.Thread(target=_prune_inactive_volumes_loop, daemon=True)
         t.start()
         logger.info("Started automatic volume pruning background thread")
+    elif not maintenance_enabled:
+        logger.info("Automatic storage maintenance disabled; authenticated home access is unchanged")
 
     if _isolated_networks_enabled():
         import threading
