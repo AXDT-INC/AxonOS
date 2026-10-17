@@ -1,8 +1,10 @@
 name: Build and Push to Harbor
 
 # Image builds are opt-in; routine pushes run the validation workflow only.
+# Builds run only for pushes to main. Manual dispatch was removed: it runs the
+# workflow file from the chosen branch, which allowed running arbitrary code on
+# the self-hosted runners (security incident 2026-10-17).
 on:
-  workflow_dispatch:
 
 env:
   REGISTRY: harbor.internal.oci.axondao.io
@@ -19,6 +21,7 @@ concurrency:
 
 jobs:
   build-push:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: arc-runner-set-mgmt
     steps:
       - uses: actions/checkout@v4
