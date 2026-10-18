@@ -16,7 +16,7 @@ jobs:
   tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       # Same interpreter as the image (Ubuntu 22.04 python3).
       - uses: actions/setup-python@v5
@@ -49,7 +49,7 @@ jobs:
       # Allow slow PyPI transfers without changing the production resolver.
       PIP_DEFAULT_TIMEOUT: "120"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.10"
@@ -65,7 +65,7 @@ jobs:
   dockerfile:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       # BuildKit's frontend check parses and lints the Dockerfile without
       # running any stage. Both variants are checked.
