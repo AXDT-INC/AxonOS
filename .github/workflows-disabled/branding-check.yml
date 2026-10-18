@@ -1,0 +1,23 @@
+# DISABLED 2026-10-19: AxonOS has no CI. Kept for reference only; to re-enable,
+# uncomment and move back to .github/workflows/.
+# name: Branding Check
+
+# on:
+#   pull_request:
+#     branches: [ main, master ]
+#   push:
+#     branches: [ main, master ]
+
+# jobs:
+#   check-branding:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+#       
+#       - name: Check for forbidden branding
+#         run: |
+#           if [ -f scripts/check_branding.sh ]; then
+#             bash scripts/check_branding.sh
+#           else
+#             echo "⚠️ Branding check script not found, skipping..."
+#           fi
