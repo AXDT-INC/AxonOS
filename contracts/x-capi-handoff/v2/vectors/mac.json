@@ -1,0 +1,118 @@
+{
+  "synthetic_only": true,
+  "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "key_id": "test-1",
+  "algorithm": "HMAC-SHA256",
+  "request": {
+    "body": {
+      "v": 2,
+      "epoch": 42,
+      "generation": "11111111-1111-4111-8111-111111111111",
+      "request_id": "22222222-2222-4222-8222-222222222222",
+      "op": "revoke",
+      "owner_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "reason": "withdrawn"
+    },
+    "canonical_body_ascii": "{\"epoch\":42,\"generation\":\"11111111-1111-4111-8111-111111111111\",\"op\":\"revoke\",\"owner_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"reason\":\"withdrawn\",\"request_id\":\"22222222-2222-4222-8222-222222222222\",\"v\":2}",
+    "body_sha256": "8a61369a9b3adec9fc1ac5a0c3704263230069d6e5c5d799225aace88dc8b464",
+    "mac_input_ascii": "AXONOS-X-HANDOFF-V2\nrequest\nPOST\n/api/x-attribution/handoff/source\ntest-1\n42\n11111111-1111-4111-8111-111111111111\n22222222-2222-4222-8222-222222222222\n8a61369a9b3adec9fc1ac5a0c3704263230069d6e5c5d799225aace88dc8b464\n",
+    "mac_base64url": "9rE9RCzbaSjyJbXaqSeogoDHsvrZ904m_0I5lZ4mPko"
+  },
+  "response": {
+    "http_status": 200,
+    "body": {
+      "v": 2,
+      "ok": true,
+      "epoch": 42,
+      "generation": "11111111-1111-4111-8111-111111111111",
+      "request_id": "22222222-2222-4222-8222-222222222222",
+      "state": "withdrawn"
+    },
+    "canonical_body_ascii": "{\"epoch\":42,\"generation\":\"11111111-1111-4111-8111-111111111111\",\"ok\":true,\"request_id\":\"22222222-2222-4222-8222-222222222222\",\"state\":\"withdrawn\",\"v\":2}",
+    "body_sha256": "219d464bf5a7e83654fe93ae91a2373f126951191cabb726ec1ba72ab5952946",
+    "mac_input_ascii": "AXONOS-X-HANDOFF-V2\nresponse\n8a61369a9b3adec9fc1ac5a0c3704263230069d6e5c5d799225aace88dc8b464\n200\ntest-1\n42\n11111111-1111-4111-8111-111111111111\n22222222-2222-4222-8222-222222222222\n219d464bf5a7e83654fe93ae91a2373f126951191cabb726ec1ba72ab5952946\n",
+    "mac_base64url": "KOMRAfuYflnpbJLOKVpy9nZzhYgIWFdUUC0wJ454iMQ"
+  },
+  "negative_cases": [
+    {
+      "change": "method",
+      "mac_input_ascii": "AXONOS-X-HANDOFF-V2\nrequest\nGET\n/api/x-attribution/handoff/source\ntest-1\n42\n11111111-1111-4111-8111-111111111111\n22222222-2222-4222-8222-222222222222\n8a61369a9b3adec9fc1ac5a0c3704263230069d6e5c5d799225aace88dc8b464\n",
+      "computed_mac_base64url": "9ZW_XECq6kH57m8TOEV9ARn9DCVoKutpnb3AfVPeo0U",
+      "supplied_mac_base64url": "9rE9RCzbaSjyJbXaqSeogoDHsvrZ904m_0I5lZ4mPko",
+      "expected": "reject"
+    },
+    {
+      "change": "path",
+      "mac_input_ascii": "AXONOS-X-HANDOFF-V2\nrequest\nPOST\n/api/x-attribution/handoff/source/\ntest-1\n42\n11111111-1111-4111-8111-111111111111\n22222222-2222-4222-8222-222222222222\n8a61369a9b3adec9fc1ac5a0c3704263230069d6e5c5d799225aace88dc8b464\n",
+      "computed_mac_base64url": "rVgdnQ-_52X7axxu51WfCIGu_nvWU1kS40fEeZrsuB0",
+      "supplied_mac_base64url": "9rE9RCzbaSjyJbXaqSeogoDHsvrZ904m_0I5lZ4mPko",
+      "expected": "reject"
+    },
+    {
+      "change": "body",
+      "mac_input_ascii": "AXONOS-X-HANDOFF-V2\nrequest\nPOST\n/api/x-attribution/handoff/source\ntest-1\n42\n11111111-1111-4111-8111-111111111111\n22222222-2222-4222-8222-222222222222\n7c7fc9786ce0c2a078c3d5d7915335f76dc3264ab6485350d884c519a20d03aa\n",
+      "computed_mac_base64url": "E1MZtJ7zbtlDR-Ztmtm9cxHJMtGivmmy8x8W9iQ8_x0",
+      "supplied_mac_base64url": "9rE9RCzbaSjyJbXaqSeogoDHsvrZ904m_0I5lZ4mPko",
+      "expected": "reject"
+    },
+    {
+      "change": "purpose",
+      "mac_input_ascii": "AXONOS-X-HANDOFF-V2\nresponse\nPOST\n/api/x-attribution/handoff/source\ntest-1\n42\n11111111-1111-4111-8111-111111111111\n22222222-2222-4222-8222-222222222222\n8a61369a9b3adec9fc1ac5a0c3704263230069d6e5c5d799225aace88dc8b464\n",
+      "computed_mac_base64url": "XwkJMVnExJgmmCZrYfogAyuSw3GLJ8m0-xjXfOrhpxE",
+      "supplied_mac_base64url": "9rE9RCzbaSjyJbXaqSeogoDHsvrZ904m_0I5lZ4mPko",
+      "expected": "reject"
+    },
+    {
+      "change": "epoch",
+      "mac_input_ascii": "AXONOS-X-HANDOFF-V2\nrequest\nPOST\n/api/x-attribution/handoff/source\ntest-1\n43\n11111111-1111-4111-8111-111111111111\n22222222-2222-4222-8222-222222222222\n46481179a6bb8ffbb425332089e4bb56feb6d3994cc5ff0d3a2ee979f43d92d2\n",
+      "computed_mac_base64url": "L_W9yy3l_mPw5Q8LZVFPEOx0MC-GFlPO9PXIQfPpZaI",
+      "supplied_mac_base64url": "9rE9RCzbaSjyJbXaqSeogoDHsvrZ904m_0I5lZ4mPko",
+      "expected": "reject"
+    },
+    {
+      "change": "generation",
+      "mac_input_ascii": "AXONOS-X-HANDOFF-V2\nrequest\nPOST\n/api/x-attribution/handoff/source\ntest-1\n42\n99999999-9999-4999-8999-999999999999\n22222222-2222-4222-8222-222222222222\n2627befc3fe1a39397ea107892eeac1815b83626abed35ff1f60e95f38deda8a\n",
+      "computed_mac_base64url": "TQizFu89QiQauxiDsk4i389r9BuIsbpp6elD_D9ZnfY",
+      "supplied_mac_base64url": "9rE9RCzbaSjyJbXaqSeogoDHsvrZ904m_0I5lZ4mPko",
+      "expected": "reject"
+    },
+    {
+      "change": "key_id",
+      "mac_input_ascii": "AXONOS-X-HANDOFF-V2\nrequest\nPOST\n/api/x-attribution/handoff/source\ntest-2\n42\n11111111-1111-4111-8111-111111111111\n22222222-2222-4222-8222-222222222222\n8a61369a9b3adec9fc1ac5a0c3704263230069d6e5c5d799225aace88dc8b464\n",
+      "computed_mac_base64url": "-w_Tl01PyssPy1LePQYAJIK356VD9RcYFpvFXZNRuds",
+      "supplied_mac_base64url": "9rE9RCzbaSjyJbXaqSeogoDHsvrZ904m_0I5lZ4mPko",
+      "expected": "reject"
+    }
+  ],
+  "phase_1d_expected_request_mac": "9rE9RCzbaSjyJbXaqSeogoDHsvrZ904m_0I5lZ4mPko",
+  "response_negative_cases": [
+    {
+      "change": "http_status",
+      "mac_input_ascii": "AXONOS-X-HANDOFF-V2\nresponse\n8a61369a9b3adec9fc1ac5a0c3704263230069d6e5c5d799225aace88dc8b464\n202\ntest-1\n42\n11111111-1111-4111-8111-111111111111\n22222222-2222-4222-8222-222222222222\n219d464bf5a7e83654fe93ae91a2373f126951191cabb726ec1ba72ab5952946\n",
+      "computed_mac_base64url": "mijMrr2Ju2eYwqETBdlFgnGRpwmpeaTBl9Cf1HOwwQw",
+      "supplied_mac_base64url": "KOMRAfuYflnpbJLOKVpy9nZzhYgIWFdUUC0wJ454iMQ",
+      "expected": "reject"
+    },
+    {
+      "change": "request_digest",
+      "mac_input_ascii": "AXONOS-X-HANDOFF-V2\nresponse\nd96bb7a86e8b309f86d3c89e1e7e874ac5b7c51baacea176e809a9bebd4655ca\n200\ntest-1\n42\n11111111-1111-4111-8111-111111111111\n22222222-2222-4222-8222-222222222222\n219d464bf5a7e83654fe93ae91a2373f126951191cabb726ec1ba72ab5952946\n",
+      "computed_mac_base64url": "Y-OcnTKUTbnMSiE3isFyoMaMmYB1v4aOEuaMmzjEUUk",
+      "supplied_mac_base64url": "KOMRAfuYflnpbJLOKVpy9nZzhYgIWFdUUC0wJ454iMQ",
+      "expected": "reject"
+    },
+    {
+      "change": "response_body",
+      "mac_input_ascii": "AXONOS-X-HANDOFF-V2\nresponse\n8a61369a9b3adec9fc1ac5a0c3704263230069d6e5c5d799225aace88dc8b464\n200\ntest-1\n42\n11111111-1111-4111-8111-111111111111\n44444444-4444-4444-8444-444444444444\naf3ad3ea0bd68b0344d363864f5702b12da55df318c3febfb3860c74c55d3dbf\n",
+      "computed_mac_base64url": "xjZfKSHe_PFeQY-b2x18qrIM7A1DuGuSEa-hp7_83bA",
+      "supplied_mac_base64url": "KOMRAfuYflnpbJLOKVpy9nZzhYgIWFdUUC0wJ454iMQ",
+      "expected": "reject"
+    },
+    {
+      "change": "key_id",
+      "mac_input_ascii": "AXONOS-X-HANDOFF-V2\nresponse\n8a61369a9b3adec9fc1ac5a0c3704263230069d6e5c5d799225aace88dc8b464\n200\ntest-2\n42\n11111111-1111-4111-8111-111111111111\n22222222-2222-4222-8222-222222222222\n219d464bf5a7e83654fe93ae91a2373f126951191cabb726ec1ba72ab5952946\n",
+      "computed_mac_base64url": "_IUe9XSKyuc4capKtBWDfTpJqLeuYeLxOR409tjXdxk",
+      "supplied_mac_base64url": "KOMRAfuYflnpbJLOKVpy9nZzhYgIWFdUUC0wJ454iMQ",
+      "expected": "reject"
+    }
+  ]
+}

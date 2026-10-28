@@ -344,7 +344,7 @@ class TestFlaskX402Ownership(_OwnershipCases, unittest.TestCase):
 class TestWebsockifyX402Ownership(_OwnershipCases, unittest.TestCase):
     def prepare_listener(self):
         tree = ast.parse((ROOT / "axonos_gate/websockify_gate.py").read_text())
-        names = {"do_POST", "_proxy_stripe_request", "_is_auth_token_valid", "_auth_cookie_name",
+        names = {"do_POST", "_authenticated_attribution_context", "_proxy_stripe_request", "_is_auth_token_valid", "_auth_cookie_name",
                  "_auth_token_candidates_from_path_and_headers", "_extract_auth_token_from_path_and_headers",
                  "_valid_auth_token_from_path_and_headers", "_x402_402_body", "_x402_v2_headers"}
         functions = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name in names]
@@ -355,6 +355,7 @@ class TestWebsockifyX402Ownership(_OwnershipCases, unittest.TestCase):
             "_auth_pg_get_connection": self.database.connect, "_is_guest_shaped": gate._is_guest_shaped,
             "client_ip_for_rate_limit": lambda *_args: "192.0.2.1", "webrtc_service": None,
             "_session_mgr_available": True, "_request_attribution_context": lambda *_args: None,
+            "x_capi": gate.x_capi, "x_capi_human": gate.x_capi_human, "handoff_http": gate.handoff_http,
             "_guest_rejection": lambda *_args: None, "get_wallet_access_status": self.prepaid,
             "unpaid_session_requires_402": gate.unpaid_session_requires_402,
             "payment_required_body": gate.payment_required_body,

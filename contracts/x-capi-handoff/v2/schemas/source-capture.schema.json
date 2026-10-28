@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "source-capture",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 2
+    },
+    "epoch": {
+      "$ref": "common.schema.json#/definitions/Epoch"
+    },
+    "generation": {
+      "$ref": "common.schema.json#/definitions/UUID"
+    },
+    "request_id": {
+      "$ref": "common.schema.json#/definitions/UUID"
+    },
+    "op": {
+      "const": "capture"
+    },
+    "owner_hash": {
+      "$ref": "common.schema.json#/definitions/Hash"
+    },
+    "observation_id": {
+      "$ref": "common.schema.json#/definitions/UUID"
+    },
+    "observed_at_ms": {
+      "$ref": "common.schema.json#/definitions/Ms"
+    },
+    "original_expires_at_ms": {
+      "$ref": "common.schema.json#/definitions/Ms"
+    },
+    "landing_consented_at_ms": {
+      "$ref": "common.schema.json#/definitions/Ms"
+    },
+    "policy": {
+      "const": "landing-x-v2"
+    },
+    "gpc": {
+      "const": false
+    },
+    "twclid": {
+      "$ref": "common.schema.json#/definitions/Click"
+    }
+  },
+  "required": [
+    "v",
+    "epoch",
+    "generation",
+    "request_id",
+    "op",
+    "owner_hash",
+    "observation_id",
+    "observed_at_ms",
+    "original_expires_at_ms",
+    "landing_consented_at_ms",
+    "policy",
+    "gpc",
+    "twclid"
+  ],
+  "additionalProperties": false
+}

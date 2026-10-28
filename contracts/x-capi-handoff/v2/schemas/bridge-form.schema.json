@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bridge-form",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": "2"
+    },
+    "handoff": {
+      "$ref": "common.schema.json#/definitions/Token"
+    }
+  },
+  "required": [
+    "v",
+    "handoff"
+  ],
+  "additionalProperties": false
+}

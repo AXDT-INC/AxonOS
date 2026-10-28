@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "app-begin",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 2
+    },
+    "request_id": {
+      "$ref": "common.schema.json#/definitions/UUID"
+    },
+    "choice": {
+      "const": "grant"
+    },
+    "policy": {
+      "const": "app-x-v2"
+    },
+    "destination": {
+      "const": "desktop"
+    }
+  },
+  "required": [
+    "v",
+    "request_id",
+    "choice",
+    "policy",
+    "destination"
+  ],
+  "additionalProperties": false
+}

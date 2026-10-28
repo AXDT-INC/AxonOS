@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "source-request",
+  "oneOf": [
+    {
+      "$ref": "source-capture.schema.json"
+    },
+    {
+      "$ref": "source-status.schema.json"
+    },
+    {
+      "$ref": "source-authorize.schema.json"
+    },
+    {
+      "$ref": "source-revoke.schema.json"
+    },
+    {
+      "$ref": "source-lease-challenge.schema.json"
+    },
+    {
+      "$ref": "source-lease-attest.schema.json"
+    }
+  ]
+}

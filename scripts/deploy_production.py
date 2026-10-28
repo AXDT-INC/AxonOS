@@ -7,7 +7,6 @@ lock serializes participating operators. Command diagnostics are never replayed.
 
 import argparse
 import contextlib
-import copy
 import fcntl
 import io
 import json
@@ -42,6 +41,12 @@ CANDIDATE_RUN = 'com.axonos.deploy.candidate-run'
 CANDIDATE_CREATED = 'com.axonos.deploy.candidate-created-ns'
 CANDIDATE_TOOL = 'axonos-production-deploy-v1'
 CANDIDATE_KEEP = 3
+PRODUCTION_NVIDIA = '580.173.02-1ubuntu1'
+REVISION_LABEL = 'org.opencontainers.image.revision'
+NVIDIA_LABEL = 'com.axonos.deploy.nvidia-package'
+ROLE_LABEL = 'com.axonos.deploy.image-role'
+BUILDER_CONFIG = 'root = "/var/lib/buildkit"\n[worker.oci]\n  enabled = true\n  max-parallelism = 1\n[worker.containerd]\n  enabled = false\n'
+NONCE_LABEL = 'com.axonos.deploy.credential-nonce'
 CANDIDATE_SCAN_LIMIT = 32
 CANDIDATE_CLEANUP_TIMEOUT = 60
 # Reference enumeration/deletion semantics verified in these upstream releases.
@@ -291,7 +296,7 @@ class Deployment:
         require(self.env.get('DOCKER_HOST', '') in ('', 'unix:///var/run/docker.sock'), 'Alternate DOCKER_HOST is unsupported')
         require(self.env.get('DOCKER_CONTEXT', '') in ('', 'default'), 'Alternate DOCKER_CONTEXT is unsupported')
         for key in list(self.env):
-            if key.startswith('COMPOSE_') or key in ('DOCKER_HOST', 'DOCKER_CONTEXT'):
+            if key.startswith(('COMPOSE_', 'BUILDX_', 'BUILDKIT_')) or key in ('DOCKER_HOST', 'DOCKER_CONTEXT'):
                 del self.env[key]
         # These explicit values override BOTH shell and .env. Never use --yes.
         self.env.update(COMPOSE_REMOVE_ORPHANS='false', COMPOSE_IGNORE_ORPHANS='true',
@@ -307,6 +312,8 @@ class Deployment:
         self.image_id = None
         self.candidate = None
         self.deployed = False
+        self.worker_image_id = None
+        self.backend_override = None
 
     def command(self, args, **kwargs):
         return run(args, self.env, self.root, **kwargs)
@@ -315,6 +322,8 @@ class Deployment:
         return self.command([*DOCKER, *args], **kwargs)
 
     def compose_run(self, *args, override=None, **kwargs):
+        if args and args[0] == 'up' and self.backend_override is not None:
+            override = self.backend_override
         return self.command([*self.compose, *(['-f', str(override)] if override else []), *args], **kwargs)
 
     def git(self, *args):
@@ -387,8 +396,7 @@ class Deployment:
         active = checked_output(checks.sessions, text)
         if active:
             note('Active tenant sessions:\n' + active)
-            require(self.options.allow_active_sessions, 'Active tenants found; no mutation permitted without --allow-active-sessions')
-            note('WARNING: --allow-active-sessions ACCEPTED; viewers/control traffic may be interrupted.')
+            raise Refusal('Active tenants found; deployment is prohibited')
         else:
             note('Active tenant sessions: none')
 
@@ -480,22 +488,140 @@ class Deployment:
         self.active_sessions()
         return dependencies
 
+    def builder_storage(self, mountpoint):
+        require(isinstance(mountpoint, str) and Path(mountpoint).is_absolute(),
+                'Missing builder storage mountpoint')
+        path = Path(mountpoint)
+        require(str(path.resolve()) == mountpoint and os.path.ismount(path) and
+                path.stat().st_dev != path.parent.stat().st_dev,
+                'Builder state must be a separately mounted filesystem; inaccessible metadata is refused')
+
+    def admit_builder(self):
+        """Read-only admission of an already provisioned, dedicated local builder.
+
+        Docker administrators remain trusted; the shared host lock serializes
+        controller clients, while BuildKit bounds all concurrent execution steps.
+        Never bootstrap, create, repair, or select an implicit builder.
+        """
+        name = getattr(self.options, 'builder', None)
+        identity = getattr(self.options, 'builder_id', None)
+        require(isinstance(name, str) and name != 'default' and
+                re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}', name) and
+                isinstance(identity, str) and re.fullmatch(r'[a-f0-9]{64}', identity),
+                'Explicit dedicated builder name and full container ID required')
+        metadata = self.docker('buildx', 'inspect', name, capture=True,
+                               label='Dedicated builder metadata')
+        # inspect has no --format option. Admit only one unambiguous node in
+        # its documented text format; extra/missing identity fields fail closed.
+        def fields(key):
+            return re.findall(r'^' + re.escape(key) + r':\s*([^\n]+)$', metadata, re.M)
+        names = fields('Name')
+        require(len(names) == 2 and names[0] == name and
+                fields('Driver') == ['docker-container'] and
+                fields('Endpoint') == [DOCKER[2]] and fields('Status') == ['running']
+                and not fields('Error'), 'Unsuitable builder driver/endpoint/nodes')
+        node = names[1]
+        require(re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]{0,80}', node), 'Invalid builder node')
+        items = json.loads(self.docker('inspect', 'buildx_buildkit_' + node,
+                                      capture=True, label='Builder container boundaries'))
+        require(len(items) == 1 and items[0].get('Id') == identity, 'Builder container identity differs')
+        item = items[0]
+        host, config = item['HostConfig'], item['Config']
+        require(item['State'].get('Running') is True and config.get('Entrypoint') == ['buildkitd']
+                and config.get('Cmd') == ['--config', '/etc/buildkit/buildkitd.toml']
+                and not any(e.startswith('BUILDKITD_') for e in config.get('Env', [])),
+                'Builder command/configuration differs')
+        require(0 < host.get('NanoCpus', 0) <= 4_000_000_000 and
+                0 < host.get('Memory', 0) <= 16 * 1024**3 and
+                host.get('MemorySwap') == host['Memory'] and
+                0 < host.get('PidsLimit', 0) <= 1024 and not host.get('OomKillDisable') and
+                host.get('CgroupnsMode') == 'private' and not host.get('PidMode') and
+                not host.get('Devices') and not host.get('DeviceRequests'),
+                'Builder CPU/memory/PID/swap/isolation boundaries differ')
+        mounts = item.get('Mounts', [])
+        require(len(mounts) == 1 and mounts[0].get('Type') == 'volume' and
+                mounts[0].get('Destination') == '/var/lib/buildkit' and mounts[0].get('RW') is True,
+                'Builder must have only its dedicated state volume')
+        volume = mounts[0]['Name']
+        require(volume == 'buildx_buildkit_' + node + '_state', 'Builder storage identity differs')
+        volumes = json.loads(self.docker('volume', 'inspect', volume, capture=True, label='Builder storage isolation'))
+        require(len(volumes) == 1 and volumes[0].get('Name') == volume and
+                volumes[0].get('Driver') == 'local' and not volumes[0].get('Options'),
+                'Builder storage must be a dedicated local volume without host bindings')
+        self.builder_storage(volumes[0].get('Mountpoint'))
+        users = self.docker('ps', '-a', '--no-trunc', '-q', '--filter', 'volume=' + volume,
+                            capture=True, label='Builder storage users')
+        require(users == identity, 'Builder state volume is shared')
+        actual = self.docker('exec', identity, 'cat', '/etc/buildkit/buildkitd.toml',
+                             capture=True, label='Builder concurrency configuration')
+        require(actual.strip() == BUILDER_CONFIG.strip(), 'Builder concurrency/configuration differs')
+        limits = self.docker('exec', identity, 'cat', '/sys/fs/cgroup/cpu.max',
+                            '/sys/fs/cgroup/memory.max', '/sys/fs/cgroup/memory.swap.max',
+                            '/sys/fs/cgroup/pids.max', capture=True, label='Effective builder cgroup limits').splitlines()
+        require(len(limits) == 4, 'Missing effective builder cgroup limits')
+        cpu = limits[0].split()
+        require(len(cpu) == 2 and all(v.isdecimal() for v in cpu) and
+                0 < int(cpu[0]) <= 4 * int(cpu[1]) and int(cpu[1]) > 0 and
+                limits[1] == str(host['Memory']) and limits[2] == '0' and
+                limits[3] == str(host['PidsLimit']), 'Effective builder limits differ')
+
     def build_candidate(self):
         note('Build private full candidate (output suppressed to protect secrets)')
-        bake = json.loads(self.compose_run('build', '--print', '--build-arg', 'AXONOS_SKIP_HEAVY=0', 'axonos', capture=True, label='Compose build plan'))
-        target = copy.deepcopy(bake['target']['axonos'])
-        require((self.root / target['context']).resolve() == self.root and target.get('dockerfile', 'Dockerfile') == 'Dockerfile', 'Unexpected Bake build context')
-        require(not target.get('inherits') and not target.get('contexts'), 'Unreviewed Bake target dependencies')
+        secret = Path(self.options.password_secret_file or '')
+        require(secret.is_absolute() and str(secret.resolve()) == str(secret)
+                and self.root not in secret.parents and ',' not in str(secret) and '\n' not in str(secret), 'Build secret must be canonical and outside the build context')
+        try:
+            metadata = secret.lstat()
+        except OSError:
+            raise Refusal('Required BuildKit password secret is unavailable') from None
+        require(stat.S_ISREG(metadata.st_mode) and metadata.st_size > 0
+                and stat.S_IMODE(metadata.st_mode) & 0o077 == 0,
+                'Build secret must be a nonempty private regular file')
+        self.admit_builder()
+        # Never resolve Compose/.env for image preparation. Only this allowlist
+        # reaches Bake; no legacy password argument or arbitrary build option.
+        target = {'context': str(self.root), 'dockerfile': 'Dockerfile',
+                  'secret': ['id=axonos_password,src=' + str(secret)],
+                  'args': {'NVIDIA_DRIVER_VERSION': '580',
+                           'NVIDIA_DRIVER_PKG_VERSION': self.options.nvidia_package,
+                           'AXONOS_CREDENTIAL_CACHE_NONCE': secrets.token_hex(32)}}
         self.candidate = CANDIDATE_PREFIX + self.run_id
         target['tags'] = [self.candidate]
         target['output'] = ['type=docker']
         target.setdefault('args', {})['AXONOS_SKIP_HEAVY'] = '0'
         target.setdefault('labels', {}).update({CANDIDATE_OWNER: CANDIDATE_TOOL,
-            CANDIDATE_RUN: self.run_id, CANDIDATE_CREATED: str(time.time_ns())})
+            CANDIDATE_RUN: self.run_id, CANDIDATE_CREATED: str(time.time_ns()),
+            ROLE_LABEL: 'gate', REVISION_LABEL: self.head, NVIDIA_LABEL: self.options.nvidia_package,
+            NONCE_LABEL: target['args']['AXONOS_CREDENTIAL_CACHE_NONCE']})
         plan = {'target': {'axonos': target}, 'group': {'default': {'targets': ['axonos']}}}
-        self.docker('buildx', 'bake', '--file', '-', '--load', 'axonos', input_text=json.dumps(plan), timeout=BUILD_TIMEOUT, label='Build full private candidate')
+        self.docker('buildx', 'bake', '--builder', self.options.builder, '--file', '-', '--load', 'axonos', input_text=json.dumps(plan), timeout=BUILD_TIMEOUT, label='Build full private candidate')
         self.image_id = self.docker('image', 'inspect', self.candidate, '--format', '{{.Id}}', capture=True, label='Candidate image identity')
         require(re.fullmatch(r'sha256:[a-f0-9]{64}', self.image_id), 'Invalid immutable candidate image ID')
+
+    def attest_image(self, role='gate'):
+        require(isinstance(self.image_id, str) and re.fullmatch(r'sha256:[a-f0-9]{64}', self.image_id),
+                'Prevalidated image must be an immutable local sha256 ID')
+        items = json.loads(self.docker('image', 'inspect', self.image_id, capture=True,
+                                      label='Candidate provenance'))
+        require(isinstance(items, list) and len(items) == 1 and items[0].get('Id') == self.image_id,
+                'Candidate identity mismatch')
+        labels = (items[0].get('Config') or {}).get('Labels') or {}
+        require(labels.get(ROLE_LABEL, 'gate') == role, 'Candidate image role mismatch')
+        require(labels.get(CANDIDATE_OWNER) == CANDIDATE_TOOL
+                and labels.get(REVISION_LABEL) == self.head
+                and labels.get(NVIDIA_LABEL) == self.options.nvidia_package
+                and re.fullmatch(r'[a-f0-9]{64}', labels.get(NONCE_LABEL, '')),
+                'Candidate source/package/credential provenance mismatch')
+
+    def preparation_preflight(self):
+        self.clean_git()
+        self.head = self.git('rev-parse', '--verify', 'HEAD')
+        self.branch = self.git('symbolic-ref', '--quiet', '--short', 'HEAD')
+        self.docker('buildx', 'version', label='Docker Buildx')
+        info = json.loads(self.docker('info', '--format', '{{json .}}', capture=True, label='Local Docker image store'))
+        candidate_store(info)
+        version = json.loads(self.docker('version', '--format', '{{json .}}', capture=True, label='Effective Docker API'))
+        docker_api_contract(info, version, self.env.get('DOCKER_API_VERSION', ''))
 
     def maintain_candidates(self, *, strict):
         """Bounded tag housekeeping, never image-ID deletion/force/prune.
@@ -582,7 +708,7 @@ class Deployment:
                     del owned[tag]
             require(len(owned) <= CANDIDATE_KEEP, 'Candidate retention quota cannot be met safely')
             if not strict and not self.deployed and self.candidate in owned:
-                note('Failed/interrupted candidate retained within the newest-three candidate policy.')
+                note('Undeployed candidate retained within the newest-three candidate policy.')
         except Exception:
             note('WARNING: candidate-tag housekeeping incomplete; no broad cleanup attempted. Review candidate retention before another build.')
             if strict:
@@ -602,21 +728,28 @@ class Deployment:
             require(re.fullmatch(r'[a-f0-9]{12,64}', raw), 'Ambiguous validator cleanup identity')
             item = json.loads(self.docker('inspect', raw, capture=True, label='Validator cleanup inspection'))[0]
             require(item.get('Name') == '/' + name and item['Config'].get('Labels', {}).get(LABEL) == self.run_id
-                    and item['Image'] == self.image_id, 'Refusing cleanup of unowned container')
+                    and item['Image'] == self.validators[name], 'Refusing cleanup of unowned container')
             self.docker('rm', '--force', item['Id'], timeout=15, label='Bounded validator removal')
             self.validators.pop(name, None)
         except Exception:
             raise Refusal('Validator cleanup failed; inspect only this run-owned validator: ' + name) from None
 
     def validate_image(self, kind, arguments):
+        info = json.loads(self.docker('info', '--format', '{{json .}}', capture=True,
+                                      label='Validator resource capability admission'))
+        require(all(info.get(key) is True for key in
+                    ('MemoryLimit', 'SwapLimit', 'PidsLimit', 'CpuCfsQuota', 'CpuCfsPeriod')),
+                'Docker cannot enforce validator CPU/memory/PID/swap limits')
         name = 'axonos-deploy-validator-' + self.run_id + '-' + kind.lower()
-        self.validators[name] = True
+        self.validators[name] = self.image_id
         note(kind + ' image validation (immutable candidate, no network/GPU/production mounts)')
         try:
             identifier = self.docker('create', '--name', name, '--label', LABEL + '=' + self.run_id,
                 '--pull', 'never', '--runtime', 'runc', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
+                '--cpus', '1', '--memory', '1g', '--memory-swap', '1g', '--pids-limit', '128',
                 '--security-opt', 'no-new-privileges', '--tmpfs', '/tmp:rw,nosuid,nodev,size=256m',
-                '--env', 'PYTHONDONTWRITEBYTECODE=1', '--entrypoint', '/usr/bin/python3', self.image_id,
+                '--env', 'PYTHONDONTWRITEBYTECODE=1', '--entrypoint',
+                '/usr/local/bin/python3' if kind == 'Worker' else '/usr/bin/python3', self.image_id,
                 *arguments, capture=True, label=kind + ' validator creation')
             require(re.fullmatch(r'[a-f0-9]{12,64}', identifier), 'Invalid validator identity')
             self.docker('start', '--attach', identifier, timeout=VALIDATOR_TIMEOUT, label=kind + ' image validation')
@@ -625,9 +758,58 @@ class Deployment:
         finally:
             self.cleanup_validator(name)
 
+    def prepare_worker(self):
+        gate = self.image_id
+        try:
+            self.image_id = getattr(self.options, 'prevalidated_worker_image', None)
+            if not self.image_id:
+                self.admit_builder()
+                self.maintain_candidates(strict=True)
+                worker_run = secrets.token_hex(12)
+                tag = CANDIDATE_PREFIX + worker_run
+                self.worker_candidate = tag
+                labels = {CANDIDATE_OWNER: CANDIDATE_TOOL, ROLE_LABEL: 'worker',
+                          CANDIDATE_RUN: worker_run, CANDIDATE_CREATED: str(time.time_ns()),
+                          REVISION_LABEL: self.head, NVIDIA_LABEL: self.options.nvidia_package,
+                          NONCE_LABEL: secrets.token_hex(32)}
+                target = {'context': str(self.root), 'dockerfile': 'docker/x-capi-worker/Dockerfile',
+                          'platforms': ['linux/amd64'], 'tags': [tag], 'labels': labels,
+                          'output': ['type=docker']}
+                self.docker('buildx', 'bake', '--builder', self.options.builder, '--file', '-',
+                            '--load', 'worker', input_text=json.dumps({'target': {'worker': target}}),
+                            timeout=BUILD_TIMEOUT, label='Build private CAPI worker/privacy image')
+                self.image_id = self.docker('image', 'inspect', tag, '--format', '{{.Id}}',
+                                            capture=True, label='Worker image identity')
+            self.attest_image('worker')
+            # Compile without executing application top-level code or initializers.
+            # Import only third-party dependencies; no DB, secrets or network.
+            self.validate_image('Worker', ['-c',
+                "from pathlib import Path; import psycopg2, cryptography; "
+                "files = ['x_capi.py','x_capi_worker.py','x_capi_cli.py','x_capi_handoff.py',"
+                "'x_capi_handoff_rpc.py','x_capi_handoff_store.py','x_capi_handoff_worker.py',"
+                "'init_privacy_fence.py']; "
+                "[compile((Path('/app')/p).read_bytes(), p, 'exec') for p in files]; "
+                "assert Path('/app/bootstrap_x_capi_db.sh').is_file()"])
+            self.worker_image_id = self.image_id
+        finally:
+            self.image_id = gate
+
     def backend(self):
+        require(self.worker_image_id is not None, 'Validated worker/privacy image required')
+        with tempfile.TemporaryDirectory(prefix='axonos-immutable-backend-') as directory:
+            override = Path(directory) / 'image.json'
+            override.write_text(json.dumps({'services': {
+                name: {'image': self.worker_image_id}
+                for name in ('x-capi-worker', 'x-capi-privacy-init')}}))
+            self.backend_override = override
+            try:
+                self._backend()
+            finally:
+                self.backend_override = None
+
+    def _backend(self):
         note('Build/fetch and prepare backend while the original worker stays healthy')
-        self.compose_run('build', 'x-capi-privacy-init', 'x-capi-worker', timeout=BUILD_TIMEOUT, label='CAPI image build')
+        require(self.worker_image_id is not None, 'Validated worker/privacy image required')
         self.compose_run('pull', 'x-capi-postgres', 'x-capi-db-init', timeout=600, label='Pinned CAPI image fetch')
         self.recheck()
         self.compose_run('up', '--no-start', '--no-deps', '--no-build', '--pull', 'never', '--force-recreate',
@@ -635,6 +817,8 @@ class Deployment:
         self.recheck()
         initializers = {name: self.inspect_service(name)[0]['Id']
                         for name in ('x-capi-db-init', 'x-capi-privacy-init')}
+        require(self.inspect_service('x-capi-privacy-init')[0]['Image'] == self.worker_image_id,
+                'Prepared privacy initializer immutable image differs')
         require(self.require_healthy('x-capi-worker')[0]['Id'] == self.old_worker['Id'], 'Worker identity changed before stop')
         self.worker_stopped = True
         self.docker('stop', '--time', '60', self.old_worker['Id'], timeout=90, label='Stop original CAPI worker')
@@ -650,6 +834,8 @@ class Deployment:
             'x-capi-worker', timeout=120, label='Prepare replacement CAPI worker')
         self.recheck()
         self.verify_initializers(initializers)
+        require(self.inspect_service('x-capi-worker')[0]['Image'] == self.worker_image_id,
+                'Prepared worker immutable image differs')
         # Dependencies were executed and verified in THIS attempt. Asking
         # Compose to process them again restarts completed one-shot services.
         self.compose_run('up', '-d', '--no-deps', '--no-build', '--pull', 'never', '--no-recreate', 'x-capi-worker',
@@ -657,12 +843,16 @@ class Deployment:
         self.wait('x-capi-worker', 'healthy')
         self.wait('x-capi-db-init', 'exited:0')
         self.wait('x-capi-privacy-init', 'exited:0')
+        require(self.inspect_service('x-capi-worker')[0]['Image'] == self.worker_image_id,
+                'Replacement worker immutable image differs')
         checks.worker_check(self.inspect_service('x-capi-worker'), self.mode, self.worker_contract)
 
     def verify_initializers(self, expected):
         require(self.persistent_started and len(expected) == 2, 'Current-run initialization is not established')
         for name, identifier in expected.items():
             document = self.inspect_service(name)
+            if name == 'x-capi-privacy-init':
+                require(document[0]['Image'] == self.worker_image_id, 'Privacy initializer immutable image differs')
             require(document[0]['Id'] == identifier and
                     checked_output(checks.state_check, document, name) == 'exited:0',
                     'Current-run initializer identity/completion changed')
@@ -721,14 +911,38 @@ class Deployment:
     def execute(self):
         with deployment_lock():
             try:
-                self.preflight()
+                if self.options.build_only:
+                    self.preparation_preflight()
+                else:
+                    self.preflight()
                 if self.options.check:
                     note('CHECK PASSED: read-only Docker/metadata checks; no build, service mutation or initialization.')
                     return
-                self.maintain_candidates(strict=True)
-                self.build_candidate()
+                require(self.options.nvidia_package == PRODUCTION_NVIDIA,
+                        'Explicit production NVIDIA package 580.173.02-1ubuntu1 is required')
+                if self.options.prevalidated_image:
+                    self.image_id = self.options.prevalidated_image
+                else:
+                    self.admit_builder()
+                    self.maintain_candidates(strict=True)
+                    self.build_candidate()
+                self.attest_image()
                 self.validate_image('Scientific', ['/opt/axonos-build/check_scientific_python.py', '/opt/axonos-build/scientific-python.txt'])
                 self.validate_image('NVIDIA', ['/usr/local/bin/plan-nvidia-userspace.py', 'verify', '--manifest', '/usr/local/share/axonos/nvidia-userspace.txt'])
+                self.validate_image('NVIDIA-version', ['-c',
+                    "import sys; from pathlib import Path; p=Path('/usr/local/share/axonos/nvidia-userspace.txt'); "
+                    "rows=p.read_text().splitlines(); sys.exit(not (rows and all(r.split('=',1)[1] == "
+                    + repr(PRODUCTION_NVIDIA) + " for r in rows)))"])
+                if self.options.build_only or self.options.with_capi_backend:
+                    self.prepare_worker()
+                if self.options.build_only:
+                    self.clean_git()
+                    require(self.git('rev-parse', '--verify', 'HEAD') == self.head and
+                            self.git('symbolic-ref', '--quiet', '--short', 'HEAD') == self.branch,
+                            'Git revision changed during image preparation')
+                    note('BUILD ONLY PASSED: validated immutable gate ' + self.image_id +
+                         ' worker/privacy ' + self.worker_image_id)
+                    return
                 if self.options.with_capi_backend:
                     self.backend()
                 self.rollout()
@@ -745,7 +959,7 @@ class Deployment:
                         for name in list(self.validators):
                             self.cleanup_validator(name)
                     finally:
-                        if self.candidate is not None:
+                        if self.candidate is not None or getattr(self, 'worker_candidate', None):
                             self.maintain_candidates(strict=False)
 
 
@@ -753,10 +967,24 @@ def main():
     parser = argparse.ArgumentParser(description='Safe production deployment; --check is NOT CAPI dry_run.')
     parser.add_argument('--check', action='store_true', help='Read-only preflight including metadata-only exec checks')
     parser.add_argument('--with-capi-backend', action='store_true', help='Deliberately update the existing CAPI backend')
-    parser.add_argument('--allow-active-sessions', action='store_true', help='Explicitly accept tenant interruption')
+    parser.add_argument('--build-only', action='store_true', help='Prepare and validate image without production configuration or rollout')
+    parser.add_argument('--prevalidated-image', help='Reuse local immutable sha256 image; reattest and revalidate before rollout')
+    parser.add_argument('--builder', help='Explicit preprovisioned docker-container builder name')
+    parser.add_argument('--builder-id', help='Expected full builder container ID on the fixed local endpoint')
+    parser.add_argument('--prevalidated-worker-image', help='Immutable worker/privacy image ID, revalidated before use')
+    parser.add_argument('--password-secret-file', help='Private external file passed only as BuildKit axonos_password secret')
+    parser.add_argument('--nvidia-package', help='Explicit production container package version')
     parser.add_argument('--health-timeout', type=int, default=300, help='Health/init wait seconds (1..1800)')
     args = parser.parse_args()
     require(1 <= args.health_timeout <= 1800, 'Health timeout must be 1..1800 seconds')
+    require(not (args.build_only and (args.check or args.with_capi_backend)),
+            'Build-only cannot be combined with check or backend mutation')
+    require(not (args.prevalidated_image and args.password_secret_file),
+            'Image reuse must not supply build credentials')
+    require(not args.prevalidated_worker_image or (args.build_only or args.with_capi_backend),
+            'Worker image requires build-only or backend rollout')
+    require(not (args.prevalidated_image and (args.build_only or args.with_capi_backend))
+            or args.prevalidated_worker_image, 'Image reuse requires both gate and worker IDs')
     os.umask(0o077)
     def interrupted(_signum, _frame):
         os.write(2, b'Interruption requested; completing bounded teardown before releasing the deployment lock.\n')

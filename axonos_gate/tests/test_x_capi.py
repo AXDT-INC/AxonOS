@@ -37,7 +37,17 @@ def _provision_test_privacy_controls(directory: Path) -> None:
         os.chmod(path, 0o600)
 
 
+def _inline_authenticated_queue(context, envelope, cfg):
+    x_capi._authorize_and_send(context, envelope, cfg, time.monotonic())
+    return True
+
+
 class ConfigTests(unittest.TestCase):
+    def setUp(self):
+        queue = patch.object(x_capi, "_queue_authenticated_envelope", side_effect=_inline_authenticated_queue)
+        queue.start()
+        self.addCleanup(queue.stop)
+
     @staticmethod
     def enabled_env(mode="dry_run", **overrides):
         values = {
@@ -96,7 +106,7 @@ class ConfigTests(unittest.TestCase):
             config = x_capi.load_config()
             status = x_capi.attribution_status(landing_twclid=click)
             emitted = x_capi.emit_event_nonblocking(
-                context_token="A" * 64,
+                context_token=x_capi.authenticated_context("A" * 64, "0x" + "1" * 40, lambda: True),
                 wallet_address="0x" + "1" * 40,
                 milestone=x_capi.MILESTONE_WALLET_VERIFIED,
                 source_key="0x" + "1" * 40,
@@ -348,7 +358,7 @@ class ConfigTests(unittest.TestCase):
             ) as send:
                 rolled_back = x_capi.attribution_status(issued["context"])
                 emitted = x_capi.emit_event_nonblocking(
-                    context_token=issued["context"],
+                    context_token=x_capi.authenticated_context(issued["context"], "0x" + "1" * 40, lambda: True),
                     wallet_address="0x" + "1" * 40,
                     milestone=x_capi.MILESTONE_WALLET_VERIFIED,
                     source_key="0x" + "1" * 40,
@@ -713,7 +723,7 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(x_capi.business_context_or_none(token), token)
             self.assertTrue(
                 x_capi.emit_event_nonblocking(
-                    context_token=token,
+                    context_token=x_capi.authenticated_context(token, wallet, lambda: True),
                     wallet_address=wallet,
                     milestone=x_capi.MILESTONE_WALLET_VERIFIED,
                     source_key=wallet,
@@ -1357,12 +1367,15 @@ class ConfigTests(unittest.TestCase):
         ) as send:
             self.assertTrue(
                 x_capi.emit_binding_nonblocking(
-                    context_token=token,
+                    context_token=x_capi.authenticated_context(token, wallet, lambda: True),
                     wallet_address=wallet,
                     event_timestamp_ms=123456789,
                 )
             )
-        send.assert_called_once_with({
+        send.assert_called_once()
+        sent = dict(send.call_args.args[0])
+        self.assertTrue(sent.pop("wallet_authority"))
+        self.assertEqual(sent, {
             "v": 1,
             "action": "bind",
             "context_token": token,
@@ -1615,7 +1628,8 @@ class ConfigTests(unittest.TestCase):
             body=[parse_method],
             decorator_list=[],
         )
-        namespace = {"Base": Base}
+        from axonos_gate import x_capi_handoff_http
+        namespace = {"Base": Base, "handoff_http": x_capi_handoff_http}
         exec(
             compile(
                 ast.fix_missing_locations(
@@ -1631,6 +1645,7 @@ class ConfigTests(unittest.TestCase):
             with self.subTest(command=command):
                 request = namespace["Request"]()
                 request.command = command
+                request.path = "/synthetic-non-handoff"
                 request.parsed = True
                 request._observe_request_gpc_early = MagicMock()
                 self.assertTrue(request.parse_request())
@@ -1944,7 +1959,7 @@ class ConfigTests(unittest.TestCase):
             )
             self.assertTrue(
                 x_capi.emit_event_nonblocking(
-                    context_token=granted["context"],
+                    context_token=x_capi.authenticated_context(granted["context"], "0x" + "1" * 40, lambda: True),
                     wallet_address="0x" + "1" * 40,
                     milestone=x_capi.MILESTONE_WALLET_VERIFIED,
                     source_key="0x" + "1" * 40,
@@ -2670,6 +2685,26 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(response.get_json()["error"], "HTTPS is required")
         update.assert_not_called()
 
+    def test_listener_and_financial_producers_share_authenticated_context_identity(self):
+        from axonos_gate import deposit_ledger, gate_server, session_manager
+
+        self.assertIs(gate_server.x_capi, deposit_ledger._x_capi)
+        self.assertIs(gate_server.x_capi, session_manager._x_capi)
+        wallet = "0x" + "1" * 40
+        with patch.dict(os.environ, self.enabled_env(), clear=True), patch.object(
+            gate_server.x_capi_human, "authorize_exact_bearer", return_value=True
+        ), patch.object(x_capi, "_send_local_envelope", return_value=True) as send, gate_server.app.test_request_context("/api/deposit/usdc"):
+            context = gate_server._authenticated_attribution_context(
+                "h" * 40, wallet, "synthetic-bearer",
+            )
+            self.assertTrue(deposit_ledger._emit_paid_deposit_conversion(
+                wallet, "0x" + "a" * 64, "onchain", "usdc", 7, 60.0,
+                "0.25", context, time.time(), 8453,
+            ))
+            send.assert_called_once()
+            self.assertFalse(send.call_args.args[0]["metadata"]["allow_context_binding"])
+            self.assertTrue(x_capi.wallet_authority_valid(send.call_args.args[0], time.time()))
+
     def test_deposit_hook_is_post_commit_nonblocking_and_paid_only(self):
         from axonos_gate import deposit_ledger
         capi = MagicMock()
@@ -2677,20 +2712,20 @@ class ConfigTests(unittest.TestCase):
         capi.production_chain_eligible.return_value = True
         capi.wallet_is_campaign_eligible.return_value = True
         capi.emit_event_nonblocking.return_value = True
-        with patch.dict(os.environ, {"AXGT_CHAIN_ID": "1"}, clear=True), patch.object(
+        with patch.dict(os.environ, {"AXGT_CHAIN_ID": "8453"}, clear=True), patch.object(
             deposit_ledger, "_x_capi", capi
         ):
             emitted = deposit_ledger._emit_paid_deposit_conversion(
                 "0x" + "1" * 40,
                 "0x" + "a" * 64,
                 "onchain",
-                "eth",
+                "usdc",
                 7,
                 60.0,
                 "0.25",
                 "context",
                 123.456,
-                1,
+                8453,
             )
             self.assertTrue(emitted)
             capi.emit_event_nonblocking.assert_called_once_with(
@@ -2699,24 +2734,45 @@ class ConfigTests(unittest.TestCase):
                 milestone="deposit_completed",
                 source_key="0x" + "a" * 64,
                 event_timestamp_ms=123456,
-                allow_context_binding=True,
+                allow_context_binding=False,
                 credit_source="onchain",
-                payment_rail="eth",
-                chain_id=1,
+                payment_rail="usdc",
+                chain_id=8453,
             )
             capi.emit_event_nonblocking.reset_mock()
             self.assertFalse(deposit_ledger._emit_paid_deposit_conversion(
                 "0x" + "1" * 40,
                 "test-credit",
                 "test_credit",
-                "eth",
+                "usdc",
                 7,
                 60.0,
                 "0.25",
                 "context",
                 123.456,
-                1,
+                8453,
             ))
+            capi.emit_event_nonblocking.assert_not_called()
+
+    def test_human_deposit_hook_excludes_other_rails_and_chains(self):
+        from axonos_gate import deposit_ledger
+        capi = MagicMock()
+        capi.wallet_is_campaign_eligible.return_value = True
+        capi.production_chain_eligible.return_value = True
+        with patch.object(deposit_ledger, "_x_capi", capi):
+            for source, rail, chain in (
+                ("onchain", "card", 8453),
+                ("stripe", "usdc", 8453),
+                ("x402", "usdc", 8453),
+                ("onchain", "usdc", 1),
+                ("onchain", "usdc", 84532),
+                ("onchain", "usdc", None),
+            ):
+                with self.subTest(source=source, rail=rail, chain=chain):
+                    self.assertFalse(deposit_ledger._emit_paid_deposit_conversion(
+                        "0x" + "1" * 40, "0x" + "a" * 64, source, rail,
+                        7, 60.0, "0.25", "context", 123.456, chain,
+                    ))
             capi.emit_event_nonblocking.assert_not_called()
 
     def test_deposit_credit_closes_financial_connection_before_optional_emit(self):
@@ -2742,7 +2798,7 @@ class ConfigTests(unittest.TestCase):
 
         capi.emit_event_nonblocking.side_effect = emitted
 
-        with patch.dict(os.environ, {"AXGT_CHAIN_ID": "1"}, clear=True), patch.object(
+        with patch.dict(os.environ, {"AXGT_CHAIN_ID": "8453"}, clear=True), patch.object(
             deposit_ledger, "init_once", return_value=True
         ), patch.object(
             deposit_ledger, "_get_connection", return_value=conn
@@ -2751,9 +2807,9 @@ class ConfigTests(unittest.TestCase):
         ), patch.object(
             deposit_ledger.time, "time", side_effect=(100.0, 200.0, 300.0)
         ):
-            ok, remaining, error = deposit_ledger.credit_eth_deposit(
+            ok, remaining, error = deposit_ledger.credit_usdc_deposit(
                 wallet, Decimal("0.25"),
-                60.0, "0x" + "a" * 64, 7, 1,
+                60.0, "0x" + "a" * 64, 7, 8453,
                 attribution_context="context",
             )
         self.assertTrue(ok)
@@ -3027,7 +3083,7 @@ class ConfigTests(unittest.TestCase):
             sys.path.insert(0, gate_dir)
         from axonos_gate import gate_server
         client = gate_server.app.test_client()
-        with patch.object(gate_server, "verify_signed_challenge", return_value=True), patch.object(
+        with patch.dict(os.environ, self.enabled_env(), clear=True), patch.object(gate_server, "verify_signed_challenge", return_value=True), patch.object(
             gate_server, "get_wallet_access_status",
             return_value={"verified": False, "remaining_minutes": 0.0},
         ), patch.object(
@@ -3053,7 +3109,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.get_json()["verified"])
         emit.assert_called_once()
-        self.assertEqual(emit.call_args.kwargs["context_token"], "h" * 40)
+        self.assertEqual(emit.call_args.kwargs["context_token"]._token, "h" * 40)
         self.assertEqual(emit.call_args.kwargs["wallet_address"], "0x" + "1" * 40)
         self.assertEqual(emit.call_args.kwargs["milestone"], x_capi.MILESTONE_WALLET_VERIFIED)
         self.assertTrue(emit.call_args.kwargs["allow_context_binding"])
@@ -3064,7 +3120,7 @@ class ConfigTests(unittest.TestCase):
             sys.path.insert(0, gate_dir)
         from axonos_gate import gate_server
         client = gate_server.app.test_client()
-        with patch.object(
+        with patch.dict(os.environ, self.enabled_env(), clear=True), patch.object(
             gate_server, "verify_signed_challenge", return_value=True
         ), patch.object(
             gate_server,
@@ -3137,7 +3193,7 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(x_capi_worker.classify_response(x_capi_worker.TransportResponse(401, {}, b""), 100)["action"], "pause")
         rate = x_capi_worker.classify_response(x_capi_worker.TransportResponse(429, {"Retry-After": "999999"}, b""), 100)
         self.assertEqual(rate["action"], "retry")
-        self.assertEqual(rate["retry_at"], 3700)
+        self.assertEqual(rate["retry_at"], 1000099)
         self.assertEqual(x_capi_worker.classify_response(x_capi_worker.TransportResponse(503, {}, b""), 100)["action"], "retry")
         self.assertEqual(x_capi_worker.classify_response(x_capi_worker.TransportResponse(302, {}, b""), 100)["code"], "redirect_rejected")
         self.assertEqual(x_capi_worker.classify_response(x_capi_worker.TransportResponse(400, {}, b""), 100)["action"], "permanent")
@@ -3323,6 +3379,11 @@ class AdapterTests(unittest.TestCase):
 
 
 class PrivacyBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        queue = patch.object(x_capi, "_queue_authenticated_envelope", side_effect=_inline_authenticated_queue)
+        queue.start()
+        self.addCleanup(queue.stop)
+
     def test_access_log_redaction_covers_click_and_handoff(self):
         raw = "GET /?twclid=secret-click&x_capi_handoff=opaque&keep=yes HTTP/1.1"
         safe = security_utils.redact_terminal_websocket_query(raw)
@@ -3487,7 +3548,12 @@ class PrivacyBoundaryTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.get_json(), {"ok": True, "accepted": True})
-        bind.assert_called_once_with(granted["context"], wallet)
+        bind.assert_called_once()
+        bound_context, bound_wallet = bind.call_args.args
+        self.assertIs(type(bound_context), gate_server.x_capi._AuthenticatedContext)
+        self.assertEqual(bound_context._token, granted["context"])
+        self.assertEqual(bound_context._wallet, wallet)
+        self.assertEqual(bound_wallet, wallet)
         wallet_event.assert_not_called()
 
         proxy = (ROOT / "axonos_gate" / "websockify_gate.py").read_text(
@@ -3496,7 +3562,7 @@ class PrivacyBoundaryTests(unittest.TestCase):
         bind_branch = proxy.split(
             "if ponly == '/api/x-attribution/bind':", 1
         )[1].split("if ponly.startswith('/api/files/')", 1)[0]
-        self.assertIn("_bind_attribution_nonblocking(context_token, wallet)", bind_branch)
+        self.assertIn('_authenticated_attribution_context(context_token, wallet, (_auth_token_candidates_from_path_and_headers(self.path, self.headers) or [None])[0], request_headers=self.headers, request_method="POST")', bind_branch)
         self.assertNotIn("_emit_wallet_verified_nonblocking", bind_branch)
 
     def test_gpc_bind_hint_limit_is_advisory_and_allows_prior_origin_cors(self):
@@ -3633,7 +3699,7 @@ class PrivacyBoundaryTests(unittest.TestCase):
                 landing_twclid="officialclick1234567890"
             )
             emitted = x_capi.emit_event_nonblocking(
-                context_token="A" * 64,
+                context_token=x_capi.authenticated_context("A" * 64, "0x" + "1" * 40, lambda: True),
                 wallet_address="0x" + "1" * 40,
                 milestone=x_capi.MILESTONE_WALLET_VERIFIED,
                 source_key="0x" + "1" * 40,
@@ -3999,6 +4065,7 @@ class LaunchRequestIdRouteContractTests(unittest.TestCase):
             ),
             "_is_auth_token_valid": lambda *_args: True,
             "_request_attribution_context": lambda _headers: None,
+            "_authenticated_attribution_context": lambda *_args, request_headers, request_method: None,
             "try_claim_session": claim,
         }
         exec(

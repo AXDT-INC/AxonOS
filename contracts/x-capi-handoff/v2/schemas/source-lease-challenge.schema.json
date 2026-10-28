@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "source-lease-challenge",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 2
+    },
+    "epoch": {
+      "$ref": "common.schema.json#/definitions/Epoch"
+    },
+    "generation": {
+      "$ref": "common.schema.json#/definitions/UUID"
+    },
+    "request_id": {
+      "$ref": "common.schema.json#/definitions/UUID"
+    },
+    "op": {
+      "const": "lease_challenge"
+    }
+  },
+  "required": [
+    "v",
+    "epoch",
+    "generation",
+    "request_id",
+    "op"
+  ],
+  "additionalProperties": false
+}

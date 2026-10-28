@@ -37,11 +37,18 @@ from security_utils import (
     request_is_effectively_https,
 )
 
+# Optional attribution helpers never issue credentials or settle payments.
 try:
-    import x_capi
+    from axonos_gate import x_capi_handoff_http as handoff_http, x_capi_human
+except ImportError:
+    import x_capi_handoff_http as handoff_http
+    import x_capi_human
+
+try:
+    from axonos_gate import x_capi
 except ImportError:
     try:
-        from axonos_gate import x_capi
+        import x_capi
     except Exception:
         x_capi = None
 except Exception:
@@ -215,6 +222,26 @@ def _bind_attribution_nonblocking(context_token, wallet_address) -> bool:
         return False
 
 
+def _authenticated_attribution_context(context_token, wallet_address, original_token=None):
+    """Capture request authority; revalidate only in optional post-commit work."""
+    try:
+        if x_capi is None or not x_capi.load_config().producer_ready or not context_token:
+            return None
+        if request.path.startswith('/api/x402/') or _is_guest_shaped(wallet_address):
+            return None
+        # Capture exactly one presented bearer; no later cookie/current-token
+        # fallback. A rejected first candidate conservatively loses attribution.
+        candidates = _gate_auth_token_candidates() if original_token is None else [original_token]
+        token = candidates[0] if candidates else None
+        wallet = str(wallet_address or '').strip().lower()
+        owner = handoff_http.trusted_browser_owner_hash(request.headers, request.method)
+        return x_capi.authenticated_context(context_token, wallet,
+            lambda: x_capi_human.authorize_exact_bearer(token, wallet, _gate_pg_get_connection),
+            browser_owner_hash=owner)
+    except Exception:
+        return None
+
+
 def _request_attribution_context():
     """Return a bounded context unless this request carries authoritative GPC."""
     try:
@@ -359,7 +386,7 @@ _CAPI_EXACT_PATHS = frozenset({
     "/api/x-attribution/status",
     "/api/x-attribution/consent",
     "/api/x-attribution/bind",
-})
+}) | handoff_http.PATHS
 
 
 def _env_truthy(name: str, default: bool = False) -> bool:
@@ -395,6 +422,8 @@ def _observe_gpc_before_route_dispatch():
 def _reject_capi_path_parameter_aliases():
     """Do not let Flask's static catch-all preflight malformed API aliases."""
     path = request.path
+    if handoff_http.is_handoff_target(path):
+        return None  # The strict handoff dispatcher owns all of its aliases.
     if any(path.startswith(canonical + ";") for canonical in _CAPI_EXACT_PATHS):
         return jsonify({"ok": False, "error": "Not found"}), 404
     return None
@@ -413,6 +442,17 @@ def _restrict_internal_agent_listener():
     if is_agent_path and not (agent_only and agent_api_enabled):
         return jsonify({"ok": False, "error": "Not found"}), 404
     return None
+
+@app.before_request
+def _dispatch_handoff_before_route():
+    # Flask routing has already decoded PATH_INFO and may otherwise redirect or
+    # emit a generic 405. Reject aliases and every unsupported method through
+    # the same privacy-safe adapter before invoking a routed view.
+    target = _handoff_raw_target()
+    if handoff_http.is_handoff_target(target) or handoff_http.is_handoff_target(request.path):
+        return _handoff_dispatch()
+    return None
+
 
 _rate_limiter = get_rate_limiter_from_env()
 _card_checkout_limiter = SimpleRateLimiter(limit=10, window_seconds=60)
@@ -751,6 +791,23 @@ def _rotate_gate_auth_token(
 @app.after_request
 def after_request(response):
     """Add CORS headers to all responses."""
+    if handoff_http.is_handoff_target(_handoff_raw_target()) or handoff_http.is_handoff_target(request.path):
+        # Exact handoff provenance has no browser CORS exception. Preserve the
+        # nonce CSP and strict-origin bridge policy from the shared adapter.
+        for name in list(response.headers):
+            if name[0].lower().startswith("access-control-"):
+                del response.headers[name[0]]
+        response.headers.setdefault("Cache-Control", "no-store, private")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        if request_is_effectively_https(
+            request.remote_addr, request.headers.get("X-Forwarded-For"),
+            request.headers.get("X-Forwarded-Proto"),
+            request.environ.get("wsgi.url_scheme") or request.scheme,
+        ):
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
     is_x_capi = request.path.startswith("/api/x-attribution/")
     if is_x_capi and x_capi is not None:
         supplied = request.headers.get("Origin")
@@ -869,7 +926,7 @@ def verify_wallet():
                 }
             ), 503
         _emit_wallet_verified_nonblocking(
-            _request_attribution_context(), wallet_address
+            _authenticated_attribution_context(_request_attribution_context(), wallet_address, token), wallet_address
         )
         if status.get("verified"):
             logger.info("Wallet verified (prepaid): %s", mask_wallet_address(wallet_address))
@@ -928,6 +985,42 @@ def _x_capi_live_transport_allowed() -> bool:
         request.headers.get("X-Forwarded-Proto"),
         request.environ.get("wsgi.url_scheme") or request.scheme,
     )
+
+
+def _handoff_raw_target():
+    # Only server-owned WSGI values are accepted, never a forwarding header or
+    # reconstructed decoded PATH_INFO. Unsupported WSGI servers fail closed.
+    for name in ("axonos.raw_request_target", "RAW_URI", "REQUEST_URI"):
+        value = request.environ.get(name)
+        if isinstance(value, str):
+            return value
+    return ""
+
+
+def _handoff_dispatch():
+    """Read at most the contracted body before the bounded local RPC."""
+    try:
+        target = _handoff_raw_target()
+        reply = handoff_http.handle(
+            request.environ.get("REQUEST_METHOD", ""), target, request.headers,
+            read_body=request.stream.read,
+            https=request_is_effectively_https(
+                request.remote_addr, request.headers.get("X-Forwarded-For"),
+                request.headers.get("X-Forwarded-Proto"),
+                request.environ.get("wsgi.url_scheme") or request.scheme,
+            ),
+        )
+    except handoff_http.protocol.HandoffError as error:
+        reply = handoff_http.failure(error, html=request.path in (handoff_http.ENTRY, handoff_http.CALLBACK))
+    except Exception:
+        reply = handoff_http.failure(handoff_http.protocol.HandoffError("INVALID_REQUEST"),
+            html=request.path in (handoff_http.ENTRY, handoff_http.CALLBACK))
+    return Response(reply.body, status=reply.status, headers=reply.headers)
+
+
+for _handoff_index, _handoff_path in enumerate(sorted(handoff_http.PATHS)):
+    app.add_url_rule(_handoff_path, "x_handoff_" + str(_handoff_index), _handoff_dispatch,
+                     methods=["GET", "POST", "OPTIONS"], provide_automatic_options=False)
 
 
 @app.route('/api/x-attribution/status', methods=['GET', 'OPTIONS'])
@@ -1123,7 +1216,7 @@ def x_attribution_bind():
         or x_capi._effective_ticket_state(ticket, x_capi.load_config(), time.time()) != "granted"
     ):
         return jsonify({"ok": False, "error": "Granted attribution required"}), 409
-    accepted = _bind_attribution_nonblocking(context_token, wallet)
+    accepted = _bind_attribution_nonblocking(_authenticated_attribution_context(context_token, wallet), wallet)
     return jsonify({"ok": True, "accepted": bool(accepted)}), 202
 
 def _guest_mode_ready() -> bool:
@@ -1509,7 +1602,7 @@ def api_verify_deposit():
     result = verify_deposit(
         authenticated_wallet=wallet_address,
         tx_hash=tx_hash,
-        attribution_context=_request_attribution_context(),
+        attribution_context=_authenticated_attribution_context(_request_attribution_context(), wallet_address),
     )
     if result.get("verified") or verify_deposit_is_pending(result):
         try:
@@ -1548,7 +1641,7 @@ def api_verify_usdc_deposit():
     result = verify_usdc_deposit(
         authenticated_wallet=wallet_address,
         tx_hash=tx_hash,
-        attribution_context=_request_attribution_context(),
+        attribution_context=_authenticated_attribution_context(_request_attribution_context(), wallet_address),
     )
     if result.get("verified") or verify_usdc_deposit_is_pending(result):
         try:
@@ -1595,7 +1688,7 @@ def api_verify_deposit_auto():
         eth_is_pending=verify_deposit_is_pending,
         verify_usdc=verify_usdc_deposit,
         usdc_is_pending=verify_usdc_deposit_is_pending,
-        attribution_context=_request_attribution_context(),
+        attribution_context=_authenticated_attribution_context(_request_attribution_context(), wallet_address),
     )
     if result.get("verified") or is_pending:
         try:
@@ -1821,7 +1914,7 @@ def api_x402_access():
         result = settle_x402_payment(
             authenticated_wallet=wallet_address,
             x_payment_header=x_payment,
-            attribution_context=_request_attribution_context(),
+            attribution_context=None,
         )
         if result.get("verified") or verify_usdc_deposit_is_pending(result):
             status = get_wallet_access_status(wallet_address)
@@ -1945,7 +2038,7 @@ def api_x402_settle():
     result = settle_x402_payment(
         authenticated_wallet=wallet_address,
         x_payment_header=x_payment,
-        attribution_context=_request_attribution_context(),
+        attribution_context=None,
     )
     if result.get("verified") or verify_usdc_deposit_is_pending(result):
         try:
@@ -2068,7 +2161,7 @@ def api_x402_session():
     if auth_error:
         response, status_code = auth_error
         return jsonify({**response.get_json(), "granted": False}), status_code
-    attribution_context = request_attribution_context
+    attribution_context = None  # Agent x402 sessions are excluded from attribution.
     # SSH is the agent-usable session type (text I/O). A pubkey is mandatory.
     ssh_pubkey = validate_ssh_public_key(data.get('ssh_pubkey'))
     if not ssh_pubkey:
@@ -2082,7 +2175,7 @@ def api_x402_session():
         settle_result = settle_x402_payment(
             authenticated_wallet=wallet_address,
             x_payment_header=x_payment,
-            attribution_context=request_attribution_context,
+            attribution_context=None,
         )
         if not (settle_result.get("verified") or verify_usdc_deposit_is_pending(settle_result)):
             resp = jsonify({"granted": False, "error": settle_result.get("error") or "Payment failed", "payment": settle_result})
@@ -3053,7 +3146,7 @@ def api_session_claim():
         requested_storage_gb=requested_storage_gb,
         new_session=new_session,
         launch_request_id=launch_request_id,
-        attribution_context=_request_attribution_context(),
+        attribution_context=_authenticated_attribution_context(_request_attribution_context(), wallet_address),
     )
     if launch_request_id is not None:
         # An application response bearing the exact key lets the browser
@@ -3967,7 +4060,7 @@ _HTTP_HEADER_DEADLINE_SECONDS = 10.0
 _X_CAPI_REQUEST_DEADLINE_SECONDS = 2.0
 _X_CAPI_BOUNDED_POST_PATHS = frozenset(
     ("/api/x-attribution/consent", "/api/x-attribution/bind")
-)
+) | handoff_http.POST_PATHS
 
 
 def _deadline_websocket_handler(base_handler, gevent_module):
@@ -3980,6 +4073,57 @@ def _deadline_websocket_handler(base_handler, gevent_module):
     """
 
     class DeadlineWebSocketHandler(base_handler):
+        def _handle_client_error(self, error):
+            # gevent's default parser hook logs the exception's formatted raw
+            # request line before a path/environ exists. Never pass that text
+            # to logging, even for an unrecognized or deeply encoded target.
+            self._parser_rejected = True
+            self.log_error("Invalid HTTP request (%s; request details redacted)",
+                           type(error).__name__)
+            reply = handoff_http.failure(handoff_http.protocol.HandoffError("INVALID_REQUEST"))
+            wire = ("HTTP/1.1 400 Bad Request\r\n" +
+                    "".join(name + ": " + value + "\r\n" for name, value in reply.headers.items()) +
+                    "Content-Length: " + str(len(reply.body)) + "\r\nConnection: close\r\n\r\n").encode("ascii")
+            return "400", wire + reply.body
+
+        def handle_one_request(self):
+            result = super().handle_one_request()
+            # gevent rejects an oversized line before read_request and before
+            # its client-error hook. Preserve its transport status while adding
+            # the same privacy protection, independently of path recognition.
+            if isinstance(result, tuple) and result[0] == "414":
+                self._parser_rejected = True
+                reply = handoff_http.request_line_too_long()
+                wire = ("HTTP/1.1 414 Request-URI Too Long\r\n" +
+                        "".join(name + ": " + value + "\r\n" for name, value in reply.headers.items()) +
+                        "Content-Length: " + str(len(reply.body)) + "\r\nConnection: close\r\n\r\n").encode("ascii")
+                return "414", wire + reply.body
+            return result
+
+        def format_request(self):
+            # Also sanitize the actual access-log sink. Rejection classification
+            # alone cannot protect parser failures or future unrelated routes.
+            original = getattr(self, "requestline", "")
+            candidates = original.split()
+            if getattr(self, "_parser_rejected", False):
+                safe = "HTTP parser rejected request (details redacted)"
+            elif any(handoff_http.is_handoff_target(target) for target in candidates):
+                safe = "handoff request (target redacted)"
+            else:
+                safe = handoff_http.privacy_safe_http_log(original)
+            self.requestline = safe
+            try:
+                return super().format_request()
+            finally:
+                self.requestline = original
+
+        def get_environ(self):
+            environ = super().get_environ()
+            # gevent decodes self.path into PATH_INFO without preserving the
+            # raw target. Preserve it before Flask can accept an encoded alias.
+            environ["axonos.raw_request_target"] = self.path
+            return environ
+
         def _abort_slow_request(self):
             self.close_connection = True
             connection = getattr(self, "socket", None)
@@ -4002,6 +4146,7 @@ def _deadline_websocket_handler(base_handler, gevent_module):
                 pass
 
         def read_requestline(self):
+            self._parser_rejected = False
             deadline = gevent_module.spawn_later(
                 _HTTP_HEADER_DEADLINE_SECONDS, self._abort_slow_request
             )

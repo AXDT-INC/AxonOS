@@ -376,7 +376,8 @@ def _emit_paid_deposit_conversion(
             _x_capi is None
             or not attribution_context
             or source != "onchain"
-            or rail not in ("axgt", "eth", "usdc")
+            or rail not in ("usdc", "eth", "axgt")
+            or (rail == "usdc" and observed_chain_id != 8453)
             or block <= 0
             or not _positive_finite(credited_minutes)
             or not _positive_finite(paid_amount)
@@ -395,11 +396,10 @@ def _emit_paid_deposit_conversion(
             milestone=_x_capi.MILESTONE_DEPOSIT_COMPLETED,
             source_key=tx_hash,
             event_timestamp_ms=int(observed_at * 1000),
-            # A committed, verifier-authenticated on-chain payment proves the
-            # same wallet as strongly as SIWE and may establish first-touch
-            # binding atomically with the deposit conversion. The worker repeats
-            # provenance, chain, ticket, and cross-wallet checks.
-            allow_context_binding=True,
+            # Settlement proves a transfer, not browser wallet ownership. Only
+            # independently authenticated binding may establish first touch;
+            # the producer also requires post-commit exact-bearer authority.
+            allow_context_binding=False,
             credit_source=source,
             payment_rail=rail,
             chain_id=chain_id,

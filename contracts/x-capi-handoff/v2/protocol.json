@@ -1,0 +1,212 @@
+{
+  "protocol": "axonos-first-party-handoff-v2",
+  "revision": "2.0.0-candidate.2",
+  "wire_version": 2,
+  "f2_positive_envelope_version": 2,
+  "context_ticket_version": 4,
+  "capi_schema_current": 4,
+  "capi_schema_target": 5,
+  "worker_policy_version": "x-capi-handoff-v2",
+  "landing_policy": "landing-x-v2",
+  "app_policy": "app-x-v2",
+  "policy_epoch": {
+    "minimum": 1,
+    "maximum": 2147483647,
+    "production_value": null,
+    "fixture_only": 42,
+    "upgrade": "strictly greater than prior accepted epoch"
+  },
+  "origins": {
+    "landing": "https://axonos.io",
+    "app": "https://app.axonos.io"
+  },
+  "withdrawal_policy": "B",
+  "limits": {
+    "observation_memory_ms": 120000,
+    "observation_receipt_ms": 110000,
+    "clock_error_per_host_ms": 5000,
+    "clock_safety_margin_ms": 10000,
+    "source_nominal_ttl_ms": 604800000,
+    "source_effective_ttl_ms": 604790000,
+    "transaction_ttl_ms": 300000,
+    "app_owner_max_ttl_ms": 604800000,
+    "lease_ms": 30000,
+    "renew_interval_ms": 10000,
+    "json_body_bytes": 8192,
+    "form_body_bytes": 256,
+    "json_response_bytes": 8192,
+    "bridge_response_bytes": 65536,
+    "service_timeout_ms": 2000,
+    "browser_optional_wait_ms": 5000,
+    "max_active_transactions_per_owner": 4,
+    "max_assigned_transactions_per_source": 1,
+    "max_landing_owner_rows": 10000,
+    "max_worker_source_rows": 10000,
+    "retry_base_ms": 1000,
+    "retry_cap_ms": 30000,
+    "retry_jitter_percent": 20,
+    "tombstone_min_retention_days": 91,
+    "cleanup_interval_ms": 60000,
+    "bootstrap_provisional_ms": 120000,
+    "initial_query_bytes": 8192,
+    "initial_query_fields": 32,
+    "max_worker_app_owner_rows": 10000,
+    "max_worker_transaction_rows": 40000,
+    "positive_ingest_bytes": 4096,
+    "source_rpc_bytes": 12288
+  },
+  "operations": [
+    {
+      "operation_id": "landing_observation",
+      "origin": "https://axonos.io",
+      "method": "get",
+      "path": "/",
+      "request_schema": null,
+      "success_schema": null,
+      "kind": "observation"
+    },
+    {
+      "operation_id": "landing_prepare",
+      "origin": "https://axonos.io",
+      "method": "post",
+      "path": "/attribution/prepare",
+      "request_schema": "landing-prepare",
+      "success_schema": "prepared",
+      "kind": "json"
+    },
+    {
+      "operation_id": "landing_status",
+      "origin": "https://axonos.io",
+      "method": "post",
+      "path": "/attribution/status",
+      "request_schema": "landing-status",
+      "success_schema": "landing-status-success",
+      "kind": "json"
+    },
+    {
+      "operation_id": "landing_capture",
+      "origin": "https://axonos.io",
+      "method": "post",
+      "path": "/attribution/capture",
+      "request_schema": "landing-capture",
+      "success_schema": "captured",
+      "kind": "json"
+    },
+    {
+      "operation_id": "landing_withdraw",
+      "origin": "https://axonos.io",
+      "method": "post",
+      "path": "/attribution/withdraw",
+      "request_schema": "landing-withdraw",
+      "success_schema": "withdrawn",
+      "kind": "json"
+    },
+    {
+      "operation_id": "app_entry",
+      "origin": "https://app.axonos.io",
+      "method": "get",
+      "path": "/attribution/entry",
+      "request_schema": null,
+      "success_schema": null,
+      "kind": "html"
+    },
+    {
+      "operation_id": "app_prepare",
+      "origin": "https://app.axonos.io",
+      "method": "post",
+      "path": "/api/x-attribution/handoff/prepare",
+      "request_schema": "app-prepare",
+      "success_schema": "prepared",
+      "kind": "json"
+    },
+    {
+      "operation_id": "app_begin",
+      "origin": "https://app.axonos.io",
+      "method": "post",
+      "path": "/api/x-attribution/handoff/begin",
+      "request_schema": "app-begin",
+      "success_schema": "app-granted",
+      "kind": "json"
+    },
+    {
+      "operation_id": "landing_authorize",
+      "origin": "https://axonos.io",
+      "method": "post",
+      "path": "/attribution/authorize",
+      "request_schema": "bridge-form",
+      "success_schema": null,
+      "kind": "form"
+    },
+    {
+      "operation_id": "app_callback",
+      "origin": "https://app.axonos.io",
+      "method": "post",
+      "path": "/attribution/callback",
+      "request_schema": "bridge-form",
+      "success_schema": null,
+      "kind": "form"
+    },
+    {
+      "operation_id": "app_recover",
+      "origin": "https://app.axonos.io",
+      "method": "post",
+      "path": "/api/x-attribution/handoff/recover",
+      "request_schema": "app-recover",
+      "success_schema": "redeemed",
+      "kind": "json"
+    },
+    {
+      "operation_id": "app_withdraw",
+      "origin": "https://app.axonos.io",
+      "method": "post",
+      "path": "/api/x-attribution/handoff/withdraw",
+      "request_schema": "app-withdraw",
+      "success_schema": "withdrawn",
+      "kind": "json"
+    },
+    {
+      "operation_id": "source_operation",
+      "origin": "https://app.axonos.io",
+      "method": "post",
+      "path": "/api/x-attribution/handoff/source",
+      "request_schema": "source-request",
+      "success_schema": "source-success",
+      "kind": "service"
+    }
+  ],
+  "source_operations": [
+    "capture",
+    "status",
+    "authorize",
+    "revoke",
+    "lease_challenge",
+    "lease_attest"
+  ],
+  "error_codes": [
+    "INVALID_REQUEST",
+    "INVALID_CLICK",
+    "INVALID_RECEIPT",
+    "SERVICE_AUTH_FAILED",
+    "ORIGIN_REJECTED",
+    "OWNER_REQUIRED",
+    "OWNER_MISMATCH",
+    "GPC_ACTIVE",
+    "FIRST_TOUCH_LOCKED",
+    "IDEMPOTENCY_CONFLICT",
+    "SOURCE_ALREADY_ASSIGNED",
+    "RESULT_UNAVAILABLE",
+    "VERSION_MISMATCH",
+    "EXPIRED",
+    "WITHDRAWN",
+    "GENERATION_RETIRED",
+    "BODY_TOO_LARGE",
+    "UNSUPPORTED_MEDIA_TYPE",
+    "RATE_LIMITED",
+    "ATTRIBUTION_DISABLED",
+    "DEPENDENCY_UNAVAILABLE",
+    "CLOCK_UNTRUSTED",
+    "QUARANTINED"
+  ],
+  "production_enabled": false,
+  "live_delivery_authorized": false
+}

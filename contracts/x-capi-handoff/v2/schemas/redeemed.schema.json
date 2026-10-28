@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "redeemed",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 2
+    },
+    "ok": {
+      "const": true
+    },
+    "state": {
+      "const": "redeemed"
+    },
+    "context": {
+      "$ref": "common.schema.json#/definitions/Context"
+    },
+    "csrf": {
+      "$ref": "common.schema.json#/definitions/CSRF"
+    },
+    "ownership_id": {
+      "$ref": "common.schema.json#/definitions/UUID"
+    },
+    "expires_at_ms": {
+      "$ref": "common.schema.json#/definitions/Ms"
+    }
+  },
+  "required": [
+    "v",
+    "ok",
+    "state",
+    "context",
+    "csrf",
+    "ownership_id",
+    "expires_at_ms"
+  ],
+  "additionalProperties": false
+}

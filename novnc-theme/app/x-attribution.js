@@ -17,7 +17,7 @@ const initializeXAttribution = (initialLandingClick) => {
     var LOCK_PREFIX = 'axonos_x_attribution_tab_ownership_v1:';
     var OPAQUE_CONTEXT_RE = /^[A-Za-z0-9_-]{32,2048}$/;
     var CSRF_RE = /^[A-Za-z0-9_-]{32,128}$/;
-    var OWNER_RE = /^[a-f0-9]{32}$/;
+    var OWNER_RE = /^(?:[a-f0-9]{32}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/;
     var WALLET_RE = /^0x[0-9a-f]{40}$/i;
     var GUEST_WALLET_RE = /^0x6775657374[0-9a-f]{30}$/i;
     var REQUEST_TIMEOUT_MS = 10000;

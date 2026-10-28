@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "browser-success",
+  "anyOf": [
+    {
+      "$ref": "prepared.schema.json"
+    },
+    {
+      "$ref": "captured.schema.json"
+    },
+    {
+      "$ref": "landing-status-success.schema.json"
+    },
+    {
+      "$ref": "app-granted.schema.json"
+    },
+    {
+      "$ref": "redeemed.schema.json"
+    },
+    {
+      "$ref": "withdrawal-pending.schema.json"
+    },
+    {
+      "$ref": "withdrawn.schema.json"
+    }
+  ]
+}

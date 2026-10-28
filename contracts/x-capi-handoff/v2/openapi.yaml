@@ -1,0 +1,2629 @@
+openapi: 3.1.0
+info:
+  title: AxonOS first-party handoff v2 candidate
+  version: 2.0.0-candidate.2
+  description: Synthetic engineering only. Not authorization to implement, deploy, process real clicks
+    or enable CAPI. See protocol.json and normative companion documents.
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+servers:
+- url: https://axonos.io
+- url: https://app.axonos.io
+paths:
+  /:
+    get:
+      operationId: landing_observation
+      servers:
+      - url: https://axonos.io
+      summary: landing observation
+      parameters:
+      - in: query
+        name: twclid
+        required: false
+        schema:
+          $ref: ./schemas/common.schema.json#/definitions/Click
+        description: Initial observation only; one literal unambiguous name; discard/scrub invalid input
+          and all query before renderer. No raw value in response. No receipt/cookie if disabled or GPC.
+      responses:
+        '200':
+          description: Success; no side effects on financial or session operations
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            text/html:
+              schema:
+                type: string
+          x-html-contract: browser-contract.md; callback safely embeds redeemed schema; authorize fixed
+            form contains only v and handoff; entry contains no candidate raw click or H.
+      x-body-limit-bytes: 8192
+      x-no-query-parameters: false
+      security: []
+      x-query-byte-limit: 8192
+      x-attribution-only: true
+      description: The bridge HTML byte limit does not constrain the full marketing response; pre-render
+        privacy invariants still apply.
+      x-response-body-limit-bytes: null
+  /attribution/prepare:
+    post:
+      operationId: landing_prepare
+      servers:
+      - url: https://axonos.io
+      summary: landing prepare
+      parameters:
+      - in: header
+        name: Origin
+        required: true
+        schema:
+          const: https://axonos.io
+      - in: header
+        name: X-AxonOS-Handoff
+        required: true
+        schema:
+          const: '2'
+      - in: header
+        name: Sec-Fetch-Site
+        required: true
+        schema:
+          type: string
+          enum:
+          - same-origin
+      - in: header
+        name: Sec-Fetch-Mode
+        required: true
+        schema:
+          type: string
+          enum:
+          - cors
+          - same-origin
+      - in: header
+        name: Sec-Fetch-Dest
+        required: true
+        schema:
+          type: string
+          enum:
+          - empty
+      responses:
+        '200':
+          description: Success; no side effects on financial or session operations
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            Set-Cookie:
+              schema:
+                type: string
+              description: Only respective __Host ownership cookie; Secure HttpOnly SameSite=Strict Path=/
+                no Domain, fixed server deadline; issuance/shortening rules in browser-contract.md.
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/prepared.schema.json
+        '400':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '403':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '409':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '410':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '413':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '415':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '429':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '503':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+      x-body-limit-bytes: 8192
+      x-no-query-parameters: true
+      security:
+      - {}
+      - LandingOwner: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ./schemas/landing-prepare.schema.json
+      x-content-type-policy: application/json; optional charset=utf-8 only
+      x-attribution-only: true
+      x-response-body-limit-bytes: 8192
+      x-optional-browser-wait-ms: 5000
+  /attribution/status:
+    post:
+      operationId: landing_status
+      servers:
+      - url: https://axonos.io
+      summary: landing status
+      parameters:
+      - in: header
+        name: Origin
+        required: true
+        schema:
+          const: https://axonos.io
+      - in: header
+        name: X-AxonOS-Handoff
+        required: true
+        schema:
+          const: '2'
+      - in: header
+        name: Sec-Fetch-Site
+        required: true
+        schema:
+          type: string
+          enum:
+          - same-origin
+      - in: header
+        name: Sec-Fetch-Mode
+        required: true
+        schema:
+          type: string
+          enum:
+          - cors
+          - same-origin
+      - in: header
+        name: Sec-Fetch-Dest
+        required: true
+        schema:
+          type: string
+          enum:
+          - empty
+      responses:
+        '200':
+          description: Success; no side effects on financial or session operations
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/landing-status-success.schema.json
+        '400':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '403':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '409':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '410':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '413':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '415':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '429':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '503':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+      x-body-limit-bytes: 8192
+      x-no-query-parameters: true
+      security:
+      - {}
+      - LandingOwner: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ./schemas/landing-status.schema.json
+      x-content-type-policy: application/json; optional charset=utf-8 only
+      x-attribution-only: true
+      x-response-body-limit-bytes: 8192
+      x-optional-browser-wait-ms: 5000
+  /attribution/capture:
+    post:
+      operationId: landing_capture
+      servers:
+      - url: https://axonos.io
+      summary: landing capture
+      parameters:
+      - in: header
+        name: Origin
+        required: true
+        schema:
+          const: https://axonos.io
+      - in: header
+        name: X-AxonOS-Handoff
+        required: true
+        schema:
+          const: '2'
+      - in: header
+        name: Sec-Fetch-Site
+        required: true
+        schema:
+          type: string
+          enum:
+          - same-origin
+      - in: header
+        name: Sec-Fetch-Mode
+        required: true
+        schema:
+          type: string
+          enum:
+          - cors
+          - same-origin
+      - in: header
+        name: Sec-Fetch-Dest
+        required: true
+        schema:
+          type: string
+          enum:
+          - empty
+      responses:
+        '200':
+          description: Success; no side effects on financial or session operations
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/captured.schema.json
+        '400':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '403':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '409':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '410':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '413':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '415':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '429':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '503':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+      x-body-limit-bytes: 8192
+      x-no-query-parameters: true
+      security:
+      - LandingOwner: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ./schemas/landing-capture.schema.json
+      x-content-type-policy: application/json; optional charset=utf-8 only
+      x-attribution-only: true
+      x-response-body-limit-bytes: 8192
+      x-optional-browser-wait-ms: 5000
+  /attribution/withdraw:
+    post:
+      operationId: landing_withdraw
+      servers:
+      - url: https://axonos.io
+      summary: landing withdraw
+      parameters:
+      - in: header
+        name: Origin
+        required: true
+        schema:
+          const: https://axonos.io
+      - in: header
+        name: X-AxonOS-Handoff
+        required: true
+        schema:
+          const: '2'
+      - in: header
+        name: Sec-Fetch-Site
+        required: true
+        schema:
+          type: string
+          enum:
+          - same-origin
+      - in: header
+        name: Sec-Fetch-Mode
+        required: true
+        schema:
+          type: string
+          enum:
+          - cors
+          - same-origin
+      - in: header
+        name: Sec-Fetch-Dest
+        required: true
+        schema:
+          type: string
+          enum:
+          - empty
+      responses:
+        '200':
+          description: Success; no side effects on financial or session operations
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/withdrawn.schema.json
+        '202':
+          description: Durably accepted locally; NOT completed withdrawal
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                type: string
+                enum:
+                - no-referrer
+                - strict-origin
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/withdrawal-pending.schema.json
+        '400':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '403':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '409':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '410':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '413':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '415':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '429':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '503':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+      x-body-limit-bytes: 8192
+      x-no-query-parameters: true
+      security:
+      - LandingOwner: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ./schemas/landing-withdraw.schema.json
+      x-content-type-policy: application/json; optional charset=utf-8 only
+      x-attribution-only: true
+      x-response-body-limit-bytes: 8192
+      x-optional-browser-wait-ms: 5000
+  /attribution/entry:
+    get:
+      operationId: app_entry
+      servers:
+      - url: https://app.axonos.io
+      summary: app entry
+      parameters: []
+      responses:
+        '200':
+          description: Success; no side effects on financial or session operations
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: strict-origin
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            Content-Security-Policy:
+              schema:
+                type: string
+              description: Exact nonce-based bridge policy and fixed form action in browser-contract.md;
+                no arbitrary actions or third-party resources.
+          content:
+            text/html:
+              schema:
+                type: string
+                maxLength: 65536
+          x-html-contract: browser-contract.md; callback safely embeds redeemed schema; authorize fixed
+            form contains only v and handoff; entry contains no candidate raw click or H.
+      x-body-limit-bytes: 8192
+      x-no-query-parameters: true
+      security: []
+      x-attribution-only: true
+      x-response-body-limit-bytes: 65536
+      x-optional-browser-wait-ms: 5000
+  /api/x-attribution/handoff/prepare:
+    post:
+      operationId: app_prepare
+      servers:
+      - url: https://app.axonos.io
+      summary: app prepare
+      parameters:
+      - in: header
+        name: Origin
+        required: true
+        schema:
+          const: https://app.axonos.io
+      - in: header
+        name: X-AxonOS-Handoff
+        required: true
+        schema:
+          const: '2'
+      - in: header
+        name: Sec-Fetch-Site
+        required: true
+        schema:
+          type: string
+          enum:
+          - same-origin
+      - in: header
+        name: Sec-Fetch-Mode
+        required: true
+        schema:
+          type: string
+          enum:
+          - cors
+          - same-origin
+      - in: header
+        name: Sec-Fetch-Dest
+        required: true
+        schema:
+          type: string
+          enum:
+          - empty
+      responses:
+        '200':
+          description: Success; no side effects on financial or session operations
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            Set-Cookie:
+              schema:
+                type: string
+              description: Only respective __Host ownership cookie; Secure HttpOnly SameSite=Strict Path=/
+                no Domain, fixed server deadline; issuance/shortening rules in browser-contract.md.
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/prepared.schema.json
+        '400':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '403':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '409':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '410':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '413':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '415':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '429':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '503':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+      x-body-limit-bytes: 8192
+      x-no-query-parameters: true
+      security:
+      - {}
+      - AppOwner: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ./schemas/app-prepare.schema.json
+      x-content-type-policy: application/json; optional charset=utf-8 only
+      x-attribution-only: true
+      x-response-body-limit-bytes: 8192
+      x-optional-browser-wait-ms: 5000
+  /api/x-attribution/handoff/begin:
+    post:
+      operationId: app_begin
+      servers:
+      - url: https://app.axonos.io
+      summary: app begin
+      parameters:
+      - in: header
+        name: Origin
+        required: true
+        schema:
+          const: https://app.axonos.io
+      - in: header
+        name: X-AxonOS-Handoff
+        required: true
+        schema:
+          const: '2'
+      - in: header
+        name: Sec-Fetch-Site
+        required: true
+        schema:
+          type: string
+          enum:
+          - same-origin
+      - in: header
+        name: Sec-Fetch-Mode
+        required: true
+        schema:
+          type: string
+          enum:
+          - cors
+          - same-origin
+      - in: header
+        name: Sec-Fetch-Dest
+        required: true
+        schema:
+          type: string
+          enum:
+          - empty
+      responses:
+        '200':
+          description: Success; no side effects on financial or session operations
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/app-granted.schema.json
+        '400':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '403':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '409':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '410':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '413':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '415':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '429':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '503':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+      x-body-limit-bytes: 8192
+      x-no-query-parameters: true
+      security:
+      - AppOwner: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ./schemas/app-begin.schema.json
+      x-content-type-policy: application/json; optional charset=utf-8 only
+      x-attribution-only: true
+      x-idempotency: 'Hash-only H: processed retry returns 409 RESULT_UNAVAILABLE; never remint under
+        same request_id. At most four active transactions; new attempts require explicit user action.'
+      x-response-body-limit-bytes: 8192
+      x-optional-browser-wait-ms: 5000
+  /attribution/authorize:
+    post:
+      operationId: landing_authorize
+      servers:
+      - url: https://axonos.io
+      summary: landing authorize
+      parameters:
+      - in: header
+        name: Origin
+        required: true
+        schema:
+          const: https://app.axonos.io
+      - in: header
+        name: Sec-Fetch-Site
+        required: true
+        schema:
+          type: string
+          enum:
+          - same-site
+      - in: header
+        name: Sec-Fetch-Mode
+        required: true
+        schema:
+          type: string
+          enum:
+          - navigate
+      - in: header
+        name: Sec-Fetch-Dest
+        required: true
+        schema:
+          type: string
+          enum:
+          - document
+      - in: header
+        name: Sec-Fetch-User
+        required: false
+        schema:
+          const: ?1
+      responses:
+        '200':
+          description: Success; no side effects on financial or session operations
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: strict-origin
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            Content-Security-Policy:
+              schema:
+                type: string
+              description: Exact nonce-based bridge policy and fixed form action in browser-contract.md;
+                no arbitrary actions or third-party resources.
+          content:
+            text/html:
+              schema:
+                type: string
+                maxLength: 65536
+          x-html-contract: browser-contract.md; callback safely embeds redeemed schema; authorize fixed
+            form contains only v and handoff; entry contains no candidate raw click or H.
+        '400':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: strict-origin
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            Content-Security-Policy:
+              schema:
+                type: string
+              description: Exact nonce-based bridge policy and fixed form action in browser-contract.md;
+                no arbitrary actions or third-party resources.
+          content:
+            text/html:
+              schema:
+                type: string
+                maxLength: 65536
+        '403':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: strict-origin
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            Content-Security-Policy:
+              schema:
+                type: string
+              description: Exact nonce-based bridge policy and fixed form action in browser-contract.md;
+                no arbitrary actions or third-party resources.
+          content:
+            text/html:
+              schema:
+                type: string
+                maxLength: 65536
+        '409':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: strict-origin
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            Content-Security-Policy:
+              schema:
+                type: string
+              description: Exact nonce-based bridge policy and fixed form action in browser-contract.md;
+                no arbitrary actions or third-party resources.
+          content:
+            text/html:
+              schema:
+                type: string
+                maxLength: 65536
+        '410':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: strict-origin
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            Content-Security-Policy:
+              schema:
+                type: string
+              description: Exact nonce-based bridge policy and fixed form action in browser-contract.md;
+                no arbitrary actions or third-party resources.
+          content:
+            text/html:
+              schema:
+                type: string
+                maxLength: 65536
+        '413':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: strict-origin
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            Content-Security-Policy:
+              schema:
+                type: string
+              description: Exact nonce-based bridge policy and fixed form action in browser-contract.md;
+                no arbitrary actions or third-party resources.
+          content:
+            text/html:
+              schema:
+                type: string
+                maxLength: 65536
+        '415':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: strict-origin
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            Content-Security-Policy:
+              schema:
+                type: string
+              description: Exact nonce-based bridge policy and fixed form action in browser-contract.md;
+                no arbitrary actions or third-party resources.
+          content:
+            text/html:
+              schema:
+                type: string
+                maxLength: 65536
+        '429':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: strict-origin
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            Content-Security-Policy:
+              schema:
+                type: string
+              description: Exact nonce-based bridge policy and fixed form action in browser-contract.md;
+                no arbitrary actions or third-party resources.
+          content:
+            text/html:
+              schema:
+                type: string
+                maxLength: 65536
+        '503':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: strict-origin
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            Content-Security-Policy:
+              schema:
+                type: string
+              description: Exact nonce-based bridge policy and fixed form action in browser-contract.md;
+                no arbitrary actions or third-party resources.
+          content:
+            text/html:
+              schema:
+                type: string
+                maxLength: 65536
+      x-body-limit-bytes: 256
+      x-no-query-parameters: true
+      security:
+      - LandingOwner: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: ./schemas/bridge-form.schema.json
+      x-content-type-policy: Exact media type; optional charset=utf-8 only; form has exactly v and handoff.
+      x-attribution-only: true
+      x-response-body-limit-bytes: 65536
+      x-optional-browser-wait-ms: 5000
+  /attribution/callback:
+    post:
+      operationId: app_callback
+      servers:
+      - url: https://app.axonos.io
+      summary: app callback
+      parameters:
+      - in: header
+        name: Origin
+        required: true
+        schema:
+          const: https://axonos.io
+      - in: header
+        name: Sec-Fetch-Site
+        required: true
+        schema:
+          type: string
+          enum:
+          - same-site
+      - in: header
+        name: Sec-Fetch-Mode
+        required: true
+        schema:
+          type: string
+          enum:
+          - navigate
+      - in: header
+        name: Sec-Fetch-Dest
+        required: true
+        schema:
+          type: string
+          enum:
+          - document
+      - in: header
+        name: Sec-Fetch-User
+        required: false
+        schema:
+          const: ?1
+      responses:
+        '200':
+          description: Success; no side effects on financial or session operations
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: strict-origin
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            Set-Cookie:
+              schema:
+                type: string
+              description: Only respective __Host ownership cookie; Secure HttpOnly SameSite=Strict Path=/
+                no Domain, fixed server deadline; issuance/shortening rules in browser-contract.md.
+            Content-Security-Policy:
+              schema:
+                type: string
+              description: Exact nonce-based bridge policy and fixed form action in browser-contract.md;
+                no arbitrary actions or third-party resources.
+          content:
+            text/html:
+              schema:
+                type: string
+                maxLength: 65536
+          x-html-contract: browser-contract.md; callback safely embeds redeemed schema; authorize fixed
+            form contains only v and handoff; entry contains no candidate raw click or H.
+        '400':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: strict-origin
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            Content-Security-Policy:
+              schema:
+                type: string
+              description: Exact nonce-based bridge policy and fixed form action in browser-contract.md;
+                no arbitrary actions or third-party resources.
+          content:
+            text/html:
+              schema:
+                type: string
+                maxLength: 65536
+        '403':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: strict-origin
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            Content-Security-Policy:
+              schema:
+                type: string
+              description: Exact nonce-based bridge policy and fixed form action in browser-contract.md;
+                no arbitrary actions or third-party resources.
+          content:
+            text/html:
+              schema:
+                type: string
+                maxLength: 65536
+        '409':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: strict-origin
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            Content-Security-Policy:
+              schema:
+                type: string
+              description: Exact nonce-based bridge policy and fixed form action in browser-contract.md;
+                no arbitrary actions or third-party resources.
+          content:
+            text/html:
+              schema:
+                type: string
+                maxLength: 65536
+        '410':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: strict-origin
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            Content-Security-Policy:
+              schema:
+                type: string
+              description: Exact nonce-based bridge policy and fixed form action in browser-contract.md;
+                no arbitrary actions or third-party resources.
+          content:
+            text/html:
+              schema:
+                type: string
+                maxLength: 65536
+        '413':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: strict-origin
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            Content-Security-Policy:
+              schema:
+                type: string
+              description: Exact nonce-based bridge policy and fixed form action in browser-contract.md;
+                no arbitrary actions or third-party resources.
+          content:
+            text/html:
+              schema:
+                type: string
+                maxLength: 65536
+        '415':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: strict-origin
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            Content-Security-Policy:
+              schema:
+                type: string
+              description: Exact nonce-based bridge policy and fixed form action in browser-contract.md;
+                no arbitrary actions or third-party resources.
+          content:
+            text/html:
+              schema:
+                type: string
+                maxLength: 65536
+        '429':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: strict-origin
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            Content-Security-Policy:
+              schema:
+                type: string
+              description: Exact nonce-based bridge policy and fixed form action in browser-contract.md;
+                no arbitrary actions or third-party resources.
+          content:
+            text/html:
+              schema:
+                type: string
+                maxLength: 65536
+        '503':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: strict-origin
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            Content-Security-Policy:
+              schema:
+                type: string
+              description: Exact nonce-based bridge policy and fixed form action in browser-contract.md;
+                no arbitrary actions or third-party resources.
+          content:
+            text/html:
+              schema:
+                type: string
+                maxLength: 65536
+      x-body-limit-bytes: 256
+      x-no-query-parameters: true
+      security:
+      - AppOwner: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: ./schemas/bridge-form.schema.json
+      x-content-type-policy: Exact media type; optional charset=utf-8 only; form has exactly v and handoff.
+      x-attribution-only: true
+      x-response-body-limit-bytes: 65536
+      x-optional-browser-wait-ms: 5000
+  /api/x-attribution/handoff/recover:
+    post:
+      operationId: app_recover
+      servers:
+      - url: https://app.axonos.io
+      summary: app recover
+      parameters:
+      - in: header
+        name: Origin
+        required: true
+        schema:
+          const: https://app.axonos.io
+      - in: header
+        name: X-AxonOS-Handoff
+        required: true
+        schema:
+          const: '2'
+      - in: header
+        name: Sec-Fetch-Site
+        required: true
+        schema:
+          type: string
+          enum:
+          - same-origin
+      - in: header
+        name: Sec-Fetch-Mode
+        required: true
+        schema:
+          type: string
+          enum:
+          - cors
+          - same-origin
+      - in: header
+        name: Sec-Fetch-Dest
+        required: true
+        schema:
+          type: string
+          enum:
+          - empty
+      responses:
+        '200':
+          description: Success; no side effects on financial or session operations
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/redeemed.schema.json
+        '400':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '403':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '409':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '410':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '413':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '415':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '429':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '503':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+      x-body-limit-bytes: 8192
+      x-no-query-parameters: true
+      security:
+      - AppOwner: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ./schemas/app-recover.schema.json
+      x-content-type-policy: application/json; optional charset=utf-8 only
+      x-attribution-only: true
+      x-response-body-limit-bytes: 8192
+      x-optional-browser-wait-ms: 5000
+  /api/x-attribution/handoff/withdraw:
+    post:
+      operationId: app_withdraw
+      servers:
+      - url: https://app.axonos.io
+      summary: app withdraw
+      parameters:
+      - in: header
+        name: Origin
+        required: true
+        schema:
+          const: https://app.axonos.io
+      - in: header
+        name: X-AxonOS-Handoff
+        required: true
+        schema:
+          const: '2'
+      - in: header
+        name: Sec-Fetch-Site
+        required: true
+        schema:
+          type: string
+          enum:
+          - same-origin
+      - in: header
+        name: Sec-Fetch-Mode
+        required: true
+        schema:
+          type: string
+          enum:
+          - cors
+          - same-origin
+      - in: header
+        name: Sec-Fetch-Dest
+        required: true
+        schema:
+          type: string
+          enum:
+          - empty
+      responses:
+        '200':
+          description: Success; no side effects on financial or session operations
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/withdrawn.schema.json
+        '400':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '403':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '409':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '410':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '413':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '415':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '429':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '503':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+      x-body-limit-bytes: 8192
+      x-no-query-parameters: true
+      security:
+      - AppOwner: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ./schemas/app-withdraw.schema.json
+      x-content-type-policy: application/json; optional charset=utf-8 only
+      x-attribution-only: true
+      x-response-body-limit-bytes: 8192
+      x-optional-browser-wait-ms: 5000
+  /api/x-attribution/handoff/source:
+    post:
+      operationId: source_operation
+      servers:
+      - url: https://app.axonos.io
+      summary: source operation
+      parameters:
+      - in: header
+        name: X-AxonOS-Handoff-Key-Id
+        required: true
+        schema:
+          $ref: ./schemas/common.schema.json#/definitions/KeyId
+      responses:
+        '200':
+          description: Success; no side effects on financial or session operations
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            X-AxonOS-Handoff-Key-Id:
+              schema:
+                type: string
+                pattern: ^[A-Za-z0-9_-]{1,32}$(?![\s\S])
+              description: Required on authenticated responses; same verified key ID as request.
+            X-AxonOS-Handoff-MAC:
+              schema:
+                type: string
+                pattern: ^[A-Za-z0-9_-]{43}$(?![\s\S])
+              description: Required on authenticated responses; exact response framing in cryptographic-formats.md.
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/source-success.schema.json
+        '400':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page. Authenticated errors are MACed; early unauthenticated
+            failures may be unsigned and never acknowledge completion.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            X-AxonOS-Handoff-Key-Id:
+              schema:
+                type: string
+                pattern: ^[A-Za-z0-9_-]{1,32}$(?![\s\S])
+              description: Required on authenticated responses; same verified key ID as request.
+            X-AxonOS-Handoff-MAC:
+              schema:
+                type: string
+                pattern: ^[A-Za-z0-9_-]{43}$(?![\s\S])
+              description: Required on authenticated responses; exact response framing in cryptographic-formats.md.
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '401':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page. Authenticated errors are MACed; early unauthenticated
+            failures may be unsigned and never acknowledge completion.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            X-AxonOS-Handoff-Key-Id:
+              schema:
+                type: string
+                pattern: ^[A-Za-z0-9_-]{1,32}$(?![\s\S])
+              description: Required on authenticated responses; same verified key ID as request.
+            X-AxonOS-Handoff-MAC:
+              schema:
+                type: string
+                pattern: ^[A-Za-z0-9_-]{43}$(?![\s\S])
+              description: Required on authenticated responses; exact response framing in cryptographic-formats.md.
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '403':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page. Authenticated errors are MACed; early unauthenticated
+            failures may be unsigned and never acknowledge completion.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            X-AxonOS-Handoff-Key-Id:
+              schema:
+                type: string
+                pattern: ^[A-Za-z0-9_-]{1,32}$(?![\s\S])
+              description: Required on authenticated responses; same verified key ID as request.
+            X-AxonOS-Handoff-MAC:
+              schema:
+                type: string
+                pattern: ^[A-Za-z0-9_-]{43}$(?![\s\S])
+              description: Required on authenticated responses; exact response framing in cryptographic-formats.md.
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '409':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page. Authenticated errors are MACed; early unauthenticated
+            failures may be unsigned and never acknowledge completion.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            X-AxonOS-Handoff-Key-Id:
+              schema:
+                type: string
+                pattern: ^[A-Za-z0-9_-]{1,32}$(?![\s\S])
+              description: Required on authenticated responses; same verified key ID as request.
+            X-AxonOS-Handoff-MAC:
+              schema:
+                type: string
+                pattern: ^[A-Za-z0-9_-]{43}$(?![\s\S])
+              description: Required on authenticated responses; exact response framing in cryptographic-formats.md.
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '410':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page. Authenticated errors are MACed; early unauthenticated
+            failures may be unsigned and never acknowledge completion.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            X-AxonOS-Handoff-Key-Id:
+              schema:
+                type: string
+                pattern: ^[A-Za-z0-9_-]{1,32}$(?![\s\S])
+              description: Required on authenticated responses; same verified key ID as request.
+            X-AxonOS-Handoff-MAC:
+              schema:
+                type: string
+                pattern: ^[A-Za-z0-9_-]{43}$(?![\s\S])
+              description: Required on authenticated responses; exact response framing in cryptographic-formats.md.
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '413':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page. Authenticated errors are MACed; early unauthenticated
+            failures may be unsigned and never acknowledge completion.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            X-AxonOS-Handoff-Key-Id:
+              schema:
+                type: string
+                pattern: ^[A-Za-z0-9_-]{1,32}$(?![\s\S])
+              description: Required on authenticated responses; same verified key ID as request.
+            X-AxonOS-Handoff-MAC:
+              schema:
+                type: string
+                pattern: ^[A-Za-z0-9_-]{43}$(?![\s\S])
+              description: Required on authenticated responses; exact response framing in cryptographic-formats.md.
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '415':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page. Authenticated errors are MACed; early unauthenticated
+            failures may be unsigned and never acknowledge completion.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            X-AxonOS-Handoff-Key-Id:
+              schema:
+                type: string
+                pattern: ^[A-Za-z0-9_-]{1,32}$(?![\s\S])
+              description: Required on authenticated responses; same verified key ID as request.
+            X-AxonOS-Handoff-MAC:
+              schema:
+                type: string
+                pattern: ^[A-Za-z0-9_-]{43}$(?![\s\S])
+              description: Required on authenticated responses; exact response framing in cryptographic-formats.md.
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '429':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page. Authenticated errors are MACed; early unauthenticated
+            failures may be unsigned and never acknowledge completion.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            X-AxonOS-Handoff-Key-Id:
+              schema:
+                type: string
+                pattern: ^[A-Za-z0-9_-]{1,32}$(?![\s\S])
+              description: Required on authenticated responses; same verified key ID as request.
+            X-AxonOS-Handoff-MAC:
+              schema:
+                type: string
+                pattern: ^[A-Za-z0-9_-]{43}$(?![\s\S])
+              description: Required on authenticated responses; exact response framing in cryptographic-formats.md.
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+        '503':
+          description: Only codes with this status in errors.csv. No sensitive echo. For HTML bridges
+            use equivalent safe HTML error page. Authenticated errors are MACed; early unauthenticated
+            failures may be unsigned and never acknowledge completion.
+          headers:
+            Cache-Control:
+              schema:
+                const: no-store, private
+            Referrer-Policy:
+              schema:
+                const: no-referrer
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            X-AxonOS-Handoff-Key-Id:
+              schema:
+                type: string
+                pattern: ^[A-Za-z0-9_-]{1,32}$(?![\s\S])
+              description: Required on authenticated responses; same verified key ID as request.
+            X-AxonOS-Handoff-MAC:
+              schema:
+                type: string
+                pattern: ^[A-Za-z0-9_-]{43}$(?![\s\S])
+              description: Required on authenticated responses; exact response framing in cryptographic-formats.md.
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/error.schema.json
+      x-body-limit-bytes: 8192
+      x-no-query-parameters: true
+      security:
+      - ServiceMAC: []
+      x-forbidden-headers:
+      - Origin
+      - Cookie
+      - Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ./schemas/source-request.schema.json
+      x-content-type-policy: application/json; optional charset=utf-8 only
+      x-required-success-response-headers:
+      - X-AxonOS-Handoff-Key-Id
+      - X-AxonOS-Handoff-MAC
+      x-attribution-only: true
+      x-response-body-limit-bytes: 8192
+      x-whole-call-timeout-ms: 2000
+components:
+  securitySchemes:
+    LandingOwner:
+      type: apiKey
+      in: cookie
+      name: __Host-axon_x_l
+    AppOwner:
+      type: apiKey
+      in: cookie
+      name: __Host-axon_x_a
+    ServiceMAC:
+      type: apiKey
+      in: header
+      name: X-AxonOS-Handoff-MAC
+      description: Exact byte MAC; key ID also required. See cryptographic-formats.md.
+x-no-query-parameters: true
+x-parser-rules: Reject duplicate keys, non-integer numeric lexical forms, unknown properties, duplicate
+  sensitive headers/cookies and noncanonical token encodings. No content compression.

@@ -180,6 +180,7 @@ elif tool == 'docker':
             if scenario.get('image_store') == 'containerd':
                 info.update(ServerVersion='29.5.1', Driver='overlayfs',
                             DriverStatus=[['driver-type', 'io.containerd.snapshotter.v1']])
+            info.update({key: True for key in ('MemoryLimit', 'SwapLimit', 'PidsLimit', 'CpuCfsQuota', 'CpuCfsPeriod')})
             info.update(scenario.get('image_store_info', {}))
             out(json.dumps(info))
         assert args == ['info'], args
@@ -193,6 +194,23 @@ elif tool == 'docker':
         document['Server'].update(scenario.get('version_server', {}))
         out(json.dumps(scenario.get('version_metadata', document)))
     if args == ['buildx', 'version']: out('synthetic buildx')
+    if args[:2] == ['buildx', 'inspect']:
+        out('Name: isolated\nDriver: docker-container\nNodes:\nName: isolated0\nEndpoint: unix:///var/run/docker.sock\nStatus: running')
+    if args == ['inspect', 'buildx_buildkit_isolated0']:
+        out(json.dumps([{'Id': 'f' * 64, 'State': {'Running': True},
+            'Config': {'Entrypoint': ['buildkitd'], 'Cmd': ['--config', '/etc/buildkit/buildkitd.toml'], 'Env': []},
+            'HostConfig': {'NanoCpus': 2000000000, 'Memory': 8589934592, 'MemorySwap': 8589934592,
+                           'PidsLimit': 512, 'CgroupnsMode': 'private'},
+            'Mounts': [{'Type': 'volume', 'Name': 'buildx_buildkit_isolated0_state',
+                        'Destination': '/var/lib/buildkit', 'RW': True}]}]))
+    if args == ['volume', 'inspect', 'buildx_buildkit_isolated0_state']:
+        out(json.dumps([{'Name': args[-1], 'Driver': 'local', 'Options': None}]))
+    if args[:2] == ['exec', 'f' * 64]:
+        if args[-1] == '/etc/buildkit/buildkitd.toml':
+            out('root = "/var/lib/buildkit"\n[worker.oci]\n  enabled = true\n  max-parallelism = 1\n[worker.containerd]\n  enabled = false')
+        out('200000 100000\n8589934592\n0\n512')
+    if args == ['ps', '-a', '--no-trunc', '-q', '--filter', 'volume=buildx_buildkit_isolated0_state']:
+        out('f' * 64)
     if args[0] == 'compose':
         assert args[1:11] == ['--project-directory', str(root), '--project-name', 'axonos',
             '--env-file', str(root / '.env'), '-f', str(root / 'docker-compose.yml'),
@@ -265,7 +283,14 @@ elif tool == 'docker':
             out('')
     if args[:2] == ['buildx', 'bake']:
         spec = json.load(sys.stdin)
-        state['bake'] = spec
+        state['bake' if 'axonos' in spec['target'] else 'worker_bake'] = spec
+        if 'worker' in spec['target']:
+            state['worker_image'] = 'sha256:' + 'c' * 64
+            tag = spec['target']['worker']['tags'][0]
+            state.setdefault('candidate_images', {})[tag] = {'Id': state['worker_image'],
+                'RepoTags': [tag], 'RepoDigests': [], 'Config': {'Labels': spec['target']['worker']['labels']}}
+            state_file.write_text(json.dumps(state))
+            out('')
         if scenario.get('build_fail'): fail()
         if scenario.get('hold_build'):
             (root / 'build-entered').write_text('ready')
@@ -289,6 +314,10 @@ elif tool == 'docker':
         active = scenario.get('active') or (scenario.get('late_active') and n > 1)
         out(json.dumps({'Names': 'axgt-session-synthetic', 'Labels': ''}) if active else '')
     if args[:2] == ['image', 'inspect']:
+        if '--format' in args and state.get('worker_bake') and args[2] == state['worker_bake']['target']['worker']['tags'][0]:
+            out('sha256:' + 'c' * 64)
+        if args[2] == 'sha256:' + 'c' * 64:
+            out(json.dumps([{'Id': args[2], 'Config': {'Labels': state['worker_bake']['target']['worker']['labels']}}]))
         if args == ['image', 'inspect', 'sha256:' + 'a' * 64]:
             counter('probe_image_inspects')
             item = {'Id': args[-1], 'RepoTags': ['axonos:latest'], 'RepoDigests': [], 'Config': {'Labels': {}}}
@@ -300,6 +329,8 @@ elif tool == 'docker':
                     item['GraphDriver'] = {'Name': 'overlayfs'}
             else:
                 item['GraphDriver'] = {'Name': 'overlay2'}
+            if state.get('bake'):
+                item['Config']['Labels'] = state['bake']['target']['axonos']['labels']
             item.update(scenario.get('probe_metadata', {}))
             out(json.dumps(scenario.get('probe_response', [item])))
         n = counter('image_inspects')
@@ -351,8 +382,8 @@ elif tool == 'docker':
             labels['com.axonos.deploy.validator'] = 'not-this-deployment'
         state.setdefault('validator_containers', {})[identity] = {
             'Id': identity, 'Name': '/' + args[args.index('--name') + 1],
-            'Config': {'Image': 'sha256:' + 'a' * 64, 'Labels': labels},
-            'Image': 'sha256:' + 'a' * 64,
+            'Config': {'Image': args[args.index('--entrypoint') + 2], 'Labels': labels},
+            'Image': args[args.index('--entrypoint') + 2],
             'State': {'Status': 'created', 'ExitCode': 0}, 'number': n}
         state_file.write_text(json.dumps(state))
         if scenario.get('validator_create_timeout'):
@@ -483,6 +514,8 @@ elif tool == 'docker':
             dict(Destination='/run/secrets/x_capi_context_key', Type='bind', Source='/etc/axonos/x-capi-context-key', RW=False)]
         if scenario.get('post_mount') and state.get('rolled'): mounts[0]['RW'] = True
         image = 'sha256:' + ('b' if scenario.get('post_image') and state.get('rolled') else 'a') * 64
+        if service == 'x-capi-privacy-init' and state.get('initializers_prepared') or service == 'x-capi-worker' and state.get('worker_prepared'):
+            image = 'sha256:' + 'd' * 64 if scenario.get('wrong_backend_image') == service else state['worker_image']
         configured = config['services'].get(service, {})
         if service in ('x-capi-worker', 'x-capi-postgres', 'x-capi-db-init', 'postgres', 'axonos-launcher'):
             mounts = [dict(Destination=m['target'], Type=m['type'], RW=not m.get('read_only', False),
@@ -549,6 +582,7 @@ if pathlib.Path(path).name == 'deploy_production.py':
         def missing_helper_contract():
             raise checks.Refusal('Secret metadata helper installation cannot be attested')
         checks.metadata_helper_contract = missing_helper_contract
+    module.Deployment.builder_storage = lambda self, mountpoint: None  # Storage metadata tested independently.
     module.LOCK_FILE = str(root / 'deploy.lock')
     module.LOCK_UID = os.getuid()
     module.COMMAND_TIMEOUT = 3
@@ -618,6 +652,12 @@ class DeploymentOrchestrationTests(unittest.TestCase):
             env['DOCKER_HOST'] = 'tcp://DO_NOT_CONTACT:2375'
         if 'docker_api_version' in self.scenario:
             env['DOCKER_API_VERSION'] = self.scenario['docker_api_version']
+        defaults = () if '--prevalidated-image' in options else ('--password-secret-file', str(self.root.parent / (self.root.name + '-secret')))
+        options = ('--builder', 'isolated', '--builder-id', 'f' * 64, '--nvidia-package', '580.173.02-1ubuntu1', *defaults, *options)
+        secret = self.root.parent / (self.root.name + '-secret')
+        secret.touch(mode=0o600)
+        with secret.open('wb') as handle: handle.truncate(1)
+        self.addCleanup(secret.unlink, missing_ok=True)
         return ['/bin/bash', *(['-x'] if trace else []), str(self.root / 'scripts/deploy-production.sh'), *options], env
 
     def run_script(self, *options, trace=False):
@@ -779,6 +819,79 @@ class DeploymentOrchestrationTests(unittest.TestCase):
         self.assertIn('CAPI=dry_run', result.stdout)
         self.assertEqual(self.mutations(), [])
 
+    def test_build_only_never_contacts_compose_or_rolls_out(self):
+        result = self.run_script('--build-only')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('BUILD ONLY PASSED', result.stdout)
+        self.assertFalse(any(cmd[3] == 'compose' for cmd in self.commands() if cmd[0] == 'docker'))
+        self.assertFalse(any(cmd[3:5] == ['image', 'tag'] for cmd in self.mutations()))
+        self.assertNotIn('deployed_image', self.state())
+        self.assertIn('worker_bake', self.state())
+        self.assertEqual(self.state()['validators'], 4)
+        self.assertNotIn('initialization_started', self.state())
+        self.assertNotIn('worker_prepared', self.state())
+        first = self.state()['bake']['target']['axonos']
+        self.assertEqual(set(first['args']), {'AXONOS_SKIP_HEAVY', 'NVIDIA_DRIVER_VERSION',
+                         'NVIDIA_DRIVER_PKG_VERSION', 'AXONOS_CREDENTIAL_CACHE_NONCE'})
+        self.assertTrue(first['secret'][0].startswith('id=axonos_password,src='))
+        result = self.run_script('--build-only')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        second = self.state()['bake']['target']['axonos']
+        self.assertNotEqual(first['args']['AXONOS_CREDENTIAL_CACHE_NONCE'], second['args']['AXONOS_CREDENTIAL_CACHE_NONCE'])
+
+    def test_build_only_refuses_mutation_flags_missing_secret_and_wrong_package(self):
+        for options in (('--with-capi-backend',), ('--check',),
+                        ('--password-secret-file', '/nonexistent/controller-secret'),
+                        ('--nvidia-package', '580.178.04-1ubuntu1')):
+            self.assert_failed(self.run_script('--build-only', *options))
+        self.assertFalse(any(cmd[3:5] == ['buildx', 'bake'] for cmd in self.mutations()))
+
+    def test_prevalidated_image_reuses_id_and_rejects_tags(self):
+        self.assertEqual(self.run_script('--build-only').returncode, 0)
+        before = sum(cmd[3:5] == ['buildx', 'bake'] for cmd in self.mutations())
+        result = self.run_script('--prevalidated-image', IMAGE)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(sum(cmd[3:5] == ['buildx', 'bake'] for cmd in self.mutations()), before)
+        self.assertEqual(self.state()['deployed_image'], IMAGE)
+        self.assert_failed(self.run_script('--prevalidated-image', 'axonos:latest'), 'immutable')
+
+    def test_missing_validator_resource_support_refuses_before_create(self):
+        self.scenario = {'image_store_info': {'PidsLimit': False}}
+        self.assert_failed(self.run_script(), 'cannot enforce validator')
+        self.assertNotIn('validators', self.state())
+        self.assertNotIn('deployed_image', self.state())
+
+    def test_both_immutable_images_reuse_without_build_or_builder(self):
+        self.assertEqual(self.run_script('--build-only').returncode, 0)
+        before = len(self.commands())
+        result = self.run_script('--build-only', '--prevalidated-image', IMAGE,
+                                 '--prevalidated-worker-image', 'sha256:' + 'c' * 64,
+                                 '--builder', 'default')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(any(cmd[3:5] in (['buildx', 'bake'], ['buildx', 'inspect'])
+                             or cmd[3] == 'compose' for cmd in self.commands()[before:] if cmd[0] == 'docker'))
+        result = self.run_script('--with-capi-backend', '--prevalidated-image', IMAGE,
+                                 '--prevalidated-worker-image', 'sha256:' + 'c' * 64)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(any(cmd[3:5] == ['buildx', 'bake'] for cmd in self.commands()[before:]))
+        events = [json.loads(line) for line in (self.root / 'compose-events.jsonl').read_text().splitlines()]
+        backend = [e for e in events if e['command'][0] == 'up' and e['command'][-1] != 'axonos']
+        for event in backend:
+            self.assertEqual(event['override']['services']['x-capi-worker']['image'], 'sha256:' + 'c'*64)
+            self.assertEqual(event['override']['services']['x-capi-privacy-init']['image'], 'sha256:' + 'c'*64)
+
+    def test_wrong_prepared_backend_image_refused_before_start(self):
+        for service in ('x-capi-privacy-init', 'x-capi-worker'):
+            with self.subTest(service=service):
+                for path in ('fake-state.json', 'commands.jsonl'):
+                    (self.root / path).unlink(missing_ok=True)
+                self.scenario = {'wrong_backend_image': service}
+                self.assert_failed(self.run_script('--with-capi-backend'), 'immutable image differs')
+                if service == 'x-capi-privacy-init':
+                    self.assertNotIn('initialization_started', self.state())
+                    self.assertNotIn('stopped_worker', self.state())
+                self.assertNotIn('backend_started', self.state())
+
     def test_normal_flow_build_validate_gate_only_and_postflight(self):
         result = self.run_script()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -792,8 +905,10 @@ class DeploymentOrchestrationTests(unittest.TestCase):
         self.assertTrue(baked['tags'][0].startswith('axonos-deploy-candidate:'))
         self.assertNotIn('axonos:latest', baked['tags'])
         validators = [cmd for cmd in mutations if cmd[3] == 'create']
-        self.assertEqual(len(validators), 2)
+        self.assertEqual(len(validators), 3)
         for cmd in validators:
+            for flag, value in [('--cpus', '1'), ('--memory', '1g'), ('--memory-swap', '1g'), ('--pids-limit', '128')]:
+                self.assertEqual(cmd[cmd.index(flag) + 1], value)
             self.assertIn(IMAGE, cmd)
             self.assertNotIn('axonos:latest', cmd)
             for option in ('--read-only', '--cap-drop', '--security-opt', '--network', 'none', '--runtime', 'runc'):
@@ -841,14 +956,13 @@ class DeploymentOrchestrationTests(unittest.TestCase):
         self.assert_failed(self.run_script('--check'), 'mode differs')
         self.assertEqual(self.mutations(), [])
 
-    def test_active_sessions_block_before_build_unless_explicitly_allowed(self):
+    def test_active_sessions_block_before_build_without_override(self):
         self.scenario = {'active': True}
         self.assert_failed(self.run_script(), 'Active tenants found')
         self.assertEqual(self.mutations(), [])
         result = self.run_script('--allow-active-sessions')
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('ACCEPTED', result.stdout)
-        self.assertIn('axgt-session-synthetic', result.stdout)
+        self.assert_failed(result, 'unrecognized arguments')
+        self.assertEqual(self.mutations(), [])
 
     def test_sessions_rechecked_after_build_before_rollout(self):
         self.scenario = {'late_active': True}

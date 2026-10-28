@@ -1,0 +1,261 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "f2-positive-ingestion",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "v": {
+          "const": 2
+        },
+        "context_token": {
+          "$ref": "common.schema.json#/definitions/Context"
+        },
+        "wallet_address": {
+          "$ref": "common.schema.json#/definitions/Wallet"
+        },
+        "event_timestamp_ms": {
+          "$ref": "common.schema.json#/definitions/Ms"
+        },
+        "wallet_authority": {
+          "$ref": "common.schema.json#/definitions/Authority"
+        },
+        "browser_owner_hash": {
+          "$ref": "common.schema.json#/definitions/Hash"
+        },
+        "action": {
+          "const": "bind"
+        }
+      },
+      "required": [
+        "v",
+        "context_token",
+        "wallet_address",
+        "event_timestamp_ms",
+        "wallet_authority",
+        "browser_owner_hash",
+        "action"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "v": {
+          "const": 2
+        },
+        "context_token": {
+          "$ref": "common.schema.json#/definitions/Context"
+        },
+        "wallet_address": {
+          "$ref": "common.schema.json#/definitions/Wallet"
+        },
+        "event_timestamp_ms": {
+          "$ref": "common.schema.json#/definitions/Ms"
+        },
+        "wallet_authority": {
+          "$ref": "common.schema.json#/definitions/Authority"
+        },
+        "browser_owner_hash": {
+          "$ref": "common.schema.json#/definitions/Hash"
+        },
+        "action": {
+          "const": "event"
+        },
+        "milestone": {
+          "const": "wallet_verified"
+        },
+        "source_key": {
+          "$ref": "common.schema.json#/definitions/Wallet"
+        },
+        "metadata": {
+          "type": "object",
+          "properties": {
+            "allow_context_binding": {
+              "const": true
+            },
+            "credit_source": {
+              "type": "null"
+            },
+            "payment_rail": {
+              "type": "null"
+            },
+            "chain_id": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "allow_context_binding",
+            "credit_source",
+            "payment_rail",
+            "chain_id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "v",
+        "context_token",
+        "wallet_address",
+        "event_timestamp_ms",
+        "wallet_authority",
+        "browser_owner_hash",
+        "action",
+        "milestone",
+        "source_key",
+        "metadata"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "v": {
+          "const": 2
+        },
+        "context_token": {
+          "$ref": "common.schema.json#/definitions/Context"
+        },
+        "wallet_address": {
+          "$ref": "common.schema.json#/definitions/Wallet"
+        },
+        "event_timestamp_ms": {
+          "$ref": "common.schema.json#/definitions/Ms"
+        },
+        "wallet_authority": {
+          "$ref": "common.schema.json#/definitions/Authority"
+        },
+        "browser_owner_hash": {
+          "$ref": "common.schema.json#/definitions/Hash"
+        },
+        "action": {
+          "const": "event"
+        },
+        "milestone": {
+          "const": "deposit_completed"
+        },
+        "source_key": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{64}$(?![\\s\\S])"
+        },
+        "metadata": {
+          "type": "object",
+          "properties": {
+            "allow_context_binding": {
+              "const": false
+            },
+            "credit_source": {
+              "const": "onchain"
+            },
+            "payment_rail": {
+              "type": "string",
+              "enum": [
+                "axgt",
+                "eth",
+                "usdc"
+              ]
+            },
+            "chain_id": {
+              "type": "integer",
+              "enum": [
+                1,
+                8453
+              ]
+            }
+          },
+          "required": [
+            "allow_context_binding",
+            "credit_source",
+            "payment_rail",
+            "chain_id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "v",
+        "context_token",
+        "wallet_address",
+        "event_timestamp_ms",
+        "wallet_authority",
+        "browser_owner_hash",
+        "action",
+        "milestone",
+        "source_key",
+        "metadata"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "v": {
+          "const": 2
+        },
+        "context_token": {
+          "$ref": "common.schema.json#/definitions/Context"
+        },
+        "wallet_address": {
+          "$ref": "common.schema.json#/definitions/Wallet"
+        },
+        "event_timestamp_ms": {
+          "$ref": "common.schema.json#/definitions/Ms"
+        },
+        "wallet_authority": {
+          "$ref": "common.schema.json#/definitions/Authority"
+        },
+        "browser_owner_hash": {
+          "$ref": "common.schema.json#/definitions/Hash"
+        },
+        "action": {
+          "const": "event"
+        },
+        "milestone": {
+          "const": "session_started"
+        },
+        "source_key": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,18}$(?![\\s\\S])"
+        },
+        "metadata": {
+          "type": "object",
+          "properties": {
+            "allow_context_binding": {
+              "const": false
+            },
+            "credit_source": {
+              "type": "null"
+            },
+            "payment_rail": {
+              "type": "null"
+            },
+            "chain_id": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "allow_context_binding",
+            "credit_source",
+            "payment_rail",
+            "chain_id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "v",
+        "context_token",
+        "wallet_address",
+        "event_timestamp_ms",
+        "wallet_authority",
+        "browser_owner_hash",
+        "action",
+        "milestone",
+        "source_key",
+        "metadata"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "description": "Envelope schema only; existing independent exact-bearer F2 proof and all imported-path semantic checks are mandatory. No wallet/hash fields are sent to X."
+}

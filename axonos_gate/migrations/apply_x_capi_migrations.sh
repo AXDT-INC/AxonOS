@@ -101,12 +101,22 @@ else
 fi
 if [ "$schema_version" = "0" ]; then
     psql -X -w -v ON_ERROR_STOP=1 -f "$migration_dir/001_x_capi_outbox.sql"
-elif [ "$schema_version" = "4" ]; then
-    : # Exact role/ACL postflight below remains mandatory on every start.
+    psql -X -w -v ON_ERROR_STOP=1 \
+        -v owner_role="$1" -v worker_role="$2" \
+        -f "$migration_dir/004_x_capi_roles_and_grants.sql"
+    schema_version=4
+fi
+if [ "$schema_version" = "4" ]; then
+    # 008 attests the exact v4 catalog AND ACL before any DDL. Do not run the
+    # historical grants repair on existing state and hide privilege drift.
+    psql -X -w -v ON_ERROR_STOP=1 \
+        -v owner_role="$1" -v worker_role="$2" \
+        -f "$migration_dir/008_x_capi_handoff.sql"
+elif [ "$schema_version" = "5" ]; then
+    # A restart verifies the exact v5 catalog/ACL without reinterpreting v4.
+    { printf '%s\n' 'BEGIN;' ; cat "$migration_dir/008_x_capi_v5_postflight.sql"; printf '%s\n' 'ROLLBACK;'; } |
+        psql -X -w -v ON_ERROR_STOP=1 -v owner_role="$1" -v worker_role="$2"
 else
-    echo "unsupported existing X CAPI schema; provision a fresh dedicated database" >&2
+    echo "unsupported existing X CAPI schema; reviewed schema 4 or 5 required" >&2
     exit 65
 fi
-psql -X -w -v ON_ERROR_STOP=1 \
-    -v owner_role="$1" -v worker_role="$2" \
-    -f "$migration_dir/004_x_capi_roles_and_grants.sql"

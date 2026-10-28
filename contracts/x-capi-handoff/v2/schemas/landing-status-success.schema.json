@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "landing-status-success",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 2
+    },
+    "ok": {
+      "const": true
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "none",
+        "prepared",
+        "capture_pending",
+        "captured",
+        "withdrawal_pending",
+        "withdrawn",
+        "expired"
+      ]
+    },
+    "expires_at_ms": {
+      "anyOf": [
+        {
+          "$ref": "common.schema.json#/definitions/Ms"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "v",
+    "ok",
+    "state",
+    "expires_at_ms"
+  ],
+  "additionalProperties": false
+}

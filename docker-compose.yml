@@ -15,6 +15,10 @@ name: axonos
 
 services:
   axonos-launcher:
+    # clu1 release reconciliation: retain the October 8 launcher and tenant
+    # template. The deployment controller must not rebuild/recreate this service.
+    image: sha256:14cecf32f88b20a66e1245954ffd31050c3f6196782c38b50ba58a3f775acdf9
+    pull_policy: never
     build:
       context: .
       dockerfile: docker/launcher/Dockerfile
@@ -43,7 +47,7 @@ services:
       X_CAPI_CONTEXT_KEY_HOST_FILE: ""
       X_CAPI_HASH_KEY_HOST_FILE: ""
       X_CAPI_RUNTIME_HOST_DIR: ""
-      X_CAPI_MODE: ""
+      X_CAPI_MODE: "off"
       X_CAPI_PIXEL_ID: ""
       X_CAPI_EVENT_WALLET_VERIFIED: ""
       X_CAPI_EVENT_DEPOSIT_COMPLETED: ""
@@ -97,7 +101,7 @@ services:
       # Session desktops must run the WebRTC capture agent; base gate stack disables it (see startup.sh).
       WEBRTC_ENABLED: ${WEBRTC_ENABLED:-false}
       WEBRTC_AGENT_ENABLED: "true"
-      AXGT_HOST_SESSION_CONTAINER_IMAGE: ${AXGT_HOST_SESSION_CONTAINER_IMAGE:-axonos:latest}
+      AXGT_HOST_SESSION_CONTAINER_IMAGE: sha256:d24b9958ff6dd886efaa4e655f8ac5ed1a7ba87ae7fd39e0ed2c415ea82c2d84
       # Used only when the explicit isolation escape hatch is disabled.
       AXGT_HOST_SESSION_CONTAINER_NETWORK: ${AXGT_HOST_SESSION_CONTAINER_NETWORK:-axonos_stack}
       AXGT_HOST_SESSION_NETWORK_ISOLATION: ${AXGT_HOST_SESSION_NETWORK_ISOLATION:-true}
@@ -106,9 +110,9 @@ services:
       AXGT_HOST_SESSION_CONTAINER_EXTRA_ARGS: ${AXGT_HOST_SESSION_CONTAINER_EXTRA_ARGS:-}
       AXGT_HOST_SESSION_CONTAINER_SHM_SIZE: ${AXGT_HOST_SESSION_CONTAINER_SHM_SIZE:-32g}
       AXGT_HOST_SESSION_LXCFS_DIR: ${AXGT_HOST_SESSION_LXCFS_DIR:-}
-      AXGT_PERSISTENT_STORAGE_ENABLED: ${AXGT_PERSISTENT_STORAGE_ENABLED:-true}
+      AXGT_PERSISTENT_STORAGE_ENABLED: "true"
       # Preserve explicit empty values so the launcher rejects invalid policy.
-      AXGT_STORAGE_MAINTENANCE_ENABLED: ${AXGT_STORAGE_MAINTENANCE_ENABLED-true}
+      AXGT_STORAGE_MAINTENANCE_ENABLED: "false"
       AXGT_PERSISTENT_STORAGE_VOLUME_PREFIX: ${AXGT_PERSISTENT_STORAGE_VOLUME_PREFIX:-axgt-user-storage-}
       AXGT_PERSISTENT_STORAGE_MOUNT_PATH: ${AXGT_PERSISTENT_STORAGE_MOUNT_PATH:-/home/aXonian}
       AXGT_PERSISTENT_STORAGE_CLEANUP_INTERVAL_SECONDS: ${AXGT_PERSISTENT_STORAGE_CLEANUP_INTERVAL_SECONDS:-3600}
@@ -124,7 +128,12 @@ services:
     privileged: true
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /var/lib/docker/axonos_storage:/var/lib/docker/axonos_storage
+      - type: bind
+        source: /var/lib/docker/axonos_storage
+        target: /var/lib/docker/axonos_storage
+        bind:
+          propagation: rslave
+          create_host_path: false
       - /dev:/dev
     networks:
       - axonos_control
@@ -205,7 +214,6 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        PASSWORD: ${AXONOS_VNC_PASSWORD}
         # Pin to host `nvidia-smi` Driver Version — see env.example / Dockerfile NVIDIA_DRIVER_PKG_VERSION.
         NVIDIA_DRIVER_PKG_VERSION: ${NVIDIA_DRIVER_PKG_VERSION:-}
       tags:

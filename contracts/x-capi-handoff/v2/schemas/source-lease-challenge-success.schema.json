@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "source-lease-challenge-success",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 2
+    },
+    "ok": {
+      "const": true
+    },
+    "epoch": {
+      "$ref": "common.schema.json#/definitions/Epoch"
+    },
+    "generation": {
+      "$ref": "common.schema.json#/definitions/UUID"
+    },
+    "request_id": {
+      "$ref": "common.schema.json#/definitions/UUID"
+    },
+    "state": {
+      "const": "challenge"
+    },
+    "worker_boot": {
+      "$ref": "common.schema.json#/definitions/UUID"
+    },
+    "challenge": {
+      "$ref": "common.schema.json#/definitions/Token"
+    },
+    "lease_ms": {
+      "const": 30000
+    }
+  },
+  "required": [
+    "v",
+    "ok",
+    "epoch",
+    "generation",
+    "request_id",
+    "state",
+    "worker_boot",
+    "challenge",
+    "lease_ms"
+  ],
+  "additionalProperties": false
+}

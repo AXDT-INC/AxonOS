@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "withdrawal-pending",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 2
+    },
+    "ok": {
+      "const": true
+    },
+    "state": {
+      "const": "withdrawal_pending"
+    },
+    "request_id": {
+      "$ref": "common.schema.json#/definitions/UUID"
+    }
+  },
+  "required": [
+    "v",
+    "ok",
+    "state",
+    "request_id"
+  ],
+  "additionalProperties": false
+}

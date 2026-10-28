@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "receipt",
+  "type": "object",
+  "properties": {
+    "kid": {
+      "$ref": "common.schema.json#/definitions/KeyId"
+    },
+    "payload": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1536,
+      "pattern": "^[A-Za-z0-9_-]+$(?![\\s\\S])"
+    },
+    "mac": {
+      "$ref": "common.schema.json#/definitions/Token"
+    }
+  },
+  "required": [
+    "kid",
+    "payload",
+    "mac"
+  ],
+  "additionalProperties": false
+}

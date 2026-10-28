@@ -1,8 +1,9 @@
 """Privacy-minimized first-party attribution and local X CAPI producer.
 
-Ordinary core event paths can only emit one bounded, non-blocking Unix datagram
-after their authoritative transaction commits. An ordinary request carrying
-GPC may additionally publish one complete record in the preallocated privacy
+Ordinary core event paths enqueue one bounded optional authorization task after
+their authoritative transaction commits. Only a fresh exact-bearer authorization
+permits the task to send a signed, non-blocking local Unix datagram. An ordinary
+request carrying GPC may additionally publish one complete record in the preallocated privacy
 controls under nonblocking locks. If the targeted pool cannot accept a valid
 ticket, it trips the preallocated global fail-closed control without fsync or
 allocation. Core success never depends on either operation or on CAPI tables.
@@ -51,7 +52,16 @@ _EVENT_ENV = {
     MILESTONE_SESSION_STARTED: "X_CAPI_EVENT_SESSION_STARTED",
 }
 _MODE_VALUES = frozenset({"off", "dry_run", "live"})
-LIVE_MODE_UNAVAILABLE_REASON = "live_delivery_blocked_untrusted_twclid_provenance"
+LIVE_MODE_UNAVAILABLE_REASON = "live_delivery_disabled"
+
+def production_transport_enabled(environ=None):
+    """Separate opt-in; test authority must never reach the real network."""
+    env = os.environ if environ is None else environ
+    return (env.get("X_CAPI_PRODUCTION_TRANSPORT") == "pixel-token-v1"
+            and not any(str(value) not in ("", "0")
+                        for name, value in env.items()
+                        if name.startswith("X_CAPI_ALLOW_TEST_")))
+
 _ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _TWCLID_ALPHABETS = {
     "lower_alnum": re.compile(r"^[a-z0-9]+$"),
@@ -72,6 +82,13 @@ _WALLET_HANDLE_RE = re.compile(
     r"^[A-Za-z0-9_-]{1,64}\.(?:eth|sol|btc|crypto|wallet)$", re.IGNORECASE
 )
 _CONTEXT_TICKET_VERSION = 4
+# Part of the audience scope: old payment-only bindings/outbox generations must
+# never become eligible under the authenticated-wallet ingestion contract.
+_WALLET_AUTHORITY_PROTOCOL = "exact-bearer-v1"
+_WALLET_AUTHORITY_PURPOSE = "AxonOS X CAPI independently authenticated wallet v1"
+_WALLET_AUTHORITY_SECONDS = 30
+_AUTHORITY_MAX_WORKERS = 2
+_AUTHORITY_MAX_PENDING = 4
 _CONTEXT_STATES = frozenset({"unset", "granted", "denied", "revoked"})
 _MAX_INGEST_DATAGRAM = 4096
 _DEFAULT_INGEST_SOCKET = "/run/axonos-x-capi/events.sock"
@@ -115,6 +132,11 @@ _PHONEISH_RE = re.compile(r"^[0-9][0-9._~-]{6,20}$")
 _SOURCE_KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{1,256}$")
 _GUEST_WALLET_RE = re.compile(r"^0x6775657374[0-9a-f]{30}$")
 
+_authority_lock = threading.Lock()
+_authority_pid = 0
+_authority_executor: Optional[ThreadPoolExecutor] = None
+_authority_slots: Optional[threading.BoundedSemaphore] = None
+
 _consent_rpc_lock = threading.Lock()
 _consent_rpc_pid = 0
 _consent_rpc_executor: Optional[ThreadPoolExecutor] = None
@@ -130,6 +152,11 @@ def _reset_consent_rpc_after_fork() -> None:
     """Discard inherited thread-pool state in a forked Websockify child."""
     global _consent_rpc_lock, _consent_rpc_pid, _consent_rpc_executor, _consent_rpc_slots
     global _context_cipher_cache_lock, _context_cipher_cache_pid
+    global _authority_lock, _authority_pid, _authority_executor, _authority_slots
+    _authority_lock = threading.Lock()
+    _authority_pid = 0
+    _authority_executor = None
+    _authority_slots = None
     _consent_rpc_lock = threading.Lock()
     _consent_rpc_pid = 0
     _consent_rpc_executor = None
@@ -214,11 +241,7 @@ class Config:
 
     @property
     def producer_ready(self) -> bool:
-        # This build has no callable live transport and no normative way to
-        # establish that a caller-supplied twclid has authentic X campaign
-        # provenance.  Treating live as producer-ready would still mint grant
-        # tickets and persist raw click IDs even though delivery can never run.
-        return self.mode == "dry_run" and not self.errors
+        return self.mode in ("dry_run", "live") and not self.errors
 
 
 def load_config(environ: Optional[Mapping[str, str]] = None) -> Config:
@@ -336,9 +359,13 @@ def load_config(environ: Optional[Mapping[str, str]] = None) -> Config:
     if mode == "live" and (not min_length_raw or not max_length_raw):
         errors.append("X_CAPI_TWCLID length bounds must be explicitly pinned in live mode")
     if mode == "live":
-        # Live collection is disabled together with live delivery.  This is an
-        # implementation invariant, not an operator-configurable kill switch.
-        errors.append(LIVE_MODE_UNAVAILABLE_REASON)
+        if not production_transport_enabled(env):
+            errors.append(LIVE_MODE_UNAVAILABLE_REASON)
+        # Only the frozen, authenticated landing observation and independent
+        # app grant may establish live eligibility. A click is matching data,
+        # never evidence of payment, identity, or authentic campaign origin.
+        if policy_version != "x-capi-handoff-v2" or allowed_origin != "https://app.axonos.io":
+            errors.append("live transport requires the production handoff v2 policy and origin")
     if mode in ("dry_run", "live"):
         if not pixel_id:
             errors.append("X_CAPI_PIXEL_ID is required")
@@ -404,6 +431,13 @@ def load_config(environ: Optional[Mapping[str, str]] = None) -> Config:
                 "send_values": send_values,
                 "production_chain_ids": sorted(production_chain_ids),
                 "wallet_exclusion_scope": exclusion_scope,
+                "wallet_authority_protocol": _WALLET_AUTHORITY_PROTOCOL,
+                **({"handoff": {
+                    "protocol": "axonos-first-party-handoff-v2",
+                    "positive_envelope_version": 2,
+                    "browser_owner_required": True,
+                    "withdrawal_policy": "B",
+                    }} if policy_version == "x-capi-handoff-v2" else {}),
                 "event_ids": {
                     milestone: event_ids[milestone]
                     for milestone in sorted(event_ids)
@@ -1868,6 +1902,197 @@ def _send_local_envelope(envelope: Mapping[str, Any]) -> bool:
             sock.close()
 
 
+@dataclass(frozen=True, repr=False)
+class _AuthenticatedContext:
+    """Immutable server-only authority; never serialize its callback or context."""
+
+    _token: str
+    _wallet: str
+    _authorize: Any
+    _scope: str
+    _pid: int
+    _browser_owner_hash: Optional[str] = None
+
+    def __repr__(self):
+        return "<authenticated attribution context>"
+
+
+def authenticated_context(context_token, wallet_address, authorize, *, browser_owner_hash=None):
+    """Capture independently accepted wallet authority without doing I/O.
+
+    ``authorize`` is trusted listener code, never request data: it must validate
+    the exact accepted bearer against this wallet in a short committed auth
+    transaction and return literal True. It runs only in bounded optional work
+    AFTER the caller reports a committed business fact. It must not issue a
+    credential, inspect a payment signature as login proof, or touch CAPI DBs.
+    Raw browser contexts cannot authorize event production on their own.
+    """
+    try:
+        cfg = load_config()
+        token = str(context_token or "").strip()
+        wallet = str(wallet_address or "").strip().lower()
+        if (not cfg.producer_ready or not _OPAQUE_RE.fullmatch(token)
+                or not wallet_is_campaign_eligible(wallet) or not callable(authorize)):
+            return None
+        # The trusted HTTP adapter captures this value from its exact cookie
+        # and request provenance. Never accept a caller-supplied owner hash.
+        if browser_owner_hash is not None and (
+                not isinstance(browser_owner_hash, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", browser_owner_hash)):
+            return None
+        if cfg.policy_version == "x-capi-handoff-v2" and browser_owner_hash is None:
+            return None
+        return _AuthenticatedContext(
+            token, wallet, authorize, cfg.audience_scope, os.getpid(),
+            browser_owner_hash,
+        )
+    except Exception:
+        return None
+
+
+def _authorized_context_matches(context, wallet, cfg):
+    return (type(context) is _AuthenticatedContext
+            and context._pid == os.getpid()
+            and context._wallet == wallet
+            and context._scope == cfg.audience_scope
+            and (cfg.policy_version != "x-capi-handoff-v2"
+                 or (isinstance(context._browser_owner_hash, str)
+                     and re.fullmatch(r"[0-9a-f]{64}", context._browser_owner_hash))))
+
+
+def _authority_digest(envelope):
+    return hashlib.sha256(json.dumps(
+        {key: value for key, value in envelope.items() if key != "wallet_authority"},
+        sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+    ).encode("ascii")).hexdigest()
+
+
+def _seal_wallet_authority(envelope, cfg, now):
+    """Seal one exact local fact after independent authorization; no bearer."""
+    cipher, _error = _context_cipher()
+    if cipher is None:
+        return None
+    issued_ms = int(now * 1000)
+    document = {
+        "purpose": _WALLET_AUTHORITY_PURPOSE,
+        "protocol": _WALLET_AUTHORITY_PROTOCOL,
+        "audience_scope": cfg.audience_scope,
+        "issued_at_ms": issued_ms,
+        "expires_at_ms": issued_ms + _WALLET_AUTHORITY_SECONDS * 1000,
+        "envelope_digest": _authority_digest(envelope),
+    }
+    return cipher.encrypt_at_time(json.dumps(
+        document, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+    ).encode("ascii"), current_time=int(now)).decode("ascii").rstrip("=")
+
+
+def wallet_authority_valid(envelope, now):
+    """Worker verifies a primary-key proof before creating any durable state.
+
+    This attests a committed exact-bearer authorization at event production,
+    not indefinite login validity. Later logout retains token-scoped semantics.
+    Consent, wallet binding and revocation are independently rechecked by the
+    worker. Proofs contain only a purpose, scope, times and digest of the local
+    fact; neither login bearer nor payment authorization is serialized.
+    """
+    try:
+        proof = envelope.get("wallet_authority")
+        if not isinstance(proof, str) or not 64 <= len(proof) <= 1536:
+            return False
+        if not _OPAQUE_RE.fullmatch(proof) or not math.isfinite(float(now)):
+            return False
+        cipher, _error = _context_cipher()
+        if cipher is None:
+            return False
+        decoded = cipher.decrypt_at_time(
+            (proof + "=" * ((4 - len(proof) % 4) % 4)).encode("ascii"),
+            ttl=_WALLET_AUTHORITY_SECONDS, current_time=int(now),
+        )
+        if len(decoded) > 1024:
+            return False
+        document = json.loads(decoded.decode("ascii"))
+        if not isinstance(document, dict) or set(document) != {
+                "purpose", "protocol", "audience_scope", "issued_at_ms",
+                "expires_at_ms", "envelope_digest"}:
+            return False
+        issued = document["issued_at_ms"]
+        expires = document["expires_at_ms"]
+        cfg = load_config()
+        return bool(
+            document["purpose"] == _WALLET_AUTHORITY_PURPOSE
+            and document["protocol"] == _WALLET_AUTHORITY_PROTOCOL
+            and document["audience_scope"] == cfg.audience_scope
+            and type(issued) is int and type(expires) is int
+            and 0 < issued <= float(now) * 1000 < expires
+            and expires == issued + _WALLET_AUTHORITY_SECONDS * 1000
+            and isinstance(document["envelope_digest"], str)
+            and hmac.compare_digest(document["envelope_digest"], _authority_digest(envelope))
+        )
+    except Exception:
+        return False
+
+
+def _authorize_and_send(context, envelope, cfg, queued_monotonic):
+    """Optional task: auth failure or any ambiguity loses attribution only."""
+    try:
+        if (time.monotonic() - queued_monotonic >= _WALLET_AUTHORITY_SECONDS
+                or not _authorized_context_matches(context, envelope["wallet_address"], cfg)
+                or not load_config().producer_ready
+                or load_config().audience_scope != cfg.audience_scope):
+            return False
+        # Time the authority before the DB check, rather than minting a fresh
+        # authorization window after a delayed commit acknowledgement/pause.
+        authorized_at = time.time()
+        if context._authorize() is not True:
+            return False
+        if (time.monotonic() - queued_monotonic >= _WALLET_AUTHORITY_SECONDS
+                or load_config().audience_scope != cfg.audience_scope
+                or not load_config().producer_ready):
+            return False
+        proof = _seal_wallet_authority(envelope, cfg, authorized_at)
+        if not proof:
+            return False
+        signed = dict(envelope, wallet_authority=proof)
+        # A slow key load, auth operation, or process suspension cannot refresh
+        # the authority window. The worker repeats this check before any write.
+        if not wallet_authority_valid(signed, time.time()):
+            return False
+        return _send_local_envelope(signed)
+    except Exception:
+        # Auth/SQL exceptions may contain credentials. Never log or retain them.
+        return False
+
+
+def _queue_authenticated_envelope(context, envelope, cfg):
+    """Bound work and retained callbacks without waiting for auth or CAPI I/O."""
+    global _authority_pid, _authority_executor, _authority_slots
+    if not _authority_lock.acquire(blocking=False):
+        return False
+    try:
+        if _authority_pid != os.getpid() or _authority_executor is None:
+            _authority_pid = os.getpid()
+            _authority_executor = ThreadPoolExecutor(
+                max_workers=_AUTHORITY_MAX_WORKERS, thread_name_prefix="x-capi-auth"
+            )
+            _authority_slots = threading.BoundedSemaphore(_AUTHORITY_MAX_PENDING)
+        executor, slots = _authority_executor, _authority_slots
+        if not slots.acquire(blocking=False):
+            return False
+        try:
+            future = executor.submit(
+                _authorize_and_send, context, envelope, cfg, time.monotonic()
+            )
+        except Exception:
+            slots.release()
+            return False
+        future.add_done_callback(lambda _future: slots.release())
+        return True
+    except Exception:
+        return False
+    finally:
+        _authority_lock.release()
+
+
 def emit_event_nonblocking(
     *,
     context_token: Any,
@@ -1880,20 +2105,18 @@ def emit_event_nonblocking(
     payment_rail: Optional[str] = None,
     chain_id: Optional[int] = None,
 ) -> bool:
-    """Emit one bounded post-commit fact without reading CAPI durable state.
+    """Queue one optional post-commit fact with exact-wallet request authority.
 
-    This function is the only CAPI operation used by core auth/payment/session
-    paths.  It deliberately does not decrypt the ticket, read the configuration
-    guard, touch PostgreSQL, acquire a filesystem lock, or perform network I/O.
-    The isolated worker repeats every semantic/configuration check before it can
-    materialize an outbox row.  Keeping the producer to a non-blocking local
-    datagram means a slow, corrupt, locked, or absent CAPI subsystem cannot hold
-    a core transaction or response hostage.
+    Never perform auth/CAPI database work or key-file reads on the caller. A
+    bounded background task revalidates the exact bearer before sending a
+    purpose-bound proof. Saturation, errors or process exit lose attribution.
     """
     cfg = load_config()
     name = str(milestone or "")
-    token = str(context_token or "").strip()
     wallet = str(wallet_address or "").strip().lower()
+    if not _authorized_context_matches(context_token, wallet, cfg):
+        return False
+    token = context_token._token
     source = str(source_key or "").strip().lower()
     if (
         not cfg.producer_ready
@@ -1908,7 +2131,7 @@ def emit_event_nonblocking(
         return False
     if name == MILESTONE_WALLET_VERIFIED and not allow_context_binding:
         return False
-    if name == MILESTONE_SESSION_STARTED and allow_context_binding:
+    if name != MILESTONE_WALLET_VERIFIED and allow_context_binding:
         return False
     metadata: Dict[str, Any] = {
         "allow_context_binding": allow_context_binding,
@@ -1957,9 +2180,11 @@ def emit_event_nonblocking(
         return False
     if timestamp <= 0:
         return False
-    return _send_local_envelope(
-        {
-            "v": 1,
+    return _queue_authenticated_envelope(
+        context_token, {
+            "v": 2 if cfg.policy_version == "x-capi-handoff-v2" else 1,
+            **({"browser_owner_hash": context_token._browser_owner_hash}
+               if cfg.policy_version == "x-capi-handoff-v2" else {}),
             "action": "event",
             "milestone": name,
             "context_token": token,
@@ -1967,7 +2192,7 @@ def emit_event_nonblocking(
             "source_key": source,
             "event_timestamp_ms": timestamp,
             "metadata": metadata,
-        }
+        }, cfg
     )
 
 
@@ -1979,14 +2204,16 @@ def emit_binding_nonblocking(
 ) -> bool:
     """Request a wallet binding without manufacturing a conversion milestone.
 
-    The caller must have independently authenticated the wallet. The isolated
-    worker validates the granted primary ticket, first-touch rules, revocation,
-    and configuration before creating any durable context. This action never
-    inserts a dedup key or outbox row.
+    The server-only context supplies independent exact-bearer authorization,
+    rechecked in bounded optional work. The worker verifies its proof, granted
+    primary ticket, first-touch rules, revocation and configuration. This action
+    never inserts a dedup key or outbox row.
     """
     cfg = load_config()
-    token = str(context_token or "").strip()
     wallet = str(wallet_address or "").strip().lower()
+    if not _authorized_context_matches(context_token, wallet, cfg):
+        return False
+    token = context_token._token
     if (
         not cfg.producer_ready
         or not _OPAQUE_RE.fullmatch(token)
@@ -2003,14 +2230,16 @@ def emit_binding_nonblocking(
         return False
     if timestamp <= 0:
         return False
-    return _send_local_envelope(
-        {
-            "v": 1,
+    return _queue_authenticated_envelope(
+        context_token, {
+            "v": 2 if cfg.policy_version == "x-capi-handoff-v2" else 1,
+            **({"browser_owner_hash": context_token._browser_owner_hash}
+               if cfg.policy_version == "x-capi-handoff-v2" else {}),
             "action": "bind",
             "context_token": token,
             "wallet_address": wallet,
             "event_timestamp_ms": timestamp,
-        }
+        }, cfg
     )
 
 

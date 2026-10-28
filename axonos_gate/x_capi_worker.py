@@ -44,10 +44,12 @@ LEASE_SECONDS = 45
 WORKER_STATEMENT_TIMEOUT_MS = 5_000
 WORKER_LOCK_TIMEOUT_MS = 500
 CLEANUP_STATEMENT_TIMEOUT_MS = 750
-EXPECTED_SCHEMA_VERSION = 4
+EXPECTED_SCHEMA_VERSION = 5
 SCHEMA_ATTESTATION_TTL_SECONDS = 30.0
 MIN_ATTEMPT_INTERVAL_SECONDS = 0.25
 LIVE_DELIVERY_BLOCK_REASON = x_capi.LIVE_MODE_UNAVAILABLE_REASON
+# Existing external restart supervision replaces the entire worker process.
+HANDOFF_RESTART_EXIT_STATUS = 75
 INGEST_MAX_BYTES = 8 * 1024
 INGEST_BATCH_SIZE = 100
 INGEST_DISPATCH_DRAIN_LIMIT = 1000
@@ -78,16 +80,17 @@ PRIVACY_MARKER_CAP = 1_024
 _QUEUE_CAPACITY_LOCK = 8_684_972_042
 _CONFIG_GUARD_LOCK = 8_684_972_043
 _stop = False
+_handoff_runtime = None
 _schema_attestation_lock = threading.Lock()
 _schema_attestation_key: Optional[tuple[str, str, str]] = None
 _schema_attestation_until = 0.0
 
-# Canonical, schema-name-independent catalog representation of the reviewed v4
+# Canonical, schema-name-independent catalog representation of the reviewed v5
 # objects.  The digest is intentionally compiled into the worker: trusting a
 # mutable "schema version" row would let an existing trigger, rewrite rule,
 # RLS policy, or weakened constraint survive a grants-only migration.
 _EXPECTED_SCHEMA_CATALOG_SHA256 = (
-    "7bd320a856a20d3c73d904a8b78f4f14f9c194de2e938bbfb563ed686c439195"
+    "c506596582b67345ae4ecc7140ce5695f3037ed5fa8c7a1449e28a795b062436"
 )
 _SCHEMA_CATALOG_SQL = r"""
 WITH target AS (
@@ -249,7 +252,7 @@ class TransportResponse:
 
 
 class RequestsTransport:
-    """Dedicated-token HTTPS adapter; the existing activation block still applies.
+    """Dedicated-token HTTPS adapter with an independent production gate.
 
     The historical class name is retained for the test-injection boundary. The
     standard-library client has no ambient proxy, netrc, cookie, redirect, or
@@ -262,7 +265,8 @@ class RequestsTransport:
 
     def send(self, pixel_id: str, token: str, payload: Dict[str, Any]) -> TransportResponse:
         cfg = x_capi.load_config()
-        if cfg.mode != "live" or not cfg.producer_ready or cfg.errors:
+        if (cfg.mode != "live" or not cfg.producer_ready or cfg.errors
+                or not x_capi.production_transport_enabled()):
             raise RuntimeError(LIVE_DELIVERY_BLOCK_REASON)
         body = _serialize_request(pixel_id, payload, cfg)
         # Read only the protected worker file, including for direct adapter
@@ -348,6 +352,7 @@ def _tls_context() -> ssl.SSLContext:
     )):
         raise ValueError("unsupported_transport_tls_environment")
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_default_certs(ssl.Purpose.SERVER_AUTH)
     return context
 
@@ -451,7 +456,7 @@ def _read_private_file(
             return None, f"{label} file must be mounted below /run/secrets"
     except (OSError, ValueError):
         return None, f"{label} file path is invalid"
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0) | os.O_NONBLOCK
     try:
         fd = os.open(candidate, flags)
     except OSError:
@@ -665,7 +670,7 @@ def _database_role_is_isolated(cur) -> bool:
     if not _schema_catalog_is_exact(cur):
         return False
     cur.execute(
-        r"""SELECT count(*)=9 AND bool_and(owner.rolname=%s)
+        r"""SELECT count(*)=14 AND bool_and(owner.rolname=%s)
              FROM pg_class c
              JOIN pg_roles owner ON owner.oid=c.relowner
             WHERE c.relnamespace=%s AND c.relkind IN ('r','p')
@@ -742,7 +747,10 @@ def _database_role_is_isolated(cur) -> bool:
                         'x_capi_attribution_contexts',
                         'x_capi_revocation_tombstones','x_capi_capacity',
                         'x_capi_dedup','x_capi_outbox','x_capi_counters',
-                        'x_capi_worker_state'
+                        'x_capi_worker_state',
+                        'x_capi_handoff_generations','x_capi_handoff_sources',
+                        'x_capi_handoff_app_owners','x_capi_handoff_transactions',
+                        'x_capi_handoff_imports'
                       )
                   )
                   AND (
@@ -817,6 +825,13 @@ def _database_role_is_isolated(cur) -> bool:
         "x_capi_counters": frozenset(("SELECT", "INSERT", "UPDATE")),
         "x_capi_worker_state": frozenset(("SELECT", "INSERT", "UPDATE")),
     }
+    allowed_table_privileges.update({
+        "x_capi_handoff_generations": frozenset(("SELECT", "INSERT", "UPDATE")),
+        **{name: frozenset(("SELECT", "INSERT", "UPDATE", "DELETE")) for name in (
+            "x_capi_handoff_sources", "x_capi_handoff_app_owners",
+            "x_capi_handoff_transactions", "x_capi_handoff_imports",
+        )},
+    })
     table_privileges = (
         "SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE",
         "REFERENCES", "TRIGGER",
@@ -1779,13 +1794,15 @@ def worker_readiness() -> Dict[str, Any]:
     if status["mode"] in ("dry_run", "live"):
         hash_key_ok = x_capi.keyed_internal_hash("readiness", "probe") is not None
     live_delivery_blocked_reason = (
-        LIVE_DELIVERY_BLOCK_REASON if status["mode"] == "live" else None
+        LIVE_DELIVERY_BLOCK_REASON if status["mode"] == "live"
+        and not x_capi.production_transport_enabled() else None
     )
     if status["mode"] == "live":
-        # No normative X contract currently proves that a supplied twclid is
-        # authentic campaign provenance. Do not even open the delivery token
-        # while the production path is structurally disabled.
-        token_error = live_delivery_blocked_reason
+        if live_delivery_blocked_reason is None and status["producer_ready"]:
+            token, token_error = read_token()
+            token_ok = token is not None and token_error is None
+        else:
+            token_error = live_delivery_blocked_reason or "invalid_live_configuration"
     runtime_secure, listener_present, consent_listener_present = _ingest_runtime_state()
     privacy_fence_secure = _privacy_fence_runtime_secure()
     try:
@@ -1854,11 +1871,12 @@ def worker_readiness() -> Dict[str, Any]:
 
 _EVENT_KEYS = frozenset({
     "v", "action", "milestone", "context_token", "wallet_address",
-    "source_key", "event_timestamp_ms", "metadata",
+    "source_key", "event_timestamp_ms", "metadata", "wallet_authority",
 })
 _REVOKE_KEYS = frozenset({"v", "action", "context_token", "event_timestamp_ms"})
 _BIND_KEYS = frozenset({
     "v", "action", "context_token", "wallet_address", "event_timestamp_ms",
+    "wallet_authority",
 })
 _METADATA_KEYS = frozenset({
     "allow_context_binding", "credit_source", "payment_rail", "chain_id",
@@ -1868,9 +1886,22 @@ _TX_HASH_RE = re.compile(r"^0x[0-9a-f]{64}$")
 
 def _validate_ingest_envelope(document: Any) -> Optional[Dict[str, Any]]:
     """Return a normalized strict envelope or None; never echo bad content."""
-    if not isinstance(document, dict) or document.get("v") != 1:
+    if (not isinstance(document, dict) or type(document.get("v")) is not int
+            or document["v"] not in (1, 2)):
         return None
+    v2 = document["v"] == 2
+    if v2:
+        try:
+            try:
+                from . import x_capi_handoff
+            except ImportError:
+                import x_capi_handoff
+            x_capi_handoff.validate_schema("f2-positive-ingestion", document)
+        except Exception:
+            return None
     action = document.get("action")
+    if action == "revoke" and v2:
+        return None
     if action == "revoke":
         if set(document) != _REVOKE_KEYS:
             return None
@@ -1886,8 +1917,14 @@ def _validate_ingest_envelope(document: Any) -> Optional[Dict[str, Any]]:
         ):
             return None
         return dict(document)
+    if action != "revoke" and (
+        not isinstance(document.get("wallet_authority"), str)
+        or not 64 <= len(document["wallet_authority"]) <= 1536
+        or not x_capi._OPAQUE_RE.fullmatch(document["wallet_authority"])
+    ):
+        return None
     if action == "bind":
-        if set(document) != _BIND_KEYS or not isinstance(
+        if set(document) != (_BIND_KEYS | ({"browser_owner_hash"} if v2 else set())) or not isinstance(
             document.get("context_token"), str
         ) or not isinstance(document.get("wallet_address"), str):
             return None
@@ -1905,7 +1942,7 @@ def _validate_ingest_envelope(document: Any) -> Optional[Dict[str, Any]]:
         normalized = dict(document)
         normalized["wallet_address"] = wallet
         return normalized
-    if action != "event" or set(document) != _EVENT_KEYS:
+    if action != "event" or set(document) != (_EVENT_KEYS | ({"browser_owner_hash"} if v2 else set())):
         return None
     milestone = document.get("milestone")
     if not all(
@@ -1945,7 +1982,8 @@ def _validate_ingest_envelope(document: Any) -> Optional[Dict[str, Any]]:
             return None
     elif milestone == x_capi.MILESTONE_DEPOSIT_COMPLETED:
         if (
-            source_key != source_key.lower()
+            binding
+            or source_key != source_key.lower()
             or not _TX_HASH_RE.fullmatch(source_key)
             or credit_source != "onchain"
             or payment_rail not in ("axgt", "eth", "usdc")
@@ -2099,6 +2137,44 @@ def _ingest_event(
     cfg = x_capi.load_config()
     if not cfg.producer_ready:
         return "disabled"
+    # Keep the provenance check at the durable-state boundary, including direct
+    # internal callers. Bind proof covers the original bind action, before its
+    # internal wallet milestone normalization below.
+    envelope = _validate_ingest_envelope(envelope)
+    if envelope is None or envelope["action"] != ("bind" if bind_only else "event"):
+        return "invalid_envelope"
+    imported_policy = cfg.policy_version == "x-capi-handoff-v2"
+    if (envelope["v"] == 2) != imported_policy:
+        return "positive_envelope_version_mismatch"
+    if imported_policy and (
+        _handoff_runtime is None or not _handoff_runtime.positive_allowed()
+        or not _handoff_runtime.clock_assured()
+    ):
+        return "handoff_authority_unavailable"
+    if not x_capi.wallet_authority_valid(envelope, now):
+        return "invalid_wallet_authority"
+    # Retain the exact producer-covered envelope for a post-lock authority
+    # check; bind normalization below must not discard that proof's subject.
+    authority_envelope = envelope
+    if bind_only:
+        wallet = envelope["wallet_address"]
+        envelope = {
+            "v": envelope["v"],
+            **({"browser_owner_hash": envelope["browser_owner_hash"]}
+               if envelope["v"] == 2 else {}),
+            "action": "event",
+            "milestone": x_capi.MILESTONE_WALLET_VERIFIED,
+            "context_token": envelope["context_token"],
+            "wallet_address": wallet,
+            "source_key": wallet,
+            "event_timestamp_ms": envelope["event_timestamp_ms"],
+            "metadata": {
+                "allow_context_binding": True,
+                "credit_source": None,
+                "payment_rail": None,
+                "chain_id": None,
+            },
+        }
     ticket = _ticket_for_ingest(
         str(envelope["context_token"]), require_primary=True
     )
@@ -2146,6 +2222,26 @@ def _ingest_event(
             ):
                 conn.rollback()
                 return "config_guard_rejected"
+            imported = None
+            if imported_policy:
+                try:
+                    imported = _handoff_runtime.store.lock_import(
+                        cur, handle_hash, envelope["browser_owner_hash"],
+                    )
+                except Exception:
+                    conn.rollback()
+                    return "handoff_owner_or_source_rejected"
+                event_ms = int(envelope["event_timestamp_ms"])
+                if not (imported["import_cutoff_ms"] <= event_ms
+                        < imported["effective_expires_at_ms"]):
+                    conn.rollback()
+                    return "handoff_event_order_rejected"
+                if milestone != x_capi.MILESTONE_WALLET_VERIFIED and (
+                    imported["binding_cutoff_ms"] is None
+                    or event_ms <= imported["binding_cutoff_ms"]
+                ):
+                    conn.rollback()
+                    return "handoff_binding_order_rejected"
             # A handle lock closes the absent-row revoke/event race. The wallet
             # lock then serializes fresh tabs racing to bind the same wallet.
             cur.execute(
@@ -2174,12 +2270,26 @@ def _ingest_event(
                 (handle_hash,),
             )
             row = cur.fetchone()
+            if imported_policy:
+                # Source/owner/transaction, handle, wallet and context locks now
+                # belong to this decision. The arrival timestamp is not time
+                # authority after any PostgreSQL lock wait.
+                decision_ms = _handoff_runtime.store._now(cur)
+                now = decision_ms / 1000.0
+                if (not _event_ticket_is_current(
+                        ticket, cfg, int(envelope["event_timestamp_ms"]), now)
+                        or decision_ms >= imported["effective_expires_at_ms"]):
+                    conn.rollback()
+                    return "invalid_or_stale_ticket"
+                if not x_capi.wallet_authority_valid(authority_envelope, now):
+                    conn.rollback()
+                    return "invalid_wallet_authority"
+            if not row and imported_policy:
+                conn.rollback()
+                return "handoff_context_missing"
             if not row:
                 if not (
-                    milestone in (
-                        x_capi.MILESTONE_WALLET_VERIFIED,
-                        x_capi.MILESTONE_DEPOSIT_COMPLETED,
-                    )
+                    milestone == x_capi.MILESTONE_WALLET_VERIFIED
                     and envelope["metadata"]["allow_context_binding"]
                 ):
                     _count_on_cursor(cur, "missing_bound_context", now)
@@ -2288,7 +2398,9 @@ def _ingest_event(
                     conn.commit()
                     return "wallet_or_lifecycle_mismatch"
 
-            if bound_wallet is None and envelope["metadata"]["allow_context_binding"]:
+            if (bound_wallet is None
+                    and milestone == x_capi.MILESTONE_WALLET_VERIFIED
+                    and envelope["metadata"]["allow_context_binding"]):
                 cur.execute(
                     """SELECT id,consent_state,expires_at,mode_scope,
                               policy_version,policy_epoch,audience_scope
@@ -2333,6 +2445,32 @@ def _ingest_event(
                     _decrement_outbox_capacity_on_cursor(
                         cur, cur.rowcount, now
                     )
+                if imported_policy:
+                    # Conflicting wallet-context cleanup above can itself wait
+                    # for rows/capacity. Lock the import before the final clock
+                    # sample and commit its first-binding cutoff with the wallet
+                    # assignment. Business event timestamps are never rewritten.
+                    cur.execute("SELECT context_id FROM x_capi_handoff_imports WHERE context_id=%s FOR UPDATE", (durable_id,))
+                    if cur.fetchone() is None:
+                        conn.rollback()
+                        return "handoff_context_missing"
+                    binding_cutoff_ms = _handoff_runtime.store._now(cur)
+                    now = binding_cutoff_ms / 1000.0
+                    if (not _event_ticket_is_current(
+                            ticket, cfg, int(envelope["event_timestamp_ms"]), now)
+                            or binding_cutoff_ms >= imported["effective_expires_at_ms"]):
+                        conn.rollback()
+                        return "invalid_or_stale_ticket"
+                    if not x_capi.wallet_authority_valid(authority_envelope, now):
+                        conn.rollback()
+                        return "invalid_wallet_authority"
+                    cur.execute("""UPDATE x_capi_handoff_imports
+                        SET binding_cutoff_ms=%s,updated_at_ms=%s
+                        WHERE context_id=%s AND binding_cutoff_ms IS NULL""",
+                        (binding_cutoff_ms,binding_cutoff_ms,durable_id))
+                    if cur.rowcount != 1:
+                        conn.rollback()
+                        return "handoff_binding_order_rejected"
                 cur.execute(
                     """UPDATE x_capi_attribution_contexts
                           SET wallet_hash=%s,wallet_bound_at=%s,updated_at=%s
@@ -2354,14 +2492,58 @@ def _ingest_event(
                 conn.commit()
                 return "wallet_or_lifecycle_mismatch"
 
+            def revalidate_admission():
+                """No pre-wait clock or normalized bind may authorize a commit.
+
+                The generation/source/owner/transaction and context locks remain
+                held from above, so these lifecycle rows cannot change beneath
+                this decision. Rechecking their immutable deadlines needs no
+                earlier lock reacquisition after the capacity/dedup locks.
+                """
+                nonlocal now
+                if not imported_policy:
+                    return None
+                decision_ms = _handoff_runtime.store._now(cur)
+                now = decision_ms / 1000.0
+                source, owner = imported["source"], imported["owner"]
+                error = None
+                if (not _event_ticket_is_current(
+                        ticket, cfg, int(envelope["event_timestamp_ms"]), now)
+                        or decision_ms >= min(
+                            imported["effective_expires_at_ms"],
+                            imported["original_expires_at_ms"],
+                            source["original_expires_at_ms"],
+                            owner["owner_expires_at_ms"])):
+                    error = "invalid_or_stale_ticket"
+                elif (imported["state"] != "active"
+                        or source["state"] != "consumed"
+                        or owner["state"] != "imported"):
+                    error = "handoff_owner_or_source_rejected"
+                elif not x_capi.wallet_authority_valid(authority_envelope, now):
+                    error = "invalid_wallet_authority"
+                elif (not _handoff_runtime.positive_allowed()
+                        or not _handoff_runtime.clock_assured()):
+                    error = "handoff_authority_unavailable"
+                if error:
+                    # Includes any provisional first binding, capacity reserve,
+                    # dedup/outbox writes and counter updates in this transaction.
+                    conn.rollback()
+                return error
+
             if bind_only:
                 _count_on_cursor(cur, "context_bound", now)
+                admission_error = revalidate_admission()
+                if admission_error:
+                    return admission_error
                 conn.commit()
                 return "bound"
 
             # Binding is deliberately complete before mapping lookup.
             if not event_id:
                 _count_on_cursor(cur, "mapping_disabled_" + milestone, now)
+                admission_error = revalidate_admission()
+                if admission_error:
+                    return admission_error
                 conn.commit()
                 return "mapping_disabled"
             # The singleton capacity row is the O(1), transactional admission
@@ -2377,8 +2559,15 @@ def _ingest_event(
                   RETURNING outbox_active_count""",
                 (now, cfg.queue_limit),
             )
-            if cur.fetchone() is None:
+            admitted = cur.fetchone() is not None
+            admission_error = revalidate_admission()
+            if admission_error:
+                return admission_error
+            if not admitted:
                 _count_on_cursor(cur, "queue_full", now)
+                admission_error = revalidate_admission()
+                if admission_error:
+                    return admission_error
                 conn.commit()
                 return "queue_full"
             cur.execute(
@@ -2387,9 +2576,17 @@ def _ingest_event(
                    VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
                 (milestone, logical_hash, now, now + 90 * 86400),
             )
-            if cur.rowcount != 1:
+            inserted = cur.rowcount == 1
+            # Unique-key admission may wait even after the capacity row lock.
+            admission_error = revalidate_admission()
+            if admission_error:
+                return admission_error
+            if not inserted:
                 _decrement_outbox_capacity_on_cursor(cur, 1, now)
                 _count_on_cursor(cur, "duplicate_" + milestone, now)
+                admission_error = revalidate_admission()
+                if admission_error:
+                    return admission_error
                 conn.commit()
                 return "duplicate"
             status = "dry_run" if cfg.mode == "dry_run" else "pending"
@@ -2411,6 +2608,11 @@ def _ingest_event(
                 ),
             )
             _count_on_cursor(cur, "enqueued_" + status, now)
+            # Outbox/counter writes can also wait. No expired authority may
+            # survive the last blocking statement before the commit decision.
+            admission_error = revalidate_admission()
+            if admission_error:
+                return admission_error
         conn.commit()
         return status
     except Exception:
@@ -2425,29 +2627,9 @@ def process_ingest_envelope(conn, document: Any, now: Optional[float] = None) ->
     timestamp = float(time.time() if now is None else now)
     if envelope["action"] == "revoke":
         return _upsert_revocation(conn, envelope, timestamp)
-    if envelope["action"] == "bind":
-        wallet = str(envelope["wallet_address"])
-        return _ingest_event(
-            conn,
-            {
-                "v": 1,
-                "action": "event",
-                "milestone": x_capi.MILESTONE_WALLET_VERIFIED,
-                "context_token": envelope["context_token"],
-                "wallet_address": wallet,
-                "source_key": wallet,
-                "event_timestamp_ms": envelope["event_timestamp_ms"],
-                "metadata": {
-                    "allow_context_binding": True,
-                    "credit_source": None,
-                    "payment_rail": None,
-                    "chain_id": None,
-                },
-            },
-            timestamp,
-            bind_only=True,
-        )
-    return _ingest_event(conn, envelope, timestamp)
+    return _ingest_event(
+        conn, envelope, timestamp, bind_only=envelope["action"] == "bind"
+    )
 
 
 _CONSENT_KEYS = frozenset({
@@ -2516,6 +2698,17 @@ def _consent_error(exc: Exception) -> str:
     return "store_unavailable"
 
 
+def _close_handoff_context_on_cursor(cur, context_id, now):
+    cur.execute("""UPDATE x_capi_attribution_contexts SET consent_state='revoked',
+        twclid=NULL,expires_at=NULL,wallet_hash=NULL,wallet_bound_at=NULL,
+        revoked_at=%s,updated_at=%s WHERE id=%s""", (now, now, context_id))
+    cur.execute("""UPDATE x_capi_outbox SET status='cancelled',twclid=NULL,
+        lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=%s,
+        last_error_code='source_withdrawn' WHERE context_id=%s
+        AND status IN ('dry_run','pending','retrying','leased')""", (now, context_id))
+    _decrement_outbox_capacity_on_cursor(cur, cur.rowcount, now)
+
+
 def process_consent_request(
     conn, document: Any, now: Optional[float] = None
 ) -> Dict[str, Any]:
@@ -2542,6 +2735,15 @@ def process_consent_request(
     csrf_hash = x_capi._hash(csrf)
     try:
         with conn.cursor() as cur:
+            if ticket.get("policy_version") == "x-capi-handoff-v2":
+                try:
+                    from .x_capi_handoff_store import close_import_by_handle
+                except ImportError:
+                    from x_capi_handoff_store import close_import_by_handle
+                def close_import_context(cursor, context_id):
+                    _close_handoff_context_on_cursor(cursor, context_id, timestamp)
+                close_import_by_handle(cur, handle_hash, close_import_context,
+                                       int(timestamp * 1000))
             cur.execute(
                 "SELECT pg_advisory_xact_lock(%s)",
                 (_handle_advisory_key(handle_hash),),
@@ -2678,6 +2880,17 @@ def _quarantine_all_on_cursor(cur, timestamp: float, reason: str) -> None:
     """Invalidate all dispatchable state inside the caller's transaction."""
     cur.execute("SET LOCAL statement_timeout=%s", (WORKER_STATEMENT_TIMEOUT_MS,))
     cur.execute("SET LOCAL lock_timeout=%s", (WORKER_LOCK_TIMEOUT_MS,))
+    if _handoff_runtime is not None:
+        _handoff_runtime.lease.invalidate()
+    # A restored or unclean generation is never silently reactivated. Runtime
+    # leases die at every boot; durable quarantine needs explicit fresh epoch.
+    cur.execute("SELECT generation FROM x_capi_handoff_generations ORDER BY generation FOR UPDATE")
+    cur.fetchall()
+    cur.execute("UPDATE x_capi_handoff_generations SET state='quarantined',updated_at_ms=%s WHERE state='active'", (int(timestamp * 1000),))
+    cur.execute("UPDATE x_capi_handoff_sources SET twclid_ciphertext=NULL,encryption_nonce=NULL,encryption_key_id=NULL,state='closed',closed_reason='generation_retired',closed_at_ms=COALESCE(closed_at_ms,%s),tombstone_until_ms=GREATEST(COALESCE(tombstone_until_ms,0),%s),revocation_version=GREATEST(revocation_version,1),updated_at_ms=%s WHERE state IN ('captured','assigned','consumed')", (int(timestamp * 1000), int(timestamp * 1000) + 7862400000, int(timestamp * 1000)))
+    cur.execute("UPDATE x_capi_handoff_app_owners SET state='closed',closed_at_ms=COALESCE(closed_at_ms,%s),open_transaction_count=0,updated_at_ms=%s WHERE state IN ('prepared','imported')", (int(timestamp * 1000), int(timestamp * 1000)))
+    cur.execute("UPDATE x_capi_handoff_transactions SET state='cancelled',cancelled_reason='generation_retired',updated_at_ms=%s WHERE state IN ('app_granted','source_approved')", (int(timestamp * 1000),))
+    cur.execute("UPDATE x_capi_handoff_imports SET state='closed',context_ciphertext=NULL,updated_at_ms=%s WHERE state='active'", (int(timestamp * 1000),))
     cur.execute("SELECT pg_advisory_xact_lock(%s)", (_QUEUE_CAPACITY_LOCK,))
     cur.execute(
         """UPDATE x_capi_outbox
@@ -4153,8 +4366,12 @@ def drain_ingest(listener: Optional[IngestListener], conn, now: float) -> Dict[s
     envelopes = listener.receive_batch()
     envelopes.sort(key=lambda item: 0 if item["action"] == "revoke" else 1)
     outcomes: Dict[str, int] = {}
+    batch_started = time.monotonic()
     for envelope in envelopes:
-        outcome = process_ingest_envelope(conn, envelope, now)
+        # Prior records may wait on the CAPI database. Do not extend a short
+        # wallet proof by reusing the batch's original wall-clock timestamp.
+        current = now + max(0.0, time.monotonic() - batch_started)
+        outcome = process_ingest_envelope(conn, envelope, current)
         outcomes[outcome] = outcomes.get(outcome, 0) + 1
     return outcomes
 
@@ -4188,8 +4405,12 @@ def drain_ingest_until_empty(
             break
     envelopes.sort(key=lambda item: 0 if item["action"] == "revoke" else 1)
     outcomes: Dict[str, int] = {}
+    batch_started = time.monotonic()
     for envelope in envelopes:
-        outcome = process_ingest_envelope(conn, envelope, now)
+        # Prior records may wait on the CAPI database. Do not extend a short
+        # wallet proof by reusing the batch's original wall-clock timestamp.
+        current = now + max(0.0, time.monotonic() - batch_started)
+        outcome = process_ingest_envelope(conn, envelope, current)
         outcomes[outcome] = outcomes.get(outcome, 0) + 1
     return outcomes, exhausted
 
@@ -4305,6 +4526,27 @@ def begin_dispatch(
         ):
             conn.rollback()
             return "config_guard_rejected"
+        if policy_version == "x-capi-handoff-v2":
+            if _handoff_runtime is None or not _handoff_runtime.dispatch_fresh():
+                conn.rollback()
+                return "handoff_freshness_unavailable"
+            cur.execute("SELECT context_handle_hash,app_owner_hash FROM x_capi_handoff_imports WHERE context_id=%s", (job["context_id"],))
+            located = cur.fetchone()
+            if not located:
+                conn.rollback()
+                return "handoff_context_missing"
+            try:
+                imported = _handoff_runtime.store.lock_import(
+                    cur, str(located[0]), bytes(located[1]).hex())
+                event_ms = int(job["conversion_timestamp_ms"])
+                if (not imported["import_cutoff_ms"] <= event_ms < imported["effective_expires_at_ms"]
+                        or (job["milestone"] != x_capi.MILESTONE_WALLET_VERIFIED
+                            and (imported["binding_cutoff_ms"] is None
+                                 or event_ms <= imported["binding_cutoff_ms"]))):
+                    raise ValueError("handoff_order")
+            except Exception:
+                conn.rollback()
+                return "handoff_source_closed"
         # Reassert ownership and renew the per-claim lease for the entire
         # bounded request window immediately before the committed send fence.
         cur.execute(
@@ -4397,13 +4639,13 @@ def _retry_after(headers: Mapping[str, str], now: float) -> Optional[float]:
     raw = str(value).strip()
     try:
         seconds = int(raw)
-        return now + max(1, min(3600, seconds))
+        return now + max(1, min(253_402_300_799, seconds))
     except ValueError:
         try:
             parsed = email.utils.parsedate_to_datetime(raw)
             if parsed.tzinfo is None:
                 parsed = parsed.replace(tzinfo=timezone.utc)
-            return now + max(1, min(3600, parsed.timestamp() - now))
+            return now + max(1, parsed.timestamp() - now)
         except (TypeError, ValueError, OverflowError):
             return None
 
@@ -4521,13 +4763,16 @@ def finish_job(
             return False
         if action not in ("retry", "pause"):
             _decrement_outbox_capacity_on_cursor(cur, 1, now)
-        if action == "pause":
+        if action == "pause" or (action == "retry" and code == "rate_limited"):
+            # For rate_limited only, paused_at stores the cooldown deadline.
+            # This durable singleton fences every job, including new arrivals,
+            # and survives process replacement without adding schema objects.
             cur.execute(
                 """INSERT INTO x_capi_worker_state (singleton, paused_reason, paused_at, updated_at)
                    VALUES (TRUE,%s,%s,%s) ON CONFLICT (singleton) DO UPDATE SET
                    paused_reason=EXCLUDED.paused_reason, paused_at=EXCLUDED.paused_at,
                    updated_at=EXCLUDED.updated_at""",
-                (code, now, now),
+                (code, retry_at if code == "rate_limited" else now, now),
             )
         cur.execute(
             """INSERT INTO x_capi_counters(reason,count,updated_at) VALUES(%s,1,%s)
@@ -4623,6 +4868,7 @@ def expire_and_cleanup(
                    SELECT c.id FROM x_capi_attribution_contexts c
                     WHERE c.updated_at<%s AND NOT EXISTS
                       (SELECT 1 FROM x_capi_outbox o WHERE o.context_id=c.id)
+                      AND NOT EXISTS (SELECT 1 FROM x_capi_handoff_imports i WHERE i.context_id=c.id)
                     ORDER BY c.updated_at FOR UPDATE OF c SKIP LOCKED LIMIT 500
                ), deleted AS (
                    DELETE FROM x_capi_attribution_contexts c USING targets
@@ -4675,10 +4921,16 @@ def expire_and_cleanup(
     conn.commit()
 
 
-def _is_paused(conn) -> bool:
+def _is_paused(conn, now=None) -> bool:
     with conn.cursor() as cur:
-        cur.execute("SELECT paused_reason FROM x_capi_worker_state WHERE singleton=TRUE")
+        cur.execute("SELECT paused_reason,paused_at FROM x_capi_worker_state WHERE singleton=TRUE")
         row = cur.fetchone()
+        current = time.time() if now is None else now
+        if row and row[0] == "rate_limited" and row[1] is not None and row[1] <= current:
+            cur.execute("""UPDATE x_capi_worker_state SET paused_reason=NULL,
+                paused_at=NULL,updated_at=%s WHERE singleton=TRUE
+                AND paused_reason='rate_limited' AND paused_at<=%s""", (current, current))
+            row = None
     conn.commit()
     return bool(row and row[0])
 
@@ -4806,6 +5058,14 @@ def run_once(
         # still prioritized over events in their bounded batch.
         drain_ingest(listener, conn, now)
         if perform_cleanup:
+            if _handoff_runtime is not None:
+                try:
+                    with _handoff_runtime.transaction(closure=True) as cur:
+                        _handoff_runtime.cleanup(cur)
+                except Exception:
+                    # Missing/quarantined generations cannot create eligibility;
+                    # failed optional cleanup never interrupts other services.
+                    pass
             expire_and_cleanup(
                 conn, now, cfg.max_event_age_hours, cfg.policy_version,
                 policy_epoch=cfg.policy_epoch,
@@ -4854,18 +5114,21 @@ def run_once(
                     return privacy_state
             if cfg.mode != "live":
                 return "maintenance"
-            # Official X documentation currently supplies no normative
-            # authenticity/provenance mechanism for twclid. The normal worker
-            # invocation never crosses this boundary, regardless of live env
-            # settings or token presence. Tests must inject a non-production
-            # transport *and* enable the existing isolated-secret test guard.
             if not injected_test_transport:
-                return LIVE_DELIVERY_BLOCK_REASON
+                if not x_capi.production_transport_enabled():
+                    return LIVE_DELIVERY_BLOCK_REASON
+                if transport is not None and type(transport) is not RequestsTransport:
+                    return LIVE_DELIVERY_BLOCK_REASON
+                transport = RequestsTransport()
             token, token_error = read_token()
             if token_error or token is None:
                 return "disabled"
-            if _is_paused(conn):
+            if _is_paused(conn, float(now_fn())):
                 return "paused"
+            if cfg.policy_version == "x-capi-handoff-v2" and (
+                _handoff_runtime is None or not _handoff_runtime.dispatch_fresh()
+            ):
+                return "handoff_freshness_unavailable"
             identity = worker_id or ("worker-" + os.urandom(8).hex())
             claim_now = float(now_fn())
             job = claim_job(conn, identity, claim_now)
@@ -4882,13 +5145,18 @@ def run_once(
                 _deployment_id_hash(cfg),
             )
             if decision != "allowed":
-                if decision not in ("lease_lost", "config_guard_rejected"):
+                if decision not in ("lease_lost", "config_guard_rejected", "handoff_freshness_unavailable"):
                     finish_job(
                         conn, job, {"action": "cancel", "code": decision},
                         float(now_fn()), rng,
                     )
                 return decision
             payload = build_payload(job)
+            # Last suspend-aware freshness read under the existing OS privacy
+            # boundary, after SQL commit and before any external request.
+            if cfg.policy_version == "x-capi-handoff-v2" and not _handoff_runtime.dispatch_fresh():
+                finish_job(conn, job, {"action": "retry", "code": "handoff_freshness_unavailable"}, float(now_fn()), rng)
+                return "handoff_freshness_unavailable"
             try:
                 response = transport.send(
                     job["pixel_id"], token, payload
@@ -4939,8 +5207,9 @@ def activate_worker_startup(
 ) -> bool:
     """Advance the guard and consume durable denies after socket ownership.
 
-    Every process restart preserves leases and queued work. The OS-level
-    exclusive boundary prevents another sender or producer from crossing the
+    Every process restart preserves durable outbox delivery leases and queued
+    work. Policy B availability leases and challenges are never restored. The
+    OS-level exclusive boundary prevents another sender or producer crossing the
     targeted-marker drain performed here.
     """
     cfg = x_capi.load_config()
@@ -5026,8 +5295,14 @@ def complete_worker_shutdown(
     listener: IngestListener,
     privacy_fence: PrivacyFence,
     lifecycle_token: str,
+    *,
+    mark_clean: bool = True,
 ) -> bool:
-    """Drain visible local work and durably mark a graceful stop CLEAN."""
+    """Drain local work; planned replacement retains the startup DIRTY marker.
+
+    The exiting process cannot attest that its supervisor will successfully
+    create and activate a replacement. Ordinary graceful shutdown may mark CLEAN.
+    """
     cfg = x_capi.load_config()
     conn = x_capi.get_connection(worker=True)
     if conn is None:
@@ -5069,7 +5344,7 @@ def complete_worker_shutdown(
                     return False
             else:
                 return False
-            return mark_worker_lifecycle_clean(conn, lifecycle_token)
+            return mark_worker_lifecycle_clean(conn, lifecycle_token) if mark_clean else True
     except Exception:
         try:
             conn.rollback()
@@ -5081,6 +5356,7 @@ def complete_worker_shutdown(
 
 
 def main(argv=None) -> int:
+    global _handoff_runtime
     args = list(sys.argv[1:] if argv is None else argv)
     if "--validate-config" in args:
         readiness = worker_readiness()
@@ -5094,6 +5370,7 @@ def main(argv=None) -> int:
     privacy_fence = PrivacyFence()
     consent_service: Optional[ConsentService] = None
     lifecycle_token = str(uuid.uuid4())
+    startup_handoff_drain_failed = False
     try:
         privacy_fence.open()
         listener.open()
@@ -5104,7 +5381,39 @@ def main(argv=None) -> int:
             consent_listener, privacy_path=privacy_fence.path
         )
         consent_service.start()
+        try:
+            from .x_capi_handoff_worker import WorkerHandoffRuntime
+        except ImportError:
+            from x_capi_handoff_worker import WorkerHandoffRuntime
+        try:
+            _handoff_runtime = WorkerHandoffRuntime.from_environment(sys.modules[__name__], privacy_fence.path)
+            if _handoff_runtime is not None:
+                _handoff_runtime.start()
+        except Exception:
+            # Optional handoff provisioning must not remove the established
+            # privacy-close service. Imported positives require this runtime.
+            if _handoff_runtime is not None:
+                try:
+                    startup_handoff_drain_failed = not bool(_handoff_runtime.close())
+                except Exception:
+                    startup_handoff_drain_failed = True
+                if startup_handoff_drain_failed:
+                    # A partial start may already have admitted a privacy RPC.
+                    # Keep its retired runtime reachable and fail this process;
+                    # continuing without it could later falsely publish CLEAN.
+                    raise RuntimeError("handoff_startup_drain_failed")
+            _handoff_runtime = None
+            logger.error("x_capi handoff unavailable; imported attribution disabled")
     except Exception as exc:
+        if _handoff_runtime is not None and not startup_handoff_drain_failed:
+            try:
+                startup_handoff_drain_failed = not bool(_handoff_runtime.close())
+            except Exception:
+                startup_handoff_drain_failed = True
+            if not startup_handoff_drain_failed:
+                _handoff_runtime = None
+        if startup_handoff_drain_failed:
+            logger.error("x_capi handoff startup RPC did not drain; worker remains dirty")
         if consent_service is not None:
             consent_service.stop()
         consent_listener.close()
@@ -5115,11 +5424,32 @@ def main(argv=None) -> int:
     worker_id = "worker-" + os.urandom(16).hex()
     next_cleanup = 0.0
     failure_delay = 1.0
+    exit_status = 0
+    restart_requested = False
     try:
         while not _stop:
             if consent_service is None or not consent_service.is_healthy():
                 logger.error("x_capi consent service unavailable")
-                return 2
+                exit_status = 2
+                break
+            # Retire the process boot before drain. Only the external supervisor
+            # may replace it; no in-process reset may regain freshness authority.
+            if _handoff_runtime is not None:
+                try:
+                    lifecycle = _handoff_runtime.prepare_restart_if_needed()
+                    if lifecycle == "restart_ready":
+                        restart_requested = True
+                        exit_status = HANDOFF_RESTART_EXIT_STATUS
+                        break
+                    if lifecycle != "idle":
+                        exit_status = 2
+                        logger.error("x_capi handoff process replacement could not drain; worker remains dirty")
+                        break
+                except Exception:
+                    _handoff_runtime.lease.retire_boot()
+                    exit_status = 2
+                    logger.error("x_capi handoff lifecycle unavailable; freshness closed")
+                    break
             perform_cleanup = time.monotonic() >= next_cleanup
             try:
                 outcome = run_once(
@@ -5153,22 +5483,42 @@ def main(argv=None) -> int:
                 # grow faster than the bounded cleanup can retire it.
                 delay = MIN_ATTEMPT_INTERVAL_SECONDS
             _wait_between_iterations(delay)
-        return 0
     finally:
+        handoff_stopped = True
+        if _handoff_runtime is not None:
+            try:
+                handoff_stopped = bool(_handoff_runtime.close())
+            except Exception:
+                handoff_stopped = False
+            if handoff_stopped:
+                _handoff_runtime = None
+            else:
+                # An accepted RPC may still commit privacy/source state. Keep
+                # its retired runtime reachable, never publish CLEAN, and make
+                # the failed bounded drain visible as an unsuccessful stop.
+                exit_status = 2
+                logger.error("x_capi handoff RPC did not drain; worker remains dirty")
         consent_stopped = bool(
             consent_service is not None
             and consent_service.stop(drain=True)
             and consent_service.failure_type is None
         )
-        if consent_service is not None and not consent_stopped:
+        if not consent_stopped:
+            exit_status = 2
             logger.error("x_capi consent service did not stop cleanly")
-        if _stop and consent_stopped and not complete_worker_shutdown(
-            listener, privacy_fence, lifecycle_token
-        ):
-            logger.error("x_capi worker remained dirty during shutdown")
+        if ((_stop or restart_requested) and handoff_stopped and consent_stopped
+                and exit_status in (0, HANDOFF_RESTART_EXIT_STATUS)):
+            if not complete_worker_shutdown(
+                    listener, privacy_fence, lifecycle_token,
+                    mark_clean=not restart_requested):
+                exit_status = 2
+                logger.error("x_capi worker remained dirty during shutdown")
+        if restart_requested and exit_status == HANDOFF_RESTART_EXIT_STATUS:
+            logger.info("x_capi worker drained for supervised process replacement; lifecycle remains dirty")
         consent_listener.close()
         listener.close()
         privacy_fence.close()
+    return exit_status
 
 
 if __name__ == "__main__":

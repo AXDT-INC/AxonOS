@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "source-success",
+  "anyOf": [
+    {
+      "$ref": "source-capture-success.schema.json"
+    },
+    {
+      "$ref": "source-status-success.schema.json"
+    },
+    {
+      "$ref": "source-authorize-success.schema.json"
+    },
+    {
+      "$ref": "source-revoke-success.schema.json"
+    },
+    {
+      "$ref": "source-lease-challenge-success.schema.json"
+    },
+    {
+      "$ref": "source-lease-attest-success.schema.json"
+    }
+  ]
+}

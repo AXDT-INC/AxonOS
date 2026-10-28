@@ -1,8 +1,9 @@
-FROM nvidia/cuda:12.2.2-cudnn8-devel-ubuntu22.04
+# syntax=docker/dockerfile:1
+ARG AXONOS_GATE_BASE=nvidia/cuda:12.2.2-cudnn8-devel-ubuntu22.04
+FROM ${AXONOS_GATE_BASE}
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV USER=aXonian
-ARG PASSWORD=axonpassword
 
 # Basic system setup. xfce4 pulls in xfce4-screensaver as a recommended
 # package. AxonOS sessions are already wallet-gated, and the locker can be
@@ -126,11 +127,16 @@ RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping 
 
 # Create user and set password. The password still backs the account/VNC
 # login, but sudo is passwordless: sessions are single-tenant containers whose
-# only user is $USER, and the default `axonpassword` prompt on every sudo in
+# only user is $USER, and a password prompt on every sudo in
 # desktop terminals and direct-SSH sessions is pure friction. /etc/sudoers.d is
 # image-level (not masked by the per-wallet home volume) so it applies to every
 # session, and visudo -c fails the build if the drop-in is ever malformed.
-RUN useradd -ms /bin/bash $USER && echo "$USER:$PASSWORD" | chpasswd && adduser $USER sudo && \
+ARG AXONOS_CREDENTIAL_CACHE_NONCE
+RUN --mount=type=secret,id=axonos_password,required=true \
+    test -n "${AXONOS_CREDENTIAL_CACHE_NONCE:?fresh build nonce required}" && \
+    test -s /run/secrets/axonos_password && \
+    useradd -ms /bin/bash $USER && \
+    { printf '%s:' "$USER"; cat /run/secrets/axonos_password; printf '\n'; } | chpasswd && adduser $USER sudo && \
     printf '%s\n' "$USER ALL=(ALL:ALL) NOPASSWD: ALL" "Defaults:$USER !lecture" \
       > /etc/sudoers.d/90-axonos-$USER && \
     chmod 0440 /etc/sudoers.d/90-axonos-$USER && \
@@ -184,7 +190,7 @@ RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping 
 # SKIPPED when AXONOS_SKIP_HEAVY=1: Spyder, matplotlib and the pinned NumPy (~0.8 GB).
 COPY docker/scientific-python.txt /opt/axonos-build/scientific-python.txt
 RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping Spyder"; exit 0; fi && \
-    timeout --kill-after=30s 15m /usr/bin/python3 -m pip install --no-cache-dir \
+    timeout --kill-after=30s 30m /usr/bin/python3 -m pip install --no-cache-dir \
         -r /opt/axonos-build/scientific-python.txt
 
 # Install UGENE (Bioinformatics suite)
@@ -242,7 +248,12 @@ RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping 
 # Install IPFS CLI
 # SKIPPED when AXONOS_SKIP_HEAVY=1: the IPFS CLI (kubo); the ipfs supervisor program and startup.sh init then log failures and continue.
 RUN if [ "$AXONOS_SKIP_HEAVY" = "1" ]; then echo "AXONOS_SKIP_HEAVY=1: skipping IPFS CLI"; exit 0; fi && \
-    wget https://dist.ipfs.tech/kubo/v0.24.0/kubo_v0.24.0_linux-amd64.tar.gz && \
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 --fail --location --show-error --silent \
+        --connect-timeout 20 --max-time 600 --retry 0 \
+        https://github.com/ipfs/kubo/releases/download/v0.24.0/kubo_v0.24.0_linux-amd64.tar.gz \
+        -o kubo_v0.24.0_linux-amd64.tar.gz && \
+    printf '%s  %s\n' '80aadb72fa23b216310dc0c9f307ba383ab90fbb43043ab321d9f0f8edc74b8c28bb9c2ef73b702814aba379bd15b786d9ca4330474a3f807a83211db3f0e279' \
+        'kubo_v0.24.0_linux-amd64.tar.gz' | sha512sum -c - && \
     tar -xzf kubo_v0.24.0_linux-amd64.tar.gz && \
     cd kubo && \
     bash install.sh && \
@@ -613,10 +624,13 @@ RUN mkdir -p /home/$USER/.config/xfce4 && \
     printf '%s\n' '[Terminal Emulator]' 'TerminalEmulator=terminator' > /home/$USER/.config/xfce4/helpers.rc
 
 # Configure VNC
-RUN mkdir -p /home/$USER/.vnc && \
+RUN --mount=type=secret,id=axonos_password,required=true \
+    test -n "${AXONOS_CREDENTIAL_CACHE_NONCE:?fresh build nonce required}" && \
+    test -s /run/secrets/axonos_password && \
+    mkdir -p /home/$USER/.vnc && \
     echo -e '#!/bin/bash\nexport VGL_DISPLAY=:0\nxrdb $HOME/.Xresources\nstartxfce4 &' > /home/$USER/.vnc/xstartup && \
     chmod +x /home/$USER/.vnc/xstartup && \
-    echo "$PASSWORD" | vncpasswd -f > /home/$USER/.vnc/passwd && \
+    { cat /run/secrets/axonos_password; printf '\n'; } | vncpasswd -f > /home/$USER/.vnc/passwd && \
     chmod 600 /home/$USER/.vnc/passwd && \
     touch /home/$USER/.Xresources && \
     chown -R $USER:$USER /home/$USER/.vnc /home/$USER/.Xresources /home/$USER/.config
@@ -698,6 +712,7 @@ COPY novnc-theme/axonos-theme.css /usr/share/novnc/app/styles/
 COPY novnc-theme/vnc.html /usr/share/novnc/
 COPY novnc-theme/ui.js /usr/share/novnc/app/
 COPY novnc-theme/app/x-attribution.js /usr/share/novnc/app/x-attribution.js
+COPY novnc-theme/app/x-handoff-bridge.js /usr/share/novnc/app/x-handoff-bridge.js
 COPY novnc-theme/app/fonts/ /usr/share/novnc/app/fonts/
 COPY novnc-theme/app/webrtc/axonos-webrtc.js /usr/share/novnc/app/webrtc/axonos-webrtc.js
 COPY novnc-theme/app/files/axonos-files.js /usr/share/novnc/app/files/axonos-files.js
