@@ -372,10 +372,25 @@ class Deployment:
     def resource_check(self):
         dependencies = {service: self.inspect_service(service) for service in SERVICES}
         self.provenance(dependencies)
-        networks = [value['name'] for value in self.config['networks'].values() if not value.get('external')]
+        networks = []
+        for key, value in self.config['networks'].items():
+            if value.get('external'):
+                continue
+            name = value['name']
+            found = self.docker('network', 'ls', '--filter', 'name=^' + name + '$',
+                                '--format', '{{.Name}}', capture=True,
+                                label='Managed network discovery').splitlines()
+            require(found in ([], [name]), 'Managed network discovery is ambiguous')
+            if found:
+                networks.append(name)
+            else:
+                require(key == 'x_capi_egress' and self.mode == 'live' and
+                        self.options.with_capi_backend,
+                        'Required managed network is missing')
         volumes = [value['name'] for value in self.config['volumes'].values() if not value.get('external')]
         payload = {'config': self.config, 'dependencies': dependencies,
-            'networks': json.loads(self.docker('network', 'inspect', *networks, capture=True, label='Managed network inspection')),
+            'networks': (json.loads(self.docker('network', 'inspect', *networks, capture=True,
+                                               label='Managed network inspection')) if networks else []),
             'volumes': json.loads(self.docker('volume', 'inspect', *volumes, capture=True, label='Managed volume inspection'))}
         # Require the API 1.48 field rather than letting the resource check's
         # default mask an incompatible client response, even if version text
@@ -396,7 +411,8 @@ class Deployment:
         active = checked_output(checks.sessions, text)
         expected = getattr(self.options, 'preserve_session', None) or []
         if expected:
-            require(getattr(self, 'mode', None) == 'off', 'Session preservation requires CAPI off')
+            require(getattr(self, 'mode', None) in ('off', 'live'),
+                    'Session preservation requires a production CAPI mode')
             require(len(set(expected)) == len(expected) and
                     all(re.fullmatch(r'[1-9][0-9]*', value) for value in expected),
                     'Preserved session IDs must be distinct positive integers')
@@ -477,6 +493,11 @@ class Deployment:
         self.branch = self.git('symbolic-ref', '--quiet', '--short', 'HEAD')
         self.head = self.git('rev-parse', '--verify', 'HEAD')
         self.mode = checked_output(checks.env_mode, self.root / '.env')
+        if self.mode == 'live':
+            live_overlay = self.root / 'docker-compose.x-capi-live.yml'
+            require(live_overlay.is_file() and not live_overlay.is_symlink(),
+                    'Missing or symlinked live CAPI overlay')
+            self.compose.extend(('-f', str(live_overlay)))
         info = json.loads(self.docker('info', '--format', '{{json .}}', capture=True, label='Local Docker image store'))
         store = candidate_store(info)
         version = json.loads(self.docker('version', '--format', '{{json .}}', capture=True, label='Effective Docker API'))
@@ -1015,7 +1036,7 @@ def main():
     parser.add_argument('--nvidia-package', help='Explicit production container package version')
     parser.add_argument('--health-timeout', type=int, default=300, help='Health/init wait seconds (1..1800)')
     parser.add_argument('--preserve-session', action='append', default=[], metavar='ID',
-                        help='Explicit CAPI-off maintenance: preserve this running renter; repeat for every renter')
+                        help='Explicit production maintenance: preserve this running renter; repeat for every renter')
     args = parser.parse_args()
     require(1 <= args.health_timeout <= 1800, 'Health timeout must be 1..1800 seconds')
     require(not (args.build_only and (args.check or args.with_capi_backend)),

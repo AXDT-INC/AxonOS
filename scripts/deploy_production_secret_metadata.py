@@ -16,6 +16,7 @@ import sys
 VERSION = 1
 DIRECTORIES = ('/', '/etc', '/etc/axonos')
 FILES = {
+    '/etc/axonos/x-capi-access-token': (10001, 16, 8192),
     '/etc/axonos/x-capi-context-key': (10001, 44, 4096),
     '/etc/axonos/x-capi-db-url': (10001, 1, 8192),
     '/etc/axonos/x-capi-hash-key': (10001, 32, 256),
@@ -62,7 +63,7 @@ def validate_snapshot(snapshot):
         require(stat.S_ISREG(info['mode']) and info['nlink'] == 1)
         require(info['uid'] == info['gid'] == uid and stat.S_IMODE(info['mode']) in (0o400, 0o600))
         require(low <= info['size'] <= high)
-    # Aliasing reviewed roles to one inode is not an acceptable five-file set.
+    # Aliasing reviewed roles to one inode is not an acceptable secret set.
     require(len({(item['dev'], item['ino']) for item in snapshot['files'].values()}) == len(FILES))
     return snapshot
 

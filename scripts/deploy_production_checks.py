@@ -19,7 +19,7 @@ SECRET_METADATA_HELPER = '/usr/local/libexec/axonos-deploy-secret-metadata.py'
 SECRET_METADATA_COMMAND = ('/usr/bin/sudo', '-n', '--', '/usr/bin/python3', '-I', '-S', '-B',
                            SECRET_METADATA_HELPER)
 SECRET_PATHS = {name.replace('-', '_'): '/etc/axonos/' + name for name in (
-    'x-capi-context-key', 'x-capi-db-url', 'x-capi-hash-key',
+    'x-capi-access-token', 'x-capi-context-key', 'x-capi-db-url', 'x-capi-hash-key',
     'x-capi-postgres-bootstrap-password', 'x-capi-postgres-worker-password')}
 
 
@@ -48,7 +48,6 @@ def env_mode(path):
     mode = next(value for value in match.groups() if value is not None)
     capi = capi_module(Path(path).resolve().parent)
     require(mode in capi._MODE_VALUES, 'Unsupported X_CAPI_MODE')
-    require(mode != 'live', 'Live deployment is structurally blocked by the current provenance gate')
     print(mode)
 
 
@@ -145,7 +144,11 @@ def config_check(document, root, mode, snapshot=None):
         require(not any(value for key, value in env.items() if key.startswith('X_CAPI_ALLOW_TEST')), 'CAPI test bypass is forbidden')
         for key in ('X_CAPI_ACCESS_TOKEN', 'X_CAPI_DB_URL', 'X_CAPI_CONTEXT_KEY', 'X_CAPI_HASH_KEY'):
             require(not env.get(key), 'CAPI secrets must not be provided through environment values')
-        require(not env.get('X_CAPI_ACCESS_TOKEN_FILE'), 'Current deployment must not provision an X access token')
+    gate_env, worker_env = gate.get('environment', {}), worker.get('environment', {})
+    require(not gate_env.get('X_CAPI_ACCESS_TOKEN_FILE'), 'Gate must not receive an X access token')
+    enabled = str(gate_env.get('X_HANDOFF_ENABLED', '')).strip().lower() in ('1', 'true', 'yes', 'on')
+    worker_enabled = str(worker_env.get('X_HANDOFF_ENABLED', '')).strip().lower() in ('1', 'true', 'yes', 'on')
+    require(enabled == worker_enabled == (mode == 'live'), 'Handoff must be explicit, consistent, and enabled only for live mode')
     for key, target in (('X_CAPI_DB_URL_FILE', 'x_capi_db_url'), ('X_CAPI_CONTEXT_KEY_FILE', 'x_capi_context_key'),
                         ('X_CAPI_HASH_KEY_FILE', 'x_capi_hash_key')):
         require(worker['environment'].get(key) == '/run/secrets/' + target, 'Incorrect worker secret-file path')
@@ -161,6 +164,13 @@ def config_check(document, root, mode, snapshot=None):
     context = volume(gate, '/run/secrets/x_capi_context_key', 'bind', SECRET_PATHS['x_capi_context_key'], True)
     require(volume(worker, '/run/secrets/x_capi_context_key', 'bind', readonly=True) == context, 'Gate/worker context keys differ')
     specs = [(context, 10001, 44, 4096)]
+    if mode == 'live':
+        require(worker_env.get('X_CAPI_ACCESS_TOKEN_FILE') == '/run/secrets/x_capi_access_token',
+                'Live worker token-file path differs from reviewed configuration')
+        specs.append((volume(worker, '/run/secrets/x_capi_access_token', 'bind',
+                             SECRET_PATHS['x_capi_access_token'], True), 10001, 16, 8192))
+    else:
+        require(not worker_env.get('X_CAPI_ACCESS_TOKEN_FILE'), 'Off deployment must not provision an X access token')
     for target, low, high in (('x_capi_db_url', 1, 8192), ('x_capi_hash_key', 32, 256)):
         specs.append((volume(worker, '/run/secrets/' + target, 'bind', SECRET_PATHS[target], True), 10001, low, high))
     db_init = services['x-capi-db-init']
@@ -169,10 +179,17 @@ def config_check(document, root, mode, snapshot=None):
         specs.append((path, 0, 16, 8192))
         if target.endswith('bootstrap_password'):
             volume(services['x-capi-postgres'], '/run/secrets/' + target, 'bind', path, True)
-    require(len(worker.get('volumes', [])) == 5, 'Unreviewed worker mounts; no X token belongs to this deployment')
-    for name in ('x-capi-worker', 'x-capi-postgres', 'x-capi-db-init'):
+    require(len(worker.get('volumes', [])) == (6 if mode == 'live' else 5), 'Unreviewed worker mounts')
+    require(set(worker.get('networks', {})) == ({'x_capi_db', 'x_capi_egress'} if mode == 'live' else {'x_capi_db'}),
+            'Worker network isolation differs from reviewed mode')
+    for name in ('x-capi-postgres', 'x-capi-db-init'):
         require(set(services[name].get('networks', {})) == {'x_capi_db'}, 'CAPI database network isolation changed')
     require(document['networks']['x_capi_db'].get('internal') is True, 'CAPI network must remain internal')
+    if mode == 'live':
+        egress = document['networks'].get('x_capi_egress', {})
+        require(egress.get('name') == 'axonos_x_capi_egress' and egress.get('driver', 'bridge') == 'bridge'
+                and not egress.get('internal', False) and not egress.get('external', False),
+                'Live worker egress network differs from reviewed configuration')
     require(services['x-capi-privacy-init'].get('network_mode') == 'none', 'Privacy initializer must be network-isolated')
     for name, condition in (('x-capi-postgres', 'service_healthy'),
                             ('x-capi-db-init', 'service_completed_successfully'),

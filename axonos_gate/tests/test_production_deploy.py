@@ -133,7 +133,7 @@ if tool == 'metadata-helper':
     def record(ino, uid, mode, size, nlink=1):
         return dict(dev=1, ino=ino, uid=uid, gid=uid, mode=mode, nlink=nlink,
                     size=size, mtime_ns=3, ctime_ns=4)
-    names = ('x-capi-context-key', 'x-capi-db-url', 'x-capi-hash-key',
+    names = ('x-capi-access-token', 'x-capi-context-key', 'x-capi-db-url', 'x-capi-hash-key',
              'x-capi-postgres-bootstrap-password', 'x-capi-postgres-worker-password')
     snapshot = {'version': 1,
         'directories': {path: record(number, 0, 0o40700 if path == '/etc/axonos' else 0o40755, 4096, 2)
@@ -425,6 +425,10 @@ elif tool == 'docker':
         del state['validator_containers'][identity]
         state_file.write_text(json.dumps(state))
         out('')
+    if args[:2] == ['network', 'ls']:
+        prefix = 'name=^'
+        value = next(item for item in args if item.startswith(prefix))
+        out(value[len(prefix):-1])
     if args[:2] == ['network', 'inspect']:
         if scenario.get('resource_fail_after_stop_once') and state.get('stopped_worker') and counter('post_stop_resource') == 1:
             fail()

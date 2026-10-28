@@ -149,10 +149,13 @@ def environment(item):
 def network_check(document, actual, dependencies, key='x_capi_db'):
     desired = document['networks'][key]
     name = desired['name']
-    capi = key == 'x_capi_db'
-    require(name == ('axonos_x_capi_db' if capi else key) and not desired.get('external'), 'Unexpected managed network target')
-    require(desired.get('driver', 'bridge') == 'bridge' and (not capi or desired.get('internal') is True),
-            'Managed networks must remain bridge networks; CAPI must remain internal')
+    capi = key in ('x_capi_db', 'x_capi_egress')
+    expected_name = {'x_capi_db': 'axonos_x_capi_db', 'x_capi_egress': 'axonos_x_capi_egress'}.get(key, key)
+    require(name == expected_name and not desired.get('external'), 'Unexpected managed network target')
+    require(desired.get('driver', 'bridge') == 'bridge' and
+            (key != 'x_capi_db' or desired.get('internal') is True) and
+            (key != 'x_capi_egress' or not desired.get('internal', False)),
+            'Managed network isolation differs from the reviewed contract')
     require(actual.get('Name') == name and actual.get('Driver') == 'bridge' and
             actual.get('Scope') == 'local' and actual.get('Internal') == desired.get('internal', False),
             'Existing managed network isolation/driver differs')
@@ -202,8 +205,16 @@ def network_check(document, actual, dependencies, key='x_capi_db'):
             allowed[item['Id']] = item
     for identity in (actual.get('Containers') or {}):
         require(identity in allowed, 'Unreviewed container is attached to the CAPI network')
-        require(set(allowed[identity]['NetworkSettings']['Networks']) == {name},
-                'CAPI endpoint is attached to an unreviewed network')
+        service = (allowed[identity]['Config'].get('Labels') or {}).get(COMPOSE_PREFIX + 'service')
+        networks = set(allowed[identity]['NetworkSettings']['Networks'])
+        if key == 'x_capi_egress':
+            require(service == 'x-capi-worker' and networks == {'axonos_x_capi_db', name},
+                    'Only the worker may use the reviewed egress network')
+        elif service == 'x-capi-worker':
+            require(networks in ({name}, {name, 'axonos_x_capi_egress'}),
+                    'Worker is attached to an unreviewed network')
+        else:
+            require(networks == {name}, 'CAPI database endpoint is attached to an unreviewed network')
 
 
 def volume_check(key, desired, actual):
@@ -337,11 +348,17 @@ def validate(payload, root):
         volume_check(key, desired, volumes[desired['name']])
     networks = by_name(payload['networks'])
     managed_networks = {key: value for key, value in document['networks'].items() if not value.get('external')}
-    require({'x_capi_db', 'axonos_control'} <= set(managed_networks) <= {'x_capi_db', 'axonos_control', 'axonos_stack'},
+    require({'x_capi_db', 'axonos_control'} <= set(managed_networks) <=
+            {'x_capi_db', 'x_capi_egress', 'axonos_control', 'axonos_stack'},
             'Unreviewed managed network set')
-    require(set(networks) == {value['name'] for value in managed_networks.values()}, 'Existing managed networks missing or unexpected')
+    expected_networks = {value['name'] for value in managed_networks.values()}
+    missing_networks = expected_networks - set(networks)
+    require(not (set(networks) - expected_networks) and
+            missing_networks <= {'axonos_x_capi_egress'},
+            'Existing managed networks missing or unexpected')
     for key, desired in managed_networks.items():
-        network_check(document, networks[desired['name']], payload['dependencies'], key)
+        if desired['name'] in networks:
+            network_check(document, networks[desired['name']], payload['dependencies'], key)
     preserved_dependencies(document, payload['dependencies'])
 
 

@@ -1,0 +1,27 @@
+# Live-only X CAPI transport overlay. The production controller selects this
+# file only after parsing an explicit X_CAPI_MODE=live assignment.
+services:
+  axonos:
+    environment:
+      X_CAPI_PRODUCTION_TRANSPORT: ${X_CAPI_PRODUCTION_TRANSPORT:-}
+      X_HANDOFF_ENABLED: ${X_HANDOFF_ENABLED:-false}
+
+  x-capi-worker:
+    environment:
+      X_CAPI_PRODUCTION_TRANSPORT: ${X_CAPI_PRODUCTION_TRANSPORT:-}
+      X_CAPI_ACCESS_TOKEN_FILE: /run/secrets/x_capi_access_token
+      X_HANDOFF_ENABLED: ${X_HANDOFF_ENABLED:-false}
+    volumes:
+      - type: bind
+        source: /etc/axonos/x-capi-access-token
+        target: /run/secrets/x_capi_access_token
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - x_capi_egress
+
+networks:
+  x_capi_egress:
+    name: axonos_x_capi_egress
+    driver: bridge

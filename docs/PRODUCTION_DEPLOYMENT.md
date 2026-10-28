@@ -25,12 +25,14 @@ clean-tree and image revision checks remain enforced.
 For later X CAPI activation, the proposed host token file is
 `/etc/axonos/x-capi-access-token`, outside this checkout. It must be a single-link
 regular file owned by UID 10001, mode 0400, containing only the pixel token with
-no trailing newline. A separately reviewed activation change must mount it
-read-only into the worker at `/run/secrets/x_capi_access_token`; the current
-CAPI-off overlay has no such mount. Do not put the token in `.env` or mount it
-into the gate. Creating this file alone does not enable delivery. See
+no trailing newline. A reviewed live deployment mounts it read-only into the
+worker at `/run/secrets/x_capi_access_token` through
+`docker-compose.x-capi-live.yml`. The controller selects that overlay only for
+an explicit live mode; the CAPI-off overlay has no token mount or egress network.
+Do not put the token in `.env` or mount it into the gate. Creating this file alone
+does not enable delivery. See
 [the activation runbook](X_CAPI_LIVE_TRANSPORT.md) for the other keys and required
-configuration. Keep `X_CAPI_MODE=off` and `X_HANDOFF_ENABLED=false` for this release.
+configuration. Keep both values off until the complete live admission passes.
 
 This is an operator-triggered update tool for an **already provisioned, healthy
 deployment**, not a fresh installer, repair tool, PostgreSQL upgrader, or
@@ -487,11 +489,12 @@ from the writable checkout. It invokes only:
 ```
 
 The helper accepts no caller arguments, paths, stdin configuration, or
-environment-selected policy. Its only secret targets are these five default
+environment-selected policy. Its only secret targets are these six default
 host paths; custom locations require a separate reviewed policy change:
 
 | Fixed path beneath `/etc/axonos/` | Required UID:GID | Size in bytes |
 | --- | --- | --- |
+| `x-capi-access-token` | `10001:10001` | 16–8192 |
 | `x-capi-context-key` | `10001:10001` | 44–4096 |
 | `x-capi-db-url` | `10001:10001` | 1–8192 |
 | `x-capi-hash-key` | `10001:10001` | 32–256 |
