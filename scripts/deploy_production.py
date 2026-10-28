@@ -602,7 +602,9 @@ class Deployment:
         note('Build private full candidate (output suppressed to protect secrets)')
         secret = Path(self.options.password_secret_file or '')
         require(secret.is_absolute() and str(secret.resolve()) == str(secret)
-                and self.root not in secret.parents and ',' not in str(secret) and '\n' not in str(secret), 'Build secret must be canonical and outside the build context')
+                and self.root not in secret.parents and
+                not any(char in str(secret) for char in ',\n*?[]'),
+                'Build secret must be canonical, literal and outside the build context')
         try:
             metadata = secret.lstat()
         except OSError:
@@ -627,7 +629,9 @@ class Deployment:
             ROLE_LABEL: 'gate', REVISION_LABEL: self.head, NVIDIA_LABEL: self.options.nvidia_package,
             NONCE_LABEL: target['args']['AXONOS_CREDENTIAL_CACHE_NONCE']})
         plan = {'target': {'axonos': target}, 'group': {'default': {'targets': ['axonos']}}}
-        self.docker('buildx', 'bake', '--builder', self.options.builder, '--file', '-', '--load', 'axonos', input_text=json.dumps(plan), timeout=BUILD_TIMEOUT, label='Build full private candidate')
+        self.docker('buildx', 'bake', '--builder', self.options.builder, '--file', '-',
+                    '--allow', 'fs.read=' + str(secret), '--load', 'axonos',
+                    input_text=json.dumps(plan), timeout=BUILD_TIMEOUT, label='Build full private candidate')
         self.image_id = self.docker('image', 'inspect', self.candidate, '--format', '{{.Id}}', capture=True, label='Candidate image identity')
         require(re.fullmatch(r'sha256:[a-f0-9]{64}', self.image_id), 'Invalid immutable candidate image ID')
 

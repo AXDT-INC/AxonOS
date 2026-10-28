@@ -118,12 +118,33 @@ class PreparationAdmissionTests(unittest.TestCase):
     def test_absent_noncanonical_and_context_secret_paths_never_build(self):
         for value in (None, 'relative', str(ROOT / 'credential'),
                       '/tmp/not-present-controller-secret', '/tmp/secret,env=OTHER',
-                      '/tmp/secret\nextra'):
+                      '/tmp/secret\nextra', '/tmp/secret*', '/tmp/secret?', '/tmp/secret[1]'):
             with self.subTest(path=value):
                 self.controller.options.password_secret_file = value
                 with self.assertRaises(deploy.Refusal):
                     self.controller.build_candidate()
         self.controller.docker.assert_not_called()
+
+    def test_build_grants_read_access_only_to_validated_secret_file(self):
+        self.controller.options.password_secret_file = '/tmp/controller-metadata-only'
+        self.controller.options.builder = 'dedicated'
+        self.controller.run_id = 'a' * 24
+        self.controller.admit_builder = mock.Mock()
+        self.controller.docker.side_effect = None
+        self.controller.docker.return_value = 'sha256:' + 'b' * 64
+        metadata = types.SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_size=1)
+        with mock.patch.object(Path, 'resolve', lambda path: path), \
+                mock.patch.object(Path, 'lstat', return_value=metadata), \
+                mock.patch.object(Path, 'read_bytes', side_effect=AssertionError('Secret read')), \
+                mock.patch.object(Path, 'read_text', side_effect=AssertionError('Secret read')):
+            self.controller.build_candidate()
+        self.controller.admit_builder.assert_called_once()
+        call = self.controller.docker.call_args_list[0]
+        self.assertEqual(call.args, ('buildx', 'bake', '--builder', 'dedicated',
+            '--file', '-', '--allow', 'fs.read=/tmp/controller-metadata-only', '--load', 'axonos'))
+        plan = json.loads(call.kwargs['input_text'])
+        self.assertEqual(plan['target']['axonos']['secret'],
+                         ['id=axonos_password,src=/tmp/controller-metadata-only'])
 
     def test_unsafe_secret_metadata_is_rejected_without_reading_contents(self):
         self.controller.options.password_secret_file = '/tmp/controller-metadata-only'
