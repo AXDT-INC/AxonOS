@@ -306,7 +306,11 @@ def preserved_dependencies(document, dependencies):
     actual_launcher = environment(launcher)
     # Inspect both directions, including old nonempty settings absent from the
     # new target. Do not compare unrelated image-default PATH/Python settings.
-    prefixes = ('AXGT_', 'AXONOS_', 'WEBRTC_', 'X_CAPI_', 'POSTGRES_')
+    # The launcher inherits the project's env_file but does not consume CAPI
+    # configuration; it explicitly deny-lists CAPI values from tenant envs.
+    # A coordinated gate/worker mode change must not require recreating this
+    # otherwise unchanged session owner.
+    prefixes = ('AXGT_', 'AXONOS_', 'WEBRTC_', 'POSTGRES_')
     keys = {key for key in set(expected_launcher) | set(actual_launcher) if key.startswith(prefixes)}
     require(all(str(expected_launcher.get(key) or '') == str(actual_launcher.get(key) or '') for key in keys),
             'Preserved launcher authentication/configuration differs')

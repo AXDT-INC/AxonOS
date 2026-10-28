@@ -485,6 +485,13 @@ class ResourceAttestationTests(unittest.TestCase):
             self.set_actual_env('axonos-launcher', key, value)
             self.rejected()
 
+    def test_launcher_may_retain_prior_capi_values_during_coordinated_rollout(self):
+        self.payload['config']['services']['axonos-launcher']['environment']['X_CAPI_MODE'] = 'live'
+        self.payload['config']['services']['axonos-launcher']['environment']['X_CAPI_DEPLOYMENT_ID'] = 'next'
+        self.set_actual_env('axonos-launcher', 'X_CAPI_MODE', 'off')
+        self.set_actual_env('axonos-launcher', 'X_CAPI_DEPLOYMENT_ID', 'prior')
+        self.validate()
+
     def test_gate_wrong_launcher_endpoint_or_mode_rejected(self):
         for key, value in (('AXGT_SESSION_LAUNCHER_URL', 'http://other:8090'),
                            ('AXGT_SESSION_LAUNCHER_URL', 'http://axonos-launcher:9999'),
