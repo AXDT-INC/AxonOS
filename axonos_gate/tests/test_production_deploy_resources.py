@@ -492,6 +492,13 @@ class ResourceAttestationTests(unittest.TestCase):
         self.set_actual_env('axonos-launcher', 'X_CAPI_DEPLOYMENT_ID', 'prior')
         self.validate()
 
+    def test_launcher_may_retain_prior_capi_exclusion_sources(self):
+        for key in resources.EXCLUSIONS:
+            self.payload = fixture()
+            self.payload['config']['services']['axonos-launcher']['environment'][key] = 'next'
+            self.set_actual_env('axonos-launcher', key, 'prior')
+            self.validate()
+
     def test_gate_wrong_launcher_endpoint_or_mode_rejected(self):
         for key, value in (('AXGT_SESSION_LAUNCHER_URL', 'http://other:8090'),
                            ('AXGT_SESSION_LAUNCHER_URL', 'http://axonos-launcher:9999'),

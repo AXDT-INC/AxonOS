@@ -312,6 +312,7 @@ def preserved_dependencies(document, dependencies):
     # otherwise unchanged session owner.
     prefixes = ('AXGT_', 'AXONOS_', 'WEBRTC_', 'POSTGRES_')
     keys = {key for key in set(expected_launcher) | set(actual_launcher) if key.startswith(prefixes)}
+    keys.difference_update(EXCLUSIONS)
     require(all(str(expected_launcher.get(key) or '') == str(actual_launcher.get(key) or '') for key in keys),
             'Preserved launcher authentication/configuration differs')
     token = str(gate_env.get('AXGT_SESSION_LAUNCHER_TOKEN') or '').strip()
