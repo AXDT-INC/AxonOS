@@ -112,7 +112,61 @@ different device from its parent; inaccessible host metadata fails closed.
 Provisioning that storage and ensuring its capacity is an operator prerequisite,
 not a controller operation. The Docker image store used by `--load` also requires
 capacity planning on the isolated build host; state isolation does not reserve
-space for exported images. Never run preparation on the production host.
+space for exported images. Production-host preparation requires explicit operator
+approval and the same dedicated builder boundaries; the existing default builder
+is never an alternative.
+
+### Operator setup of builder storage
+
+The version-controlled [storage setup script](../scripts/setup-production-builder-storage.sh)
+accepts explicit operator settings; it contains no deployment-specific hostname,
+account or storage location. Review it before running it on the approved host.
+From the repository root, replace each placeholder below with your own value:
+
+```bash
+# Debian/Ubuntu only, if ACL utilities are missing; report needed service restarts.
+sudo env NEEDRESTART_MODE=l apt-get install --no-install-recommends acl
+sudo bash scripts/setup-production-builder-storage.sh \
+  --host '<expected-short-hostname>' \
+  --account '<deployment-user>' \
+  --storage-mount '<absolute-existing-mount-path>' \
+  --node '<dedicated-buildx-node>'
+```
+
+The script requires root and local Docker at `/var/run/docker.sock`. It checks
+that the hostname matches the supplied short hostname and that the deployment
+account is non-root. It discovers Docker's data root from the local daemon and
+requires canonical paths and an existing storage mount on a different device
+from Docker's volume directory. Nonstandard parent directories must already
+permit the deployment account to traverse them; final verification fails closed
+if the mount metadata remains inaccessible.
+
+It creates `axonos-buildkit-<node>` under the supplied mount and the local volume
+`buildx_buildkit_<node>_state`, then bind-mounts the directory at that volume's
+`_data` path. Use the same node name when provisioning Buildx. This is a host
+filesystem mount; the builder receives a normal local Docker volume without
+driver options, as required by admission.
+
+It backs up existing parent-directory ACLs under `/var/tmp`, grants the supplied
+account traversal permissions on the necessary paths, and verifies mount
+metadata as that account. It does not read secrets, start a builder, build
+images, install packages, change Docker daemon settings, or restart services.
+Existing dedicated paths/volumes cause refusal, including on a second run.
+A partial failure retains created resources for inspection; it does not delete
+them or attempt an automatic rollback. Inspect the mount, volume ownership/use
+and printed ACL backup before any manual recovery.
+
+This mount is temporary: no fstab entry or systemd unit is installed. Keep the
+future builder's restart policy disabled. After a reboot, an operator must
+restore and verify the dedicated mount before starting that builder; do not
+rerun this creation script over existing storage. Persistent mounts and ordered
+startup need a separate reviewed change. The directory has no disk quota, so
+operators must monitor free space on both the selected filesystem and Docker's image store.
+Builder CPU, RAM, swap, PID and concurrency limits still need separate setup
+and controller verification. A storage `PASS` alone does not authorize a build
+or deployment.
+
+### Builder daemon configuration
 
 The daemon entrypoint must be `buildkitd`, with exactly
 `--config /etc/buildkit/buildkitd.toml`, no `BUILDKITD_*` environment overrides,
