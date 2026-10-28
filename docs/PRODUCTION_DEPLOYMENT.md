@@ -27,17 +27,64 @@ cd ~/AxonOS
 ```
 
 **Routine production deployment:** only after preflight passes and the operator
-maintenance/admission window is in place, run:
+maintenance/admission window is in place, set `VALIDATED_IMAGE_ID` to the exact
+`sha256:` ID reported by preparation and run:
 
 ```bash
 cd ~/AxonOS
-./scripts/deploy-production.sh
+./scripts/deploy-production.sh --prevalidated-image "$VALIDATED_IMAGE_ID" --nvidia-package 580.173.02-1ubuntu1
 ```
 
 The script owns the base-plus-CAPI Compose files, profile, and targeted gate
 rollout; operators do not need to reconstruct the long central-gate Compose
 command. See [commands and options](#commands-and-options) for release preparation
 and explicitly requested backend updates.
+
+## Independent image preparation
+
+On an operator-approved isolated build host with the existing deployment lock
+provisioned, use a clean checkout at the same commit as the intended rollout:
+
+```bash
+./scripts/deploy-production.sh --build-only \
+  --password-secret-file /secure/operator-provisioned-password \
+  --nvidia-package 580.173.02-1ubuntu1
+```
+
+The path is illustrative; provision the real file privately, outside the build
+context, without shell tracing or credential dumps. Build-only does not require
+`.env` or an existing Compose deployment. It retains a private candidate under
+the existing newest-three retention policy and prints the validated image ID.
+It creates only disposable isolated validators and performs bounded candidate
+housekeeping. It never calls Compose, initializers, migrations, or rollout.
+`--build-only --prevalidated-image "$VALIDATED_IMAGE_ID"` revalidates without
+building (also supply the NVIDIA package option).
+
+Later, the separately authorized production invocation uses `--prevalidated-image`
+as shown above. It repeats the original complete deployment preflight and drift
+checks and image validators. It requires matching source revision, so preparation
+and deployment must use the same clean commit. Labels are trusted-local controller
+metadata, not signed provenance: Docker administrators can forge them. Only accept
+an operator-selected image from the trusted build/transfer chain. The controller
+does not pull or transfer images and does not activate CAPI or handoff. Keep
+`X_CAPI_MODE=off` and `X_HANDOFF_ENABLED=false` for this release.
+
+NVIDIA compatibility evidence (2026-10-28): host driver `580.173.02`, host package
+`580.173.02-0ubuntu0.22.04.1`, and previously attested container closure
+`580.173.02-1ubuntu1` are distinct package formats for the same driver release.
+The NVIDIA Ubuntu 22.04 amd64 repository Packages metadata lists all eleven
+previously attested driver packages at the required container version: cfg1,
+common, compute, decode, GL, gpucomp, firmware, kernel-common, modprobe,
+persistenced and Xorg. Driver dependency edges retain that closure, including
+compute/decode mutual dependency and cfg1 virtual provision. EGL support and
+Ubuntu system dependencies still require the existing APT planner's exact
+transaction simulation in the build environment. Metadata availability alone
+is not a completed build/download or live GPU compatibility test. No fallback
+version is authorized. Repository metadata source:
+https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/Packages.gz
+
+Downloaded metadata SHA256:
+`eb22d6e7122904f18b362c60b4f470eb0ddb7c895868fed0cc64723b6413e282`.
 
 ## First-time host provisioning and verified production baseline
 
@@ -163,7 +210,7 @@ reboot; any automatic mechanism requires separate review.
    ```
 
 4. Do not perform a production deployment unless `--check` passes. Then use
-   `./scripts/deploy-production.sh` within the operator maintenance window.
+   `./scripts/deploy-production.sh --prevalidated-image "$VALIDATED_IMAGE_ID" --nvidia-package 580.173.02-1ubuntu1` within the operator maintenance window.
 
 ## Authorized checkout and shared lock
 
@@ -233,7 +280,7 @@ the file. No lock or administrative provisioning is performed by the script.
 
 The supported engine is Linux Docker at `unix:///var/run/docker.sock`. Alternate
 hosts/contexts and arbitrary Compose projects are refused. Docker Compose,
-Buildx with Compose `build --print` support, Python 3, Git, and curl are required.
+Buildx with Bake secret support, Python 3, Git, and curl are required for deployment.
 An operator needs Docker access and the narrowly provisioned metadata-helper
 authorization below, not permission to traverse the protected secret directory.
 Keep secrets outside the checkout/build context.
@@ -723,14 +770,17 @@ After reviewing/committing the release and establishing the maintenance window:
 cd ~/AxonOS
 git pull --ff-only
 ./scripts/deploy-production.sh --check
-./scripts/deploy-production.sh
+./scripts/deploy-production.sh --prevalidated-image "$VALIDATED_IMAGE_ID" --nvidia-package 580.173.02-1ubuntu1
 ```
 
 | Option | Meaning |
 | --- | --- |
 | `--check` | Read-only preflight, including the fixed privileged secret-metadata helper, Engine/store/effective-API admission, existing-image/network capability probes, and metadata-only exec checks in the existing gate and dedicated PostgreSQL. No image build, candidate cleanup, validator container creation, service mutation, or initialization. |
 | `--with-capi-backend` | Explicitly update the already provisioned CAPI initializers/worker before gate rollout. |
-| `--allow-active-sessions` | Conspicuous acceptance of possible viewer/control-plane interruption; does not stop or pause tenants. |
+| `--build-only` | Build/validate a private image without reading production Compose configuration, initializing databases, or replacing services. Mutually exclusive with check/backend flags. |
+| `--prevalidated-image ID` | Reuse an immutable local image ID, verify source/package/nonce metadata, and rerun image validation. Tags are refused. |
+| `--password-secret-file PATH` | Canonical private nonempty regular file outside the checkout; passed as BuildKit secret `axonos_password`, never read by controller. Required when building. |
+| `--nvidia-package VERSION` | Required explicit selection: `580.173.02-1ubuntu1`. No automatic fallback. |
 | `--health-timeout SECONDS` | Health/init polling deadline; default 300, permitted range 1–1800. |
 | `--help` | Print the interface without acquiring the lock or deploying. |
 
@@ -738,10 +788,10 @@ For a reviewed backend change:
 
 ```bash
 ./scripts/deploy-production.sh --check --with-capi-backend
-./scripts/deploy-production.sh --with-capi-backend
+./scripts/deploy-production.sh --with-capi-backend --prevalidated-image "$VALIDATED_IMAGE_ID" --nvidia-package 580.173.02-1ubuntu1
 ```
 
-Prefer draining sessions over `--allow-active-sessions`. Active tenants are
+Drain sessions before rollout. The active-session override has been removed. Active tenants are
 identified using launcher names/labels (`axgt-session-<session-id>`), and checked
 again after builds and before rollout. A detached viewer can still have an
 active, billable tenant. These checks do not lock admission: a session can start
@@ -758,22 +808,25 @@ succeed; all later gates remain mandatory.
 ## Exact immutable-image flow
 
 1. Attest the bounded private-candidate inventory and apply the retention policy
-   below before admitting another build. Obtain the canonical combined Compose build plan with
-   `compose build --print --build-arg AXONOS_SKIP_HEAVY=0 axonos`. Require the
-   expected checkout context/Dockerfile and reject unreviewed target inheritance
-   or extra contexts. Rewrite the single target's tags to one random private
-   `axonos-deploy-candidate:<run-id>` tag and its output to local `type=docker`.
-   Add tool-ownership, run-ID, and creation-time image labels for safe retention.
+   below before admitting another build. Construct a single Bake target from the
+   checkout Dockerfile, with only full-build, driver branch/package, and fresh
+   credential-cache nonce arguments. Compose build arguments are not forwarded.
+   Pass the external password file as required BuildKit secret `axonos_password`.
+   Use one random private `axonos-deploy-candidate:<run-id>` tag and local output.
+   Add ownership, run-ID, creation-time, source revision, package and nonce labels.
    Send the plan to `docker buildx bake --file - --load axonos` through stdin,
    not a credential-bearing on-disk file. Full scientific applications and normal
    build caching are retained. This does **not** publish `axonos:latest`.
 2. Inspect the private candidate once and capture its immutable `sha256:` image
-   ID. Both validators run using that ID, never by resolving a mutable tag:
+   ID. All validators run using that ID, never by resolving a mutable tag:
 
    ```text
    /usr/bin/python3 /opt/axonos-build/check_scientific_python.py /opt/axonos-build/scientific-python.txt
    /usr/bin/python3 /usr/local/bin/plan-nvidia-userspace.py verify --manifest /usr/local/share/axonos/nvidia-userspace.txt
    ```
+
+   A separate validator also requires every NVIDIA manifest row to equal the
+   explicitly selected production package version.
 
    Validators are explicit create/start/inspect operations with unique run-owned
    names/labels, `runc`, no GPU/network/production mounts, read-only root, dropped
@@ -985,7 +1038,7 @@ candidate is subject to the same checks on the next invocation, not a promise
 of immediate removal after the failed client exits.
 
 No pruning of shared layers/build cache occurs. Retained candidates/cache remain
-sensitive because the existing Dockerfile build-argument exposure is unchanged.
+sensitive because account and VNC credential derivatives remain in image layers.
 Non-cooperating administrators can change tags between inspection and deletion;
 the shared lock coordinates this tool, not arbitrary Docker access.
 
@@ -1111,10 +1164,11 @@ expanded Compose file or passed as command-line secret values. Secret contents
 are not printed. Do not invoke the tool under external tracing or combine it
 with environment/secret dumps.
 
-The existing Dockerfile `PASSWORD` build argument remains a separate image/build
-cache confidentiality risk. Withholding build output does **not** remediate
-build-argument exposure; private candidate images/cache must still be treated as
-sensitive. This task does not redesign that build mechanism.
+The controller never forwards password build arguments. Each credential-bearing
+build receives an independent random 256-bit `AXONOS_CREDENTIAL_CACHE_NONCE`,
+invalidating both credential layers even when the secret changes. The Dockerfile
+requires the secret at both mounts. Images and cache are still sensitive: account
+password hashes and VNC credential derivatives remain inside them.
 
 The tool deliberately does not pull/commit/push Git changes, change branches or
 CAPI mode, use X credentials/contact X, change host drivers, skip scientific

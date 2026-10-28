@@ -7,7 +7,6 @@ lock serializes participating operators. Command diagnostics are never replayed.
 
 import argparse
 import contextlib
-import copy
 import fcntl
 import io
 import json
@@ -42,6 +41,10 @@ CANDIDATE_RUN = 'com.axonos.deploy.candidate-run'
 CANDIDATE_CREATED = 'com.axonos.deploy.candidate-created-ns'
 CANDIDATE_TOOL = 'axonos-production-deploy-v1'
 CANDIDATE_KEEP = 3
+PRODUCTION_NVIDIA = '580.173.02-1ubuntu1'
+REVISION_LABEL = 'org.opencontainers.image.revision'
+NVIDIA_LABEL = 'com.axonos.deploy.nvidia-package'
+NONCE_LABEL = 'com.axonos.deploy.credential-nonce'
 CANDIDATE_SCAN_LIMIT = 32
 CANDIDATE_CLEANUP_TIMEOUT = 60
 # Reference enumeration/deletion semantics verified in these upstream releases.
@@ -387,8 +390,7 @@ class Deployment:
         active = checked_output(checks.sessions, text)
         if active:
             note('Active tenant sessions:\n' + active)
-            require(self.options.allow_active_sessions, 'Active tenants found; no mutation permitted without --allow-active-sessions')
-            note('WARNING: --allow-active-sessions ACCEPTED; viewers/control traffic may be interrupted.')
+            raise Refusal('Active tenants found; deployment is prohibited')
         else:
             note('Active tenant sessions: none')
 
@@ -482,20 +484,59 @@ class Deployment:
 
     def build_candidate(self):
         note('Build private full candidate (output suppressed to protect secrets)')
-        bake = json.loads(self.compose_run('build', '--print', '--build-arg', 'AXONOS_SKIP_HEAVY=0', 'axonos', capture=True, label='Compose build plan'))
-        target = copy.deepcopy(bake['target']['axonos'])
-        require((self.root / target['context']).resolve() == self.root and target.get('dockerfile', 'Dockerfile') == 'Dockerfile', 'Unexpected Bake build context')
-        require(not target.get('inherits') and not target.get('contexts'), 'Unreviewed Bake target dependencies')
+        secret = Path(self.options.password_secret_file or '')
+        require(secret.is_absolute() and str(secret.resolve()) == str(secret)
+                and self.root not in secret.parents and ',' not in str(secret) and '\n' not in str(secret), 'Build secret must be canonical and outside the build context')
+        try:
+            metadata = secret.lstat()
+        except OSError:
+            raise Refusal('Required BuildKit password secret is unavailable') from None
+        require(stat.S_ISREG(metadata.st_mode) and metadata.st_size > 0
+                and stat.S_IMODE(metadata.st_mode) & 0o077 == 0,
+                'Build secret must be a nonempty private regular file')
+        # Never resolve Compose/.env for image preparation. Only this allowlist
+        # reaches Bake; no legacy password argument or arbitrary build option.
+        target = {'context': str(self.root), 'dockerfile': 'Dockerfile',
+                  'secret': ['id=axonos_password,src=' + str(secret)],
+                  'args': {'NVIDIA_DRIVER_VERSION': '580',
+                           'NVIDIA_DRIVER_PKG_VERSION': self.options.nvidia_package,
+                           'AXONOS_CREDENTIAL_CACHE_NONCE': secrets.token_hex(32)}}
         self.candidate = CANDIDATE_PREFIX + self.run_id
         target['tags'] = [self.candidate]
         target['output'] = ['type=docker']
         target.setdefault('args', {})['AXONOS_SKIP_HEAVY'] = '0'
         target.setdefault('labels', {}).update({CANDIDATE_OWNER: CANDIDATE_TOOL,
-            CANDIDATE_RUN: self.run_id, CANDIDATE_CREATED: str(time.time_ns())})
+            CANDIDATE_RUN: self.run_id, CANDIDATE_CREATED: str(time.time_ns()),
+            REVISION_LABEL: self.head, NVIDIA_LABEL: self.options.nvidia_package,
+            NONCE_LABEL: target['args']['AXONOS_CREDENTIAL_CACHE_NONCE']})
         plan = {'target': {'axonos': target}, 'group': {'default': {'targets': ['axonos']}}}
         self.docker('buildx', 'bake', '--file', '-', '--load', 'axonos', input_text=json.dumps(plan), timeout=BUILD_TIMEOUT, label='Build full private candidate')
         self.image_id = self.docker('image', 'inspect', self.candidate, '--format', '{{.Id}}', capture=True, label='Candidate image identity')
         require(re.fullmatch(r'sha256:[a-f0-9]{64}', self.image_id), 'Invalid immutable candidate image ID')
+
+    def attest_image(self):
+        require(isinstance(self.image_id, str) and re.fullmatch(r'sha256:[a-f0-9]{64}', self.image_id),
+                'Prevalidated image must be an immutable local sha256 ID')
+        items = json.loads(self.docker('image', 'inspect', self.image_id, capture=True,
+                                      label='Candidate provenance'))
+        require(isinstance(items, list) and len(items) == 1 and items[0].get('Id') == self.image_id,
+                'Candidate identity mismatch')
+        labels = (items[0].get('Config') or {}).get('Labels') or {}
+        require(labels.get(CANDIDATE_OWNER) == CANDIDATE_TOOL
+                and labels.get(REVISION_LABEL) == self.head
+                and labels.get(NVIDIA_LABEL) == self.options.nvidia_package
+                and re.fullmatch(r'[a-f0-9]{64}', labels.get(NONCE_LABEL, '')),
+                'Candidate source/package/credential provenance mismatch')
+
+    def preparation_preflight(self):
+        self.clean_git()
+        self.head = self.git('rev-parse', '--verify', 'HEAD')
+        self.branch = self.git('symbolic-ref', '--quiet', '--short', 'HEAD')
+        self.docker('buildx', 'version', label='Docker Buildx')
+        info = json.loads(self.docker('info', '--format', '{{json .}}', capture=True, label='Local Docker image store'))
+        candidate_store(info)
+        version = json.loads(self.docker('version', '--format', '{{json .}}', capture=True, label='Effective Docker API'))
+        docker_api_contract(info, version, self.env.get('DOCKER_API_VERSION', ''))
 
     def maintain_candidates(self, *, strict):
         """Bounded tag housekeeping, never image-ID deletion/force/prune.
@@ -582,7 +623,7 @@ class Deployment:
                     del owned[tag]
             require(len(owned) <= CANDIDATE_KEEP, 'Candidate retention quota cannot be met safely')
             if not strict and not self.deployed and self.candidate in owned:
-                note('Failed/interrupted candidate retained within the newest-three candidate policy.')
+                note('Undeployed candidate retained within the newest-three candidate policy.')
         except Exception:
             note('WARNING: candidate-tag housekeeping incomplete; no broad cleanup attempted. Review candidate retention before another build.')
             if strict:
@@ -721,14 +762,34 @@ class Deployment:
     def execute(self):
         with deployment_lock():
             try:
-                self.preflight()
+                if self.options.build_only:
+                    self.preparation_preflight()
+                else:
+                    self.preflight()
                 if self.options.check:
                     note('CHECK PASSED: read-only Docker/metadata checks; no build, service mutation or initialization.')
                     return
-                self.maintain_candidates(strict=True)
-                self.build_candidate()
+                require(self.options.nvidia_package == PRODUCTION_NVIDIA,
+                        'Explicit production NVIDIA package 580.173.02-1ubuntu1 is required')
+                if self.options.prevalidated_image:
+                    self.image_id = self.options.prevalidated_image
+                else:
+                    self.maintain_candidates(strict=True)
+                    self.build_candidate()
+                self.attest_image()
                 self.validate_image('Scientific', ['/opt/axonos-build/check_scientific_python.py', '/opt/axonos-build/scientific-python.txt'])
                 self.validate_image('NVIDIA', ['/usr/local/bin/plan-nvidia-userspace.py', 'verify', '--manifest', '/usr/local/share/axonos/nvidia-userspace.txt'])
+                self.validate_image('NVIDIA-version', ['-c',
+                    "import sys; from pathlib import Path; p=Path('/usr/local/share/axonos/nvidia-userspace.txt'); "
+                    "rows=p.read_text().splitlines(); sys.exit(not (rows and all(r.split('=',1)[1] == "
+                    + repr(PRODUCTION_NVIDIA) + " for r in rows)))"])
+                if self.options.build_only:
+                    self.clean_git()
+                    require(self.git('rev-parse', '--verify', 'HEAD') == self.head and
+                            self.git('symbolic-ref', '--quiet', '--short', 'HEAD') == self.branch,
+                            'Git revision changed during image preparation')
+                    note('BUILD ONLY PASSED: validated immutable image ' + self.image_id)
+                    return
                 if self.options.with_capi_backend:
                     self.backend()
                 self.rollout()
@@ -753,10 +814,17 @@ def main():
     parser = argparse.ArgumentParser(description='Safe production deployment; --check is NOT CAPI dry_run.')
     parser.add_argument('--check', action='store_true', help='Read-only preflight including metadata-only exec checks')
     parser.add_argument('--with-capi-backend', action='store_true', help='Deliberately update the existing CAPI backend')
-    parser.add_argument('--allow-active-sessions', action='store_true', help='Explicitly accept tenant interruption')
+    parser.add_argument('--build-only', action='store_true', help='Prepare and validate image without production configuration or rollout')
+    parser.add_argument('--prevalidated-image', help='Reuse local immutable sha256 image; reattest and revalidate before rollout')
+    parser.add_argument('--password-secret-file', help='Private external file passed only as BuildKit axonos_password secret')
+    parser.add_argument('--nvidia-package', help='Explicit production container package version')
     parser.add_argument('--health-timeout', type=int, default=300, help='Health/init wait seconds (1..1800)')
     args = parser.parse_args()
     require(1 <= args.health_timeout <= 1800, 'Health timeout must be 1..1800 seconds')
+    require(not (args.build_only and (args.check or args.with_capi_backend)),
+            'Build-only cannot be combined with check or backend mutation')
+    require(not (args.prevalidated_image and args.password_secret_file),
+            'Image reuse must not supply build credentials')
     os.umask(0o077)
     def interrupted(_signum, _frame):
         os.write(2, b'Interruption requested; completing bounded teardown before releasing the deployment lock.\n')
