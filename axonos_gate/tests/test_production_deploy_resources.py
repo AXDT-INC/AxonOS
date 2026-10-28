@@ -110,6 +110,19 @@ class ResourceAttestationTests(unittest.TestCase):
     def test_reviewed_resources_and_dependencies_pass(self):
         self.validate()
 
+    def test_preserved_launcher_pin_requires_exact_declared_identity(self):
+        # A production immutable pin is a declaration correction, not permission
+        # to accept an arbitrary running image or to recreate the launcher.
+        pin = 'sha256:' + '1' * 64
+        service = self.payload['config']['services']['axonos-launcher']
+        actual = self.payload['dependencies']['axonos-launcher'][0]['Config']
+        actual['Image'] = pin
+        self.rejected()  # The historical implicit Compose name is insufficient.
+        service['image'] = pin
+        self.validate()
+        actual['Image'] = 'sha256:' + '2' * 64
+        self.rejected()
+
     def test_real_host_null_startup_inherits_reviewed_image_defaults(self):
         services = self.payload['config']['services']
         services['axonos-launcher']['command'] = None

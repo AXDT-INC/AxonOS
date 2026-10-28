@@ -7,6 +7,7 @@ RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin xcap
 
 WORKDIR /app
 COPY axonos_gate/x_capi.py axonos_gate/x_capi_worker.py axonos_gate/x_capi_cli.py /app/
+COPY axonos_gate/x_capi_handoff.py axonos_gate/x_capi_handoff_rpc.py axonos_gate/x_capi_handoff_store.py axonos_gate/x_capi_handoff_worker.py /app/
 COPY docker/x-capi-worker/init_privacy_fence.py /app/init_privacy_fence.py
 COPY docker/x-capi-worker/bootstrap_x_capi_db.sh /app/bootstrap_x_capi_db.sh
 

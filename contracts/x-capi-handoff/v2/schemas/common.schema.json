@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "common",
+  "definitions": {
+    "Epoch": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "Ms": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "Counter": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "UUID": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$(?![\\s\\S])"
+    },
+    "Hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$(?![\\s\\S])"
+    },
+    "Token": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$(?![\\s\\S])"
+    },
+    "KeyId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,32}$(?![\\s\\S])"
+    },
+    "Context": {
+      "type": "string",
+      "minLength": 32,
+      "maxLength": 2048,
+      "pattern": "^[A-Za-z0-9_-]+$(?![\\s\\S])"
+    },
+    "CSRF": {
+      "type": "string",
+      "minLength": 32,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-]+$(?![\\s\\S])"
+    },
+    "Authority": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 1536,
+      "pattern": "^[A-Za-z0-9_-]+$(?![\\s\\S])"
+    },
+    "Wallet": {
+      "type": "string",
+      "pattern": "^0x[0-9a-f]{40}$(?![\\s\\S])"
+    },
+    "Click": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9_-]+$(?![\\s\\S])",
+      "description": "Syntax only. Existing validate_twclid pinned grammar and identifier-shape exclusions are mandatory semantic checks."
+    },
+    "Policy": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,64}$(?![\\s\\S])"
+    }
+  }
+}

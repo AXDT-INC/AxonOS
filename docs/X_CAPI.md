@@ -117,9 +117,100 @@ approval.
 
 No consent, click ID, current binding, enabled mapping, or eligibility means
 skip with a reason counter. There is no alternate identity, fingerprinting, or
-wallet-history join. Headless/x402 activity therefore remains unreported unless
-it originated from the same explicit, authorized browser context (the current
-x402 agent path supplies none). Internal operational telemetry is unchanged.
+wallet-history join. This release explicitly excludes agent x402 payments and
+x402 session routes from marketing attribution. It attributes manual Base USDC
+payments, native ETH deposits and enabled direct AXGT deposits; current supported
+x402 financial/session behavior is unchanged. ETH/AXGT chains must be explicitly
+allowed by the existing CAPI production-chain configuration.
+Internal operational telemetry is unchanged.
+
+## Independent wallet authority for attribution (F2)
+
+An ERC-3009 payment authorization permits a token transfer. It does **not**
+authenticate the submitting browser or authorize binding that browser's consent
+context to the payer. Public `/api/x402/access` remains payable without a wallet
+login; missing, mismatched, expired, revoked or unavailable login authority
+suppresses attribution without rejecting an otherwise authorized payment.
+
+Both listeners capture a presented bearer and wallet in a server-only
+attribution object before human payment/session work. Wallet verification uses
+the just-issued bearer. Other Flask paths capture the first original candidate;
+if authentication accepted a later candidate, attribution may conservatively be
+lost. No later current-token lookup or cookie fallback supplies authority.
+The validation-only helper in `x_capi_human.py` uses the existing auth table,
+without importing credential-refresh or proposed x402 enhancements.
+Raw context strings cannot authorize production
+of wallet, funding or session events. The financial ledger and session allocator
+still create the authoritative facts after their existing durable commits. They
+only enqueue optional local work: no authentication/CAPI database lock, secret
+read or external request is added inside their transactions. A per-process pool
+admits at most four outstanding tasks with two workers and nonblocking admission.
+Saturation, contention, worker errors, process exit or fork isolation may lose
+attribution; they cannot undo credit, submit another payment or allocate a session.
+
+The optional task revalidates the **exact** bearer in the existing short atomic
+validation-only transaction, without issuing credentials. After that transaction
+commits, it seals a purpose-specific proof of the complete local event envelope
+using the existing primary context key. The proof contains a digest, policy
+scope and a maximum 30-second authorization window, with no wallet bearer or
+payment signature. Its window starts before the authorization check, so delayed
+work cannot manufacture a fresh authorization time. Local Unix datagrams retain
+the existing peer-credential and payload bounds.
+
+The isolated worker checks that proof before any event/binding database write.
+It also repeats consent, GPC/revocation, lifecycle, wallet and first-touch checks.
+Only an independently authenticated wallet-verification event or explicit bind
+can establish first-wallet binding. Funding and session events require an
+already-bound matching context, even if a producer asks to bind it. A race that
+loses the binding datagram loses the optional conversion; it never generates a
+retroactive conversion. The worker does not receive or query wallet-login tokens.
+This is proof of an authorization decision at event production, not perpetual
+login validity: revocation ordered after that decision cannot recall it, while
+consent withdrawal continues to fence pending delivery through existing controls.
+
+Native ETH and direct AXGT payments use `deposit_verifier.verify_deposit`, then
+`credit_eth_deposit` or `credit_deposit`. Existing enablement, sender, receipt,
+confirmation, recipient/contract and amount checks remain authoritative. Direct
+AXGT deposits remain disabled unless the existing payment policy enables them.
+Both HTTP listeners capture original F2 authority on `/verify-deposit` as well as
+the auto-detection path. AXGT ownership discounts are not deposits. All three
+rails share the same deposit milestone uniqueness: the first eligible deposit,
+not an additional conversion per rail or every subsequent deposit.
+
+Manual Base USDC payments originate in `axonosPayUsdcFromWallet` as ordinary
+ERC20 transfers, or are claimed by transaction hash. `verify_usdc_deposit`
+checks receipt success, confirmation depth and token Transfer contract/sender/
+recipient before `credit_usdc_deposit` atomically records the verified hash,
+credit, financial ledger and funding event. Only after successful commit and
+connection close does its existing optional hook emit `deposit_completed`.
+Payment submission, wallet connection and session provisioning are not deposit
+completion. The shared ledger's unique transaction identity prevents repeated
+credit; CAPI's durable deduplication prevents multiple eligible outbox records.
+The best-effort producer can lose optional attribution on overload/crash or
+uncertain commit acknowledgment; this is not an exactly-once delivery promise.
+
+The already-fetched USDC receipt is screened for `AuthorizationUsed`. Such
+ERC-3009 transactions are excluded even if later submitted to manual verification.
+There is no original-settlement exception and no new reservation/recovery ledger.
+Unknown chain or unclassifiable receipt metadata suppresses marketing only;
+existing financial verification and credit results remain unchanged. This uses
+the configured ERC-3009 token's event semantics, not transaction sender equality,
+so smart-account/delegated ordinary transfers remain eligible. The ledger hook
+further requires Base chain 8453 and USDC. Agent x402 routes and direct settlement
+calls explicitly discard their optional attribution context.
+
+**Upgrade prerequisite:** the wallet-authority protocol version is included in
+the computed audience scope. An existing pre-F2 generation therefore fails the
+same-epoch configuration guard under new code. Keep CAPI off during upgrade; a
+future approved dry-run activation must advance the existing monotonic policy
+epoch and replace all old producers/workers together. Do not bypass/reset the
+guard or reuse old tickets, contexts or queued events as authenticated evidence.
+Old-scope outbox entries cannot pass new-generation dispatch checks, and old
+code cannot match the advanced durable guard. Obtain fresh explicit consent and
+independent wallet binding under the new scope. Existing retention/tombstones
+remain intact. Handoff v2 requires dedicated CAPI migration 008 (schema 4 to 5),
+not financial migrations 006/007. No production secret is introduced by default.
+The separate live click-provenance activation gate remains closed.
 
 ## Consent and landing-page handoff
 

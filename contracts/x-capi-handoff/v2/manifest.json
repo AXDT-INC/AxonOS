@@ -1,0 +1,504 @@
+{
+  "artifact_revision": "2.0.0-candidate.2",
+  "deterministic_generation_rules": {
+    "artifact_json": "Two-space indentation with stable declared field order; manifest keys lexically sorted; final LF. Do not regenerate byte-identical transfer copies.",
+    "change_control": "Any semantic change requires revision, updated fixtures/hashes and independent review before a new freeze; copy approved artifacts byte-identically.",
+    "encoding": "UTF-8; LF only; final LF; no trailing whitespace; regular non-executable files.",
+    "file_hashes": "Lowercase SHA256 over exact stored bytes. files includes every artifact except manifest.json; manifest SHA256 is supplied externally to avoid self-reference.",
+    "fixture_inputs": "Fixed public byte sequences, UUIDs, epoch42 and timestamp1791936000000; never system clock, production state or actual keys. Fixed encryption IVs belong only to deterministic fixtures.",
+    "wire_canonical_json": "Restricted ASCII recursively sorted keys, compact separators, minimal integers, no floats, no duplicate keys; no final newline in MAC body bytes.",
+    "yaml_csv": "Stable declared field/row order, UTF-8 and LF; YAML formatting is artifact content, not the MAC canonical format."
+  },
+  "engineering_open_decisions": [],
+  "files": {
+    "README.md": "d312cb84575d91f68cbd9833d8ada76bf892e06e745e723d6d58608cbf426383",
+    "browser-contract.md": "c25d2c248a28994855f6974e5642778072aeb8849c08596d8aa9d615a1f60248",
+    "configuration-ownership.yaml": "3f55f600ec83c3e6b94f44a9a3faf9f2dfeecda6072a2dc254b09a77732e8068",
+    "consent-withdrawal-ordering.md": "d1cf7c6e29139a70228eafc4ae4a13783be50c54e7ff1e80311b0e27768acfb7",
+    "cryptographic-formats.md": "61778dae3394307cec0d7191dc3a687fc2d8617b18038202763be1a64a41bab8",
+    "database-contract.md": "bb977d4d14a24675b7573cc6bfb287aa773e746c1d324ff5c5671369ceed2ddd",
+    "errors.csv": "fc09e57dcffacf5a91609efc602269ddc57a5788dceb377d8b9c120415ba932b",
+    "fixtures/golden.json": "816fa87c68a4765400b004ff02576072c8d7fbe70d44aafd18516f6baeffacd6",
+    "migration-rollback.md": "71a32f1da389bb8184d6e27983bba7fbc4ac2db6ca7a5b9c40c2c8e5efbd92ec",
+    "openapi.yaml": "2ff6ec24a95dd2e70b5daab3c914987a2b0ef04fe65248623085aa91b0822451",
+    "protocol.json": "ddb026e83055280e85ddd854e4732af3b49f088878f06d276873837deb57bf35",
+    "schemas/app-begin.schema.json": "bf4f61608d9512ec694cc763d66874e1f3928086b51a2c24755a4a788ca4b5af",
+    "schemas/app-granted.schema.json": "c816b9a3b3ff4a6d4f6cb98af1ac4dfd8aaf0b6e4e58777ddfb379c2726647dc",
+    "schemas/app-prepare.schema.json": "c96d1cc5b266a965452020076f9b4480aac589d08cb7ff14ae2f7601139adb5b",
+    "schemas/app-recover.schema.json": "2d421cd0ac6bc024c5539717a4670065e63e0318f3c42136f5267a58e4c05435",
+    "schemas/app-withdraw.schema.json": "1202fd09cf71a8dc98b80126dde6902ef8a10db8a22392a4e8f1a1c99912079d",
+    "schemas/bridge-form.schema.json": "6cc2b890c56d428508144b46af4afd51ee1da1736c42748377779df19dfe450e",
+    "schemas/browser-success.schema.json": "34d4cd85b1afdbdbf768d6a3e6c8490316adeec342bc4fd15df9f42b162e8fb9",
+    "schemas/captured.schema.json": "ec0f2f7917aad1cc0939b6e9475fe8db359b15920676dbf2f6749c011ff40a42",
+    "schemas/common.schema.json": "49ea504ad4b9fe6c424eb81326cf0fb98f3744547ebe318d69a3cae7c35b2c9e",
+    "schemas/error.schema.json": "7febd3daf365e67f388489e3a171ac9ef54098ffe4ac5c33b91265c44eaf3e1f",
+    "schemas/f2-positive-ingestion.schema.json": "dfb4faf653d6ab422551defb9fffa68de7d051a0db6b79a9c2e1546decae2304",
+    "schemas/landing-capture.schema.json": "564ee7eb3678eaa956069697a8ed6e728b5db6676f5043881440953e7636837e",
+    "schemas/landing-prepare.schema.json": "da2c0890596dc44d10e5f712d7042545a657eb3805b692bb1126b35f879ab862",
+    "schemas/landing-status-success.schema.json": "70d6dd326ba76d0e2ce195248f5289d217516ad6ee7953f653b6704bfe72acb7",
+    "schemas/landing-status.schema.json": "03b628ca9337a633d54888403945fa2f230aec1f7df8ecaf1ec5fbbb86ae43c4",
+    "schemas/landing-withdraw.schema.json": "5f47e4f1a081065710d54d7059e8fff6c3b372fbb4d099039ff5930ae43cda9a",
+    "schemas/observation.schema.json": "15f28f89b0fc649d8126825afda22770699264312a1ee2ea1c02e4b5b540596d",
+    "schemas/prepared.schema.json": "9c5098ee09a18bef09cfa0a2b3a0a78dc3a757d3d96e380ca5096817ec3c51c2",
+    "schemas/receipt.schema.json": "5ead96a015aa486b669cd701cc5b9eae0c805b920fb43b4bc82d2b17d4118b5e",
+    "schemas/redeemed.schema.json": "0c8f0421729cd01e6cf37b92dc6327948aedfb06a5fc96dc313952ad82451cc6",
+    "schemas/source-authorize-success.schema.json": "a686489ed9150b1b800993aa7dd1ef13262e93bcd35e030fa8a26714f715476e",
+    "schemas/source-authorize.schema.json": "0302ad843282280547ac94c984db181ba5abbf1b0220b8431362ba70b4dea859",
+    "schemas/source-capture-success.schema.json": "a2a2deb89cda4bc2b96b6283d4c7bd6d07c5b51ac67aebf35d219903a9e69e6d",
+    "schemas/source-capture.schema.json": "88bd76aaeb2f45aea327b75ff5a5ab4ed779e6327f9d05b41ec104bd9002d174",
+    "schemas/source-lease-attest-success.schema.json": "90f5f939d57612dea92303a453be0e82808b186b0933caca85b4daea919f1061",
+    "schemas/source-lease-attest.schema.json": "7e51fcfbb250ab39405076c2d8bbb736e6c537b4cf872224bdc0a5efc20d94c3",
+    "schemas/source-lease-challenge-success.schema.json": "de70285d9878826c412f9cb50a7daf3a58565da862f42d2aa8c351fde36168e9",
+    "schemas/source-lease-challenge.schema.json": "07beaef0cfb1bc1cc59a74ab9fc89921a04e35e13ec5370cf96e37ad6ed41682",
+    "schemas/source-request.schema.json": "bc90227205a424cf9981615b225739b970118f89ba50205b507dd6b13bb2518f",
+    "schemas/source-revoke-success.schema.json": "cbcc2323c1bc5b3de1ee825b8a0ee86192fa6294d4bbe46b144a330b62fe507f",
+    "schemas/source-revoke.schema.json": "bb20e1d38e51af5df88ebc499175eb515bfdab2d784f706279a3af1c4c30e912",
+    "schemas/source-status-success.schema.json": "06f5368b02bf39732ef57a37d5d3ec3abaface15714e74574eb5f1b094a03421",
+    "schemas/source-status.schema.json": "9d06e52374b203c6952a7fa3f67356877392a745b2819621ee33aae4ff87030c",
+    "schemas/source-success.schema.json": "305e74cbc9cfcc227a704be36df5c9fef58aeebeee2731081c125f2a8250e78e",
+    "schemas/withdrawal-pending.schema.json": "fc26b8704700f8d15f12f591ec21302f22164a39e70deb84bc765a15776f748f",
+    "schemas/withdrawn.schema.json": "4e7d9ab3d1d2db5d07609f707d97cfab83d564a599456603fbf3576d38ff8062",
+    "state-transitions.csv": "7889104663537819bc68ac9afee6576e087e8e53d56e109aeb46355ca9c46995",
+    "test-matrix.csv": "aa58099d88223194941726f18c23486d70137b680a276e6d8af945649a7c9ba2",
+    "validation-report.md": "64b128bd121f5cb47459cf4f804b81e813d813b0474721328c606110defcdfa8",
+    "vectors/mac.json": "d4bc8a88eb9b755adfb38314f280cdeaaead68cc94467815e582f0297acf009a",
+    "vectors/receipt.json": "e1c439793d92eb074a5bf5ecf04fd9763fa7a66942133ef9209306ad5c1200eb"
+  },
+  "operator_approved_provisional_decisions": [
+    {
+      "decision": "Policy B global worker-verified freshness lease",
+      "maximum_horizon_ms": 30000,
+      "renewal_attempt_interval_ms": 10000,
+      "scope": "isolated synthetic engineering only"
+    },
+    {
+      "conditions": [
+        "Independent app consent",
+        "F2 wallet authority",
+        "No retroactive conversion creation",
+        "Durable withdrawal"
+      ],
+      "decision": "Central CAPI-worker custody after explicit landing consent",
+      "scope": "isolated synthetic engineering only"
+    }
+  ],
+  "original_phase_2a_manifest_sha256": "23ec0e8d58df3fbec9d0019988b1e5d018dfbdb51528649d9a52d1bc1bebe98d",
+  "previous_manifest_sha256": "8e30e394632b0947e9984769b5eea780081691ef2d16b1182260a17c986ec65c",
+  "prohibited_scope": [
+    "runtime implementation",
+    "financial migrations006/007",
+    "production credential access",
+    "real clicks",
+    "real payments",
+    "X requests",
+    "staging/deployment",
+    "CAPI enablement",
+    "Stripe CARD enablement",
+    "GitOps/landing edits",
+    "commit/stage/push/merge"
+  ],
+  "protocol": "axonos-first-party-handoff-v2",
+  "remaining_approvals_and_prerequisites": [
+    "Operator review and explicit contract freeze; this artifact is not yet approved.",
+    "Separate implementation authorization for Sessions A and B; Session C initially read-only.",
+    "Legal/privacy approval of pre-consent observation/volatile processing, independent consent notices, central custody sequence and retention/withdrawal language.",
+    "Provisioned durable landing control PostgreSQL and supervised withdrawal/lease process; accepted commits RPO zero or destructive retirement on uncertainty.",
+    "Authenticated transport confidentiality on every hop including ingress/internal TLS/NetBird boundaries; no unverified plaintext segment.",
+    "Enforceable isolation and direct-backend access restrictions; NetworkPolicy enforcement must be demonstrated.",
+    "Safe app nginx access/error handling and exact Umami Cookie/Authorization request removal plus Set-Cookie response removal.",
+    "Immutable landing/app image provenance, mixed-version fail-closed rollout, separately reviewed runtime identities and network reachability.",
+    "Clock assurance meeting the candidate bound; BOOTTIME support; unavailable assurance fails closed.",
+    "Database/backup encryption, approved retention and externally anchored generation/epoch recovery runbook; never trust restored empty queue.",
+    "Isolated browser/PostgreSQL/proxy and business regression acceptance; no such tests ran in Phase2A.",
+    "Separate staging/deployment/secret-provisioning approvals; real-click provenance, real processing and live-X activation remain closed."
+  ],
+  "starting_repositories": {
+    "backend": {
+      "branch": "codex/x-capi-reconciliation",
+      "clean_before_writing": true,
+      "path": "/home/cluadmin/worktrees/axonos-x-capi-reconciliation",
+      "sha": "004aba17456f3a107ee20f8d3f635ca638f29b54"
+    },
+    "gitops": {
+      "branch": "main",
+      "clean_before_writing": true,
+      "path": "/home/cluadmin/axondao-io-gitops-main",
+      "sha": "270899e7e2f0d5056f575da93e0d921b016cccfd"
+    },
+    "landing": {
+      "branch": "main",
+      "clean_before_writing": true,
+      "path": "/home/cluadmin/axonos-io-landing-page",
+      "sha": "c219dac3a0568ced7df99099f36c13e213921893"
+    }
+  },
+  "status": "READY_FOR_INDEPENDENT_RECHECK",
+  "status_scope": "Phase2C corrected synthetic contract candidate; full Draft2020-12/OpenAPI3.1 validation passed. Independent recheck and operator approval remain; no implementation/deployment authority.",
+  "validation_evidence": {
+    "details": "validation-report.md",
+    "future_test_matrix_cases": 40,
+    "historical_phase_2a_limits": [
+      "Draft7-compatible subset validation only; no installed Draft2020-12 or full OpenAPI3.1 meta-validator.",
+      "No browser, database, proxy, production, network or business regression tests executed."
+    ],
+    "independent_review": "Separate reviewer recomputed MAC/receipt/F2 data using OpenSSL and reviewed browser ownership, withdrawal and worker schema requirements; resolved findings in validation-report.md.",
+    "limits": [
+      "Standards conformance is not runtime security/behavioral acceptance.",
+      "No browser, PostgreSQL, proxy, production or business regression tests executed; no production network probes or real identifiers."
+    ],
+    "offline_validator_location": "Temporary outside-repository tooling; no executable validator included in contract artifacts.",
+    "offline_validator_sha256": "6034d0c9327ca9dcc37db6052c425bee867b33a44aaa8888b98d59f4926bb268",
+    "phase_2c": {
+      "dependency_active_requirements_checked": 24,
+      "dependency_lock_sha256": "489a999a118cf6c085b10163c6d10282c7116aa1560fe4eff073f0e726b30f94",
+      "dependency_resolution": {
+        "index": "https://pypi.org/simple",
+        "packages": [
+          {
+            "distribution": "wheel",
+            "entry_points": "",
+            "filename": "attrs-26.1.0-py3-none-any.whl",
+            "metadata_url": "https://pypi.org/pypi/attrs/26.1.0/json",
+            "name": "attrs",
+            "pypi_digest_verified": true,
+            "requires_dist": [],
+            "sha256": "c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309",
+            "source_url": "https://files.pythonhosted.org/packages/64/b4/17d4b0b2a2dc85a6df63d1157e028ed19f90d4cd97c36717afef2bc2f395/attrs-26.1.0-py3-none-any.whl",
+            "version": "26.1.0"
+          },
+          {
+            "distribution": "wheel",
+            "entry_points": "",
+            "filename": "certifi-2026.7.22-py3-none-any.whl",
+            "metadata_url": "https://pypi.org/pypi/certifi/2026.7.22/json",
+            "name": "certifi",
+            "pypi_digest_verified": true,
+            "requires_dist": [],
+            "sha256": "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775",
+            "source_url": "https://files.pythonhosted.org/packages/0b/a7/71ac2cff56fec219ed242bb11b8efb69fcc4bec75db06fb7bfe35de520e6/certifi-2026.7.22-py3-none-any.whl",
+            "version": "2026.7.22"
+          },
+          {
+            "distribution": "wheel",
+            "entry_points": "[console_scripts]\nnormalizer = charset_normalizer.cli:cli_detect\n",
+            "filename": "charset_normalizer-3.5.2-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+            "metadata_url": "https://pypi.org/pypi/charset-normalizer/3.5.2/json",
+            "name": "charset-normalizer",
+            "pypi_digest_verified": true,
+            "requires_dist": [],
+            "sha256": "8a893cc101149f80a653f82062ebc95b34525a2614382e1da5458fe7c6997249",
+            "source_url": "https://files.pythonhosted.org/packages/c4/9f/9f52d2886d52645987d603425482c63c5045a3005db1354a7097e5ed1ae9/charset_normalizer-3.5.2-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+            "version": "3.5.2"
+          },
+          {
+            "distribution": "wheel",
+            "entry_points": "[console_scripts]\nidna=idna.cli:main\n\n",
+            "filename": "idna-3.20-py3-none-any.whl",
+            "metadata_url": "https://pypi.org/pypi/idna/3.20/json",
+            "name": "idna",
+            "pypi_digest_verified": true,
+            "requires_dist": [
+              "ruff >= 0.16.0 ; extra == \"all\"",
+              "mypy >= 1.11.2 ; extra == \"all\"",
+              "ty >= 0.0.37 ; extra == \"all\"",
+              "pytest >= 8.3.2 ; extra == \"all\"",
+              "hypothesis >= 6.141.1 ; extra == \"all\"",
+              "coverage >= 7.10.0 ; extra == \"all\""
+            ],
+            "sha256": "ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c",
+            "source_url": "https://files.pythonhosted.org/packages/58/a2/bb081bab032533a855d44de1d56f8e8426114ff1ba5d1f07a438a0a654f8/idna-3.20-py3-none-any.whl",
+            "version": "3.20"
+          },
+          {
+            "distribution": "wheel",
+            "entry_points": "[console_scripts]\njsonschema = jsonschema.cli:main\n",
+            "filename": "jsonschema-4.26.0-py3-none-any.whl",
+            "metadata_url": "https://pypi.org/pypi/jsonschema/4.26.0/json",
+            "name": "jsonschema",
+            "pypi_digest_verified": true,
+            "requires_dist": [
+              "attrs>=22.2.0",
+              "jsonschema-specifications>=2023.03.6",
+              "referencing>=0.28.4",
+              "rpds-py>=0.25.0",
+              "fqdn; extra == 'format'",
+              "idna; extra == 'format'",
+              "isoduration; extra == 'format'",
+              "jsonpointer>1.13; extra == 'format'",
+              "rfc3339-validator; extra == 'format'",
+              "rfc3987; extra == 'format'",
+              "uri-template; extra == 'format'",
+              "webcolors>=1.11; extra == 'format'",
+              "fqdn; extra == 'format-nongpl'",
+              "idna; extra == 'format-nongpl'",
+              "isoduration; extra == 'format-nongpl'",
+              "jsonpointer>1.13; extra == 'format-nongpl'",
+              "rfc3339-validator; extra == 'format-nongpl'",
+              "rfc3986-validator>0.1.0; extra == 'format-nongpl'",
+              "rfc3987-syntax>=1.1.0; extra == 'format-nongpl'",
+              "uri-template; extra == 'format-nongpl'",
+              "webcolors>=24.6.0; extra == 'format-nongpl'"
+            ],
+            "sha256": "d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce",
+            "source_url": "https://files.pythonhosted.org/packages/69/90/f63fb5873511e014207a475e2bb4e8b2e570d655b00ac19a9a0ca0a385ee/jsonschema-4.26.0-py3-none-any.whl",
+            "version": "4.26.0"
+          },
+          {
+            "distribution": "wheel",
+            "entry_points": "",
+            "filename": "jsonschema_path-0.3.4-py3-none-any.whl",
+            "metadata_url": "https://pypi.org/pypi/jsonschema-path/0.3.4/json",
+            "name": "jsonschema-path",
+            "pypi_digest_verified": true,
+            "requires_dist": [
+              "PyYAML (>=5.1)",
+              "pathable (>=0.4.1,<0.5.0)",
+              "referencing (<0.37.0)",
+              "requests (>=2.31.0,<3.0.0)"
+            ],
+            "sha256": "f502191fdc2b22050f9a81c9237be9d27145b9001c55842bece5e94e382e52f8",
+            "source_url": "https://files.pythonhosted.org/packages/cb/58/3485da8cb93d2f393bce453adeef16896751f14ba3e2024bc21dc9597646/jsonschema_path-0.3.4-py3-none-any.whl",
+            "version": "0.3.4"
+          },
+          {
+            "distribution": "wheel",
+            "entry_points": "",
+            "filename": "jsonschema_specifications-2025.9.1-py3-none-any.whl",
+            "metadata_url": "https://pypi.org/pypi/jsonschema-specifications/2025.9.1/json",
+            "name": "jsonschema-specifications",
+            "pypi_digest_verified": true,
+            "requires_dist": [
+              "referencing>=0.31.0"
+            ],
+            "sha256": "98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe",
+            "source_url": "https://files.pythonhosted.org/packages/41/45/1a4ed80516f02155c51f51e8cedb3c1902296743db0bbc66608a0db2814f/jsonschema_specifications-2025.9.1-py3-none-any.whl",
+            "version": "2025.9.1"
+          },
+          {
+            "distribution": "wheel",
+            "entry_points": "",
+            "filename": "lazy_object_proxy-1.12.0-cp310-cp310-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+            "metadata_url": "https://pypi.org/pypi/lazy-object-proxy/1.12.0/json",
+            "name": "lazy-object-proxy",
+            "pypi_digest_verified": true,
+            "requires_dist": [],
+            "sha256": "d01c7819a410f7c255b20799b65d36b414379a30c6f1684c7bd7eb6777338c1b",
+            "source_url": "https://files.pythonhosted.org/packages/07/d2/b7189a0e095caedfea4d42e6b6949d2685c354263bdf18e19b21ca9b3cd6/lazy_object_proxy-1.12.0-cp310-cp310-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+            "version": "1.12.0"
+          },
+          {
+            "distribution": "wheel",
+            "entry_points": "",
+            "filename": "openapi_schema_validator-0.6.3-py3-none-any.whl",
+            "metadata_url": "https://pypi.org/pypi/openapi-schema-validator/0.6.3/json",
+            "name": "openapi-schema-validator",
+            "pypi_digest_verified": true,
+            "requires_dist": [
+              "jsonschema (>=4.19.1,<5.0.0)",
+              "jsonschema-specifications (>=2023.5.2)",
+              "rfc3339-validator"
+            ],
+            "sha256": "f3b9870f4e556b5a62a1c39da72a6b4b16f3ad9c73dc80084b1b11e74ba148a3",
+            "source_url": "https://files.pythonhosted.org/packages/21/c6/ad0fba32775ae749016829dace42ed80f4407b171da41313d1a3a5f102e4/openapi_schema_validator-0.6.3-py3-none-any.whl",
+            "version": "0.6.3"
+          },
+          {
+            "distribution": "wheel",
+            "entry_points": "[console_scripts]\nopenapi-spec-validator=openapi_spec_validator.__main__:main\n\n",
+            "filename": "openapi_spec_validator-0.7.2-py3-none-any.whl",
+            "metadata_url": "https://pypi.org/pypi/openapi-spec-validator/0.7.2/json",
+            "name": "openapi-spec-validator",
+            "pypi_digest_verified": true,
+            "requires_dist": [
+              "importlib-resources (>=5.8,<7.0) ; python_version < \"3.9\"",
+              "jsonschema (>=4.18.0,<5.0.0)",
+              "jsonschema-path (>=0.3.1,<0.4.0)",
+              "lazy-object-proxy (>=1.7.1,<2.0.0)",
+              "openapi-schema-validator (>=0.6.0,<0.7.0)"
+            ],
+            "sha256": "4bbdc0894ec85f1d1bea1d6d9c8b2c3c8d7ccaa13577ef40da9c006c9fd0eb60",
+            "source_url": "https://files.pythonhosted.org/packages/27/dd/b3fd642260cb17532f66cc1e8250f3507d1e580483e209dc1e9d13bd980d/openapi_spec_validator-0.7.2-py3-none-any.whl",
+            "version": "0.7.2"
+          },
+          {
+            "distribution": "wheel",
+            "entry_points": "",
+            "filename": "pathable-0.4.4-py3-none-any.whl",
+            "metadata_url": "https://pypi.org/pypi/pathable/0.4.4/json",
+            "name": "pathable",
+            "pypi_digest_verified": true,
+            "requires_dist": [],
+            "sha256": "5ae9e94793b6ef5a4cbe0a7ce9dbbefc1eec38df253763fd0aeeacf2762dbbc2",
+            "source_url": "https://files.pythonhosted.org/packages/7d/eb/b6260b31b1a96386c0a880edebe26f89669098acea8e0318bff6adb378fd/pathable-0.4.4-py3-none-any.whl",
+            "version": "0.4.4"
+          },
+          {
+            "distribution": "wheel",
+            "entry_points": "",
+            "filename": "pyyaml-6.0.3-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+            "metadata_url": "https://pypi.org/pypi/PyYAML/6.0.3/json",
+            "name": "PyYAML",
+            "pypi_digest_verified": true,
+            "requires_dist": [],
+            "sha256": "9c7708761fccb9397fe64bbc0395abcae8c4bf7b0eac081e12b809bf47700d0b",
+            "source_url": "https://files.pythonhosted.org/packages/7a/1e/7acc4f0e74c4b3d9531e24739e0ab832a5edf40e64fbae1a9c01941cabd7/pyyaml-6.0.3-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+            "version": "6.0.3"
+          },
+          {
+            "distribution": "wheel",
+            "entry_points": "",
+            "filename": "referencing-0.36.2-py3-none-any.whl",
+            "metadata_url": "https://pypi.org/pypi/referencing/0.36.2/json",
+            "name": "referencing",
+            "pypi_digest_verified": true,
+            "requires_dist": [
+              "attrs>=22.2.0",
+              "rpds-py>=0.7.0",
+              "typing-extensions>=4.4.0; python_version < '3.13'"
+            ],
+            "sha256": "e8699adbbf8b5c7de96d8ffa0eb5c158b3beafce084968e2ea8bb08c6794dcd0",
+            "source_url": "https://files.pythonhosted.org/packages/c1/b1/3baf80dc6d2b7bc27a95a67752d0208e410351e3feb4eb78de5f77454d8d/referencing-0.36.2-py3-none-any.whl",
+            "version": "0.36.2"
+          },
+          {
+            "distribution": "wheel",
+            "entry_points": "",
+            "filename": "requests-2.34.2-py3-none-any.whl",
+            "metadata_url": "https://pypi.org/pypi/requests/2.34.2/json",
+            "name": "requests",
+            "pypi_digest_verified": true,
+            "requires_dist": [
+              "charset_normalizer<4,>=2",
+              "idna<4,>=2.5",
+              "urllib3<3,>=1.26",
+              "certifi>=2023.5.7",
+              "PySocks!=1.5.7,>=1.5.6; extra == \"socks\"",
+              "chardet<8,>=3.0.2; extra == \"use-chardet-on-py3\""
+            ],
+            "sha256": "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0",
+            "source_url": "https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl",
+            "version": "2.34.2"
+          },
+          {
+            "distribution": "wheel",
+            "entry_points": "",
+            "filename": "rfc3339_validator-0.1.4-py2.py3-none-any.whl",
+            "metadata_url": "https://pypi.org/pypi/rfc3339-validator/0.1.4/json",
+            "name": "rfc3339-validator",
+            "pypi_digest_verified": true,
+            "requires_dist": [
+              "six"
+            ],
+            "sha256": "24f6ec1eda14ef823da9e36ec7113124b39c04d50a4d3d3a3c2859577e7791fa",
+            "source_url": "https://files.pythonhosted.org/packages/7b/44/4e421b96b67b2daff264473f7465db72fbdf36a07e05494f50300cc7b0c6/rfc3339_validator-0.1.4-py2.py3-none-any.whl",
+            "version": "0.1.4"
+          },
+          {
+            "distribution": "wheel",
+            "entry_points": "",
+            "filename": "rpds_py-0.30.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+            "metadata_url": "https://pypi.org/pypi/rpds-py/0.30.0/json",
+            "name": "rpds-py",
+            "pypi_digest_verified": true,
+            "requires_dist": [],
+            "sha256": "0c0e95f6819a19965ff420f65578bacb0b00f251fefe2c8b23347c37174271f3",
+            "source_url": "https://files.pythonhosted.org/packages/61/b5/707f6cf0066a6412aacc11d17920ea2e19e5b2f04081c64526eb35b5c6e7/rpds_py-0.30.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+            "version": "0.30.0"
+          },
+          {
+            "distribution": "wheel",
+            "entry_points": "",
+            "filename": "six-1.17.0-py2.py3-none-any.whl",
+            "metadata_url": "https://pypi.org/pypi/six/1.17.0/json",
+            "name": "six",
+            "pypi_digest_verified": true,
+            "requires_dist": [],
+            "sha256": "4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274",
+            "source_url": "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl",
+            "version": "1.17.0"
+          },
+          {
+            "distribution": "wheel",
+            "entry_points": "",
+            "filename": "typing_extensions-4.16.0-py3-none-any.whl",
+            "metadata_url": "https://pypi.org/pypi/typing_extensions/4.16.0/json",
+            "name": "typing_extensions",
+            "pypi_digest_verified": true,
+            "requires_dist": [],
+            "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+            "source_url": "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl",
+            "version": "4.16.0"
+          },
+          {
+            "distribution": "wheel",
+            "entry_points": "",
+            "filename": "urllib3-2.8.0-py3-none-any.whl",
+            "metadata_url": "https://pypi.org/pypi/urllib3/2.8.0/json",
+            "name": "urllib3",
+            "pypi_digest_verified": true,
+            "requires_dist": [
+              "brotli>=1.2.0; (platform_python_implementation == 'CPython') and extra == 'brotli'",
+              "brotlicffi>=1.2.0.0; (platform_python_implementation != 'CPython') and extra == 'brotli'",
+              "h2<5,>=4; extra == 'h2'",
+              "pysocks!=1.5.7,<2.0,>=1.5.6; extra == 'socks'",
+              "backports-zstd>=1.0.0; (python_version < '3.14') and extra == 'zstd'"
+            ],
+            "sha256": "0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3",
+            "source_url": "https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl",
+            "version": "2.8.0"
+          }
+        ],
+        "tls_verification": true
+      },
+      "dependency_resolution_sha256": "43323196f6e1fba0a89eb3cdfef5524b94c10e167d5143f1d22730648afa7467",
+      "dependency_review_script_sha256": "2bb13ebcfe64214449742d0e82ee8f6cd01569e3e720f7494de1f91f735e2163",
+      "embedded_examples_count": 0,
+      "embedded_openapi_schema_count": 517,
+      "independent_crypto_checks": 111,
+      "independent_full_standards_recheck": {
+        "checks": 3762,
+        "counted_again_in_total": false,
+        "errors": 0,
+        "isolation_verified": true,
+        "network_attempts": 0,
+        "status": "PASS",
+        "warnings": 0
+      },
+      "independent_script_sha256": "bad4a053a9d62edd4be9e6eff334919674f9b63abfbd0fc35f636c70206fa778",
+      "isolation": "Fresh disposable /tmp venv; system-site disabled; all19 installed distributions exactly equal the reviewed pinned official-PyPI wheel resolution.",
+      "json_schema_validator": "jsonschema.Draft202012Validator 4.26.0",
+      "key_id_header_fixture_count": 10,
+      "network_access_used": "Only explicitly approved official PyPI resolution/wheel/metadata acquisition; validation runs blocked network.",
+      "network_attempts_during_validation": 0,
+      "offline_contract_checks": 1776,
+      "openapi_document_validator": "openapi_spec_validator.OpenAPIV31SpecValidator 0.7.2",
+      "openapi_local_reference_count": 96,
+      "openapi_schema_validator": "openapi_schema_validator.OAS31Validator 0.6.3",
+      "protocol_security_defect_confirmed": false,
+      "python_version": "3.10.12",
+      "response_key_id_fixture_checks": 100,
+      "schema_count": 36,
+      "schema_fixture_count": 49,
+      "standards_and_http_checks": 3762,
+      "standards_result_sha256": "46d447b9f4adf67da360774931329880b5a9d97ff2e7f7385d41eac60caa8b91",
+      "standards_script_sha256": "d20cffcb7c17e139867245d5402ea7b27372ea1492185886e9f028551d8b98ef",
+      "total_passing_assertions_across_suites": 5649,
+      "warnings": []
+    },
+    "positive_f2_fixture_count": 4,
+    "query_fixture_count": 13,
+    "request_mac_tamper_count": 7,
+    "response_mac_tamper_count": 4,
+    "results": "PASS: genuine Draft2020-12 and full OpenAPI3.1 validation, cross-artifact/integrity checks and independent synthetic cryptographic verification.",
+    "scenario_fixture_count": 7,
+    "schema_count": 36,
+    "schema_fixture_count": 49,
+    "tools": {
+      "OpenSSL": "3.0.2",
+      "PyYAML": "5.4.1",
+      "Python": "3.10.12",
+      "cryptography": "48.0.0",
+      "jsonschema": "3.2.0"
+    }
+  }
+}

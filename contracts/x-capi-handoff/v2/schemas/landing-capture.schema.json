@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "landing-capture",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 2
+    },
+    "request_id": {
+      "$ref": "common.schema.json#/definitions/UUID"
+    },
+    "policy": {
+      "const": "landing-x-v2"
+    },
+    "observation": {
+      "$ref": "receipt.schema.json"
+    },
+    "twclid": {
+      "$ref": "common.schema.json#/definitions/Click"
+    }
+  },
+  "required": [
+    "v",
+    "request_id",
+    "policy",
+    "observation",
+    "twclid"
+  ],
+  "additionalProperties": false
+}

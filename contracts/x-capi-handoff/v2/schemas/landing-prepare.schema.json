@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "landing-prepare",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 2
+    },
+    "request_id": {
+      "$ref": "common.schema.json#/definitions/UUID"
+    },
+    "choice": {
+      "const": "grant"
+    },
+    "policy": {
+      "const": "landing-x-v2"
+    },
+    "observation": {
+      "$ref": "receipt.schema.json"
+    }
+  },
+  "required": [
+    "v",
+    "request_id",
+    "choice",
+    "policy",
+    "observation"
+  ],
+  "additionalProperties": false
+}

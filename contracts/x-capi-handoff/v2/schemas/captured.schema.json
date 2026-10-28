@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "captured",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 2
+    },
+    "ok": {
+      "const": true
+    },
+    "state": {
+      "const": "captured"
+    },
+    "expires_at_ms": {
+      "$ref": "common.schema.json#/definitions/Ms"
+    }
+  },
+  "required": [
+    "v",
+    "ok",
+    "state",
+    "expires_at_ms"
+  ],
+  "additionalProperties": false
+}

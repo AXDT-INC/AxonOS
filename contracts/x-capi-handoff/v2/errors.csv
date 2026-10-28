@@ -1,0 +1,24 @@
+code,http_status,retryable,durable_state_implication,safe_ui_fallback
+INVALID_REQUEST,400,false,No positive mutation; observed valid privacy signal still dominates,Discard candidate; ordinary navigation
+INVALID_CLICK,400,false,No positive mutation; observed valid privacy signal still dominates,Discard candidate; ordinary navigation
+INVALID_RECEIPT,400,false,No positive mutation; observed valid privacy signal still dominates,Discard candidate; ordinary navigation
+SERVICE_AUTH_FAILED,401,false,No authenticated operation; never interpret as withdrawal completion,Keep withdrawal pending; operator configuration alert
+ORIGIN_REJECTED,403,false,No positive authority; GPC may initiate durable suppression,Suppress attribution; ordinary navigation
+OWNER_REQUIRED,403,false,No positive authority; GPC may initiate durable suppression,Suppress attribution; ordinary navigation
+OWNER_MISMATCH,403,false,No positive authority; GPC may initiate durable suppression,Suppress attribution; ordinary navigation
+GPC_ACTIVE,403,false,No positive authority; GPC may initiate durable suppression,Suppress attribution; ordinary navigation
+FIRST_TOUCH_LOCKED,409,false,No replacement or new secret; prior commit may exist,Keep existing lifecycle; explicit bounded user retry only where permitted
+IDEMPOTENCY_CONFLICT,409,false,No replacement or new secret; prior commit may exist,Keep existing lifecycle; explicit bounded user retry only where permitted
+SOURCE_ALREADY_ASSIGNED,409,false,No replacement or new secret; prior commit may exist,Keep existing lifecycle; explicit bounded user retry only where permitted
+RESULT_UNAVAILABLE,409,false,No replacement or new secret; prior commit may exist,Keep existing lifecycle; explicit bounded user retry only where permitted
+VERSION_MISMATCH,409,false,No replacement or new secret; prior commit may exist,Keep existing lifecycle; explicit bounded user retry only where permitted
+EXPIRED,410,false,Terminal positive authority; withdrawal obligations need authenticated closure evidence,Clear positive browser state; ordinary navigation
+WITHDRAWN,410,false,Terminal positive authority; withdrawal obligations need authenticated closure evidence,Clear positive browser state; ordinary navigation
+GENERATION_RETIRED,410,false,Terminal positive authority; withdrawal obligations need authenticated closure evidence,Clear positive browser state; ordinary navigation
+BODY_TOO_LARGE,413,false,Reject before parsing; no positive mutation,Ordinary navigation
+UNSUPPORTED_MEDIA_TYPE,415,false,No positive mutation,Ordinary navigation
+RATE_LIMITED,429,true,Optional admission refused; never discard accepted withdrawal,Backoff only optional operation; navigation continues
+ATTRIBUTION_DISABLED,503,true,No new positive authority; timeout may hide a committed operation,Preserve durable withdrawal; ordinary navigation
+DEPENDENCY_UNAVAILABLE,503,true,No new positive authority; timeout may hide a committed operation,Preserve durable withdrawal; ordinary navigation
+CLOCK_UNTRUSTED,503,true,No new positive authority; timeout may hide a committed operation,Preserve durable withdrawal; ordinary navigation
+QUARANTINED,503,true,No new positive authority; timeout may hide a committed operation,Preserve durable withdrawal; ordinary navigation

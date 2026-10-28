@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "observation",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 2
+    },
+    "epoch": {
+      "$ref": "common.schema.json#/definitions/Epoch"
+    },
+    "generation": {
+      "$ref": "common.schema.json#/definitions/UUID"
+    },
+    "observation_id": {
+      "$ref": "common.schema.json#/definitions/UUID"
+    },
+    "origin": {
+      "const": "https://axonos.io"
+    },
+    "policy": {
+      "const": "landing-x-v2"
+    },
+    "observed_at_ms": {
+      "$ref": "common.schema.json#/definitions/Ms"
+    },
+    "receipt_expires_at_ms": {
+      "$ref": "common.schema.json#/definitions/Ms"
+    },
+    "original_expires_at_ms": {
+      "$ref": "common.schema.json#/definitions/Ms"
+    },
+    "click_commitment": {
+      "$ref": "common.schema.json#/definitions/Hash"
+    }
+  },
+  "required": [
+    "v",
+    "epoch",
+    "generation",
+    "observation_id",
+    "origin",
+    "policy",
+    "observed_at_ms",
+    "receipt_expires_at_ms",
+    "original_expires_at_ms",
+    "click_commitment"
+  ],
+  "additionalProperties": false
+}

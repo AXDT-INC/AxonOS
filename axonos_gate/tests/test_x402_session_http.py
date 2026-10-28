@@ -142,8 +142,8 @@ class TestX402SessionHttp(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200)
         context.assert_called_once_with()
-        self.assertEqual(settle.call_args.kwargs["attribution_context"], "browser-context")
-        self.assertEqual(claim.call_args.kwargs["attribution_context"], "browser-context")
+        self.assertIsNone(settle.call_args.kwargs["attribution_context"])
+        self.assertIsNone(claim.call_args.kwargs["attribution_context"])
 
     def test_prepaid_wallet_string_cannot_bind_browser_attribution(self):
         prepaid = {"verified": True, "remaining_minutes": 120.0}

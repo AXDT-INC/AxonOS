@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "app-recover",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 2
+    },
+    "request_id": {
+      "$ref": "common.schema.json#/definitions/UUID"
+    },
+    "handoff": {
+      "$ref": "common.schema.json#/definitions/Token"
+    }
+  },
+  "required": [
+    "v",
+    "request_id",
+    "handoff"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "source-lease-attest",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 2
+    },
+    "epoch": {
+      "$ref": "common.schema.json#/definitions/Epoch"
+    },
+    "generation": {
+      "$ref": "common.schema.json#/definitions/UUID"
+    },
+    "request_id": {
+      "$ref": "common.schema.json#/definitions/UUID"
+    },
+    "op": {
+      "const": "lease_attest"
+    },
+    "worker_boot": {
+      "$ref": "common.schema.json#/definitions/UUID"
+    },
+    "challenge": {
+      "$ref": "common.schema.json#/definitions/Token"
+    },
+    "control_version": {
+      "$ref": "common.schema.json#/definitions/Counter"
+    },
+    "ready": {
+      "const": true
+    }
+  },
+  "required": [
+    "v",
+    "epoch",
+    "generation",
+    "request_id",
+    "op",
+    "worker_boot",
+    "challenge",
+    "control_version",
+    "ready"
+  ],
+  "additionalProperties": false
+}

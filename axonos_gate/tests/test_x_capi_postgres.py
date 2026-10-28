@@ -49,6 +49,21 @@ def _migration_text(filename, schema):
         raise AssertionError("migration must pin its production search_path")
     return text.replace(_MIGRATION_SEARCH_PATH, replacement)
 
+def _handoff_migration_text(schema, owner, worker):
+    """Expand reviewed psql includes for a disposable psycopg2 transaction."""
+    root = Path(__file__).resolve().parents[1] / "migrations"
+    text = (root / "008_x_capi_handoff.sql").read_text()
+    for name in ("008_x_capi_v4_preflight.sql", "008_x_capi_v5_postflight.sql"):
+        text = text.replace("\\ir " + name, (root / name).read_text())
+    text = text.replace(_MIGRATION_SEARCH_PATH, 'SET LOCAL search_path = "' + schema + '";')
+    for variable, role in (("owner_role", owner), ("worker_role", worker)):
+        if not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", role):
+            raise ValueError("unsafe synthetic role")
+        text = text.replace(':"' + variable + '"', '"' + role + '"')
+        text = text.replace(":'" + variable + "'", "'" + role + "'")
+    return text
+
+
 LEGACY_SCHEMA_SQL = """
 CREATE TABLE x_capi_attribution_contexts (
     id UUID PRIMARY KEY, handle_hash CHAR(64) NOT NULL UNIQUE,
@@ -265,6 +280,15 @@ class PostgresOutboxTests(unittest.TestCase):
         migration = _migration_text("001_x_capi_outbox.sql", cls.schema)
         with conn.cursor() as cur:
             cur.execute(migration)
+            # Data-path tests run as the disposable bootstrap role. Reuse the
+            # exact additive DDL; do not claim this fixture attests role grants.
+            # test_z separately executes the complete 004 -> 008 migration and
+            # current worker's unmodified exact catalog/privilege attestation.
+            handoff = (Path(__file__).resolve().parents[1] / "migrations" / "008_x_capi_handoff.sql").read_text()
+            start = handoff.index("CREATE TABLE x_capi_handoff_generations")
+            end = handoff.index("-- PostgreSQL foreign-key enforcement")
+            cur.execute(handoff[start:end])
+            cur.execute("UPDATE x_capi_schema_meta SET schema_version=5 WHERE singleton=TRUE")
         conn.commit()
         conn.close()
 
@@ -395,6 +419,7 @@ class PostgresOutboxTests(unittest.TestCase):
     def worker_cfg(self, *, mapping=""):
         return SimpleNamespace(
             producer_ready=True, mode="live", policy_version="v1",
+            errors=(), production_chain_ids=(1, 8453),
             policy_epoch=POLICY_EPOCH, audience_scope=AUDIENCE_SCOPE,
             deployment_id="test-deployment",
             max_event_age_hours=24,
@@ -499,6 +524,30 @@ class PostgresOutboxTests(unittest.TestCase):
                 run=run, cfg=cfg, fence=fence, peer=peer, requests=captured,
                 connections=http_connections,
             )
+
+    @staticmethod
+    def authenticated_envelope(envelope, now):
+        """Synthetic trusted issuer proof; production verification stays active."""
+        from axonos_gate import x_capi
+        signed = dict(envelope)
+        signed.pop("wallet_authority", None)
+        proof = x_capi._seal_wallet_authority(signed, x_capi.load_config(), now)
+        if not proof:
+            raise AssertionError("Synthetic wallet authority could not be sealed")
+        signed["wallet_authority"] = proof
+        return signed
+
+    def ingest_authenticated(self, conn, envelope, now):
+        from axonos_gate import x_capi_worker
+        return x_capi_worker._ingest_event(
+            conn, self.authenticated_envelope(envelope, now), now,
+        )
+
+    def process_authenticated(self, conn, envelope, now):
+        from axonos_gate import x_capi_worker
+        return x_capi_worker.process_ingest_envelope(
+            conn, self.authenticated_envelope(envelope, now), now,
+        )
 
     def lifecycle_ticket(self, *, handle="h" * 43, csrf="c" * 43, state="granted"):
         click_id = "click_12345678"
@@ -618,12 +667,12 @@ class PostgresOutboxTests(unittest.TestCase):
                     # worker therefore cannot cross its clean boundary while
                     # a preconnected producer can still publish a datagram.
                     self.assertFalse(events.stop_accepting())
-                    queued.send(json.dumps({
+                    queued.send(json.dumps(self.authenticated_envelope({
                         "v": 1, "action": "bind",
                         "context_token": "q" * 40,
                         "wallet_address": "0x" + "1" * 40,
                         "event_timestamp_ms": 200_000,
-                    }).encode("ascii"))
+                    }, 200.0)).encode("ascii"))
                 finally:
                     queued.close()
                     fcntl.flock(acceptance_fd, fcntl.LOCK_UN)
@@ -1980,7 +2029,7 @@ class PostgresOutboxTests(unittest.TestCase):
                 x_capi_worker.enforce_config_guard(conn, cfg, now - 1)
             )
             self.assertEqual(
-                x_capi_worker._ingest_event(conn, base_envelope, now),
+                self.ingest_authenticated(conn, base_envelope, now),
                 "mapping_disabled",
             )
             with conn.cursor() as cur:
@@ -1995,14 +2044,14 @@ class PostgresOutboxTests(unittest.TestCase):
             ))
             second = dict(base_envelope, context_token="u" * 40)
             self.assertEqual(
-                x_capi_worker._ingest_event(conn, second, now),
+                self.ingest_authenticated(conn, second, now),
                 "wallet_already_attributed",
             )
             cross_wallet = dict(
                 base_envelope, wallet_address=other_wallet, source_key=other_wallet
             )
             self.assertEqual(
-                x_capi_worker._ingest_event(conn, cross_wallet, now),
+                self.ingest_authenticated(conn, cross_wallet, now),
                 "wallet_or_lifecycle_mismatch",
             )
             with conn.cursor() as cur:
@@ -2049,7 +2098,7 @@ class PostgresOutboxTests(unittest.TestCase):
             conn = self.connect()
             try:
                 barrier.wait(timeout=5)
-                outcomes.append(x_capi_worker._ingest_event(conn, envelope, 200.0))
+                outcomes.append(self.ingest_authenticated(conn, envelope, 200.0))
             except Exception as exc:
                 failures.append(exc)
             finally:
@@ -2120,7 +2169,7 @@ class PostgresOutboxTests(unittest.TestCase):
         ):
             self.assertTrue(x_capi_worker.enforce_config_guard(conn, cfg, 199.0))
             self.assertEqual(
-                x_capi_worker.process_ingest_envelope(conn, bind, 200.0),
+                self.process_authenticated(conn, bind, 200.0),
                 "bound",
             )
             with conn.cursor() as cur:
@@ -2131,12 +2180,12 @@ class PostgresOutboxTests(unittest.TestCase):
                 cur.execute("SELECT count(*) FROM x_capi_dedup")
                 self.assertEqual(cur.fetchone()[0], 0)
             self.assertEqual(
-                x_capi_worker.process_ingest_envelope(conn, session, 201.0),
+                self.process_authenticated(conn, session, 201.0),
                 "pending",
             )
         conn.close()
 
-    def test_paid_deposit_first_touch_binds_once_and_deduplicates(self):
+    def test_paid_deposit_requires_authenticated_binding_and_deduplicates(self):
         from axonos_gate import x_capi, x_capi_worker
 
         cfg = self.worker_cfg()
@@ -2151,11 +2200,10 @@ class PostgresOutboxTests(unittest.TestCase):
             "source_key": "0x" + "a" * 64,
             "event_timestamp_ms": 200_000,
             "metadata": {
-                "allow_context_binding": True, "credit_source": "onchain",
+                "allow_context_binding": False, "credit_source": "onchain",
                 "payment_rail": "eth", "chain_id": 1,
             },
         }
-        self.assertIsNotNone(x_capi_worker._validate_ingest_envelope(envelope))
 
         def internal_hash(label, value):
             return hashlib.sha256((label + "\0" + value).encode()).hexdigest()
@@ -2170,16 +2218,31 @@ class PostgresOutboxTests(unittest.TestCase):
             ),
         ):
             self.assertTrue(x_capi_worker.enforce_config_guard(conn, cfg, 199.0))
-            self.assertEqual(x_capi_worker._ingest_event(conn, envelope, 200.0), "pending")
-            self.assertEqual(x_capi_worker._ingest_event(conn, envelope, 200.0), "duplicate")
+            self.assertEqual(
+                self.ingest_authenticated(conn, envelope, 200.0),
+                "missing_bound_context",
+            )
+            with conn.cursor() as cur:
+                cur.execute("SELECT count(*) FROM x_capi_attribution_contexts")
+                self.assertEqual(cur.fetchone()[0], 0)
+                cur.execute("SELECT count(*) FROM x_capi_outbox")
+                self.assertEqual(cur.fetchone()[0], 0)
+            conn.commit()
+            bind = {
+                "v": 1, "action": "bind", "context_token": "t" * 40,
+                "wallet_address": wallet, "event_timestamp_ms": 199_000,
+            }
+            self.assertEqual(self.process_authenticated(conn, bind, 199.0), "bound")
+            self.assertEqual(self.ingest_authenticated(conn, envelope, 200.0), "pending")
+            self.assertEqual(self.ingest_authenticated(conn, envelope, 200.0), "duplicate")
             sibling_event = dict(
                 envelope,
                 context_token="u" * 40,
                 source_key="0x" + "b" * 64,
             )
             self.assertEqual(
-                x_capi_worker._ingest_event(conn, sibling_event, 200.0),
-                "wallet_already_attributed",
+                self.ingest_authenticated(conn, sibling_event, 200.0),
+                "missing_bound_context",
             )
             cross_wallet = dict(
                 envelope,
@@ -2187,7 +2250,7 @@ class PostgresOutboxTests(unittest.TestCase):
                 source_key="0x" + "c" * 64,
             )
             self.assertEqual(
-                x_capi_worker._ingest_event(conn, cross_wallet, 200.0),
+                self.ingest_authenticated(conn, cross_wallet, 200.0),
                 "wallet_or_lifecycle_mismatch",
             )
         with conn.cursor() as cur:
@@ -2195,6 +2258,123 @@ class PostgresOutboxTests(unittest.TestCase):
             self.assertEqual(cur.fetchone()[0], 1)
             cur.execute("SELECT count(*) FROM x_capi_outbox")
             self.assertEqual(cur.fetchone()[0], 1)
+        conn.close()
+
+    def test_wallet_authority_rejects_missing_forged_and_cross_operation_proofs(self):
+        from axonos_gate import x_capi, x_capi_worker
+        from cryptography.fernet import Fernet
+
+        cfg = self.worker_cfg(mapping="wallet-event")
+        ticket = self.lifecycle_ticket()
+        wallet = "0x" + "4" * 40
+        bare = {
+            "v": 1, "action": "bind", "context_token": "t" * 40,
+            "wallet_address": wallet, "event_timestamp_ms": 200_000,
+        }
+        conn = self.connect()
+        with patch.object(x_capi, "load_config", return_value=cfg), patch.object(
+            x_capi_worker, "_ticket_for_ingest", return_value=ticket
+        ):
+            signed = self.authenticated_envelope(bare, 200.0)
+            with patch.object(x_capi, "_context_cipher", return_value=(Fernet(Fernet.generate_key()), None)):
+                forged = self.authenticated_envelope(bare, 200.0)
+            variants = {
+                "missing": bare,
+                "wrong_signing_key": forged,
+                "other_wallet": dict(signed, wallet_address="0x" + "5" * 40),
+                "other_context": dict(signed, context_token="u" * 40),
+                "changed_timestamp": dict(signed, event_timestamp_ms=201_000),
+                "malformed_proof": dict(signed, wallet_authority="a" * 64),
+            }
+            for label, candidate in variants.items():
+                with self.subTest(label=label):
+                    self.assertIn(x_capi_worker.process_ingest_envelope(conn, candidate, 200.0),
+                                  ("invalid_envelope", "invalid_wallet_authority"))
+            for table in ("x_capi_attribution_contexts", "x_capi_outbox", "x_capi_dedup"):
+                with conn.cursor() as cur:
+                    cur.execute("SELECT count(*) FROM " + table)
+                    self.assertEqual(cur.fetchone()[0], 0)
+            conn.commit()
+            self.assertTrue(x_capi_worker.enforce_config_guard(conn, cfg, 199.0))
+            self.assertEqual(x_capi_worker.process_ingest_envelope(conn, signed, 200.0), "bound")
+        conn.close()
+
+    def test_wallet_authority_expiry_and_audience_change_fail_closed(self):
+        from axonos_gate import x_capi, x_capi_worker
+
+        cfg = self.worker_cfg()
+        bare = {
+            "v": 1, "action": "bind", "context_token": "t" * 40,
+            "wallet_address": "0x" + "4" * 40, "event_timestamp_ms": 200_000,
+        }
+        conn = self.connect()
+        with patch.object(x_capi, "load_config", return_value=cfg):
+            signed = self.authenticated_envelope(bare, 200.0)
+            for now in (199.999, 200.0 + x_capi._WALLET_AUTHORITY_SECONDS):
+                with self.subTest(now=now):
+                    self.assertEqual(x_capi_worker.process_ingest_envelope(conn, signed, now),
+                                     "invalid_wallet_authority")
+            cfg.audience_scope = "b" * 64
+            self.assertEqual(x_capi_worker.process_ingest_envelope(conn, signed, 200.0),
+                             "invalid_wallet_authority")
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM x_capi_attribution_contexts")
+            self.assertEqual(cur.fetchone()[0], 0)
+        conn.close()
+
+    def test_authentication_proof_does_not_override_missing_or_revoked_consent(self):
+        from axonos_gate import x_capi, x_capi_worker
+
+        cfg = self.worker_cfg()
+        bare = {
+            "v": 1, "action": "bind", "context_token": "t" * 40,
+            "wallet_address": "0x" + "4" * 40, "event_timestamp_ms": 200_000,
+        }
+        conn = self.connect()
+        with patch.object(x_capi, "load_config", return_value=cfg):
+            signed = self.authenticated_envelope(bare, 200.0)
+            for state in ("unset", "declined", "revoked"):
+                with self.subTest(state=state), patch.object(
+                    x_capi_worker, "_ticket_for_ingest", return_value=self.lifecycle_ticket(state=state)
+                ):
+                    self.assertEqual(x_capi_worker.process_ingest_envelope(conn, signed, 200.0),
+                                     "invalid_or_stale_ticket")
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM x_capi_attribution_contexts")
+            self.assertEqual(cur.fetchone()[0], 0)
+            cur.execute("SELECT count(*) FROM x_capi_outbox")
+            self.assertEqual(cur.fetchone()[0], 0)
+        conn.close()
+
+    def test_authenticated_payment_proof_cannot_request_first_wallet_binding(self):
+        from axonos_gate import x_capi, x_capi_worker
+
+        cfg = self.worker_cfg()
+        cfg.event_ids = {"deposit_completed": "deposit-event"}
+        bare = {
+            "v": 1, "action": "event", "milestone": "deposit_completed",
+            "context_token": "t" * 40, "wallet_address": "0x" + "4" * 40,
+            "source_key": "0x" + "a" * 64, "event_timestamp_ms": 200_000,
+            "metadata": {"allow_context_binding": True, "credit_source": "onchain",
+                         "payment_rail": "usdc", "chain_id": 1},
+        }
+        conn = self.connect()
+        with patch.object(x_capi, "load_config", return_value=cfg), patch.object(
+            x_capi_worker, "_ticket_for_ingest", return_value=self.lifecycle_ticket()
+        ):
+            signed = self.authenticated_envelope(bare, 200.0)
+            self.assertEqual(x_capi_worker.process_ingest_envelope(conn, signed, 200.0),
+                             "invalid_envelope")
+            bare["metadata"]["allow_context_binding"] = False
+            signed = self.authenticated_envelope(bare, 200.0)
+            self.assertTrue(x_capi_worker.enforce_config_guard(conn, cfg, 199.0))
+            self.assertEqual(x_capi_worker.process_ingest_envelope(conn, signed, 200.0),
+                             "missing_bound_context")
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM x_capi_attribution_contexts")
+            self.assertEqual(cur.fetchone()[0], 0)
+            cur.execute("SELECT count(*) FROM x_capi_outbox")
+            self.assertEqual(cur.fetchone()[0], 0)
         conn.close()
 
     def test_dry_run_ticket_cannot_be_ingested_after_live_transition(self):
@@ -2280,7 +2460,7 @@ class PostgresOutboxTests(unittest.TestCase):
                 x_capi_worker.enforce_config_guard(conn, live_cfg, 199.0)
             )
             self.assertEqual(
-                x_capi_worker._ingest_event(conn, envelope, 200.0),
+                self.ingest_authenticated(conn, envelope, 200.0),
                 "mapping_disabled",
             )
         with conn.cursor() as cur:
@@ -2818,7 +2998,7 @@ class PostgresOutboxTests(unittest.TestCase):
             x_capi_worker, "_ticket_for_ingest", return_value=ticket
         ):
             self.assertEqual(
-                x_capi_worker._ingest_event(conn, envelope, 200.0),
+                self.ingest_authenticated(conn, envelope, 200.0),
                 "identifier_conflicts_with_wallet",
             )
         with conn.cursor() as cur:
@@ -2863,7 +3043,7 @@ class PostgresOutboxTests(unittest.TestCase):
                 x_capi_worker.enforce_config_guard(conn, cfg, now - 1)
             )
             self.assertEqual(
-                x_capi_worker._ingest_event(conn, envelope, now),
+                self.ingest_authenticated(conn, envelope, now),
                 "revoked_lifecycle",
             )
         with conn.cursor() as cur:
@@ -2903,7 +3083,7 @@ class PostgresOutboxTests(unittest.TestCase):
                 x_capi_worker.enforce_config_guard(conn, cfg, now - 1)
             )
             self.assertEqual(
-                x_capi_worker._ingest_event(conn, envelope, now),
+                self.ingest_authenticated(conn, envelope, now),
                 "mapping_disabled",
             )
         request = {
@@ -2995,7 +3175,7 @@ class PostgresOutboxTests(unittest.TestCase):
             conn = self.connect()
             try:
                 barrier.wait(timeout=5)
-                results["event"] = x_capi_worker._ingest_event(conn, envelope, 200.0)
+                results["event"] = self.ingest_authenticated(conn, envelope, 200.0)
             except Exception as exc:
                 failures.append(exc)
             finally:
@@ -3076,7 +3256,7 @@ class PostgresOutboxTests(unittest.TestCase):
                 x_capi_worker.enforce_config_guard(conn, cfg, 199.0)
             )
             self.assertEqual(
-                x_capi_worker._ingest_event(conn, envelope, 200.0),
+                self.ingest_authenticated(conn, envelope, 200.0),
                 "context_capacity_unavailable",
             )
         with conn.cursor() as cur:
@@ -3161,7 +3341,7 @@ class PostgresOutboxTests(unittest.TestCase):
         ):
             self.assertTrue(x_capi_worker.enforce_config_guard(conn, cfg, 299.0))
             self.assertEqual(
-                x_capi_worker._ingest_event(conn, envelope, 300.0),
+                self.ingest_authenticated(conn, envelope, 300.0),
                 "context_capacity_unavailable",
             )
 
@@ -3192,7 +3372,7 @@ class PostgresOutboxTests(unittest.TestCase):
         ):
             expired = dict(envelope, event_timestamp_ms=10_000_000)
             self.assertEqual(
-                x_capi_worker._ingest_event(conn, expired, 10_000.0),
+                self.ingest_authenticated(conn, expired, 10_000.0),
                 "invalid_or_stale_ticket",
             )
         conn.close()
@@ -3305,7 +3485,7 @@ class PostgresOutboxTests(unittest.TestCase):
         ):
             self.assertTrue(x_capi_worker.enforce_config_guard(conn, cfg, 300.0))
             self.assertIn(
-                x_capi_worker._ingest_event(conn, envelope, 301.0),
+                self.ingest_authenticated(conn, envelope, 301.0),
                 ("revoked_lifecycle", "context_capacity_unavailable"),
             )
         conn.close()
@@ -3347,7 +3527,7 @@ class PostgresOutboxTests(unittest.TestCase):
         ):
             self.assertTrue(x_capi_worker.enforce_config_guard(conn, cfg, 199.0))
             self.assertEqual(
-                x_capi_worker._ingest_event(conn, wallet_event, 200.0),
+                self.ingest_authenticated(conn, wallet_event, 200.0),
                 "pending",
             )
             job = x_capi_worker.claim_job(conn, "worker-a", 201.0, 30)
@@ -3368,7 +3548,7 @@ class PostgresOutboxTests(unittest.TestCase):
                 "lease_lost",
             )
             self.assertEqual(
-                x_capi_worker._ingest_event(conn, session_event, 203.0),
+                self.ingest_authenticated(conn, session_event, 203.0),
                 "queue_full",
             )
             self.assertIsNone(
@@ -3605,6 +3785,19 @@ class PostgresOutboxTests(unittest.TestCase):
                         self.assertFalse(cur.fetchone()[0], table)
                 conn.commit()
 
+            def drain_authorized_event(now=None):
+                # The production emitter deliberately returns before its short
+                # authorization task; wait only in this disposable test.
+                deadline = time.monotonic() + 5.0
+                while time.monotonic() < deadline:
+                    result = x_capi_worker.drain_ingest(
+                        listener, conn, time.time() if now is None else now,
+                    )
+                    if result:
+                        return result
+                    time.sleep(0.005)
+                self.fail("Authenticated synthetic datagram did not arrive")
+
             def on_granted(context, csrf):
                 ticket = x_capi.decode_context_ticket(context, require_primary=True)
                 self.assertIsNotNone(ticket)
@@ -3625,13 +3818,15 @@ class PostgresOutboxTests(unittest.TestCase):
                 event_ms = int(max(time.time(), ticket["consented_at"]) * 1000) + 1
                 for expected in ("dry_run", "duplicate"):
                     self.assertTrue(x_capi.emit_event_nonblocking(
-                        context_token=context, wallet_address=synthetic_wallet,
+                        context_token=x_capi.authenticated_context(
+                            context, synthetic_wallet, lambda: True,
+                        ), wallet_address=synthetic_wallet,
                         milestone=x_capi.MILESTONE_WALLET_VERIFIED,
                         source_key=synthetic_wallet, event_timestamp_ms=event_ms,
                         allow_context_binding=True,
                     ))
                     self.assertEqual(
-                        x_capi_worker.drain_ingest(listener, conn, time.time()),
+                        drain_authorized_event(),
                         {expected: 1},
                     )
                 with conn.cursor() as cur:
@@ -3652,15 +3847,16 @@ class PostgresOutboxTests(unittest.TestCase):
                 with patch.object(x_capi.time, "time", return_value=ticket["expires_at"] + 1):
                     expired = x_capi.attribution_status(context)
                     self.assertEqual(expired["state"], "stale")
-                self.assertTrue(x_capi.emit_event_nonblocking(
-                    context_token=context, wallet_address=synthetic_wallet,
-                    milestone=x_capi.MILESTONE_WALLET_VERIFIED,
-                    source_key=synthetic_wallet, event_timestamp_ms=event_ms,
-                    allow_context_binding=True,
-                ))
-                self.assertEqual(x_capi_worker.drain_ingest(
-                    listener, conn, ticket["expires_at"] + 1
-                ), {"invalid_or_stale_ticket": 1})
+                    self.assertTrue(x_capi.emit_event_nonblocking(
+                        context_token=x_capi.authenticated_context(
+                            context, synthetic_wallet, lambda: True,
+                        ), wallet_address=synthetic_wallet,
+                        milestone=x_capi.MILESTONE_WALLET_VERIFIED,
+                        source_key=synthetic_wallet, event_timestamp_ms=event_ms,
+                        allow_context_binding=True,
+                    ))
+                    self.assertEqual(drain_authorized_event(ticket["expires_at"] + 1),
+                                     {"invalid_or_stale_ticket": 1})
                 return {
                     "real_dry_run_row": True, "duplicate_suppressed": True,
                     "fixed_expiry": True, "expired_ticket_rejected": True,
@@ -3822,6 +4018,31 @@ class PostgresOutboxTests(unittest.TestCase):
             admin.close()
 
     def test_z_owner_and_column_grants_are_enforced(self):
+        # Historical 004 guards need their exact v4 input, independent of the
+        # v5 data-path fixture. Preserve both historical and current coverage.
+        previous_schema, previous_options = self.__class__.schema, self.__class__.options
+        schema = "xcapimigration_" + uuid.uuid4().hex[:16]
+        admin = self.psycopg2.connect(TEST_URL)
+        admin.autocommit = True
+        with admin.cursor() as cur:
+            cur.execute("CREATE SCHEMA " + schema)
+        admin.close()
+        self.__class__.schema = schema
+        self.__class__.options = "-c search_path=" + schema
+        def restore_schema():
+            cleanup = self.psycopg2.connect(TEST_URL)
+            cleanup.autocommit = True
+            try:
+                with cleanup.cursor() as cur:
+                    cur.execute("DROP SCHEMA " + schema + " CASCADE")
+            finally:
+                cleanup.close()
+                self.__class__.schema, self.__class__.options = previous_schema, previous_options
+        self.addCleanup(restore_schema)
+        fresh = self.connect()
+        with fresh.cursor() as cur:
+            cur.execute(_migration_text("001_x_capi_outbox.sql", schema))
+        fresh.close()
         suffix = uuid.uuid4().hex[:8]
         owner = "xcap_owner_" + suffix
         worker = "xcap_worker_" + suffix
@@ -4088,6 +4309,16 @@ class PostgresOutboxTests(unittest.TestCase):
                     "UPDATE x_capi_attribution_contexts SET lifecycle_expires_at=1"
                 )
         worker_conn.rollback()
+        # Advance the exact historical catalog through the production migration,
+        # including both read-only pre/postflight checks, before v5 readiness.
+        upgraded = self.connect()
+        with upgraded.cursor() as cur:
+            cur.execute(_handoff_migration_text(self.schema, owner, worker))
+        upgraded.close()
+        postflight = _migration_text("008_x_capi_v5_postflight.sql", self.schema)
+        for variable, role in (("owner_role", owner), ("worker_role", worker)):
+            postflight = postflight.replace(':"' + variable + '"', '"' + role + '"')
+            postflight = postflight.replace(":'" + variable + "'", "'" + role + "'")
         from axonos_gate import x_capi_worker
         with worker_conn.cursor() as cur:
             cur.execute("SET ROLE " + worker)
@@ -4169,13 +4400,20 @@ class PostgresOutboxTests(unittest.TestCase):
             admin.close()
             repair = self.connect()
             with repair.cursor() as cur:
-                cur.execute(grants)
+                # Restore only the ACLs deliberately changed above, using the
+                # unchanged reviewed core grant statements. Do not execute the
+                # v4-only migration against v5 or bypass catalog attestation.
+                core_acl_start = grants.index("ALTER TABLE x_capi_schema_meta OWNER")
+                core_acl_end = grants.index("CREATE TEMPORARY TABLE x_capi_expected_table_acl")
+                cur.execute(grants[core_acl_start:core_acl_end])
+                cur.execute(postflight)
+            repair.commit()
             repair.close()
             worker_conn.rollback()
             with worker_conn.cursor() as cur:
                 self.assertTrue(x_capi_worker._database_role_is_isolated(cur))
 
-            # A grants-only rerun must not bless an existing v4 label whose
+            # A current-schema postflight must not bless an existing v5 label whose
             # catalog contains a hidden side effect. PostgreSQL checks trigger
             # function EXECUTE at CREATE time, so revoke it afterward to prove
             # the exact catalog check catches what privilege probing cannot.
@@ -4204,7 +4442,7 @@ class PostgresOutboxTests(unittest.TestCase):
             rejected = self.connect()
             with rejected.cursor() as cur:
                 with self.assertRaises(self.psycopg2.errors.RaiseException):
-                    cur.execute(grants)
+                    cur.execute(postflight)
             rejected.rollback(); rejected.close()
             admin = self.psycopg2.connect(TEST_URL)
             admin.autocommit = True
@@ -4258,7 +4496,7 @@ class PostgresOutboxTests(unittest.TestCase):
                 x_capi_worker.enforce_config_guard(worker_conn, cfg, now=199.0)
             )
             self.assertEqual(
-                x_capi_worker._ingest_event(worker_conn, envelope, 200.0),
+                self.ingest_authenticated(worker_conn, envelope, 200.0),
                 "mapping_disabled",
             )
             response = x_capi_worker.process_consent_request(

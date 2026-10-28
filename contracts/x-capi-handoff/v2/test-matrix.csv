@@ -1,0 +1,41 @@
+id,area,test_type,owner_session,case,expected_invariant,evidence_type
+OBS01,observation,unit/browser,B,Pre-render adapter strips request target and original/router metadata,No raw click reaches SSR/RSC or caches,future synthetic execution
+OBS02,observation,browser,B,First query scrub before analytics and early resources,No raw click in telemetry/referrers,future synthetic execution
+OBS03,observation,unit,A+B,Duplicate/encoded names whitespace identifier-shaped click,Conservative discard; ordinary navigation,future synthetic execution
+CONS01,consent,browser,A+B,Accept deny revoke separately on both origins,No shared or implied consent,future synthetic execution
+CONS02,consent,browser,A+B,GPC changes while open and after restoration,Observed GPC suppresses and initiates closure; no background omniscience,future synthetic execution
+TIME01,expiry,unit,A+B,Memory120s receipt110s server bound original604790000ms,No retry or refresh renewal,future synthetic execution
+TIME02,expiry,unit,A+B,Unknown clock assurance forward/backward step,No positive operations; closure still allowed,future synthetic execution
+OWN01,ownership,browser,B,Cross-site initial Strict omission then same-origin bootstrap,Existing L never rotated from initial absence,future synthetic execution
+OWN02,ownership,browser,A+B,Concurrent tabs duplicate cookies blocked cookies profiles,One confirmed owner or attribution loss; no last-writer capture,future synthetic execution
+OWN03,ownership,browser,A+B,Malicious sibling Origin and forged Fetch Metadata from page,Ambient cookies insufficient,future synthetic execution
+OWN04,ownership,browser,A+B,Arbitrary H sent to trusted app forwarding UI,App never forwards externally supplied H,future synthetic execution
+OWN05,ownership,unit/PostgreSQL,A,Stolen context with attacker wallet and attacker A,F2 owner mapping mismatch before durable mutation,future synthetic execution
+OWN06,ownership,unit,A,Body/header owner-hash override and bind normalization,Only trusted captured cookie hash; proof retains it,future synthetic execution
+NAV01,navigation,browser,B,All same/new-tab anchors buttons keyboard redirects,Clean entry or ordinary navigation; no URL capability,future synthetic execution
+NAV02,navigation,browser,A+B,POST Origin strict-origin/no-referrer redirects,Exact peer Origin; null never accepted,future synthetic execution
+NAV03,navigation,browser,A+B,Refresh BFCache pagehide cloned tab,Clear candidate; stable context ownership lock; no deadline extension,future synthetic execution
+ACK01,idempotency,PostgreSQL,A,Lost begin response concurrent same begin ID,One hash-only H; RESULT_UNAVAILABLE; four-active cap,future synthetic execution
+ACK02,idempotency,PostgreSQL,A,Lost callback commit acknowledgment concurrent redemption,One context; identical ciphertext recovery before expiry,future synthetic execution
+ACK03,idempotency,PostgreSQL,A+B,Capture timeout status recovery without persisted raw click,No replacement first touch,future synthetic execution
+REV01,withdrawal,PostgreSQL,A+B,Revoke before capture absent source,Closed tombstone cannot reopen,future synthetic execution
+REV02,withdrawal,PostgreSQL,A,Dispatch/closure race same exclusive fence,No completion ack before durable close; prior in-flight request cannot recall,future synthetic execution
+REV03,withdrawal,PostgreSQL/crash,B,Accepted withdrawal browser exits retry pod dies,Obligation persists and supervised retry resumes,future synthetic execution
+REV04,withdrawal,PostgreSQL,A+B,Lost close acknowledgment queue saturation,No false completion; pending retained; privacy capacity reserved,future synthetic execution
+LEASE01,freshness,unit,A+B,Delayed replayed or wrong-boot positive attestation,Deadline fixed at challenge creation; no renewal from replay,future synthetic execution
+LEASE02,freshness,PostgreSQL,B,Two replicas attest and withdraw concurrently,Same control row; pending blocks positive attestation,future synthetic execution
+LEASE03,freshness,unit/crash,A,Suspend restart expiry during payload preparation,BOOTTIME; fresh boot; final protected check,future synthetic execution
+REST01,restore,disposable PostgreSQL,A+B,Restore empty queue after unseen accepted withdrawal,Quarantine and retire source generation; no empty-queue all-clear,future synthetic execution
+REST02,restore,disposable PostgreSQL,A,Whole CAPI snapshot rollback mixed schema versions,Higher-epoch destructive privacy recovery; no oldworker fallback,future synthetic execution
+F201,F2,unit/PostgreSQL,A,Legacy v1 positive proof missing mapping bad owner,Reject positive downgrade; allow legacy privacy closure,future synthetic execution
+F202,F2,unit/PostgreSQL,A,Payment-only authorization token revocation wrongwallet,Independent exact accepted bearer remains required,future synthetic execution
+F203,F2,unit/PostgreSQL,A,Event precedes import/binding decision or same-ms ambiguity,No historical conversion generation or timestamp rewriting,future synthetic execution
+PRIV01,privacy,proxy/disposable,C,nginx success 4xx oversize upstream failure malformed URL,No raw query/body/cookie/capability in access/error logs,future synthetic execution
+PRIV02,privacy,proxy/disposable,C,Both exact stats routes request and response cookies,Remove Cookie Authorization and Set-Cookie; preserve exact routes,future synthetic execution
+PRIV03,privacy,browser/proxy,B+C,Shared cache early hints SSR HTML RSC errors,No personalized receipt/context shared across requests,future synthetic execution
+NET01,infrastructure,future real ingress,C,Authenticated encrypted hops directbackend attempts,Effective confidentiality and bypass resistance; synthetic markers only,future synthetic execution
+DOS01,isolation,unit/disposable,A+B,Capture renew floods DB down socket down queue full,Bounded attribution; withdrawals prioritized; business independent,future synthetic execution
+REG01,regression,existing synthetic suites,A,F1 wallet-status x402 recovery/admission session ownership,No credential disclosure payment rebroadcast credit duplication or session retry,future synthetic execution
+OFF01,activation,unit,A+B,Production off defaults all positive endpoints,No production-eligible work or outbound X; closure available,future synthetic execution
+OFF02,activation,isolated dry-run,A+B,Generated fixtures no network transport,Synthetic positive path only; no real identifiers,future synthetic execution
+CRYPTO01,cryptography,offline,A,MAC receipt and v4/F2 fixtures tampering,Exact canonical framing and cryptographic checks,future synthetic execution

@@ -235,6 +235,14 @@ def verify_usdc_deposit(
     # (revenue wallet), so a positive amount here is a fully verified payment.
     decimals = _dv._token_decimals(rpc_url, contract)
     logs = receipt.get("logs") or []
+    try:
+        try:
+            from .x_capi_human import manual_usdc_context
+        except ImportError:
+            from x_capi_human import manual_usdc_context
+        attribution_context = manual_usdc_context(attribution_context, observed_chain_id, contract, logs)
+    except Exception:
+        attribution_context = None  # Optional attribution must not reject payment.
     usdc_amount = _dv._parse_transfer_logs(logs, contract, revenue, wallet, decimals)
     if usdc_amount <= 0:
         deposit_ledger.record_verification_reject(
@@ -1179,6 +1187,7 @@ def settle_x402_payment(
 
     Returns the verify_usdc_deposit result, plus settlement_tx_hash, or {error}.
     """
+    attribution_context = None  # Agent x402 payments are outside marketing scope.
     wallet = (authenticated_wallet or "").strip().lower()
     revenue = _get_revenue_wallet()
     contract = _get_usdc_contract()

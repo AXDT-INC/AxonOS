@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "error",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 2
+    },
+    "ok": {
+      "const": false
+    },
+    "error": {
+      "type": "string",
+      "enum": [
+        "INVALID_REQUEST",
+        "INVALID_CLICK",
+        "INVALID_RECEIPT",
+        "SERVICE_AUTH_FAILED",
+        "ORIGIN_REJECTED",
+        "OWNER_REQUIRED",
+        "OWNER_MISMATCH",
+        "GPC_ACTIVE",
+        "FIRST_TOUCH_LOCKED",
+        "IDEMPOTENCY_CONFLICT",
+        "SOURCE_ALREADY_ASSIGNED",
+        "RESULT_UNAVAILABLE",
+        "VERSION_MISMATCH",
+        "EXPIRED",
+        "WITHDRAWN",
+        "GENERATION_RETIRED",
+        "BODY_TOO_LARGE",
+        "UNSUPPORTED_MEDIA_TYPE",
+        "RATE_LIMITED",
+        "ATTRIBUTION_DISABLED",
+        "DEPENDENCY_UNAVAILABLE",
+        "CLOCK_UNTRUSTED",
+        "QUARANTINED"
+      ]
+    },
+    "retryable": {
+      "type": "boolean"
+    },
+    "request_id": {
+      "anyOf": [
+        {
+          "$ref": "common.schema.json#/definitions/UUID"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "v",
+    "ok",
+    "error",
+    "retryable",
+    "request_id"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,21 @@
+entity,actor,old_state,new_state,prerequisites,lock_transaction_boundary,idempotent_retry,irreversible_closure
+landing_owner,landing,absent,prepared,Explicit landing consent; validated receipt; no GPC; reserve closure slot,privacy_control then owner row; committed before capture,Existing cookie same request returns metadata; missing secret RESULT_UNAVAILABLE,false
+landing_owner,landing,prepared,capture_pending,Cookie confirmed; original observation fixed,privacy_control then owner row; immutable capture request digest,Same ID/digest only,false
+source,worker,absent,captured,Authenticated source request; consent; expiry; capacity; no tombstone,source identity advisory lock; generation/source row transaction,Same capture ID/digest acknowledges captured without resetting current state,false
+landing_owner,landing,capture_pending,captured,Authenticated central capture/status response,control then owner transaction,Same state,false
+app_owner,gate-worker,absent,prepared,Independent affirmative app consent; no GPC,app owner transaction; fixed deadline,Cookie-dependent metadata only; no secret reconstruction,false
+handoff,worker,absent,app_granted,Confirmed A; consent; fewer than four active H,app owner lock; insert unique begin ID and H hash,409 RESULT_UNAVAILABLE; never mint same-ID replacement,false
+handoff,worker,app_granted,source_approved,Exact app Origin at landing; L source active; no GPC; H current,Source identity then app owner/transaction locks; atomically assign source,Same H/source only; changed source rejected,false
+source,worker,captured,assigned,One unconsumed assignment; current H,Same authorize transaction,Existing assignment idempotent,false
+handoff,worker,source_approved,redeemed,Correct A; both consents; generation; expiry; no closure,Source then app owner/transaction; context/import/result/consume one commit,Same immutable result if still current and H deadline not reached,false
+source,worker,assigned,consumed,Atomic import commit,Same redemption transaction,Never another context for source,false
+existing_context_wallet_binding,worker,unbound,bound,Valid v2 F2; matching owner; independently authenticated first wallet,Source/app checks; existing handle then wallet locks; bind cutoff integer ms,Same wallet only; no retroactive milestone,false
+handoff,worker,app_granted|source_approved,expired,Fixed deadline reached,Source/app transaction locks; release only unconsumed source slot,410 EXPIRED,true
+source,worker,assigned,captured,Assigned H expired unconsumed; source still current,Same expiration transaction,Original source expiry unchanged,false
+landing_owner,landing,prepared|capture_pending|captured,withdrawal_pending,Authenticated decline/revoke/GPC; reserve already exists,Same control row used by lease; increment version; durable pending slot,202 until authenticated central closure,true
+source,worker,absent|captured|assigned|consumed|expired,closed,Authenticated revoke; no positive permission required,Exclusive privacy-close boundary; source tombstone/context cancellation commit,200 same closure including absent source,true
+landing_owner,retry-process,withdrawal_pending,withdrawn,Authenticated response for exact withdrawal ID/generation,Control then owner transaction; acknowledge only after worker commit,200 withdrawn,true
+app_owner,worker,prepared|imported,closed,App revoke or observed GPC,Existing privacy-close boundary; cancel H/imports,Closure without requiring A when existing context privacy capability is valid,true
+source,worker,captured|assigned|consumed,expired,Original deadline reached,Privacy-safe cleanup and source lock; clear raw data,410 EXPIRED,true
+lease,worker,invalid|active,active,Current boot challenge; fixed deadline; positive locked landing attestation,Short runtime mutex; control high-water persistent check; no HTTP under mutex,Same challenge never extends deadline,false
+lease,worker,active,invalid,Deadline reached; restart; generation mismatch; quarantine,Final dispatch predicate under existing exclusive fence,No new dispatch; fresh valid challenge may establish new lease,false

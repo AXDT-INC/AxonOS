@@ -1,0 +1,206 @@
+protocol: axonos-first-party-handoff-v2
+revision: 2.0.0-candidate.2
+scope: isolated synthetic engineering only
+origins:
+  landing: https://axonos.io
+  app: https://app.axonos.io
+configuration:
+- name: X_HANDOFF_PROTOCOL
+  owner: landing+gate+worker
+  default: axonos-first-party-handoff-v2
+  secret: false
+  permitted_recipients:
+  - landing
+  - gate
+  - worker
+  notes: ''
+- name: X_HANDOFF_ENABLED
+  owner: landing+gate
+  default: false
+  secret: false
+  permitted_recipients:
+  - landing
+  - gate
+  notes: Only isolated synthetic development may enable; deployment approval remains absent.
+- name: X_HANDOFF_SOURCE_GENERATION
+  owner: landing+worker
+  default: null
+  secret: false
+  permitted_recipients:
+  - landing
+  - worker
+  notes: Required explicit UUIDv4; external recovery anchor; fixture generation is not a deployment value.
+- name: X_HANDOFF_WITHDRAWAL_POLICY
+  owner: landing+worker
+  default: null
+  secret: false
+  permitted_recipients:
+  - landing
+  - worker
+  notes: Explicit B for approved synthetic profile; absent value fails closed.
+- name: X_HANDOFF_SERVICE_KEYRING_FILE
+  owner: landing+retry+worker
+  default: null
+  secret: true
+  permitted_recipients:
+  - landing
+  - retry
+  - worker
+  notes: Read-only runtime secret mount; never gate/browser/Umami. Current+retiring key IDs; MAC purpose separation.
+- name: X_HANDOFF_RECEIPT_KEYRING_FILE
+  owner: landing
+  default: null
+  secret: true
+  permitted_recipients:
+  - landing
+  notes: Independent key from service key; no NEXT_PUBLIC; overlap at least receipt window.
+- name: X_HANDOFF_CONTROL_DB_URL_FILE
+  owner: landing+retry
+  default: null
+  secret: true
+  permitted_recipients:
+  - landing
+  - retry
+  notes: Separate least-privilege database role; never gate/worker/browser/Umami.
+- name: X_HANDOFF_SOURCE_DATA_KEYRING_FILE
+  owner: worker
+  default: null
+  secret: true
+  permitted_recipients:
+  - worker
+  notes: Worker-only AES-256-GCM keys; protect ciphertext and backups. Never reuse context/service/receipt keys.
+- name: X_HANDOFF_SOCKET
+  owner: gate+worker
+  default: /run/axonos-x-capi/handoff.sock
+  secret: false
+  permitted_recipients:
+  - gate
+  - worker
+  notes: Bounded local authenticated RPC; separate admission from privacy-close listener.
+- name: X_HANDOFF_SOURCE_URL
+  owner: landing+retry
+  default: https://app.axonos.io/api/x-attribution/handoff/source
+  secret: false
+  permitted_recipients:
+  - landing
+  - retry
+  notes: Immutable origin/path; no redirects or caller override.
+- name: X_HANDOFF_LEASE_MS
+  owner: landing+worker
+  default: 30000
+  secret: false
+  permitted_recipients:
+  - landing
+  - worker
+  notes: Candidate synthetic profile constant; changing it requires contract revision.
+- name: X_HANDOFF_RENEW_INTERVAL_MS
+  owner: landing+worker
+  default: 10000
+  secret: false
+  permitted_recipients:
+  - landing
+  - worker
+  notes: Candidate synthetic profile constant; changing it requires contract revision.
+- name: X_HANDOFF_TRANSACTION_TTL_MS
+  owner: landing+worker
+  default: 300000
+  secret: false
+  permitted_recipients:
+  - landing
+  - worker
+  notes: Candidate synthetic profile constant; changing it requires contract revision.
+- name: X_HANDOFF_OBSERVATION_TTL_MS
+  owner: landing+worker
+  default: 120000
+  secret: false
+  permitted_recipients:
+  - landing
+  - worker
+  notes: Candidate synthetic profile constant; changing it requires contract revision.
+- name: X_HANDOFF_MAX_CLOCK_ERROR_MS
+  owner: landing+worker
+  default: 5000
+  secret: false
+  permitted_recipients:
+  - landing
+  - worker
+  notes: Candidate synthetic profile constant; changing it requires contract revision.
+- name: X_CAPI_MODE
+  owner: gate+worker
+  default: 'off'
+  secret: false
+  permitted_recipients:
+  - gate
+  - worker
+  notes: Existing control; fixture-only isolated dry_run is not approval to change real configuration.
+- name: X_CAPI_CONSENT_POLICY_EPOCH
+  owner: gate+worker
+  default: null
+  secret: false
+  permitted_recipients:
+  - gate
+  - worker
+  notes: Existing control; new strictly higher epoch required; fixture42 is not chosen operational epoch.
+- name: X_CAPI_CONSENT_POLICY_VERSION
+  owner: gate+worker
+  default: x-capi-handoff-v2
+  secret: false
+  permitted_recipients:
+  - gate
+  - worker
+  notes: Candidate synthetic handoff policy; no production configuration change authorized.
+- name: X_CAPI_CONTEXT_KEY_FILE
+  owner: gate+worker
+  default: null
+  secret: true
+  permitted_recipients:
+  - gate
+  - worker
+  notes: Existing Fernet purpose/bounds; primary for positive proofs; old-key privacy closure remains possible.
+- name: X_CAPI_HASH_KEY_FILE
+  owner: worker
+  default: null
+  secret: true
+  permitted_recipients:
+  - worker
+  notes: Existing immutable retained-row hash key; do not rotate through this handoff.
+- name: X_CAPI_DB_URL_FILE
+  owner: worker
+  default: null
+  secret: true
+  permitted_recipients:
+  - worker
+  notes: Existing dedicated database; NEVER public gate or landing.
+prohibited_actions:
+- enable live X
+- read existing credentials
+- alter Stripe CARD disabled state
+- apply financial migrations 006/007
+- provision infrastructure
+- deploy
+keyring_format:
+  json_keys:
+  - primary_kid
+  - keys
+  key_entry_fields:
+  - kid
+  - key_base64url
+  key_bytes: 32
+  duplicate_ids: reject
+  unknown_properties: reject
+  default_keys: none
+rotation:
+  service: Distribute new verification key first; switch signer; retry logical queue operations with current key;
+    retire old only after reviewed overlap. Never change operation identity.
+  receipt: Separate keyring; old verification available through outstanding receipt validity; no new expiry on rotation.
+  source_data: New writes use primary; decrypt-only old keys retained until all protected data/backups retired;
+    each nonce unique per key.
+  existing_context: Preserve current primary/decrypt-only semantics and coordinated audience/epoch rules.
+  existing_hash: Immutable while retained rows exist.
+infrastructure_status: UNVERIFIED; prerequisite only; no secrets provisioned
+queue_retry:
+  initial_ms: 1000
+  cap_ms: 30000
+  jitter_percent: 20
+  discard_after_attempts: null
+  independent_of_browser: true

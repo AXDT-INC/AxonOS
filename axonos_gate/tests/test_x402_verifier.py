@@ -151,7 +151,7 @@ class TestSettleX402Gates(unittest.TestCase):
         verify.assert_called_once_with(
             authenticated_wallet=_SIGNER.lower(),
             tx_hash="0x" + "ab" * 32,
-            attribution_context="browser-context",
+            attribution_context=None,
         )
         self.assertTrue(result["verified"])
         self.assertTrue(result["x402"])

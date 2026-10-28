@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "source-status-success",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 2
+    },
+    "ok": {
+      "const": true
+    },
+    "epoch": {
+      "$ref": "common.schema.json#/definitions/Epoch"
+    },
+    "generation": {
+      "$ref": "common.schema.json#/definitions/UUID"
+    },
+    "request_id": {
+      "$ref": "common.schema.json#/definitions/UUID"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "none",
+        "captured",
+        "assigned",
+        "consumed",
+        "closed",
+        "expired"
+      ]
+    },
+    "expires_at_ms": {
+      "anyOf": [
+        {
+          "$ref": "common.schema.json#/definitions/Ms"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "v",
+    "ok",
+    "epoch",
+    "generation",
+    "request_id",
+    "state",
+    "expires_at_ms"
+  ],
+  "additionalProperties": false
+}

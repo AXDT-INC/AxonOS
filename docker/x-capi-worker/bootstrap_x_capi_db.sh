@@ -151,9 +151,14 @@ if [ "$schema_version" = 0 ]; then
     run_migration_preflight \
         "$migration_dir/001_x_capi_outbox.sql" '$preflight$;'
 elif [ "$schema_version" = 4 ]; then
-    run_migration_preflight \
-        "$migration_dir/004_x_capi_roles_and_grants.sql" \
-        '$catalog_preflight$;'
+    { printf '%s\n' 'BEGIN;'; cat "$migration_dir/008_x_capi_v4_preflight.sql"; printf '%s\n' 'ROLLBACK;'; } |
+        psql -X -w -q -o /dev/null -v ON_ERROR_STOP=1 \
+            -v owner_role="$owner_role" -v worker_role="$worker_role"
+elif [ "$schema_version" = 5 ]; then
+    # The helper is read-only; no historical v4 grants are applied on restart.
+    { printf '%s\n' 'BEGIN;'; cat "$migration_dir/008_x_capi_v5_postflight.sql"; printf '%s\n' 'ROLLBACK;'; } |
+        psql -X -w -q -o /dev/null -v ON_ERROR_STOP=1 \
+            -v owner_role="$owner_role" -v worker_role="$worker_role"
 else
     fail "unsupported existing X CAPI schema; provision a fresh dedicated database"
 fi

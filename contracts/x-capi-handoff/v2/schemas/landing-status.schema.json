@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "landing-status",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 2
+    }
+  },
+  "required": [
+    "v"
+  ],
+  "additionalProperties": false
+}

@@ -46,7 +46,10 @@ class ScientificPythonImageTests(unittest.TestCase):
             "-c /opt/axonos-build/scientific-python.txt numpy matplotlib pyparsing",
             source,
         )
-        self.assertEqual(source.count("timeout --kill-after=30s 15m"), 2)
+        self.assertEqual(source.count("timeout --kill-after=30s 30m"), 1)
+        self.assertEqual(source.count("timeout --kill-after=30s 15m"), 1)
+        science_install = source.split("# Install Spyder", 1)[1].split("# Install UGENE", 1)[0]
+        self.assertIn("timeout --kill-after=30s 30m", science_install)
         self.assertNotIn("'numpy>=1.24.0,<2' matplotlib", source)
         self.assertNotIn("--no-deps", source)
         self.assertNotIn("--upgrade pip", source)
@@ -62,8 +65,12 @@ class ScientificPythonImageTests(unittest.TestCase):
         self.assertGreater(check, max(match.start() for match in installs))
         self.assertIn('if [ "$AXONOS_SKIP_HEAVY" != "1" ]; then', source[:check])
 
-    def test_ci_resolves_with_production_pip_and_a_deadline(self):
-        source = (ROOT / ".github/workflows/validate.yaml").read_text()
+    def test_archived_ci_documents_production_pip_and_deadline(self):
+        # Upstream intentionally disables CI. Validate the archived recipe
+        # without reinstating an executable workflow.
+        self.assertFalse((ROOT / ".github/workflows/validate.yaml").exists())
+        archived = (ROOT / ".github/workflows-disabled/validate.yaml").read_text()
+        source = "\n".join(line[2:] if line.startswith("# ") else line for line in archived.splitlines())
         job = source.split("  scientific-python:\n", 1)[1].split("  dockerfile:", 1)[0]
         self.assertIn('python-version: "3.10"', job)
         self.assertIn("timeout-minutes: 25", job)

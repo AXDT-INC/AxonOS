@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "source-revoke",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 2
+    },
+    "epoch": {
+      "$ref": "common.schema.json#/definitions/Epoch"
+    },
+    "generation": {
+      "$ref": "common.schema.json#/definitions/UUID"
+    },
+    "request_id": {
+      "$ref": "common.schema.json#/definitions/UUID"
+    },
+    "op": {
+      "const": "revoke"
+    },
+    "owner_hash": {
+      "$ref": "common.schema.json#/definitions/Hash"
+    },
+    "reason": {
+      "type": "string",
+      "enum": [
+        "withdrawn",
+        "gpc",
+        "denied"
+      ]
+    }
+  },
+  "required": [
+    "v",
+    "epoch",
+    "generation",
+    "request_id",
+    "op",
+    "owner_hash",
+    "reason"
+  ],
+  "additionalProperties": false
+}
