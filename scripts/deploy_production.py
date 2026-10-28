@@ -394,6 +394,39 @@ class Deployment:
     def active_sessions(self):
         text = self.docker('ps', '--format', '{{json .}}', capture=True, label='Active session inspection')
         active = checked_output(checks.sessions, text)
+        expected = getattr(self.options, 'preserve_session', None) or []
+        if expected:
+            require(getattr(self, 'mode', None) == 'off', 'Session preservation requires CAPI off')
+            require(len(set(expected)) == len(expected) and
+                    all(re.fullmatch(r'[1-9][0-9]*', value) for value in expected),
+                    'Preserved session IDs must be distinct positive integers')
+            names = sorted('axgt-session-' + value for value in expected)
+            require(sorted(active.splitlines()) == names,
+                    'Running tenant set differs from explicitly preserved sessions')
+            # Never request Config/Env: runtime identity needs no credentials.
+            fields = ('Id', 'Name', 'Image', 'State.Running', 'State.Paused',
+                      'State.Restarting', 'State.StartedAt', 'RestartCount',
+                      'Mounts', 'HostConfig.DeviceRequests', 'HostConfig.Devices',
+                      'HostConfig.PidMode', 'NetworkSettings.Networks')
+            template = '[' + ','.join('{{json .' + field + '}}' for field in fields) + ']'
+            rows = self.docker('inspect', '--format', template, *names, capture=True,
+                               label='Preserved renter runtime identities')
+            snapshot = [json.loads(line) for line in rows.splitlines()]
+            require(len(snapshot) == len(names), 'Missing preserved renter metadata')
+            for name, row in zip(names, snapshot):
+                require(len(row) == len(fields) and row[1] == '/' + name and
+                        re.fullmatch(r'[a-f0-9]{64}', row[0]) and
+                        row[3] is True and row[4] is False and row[5] is False and
+                        row[11] in ('', None), 'Preserved renter is not independently running')
+                row[8] = sorted(row[8], key=lambda mount: mount['Destination'])
+            baseline = getattr(self, 'preserved_sessions', None)
+            if baseline is None:
+                self.preserved_sessions = snapshot
+            else:
+                require(snapshot == baseline,
+                        'Preserved renter identity, uptime, GPU, mounts or networks changed')
+            note('Verified unchanged running renters: ' + ', '.join(names))
+            return
         if active:
             note('Active tenant sessions:\n' + active)
             raise Refusal('Active tenants found; deployment is prohibited')
@@ -886,6 +919,7 @@ class Deployment:
             override = Path(directory) / 'image.json'
             override.write_text(json.dumps({'services': {'axonos': {'image': self.image_id}}}))
             self.compose_run('config', '--quiet', override=override, label='Immutable rollout configuration')
+            self.active_sessions()
             note('Promote validated ID to shared tag; deploy that SAME ID, never resolve the tag for rollout.')
             self.docker('image', 'tag', self.image_id, 'axonos:latest', label='Validated image promotion')
             self.compose_run('up', '-d', '--no-deps', '--no-build', '--pull', 'never', 'axonos',
@@ -903,6 +937,7 @@ class Deployment:
             note(endpoint + ': HTTP ' + code)
             require(code == '200', 'Local HTTP postflight failed')
         checks.worker_check(self.require_healthy('x-capi-worker'), self.mode, self.worker_contract)
+        self.active_sessions()
         require(self.docker('image', 'inspect', 'axonos:latest', '--format', '{{.Id}}', capture=True) == self.image_id,
             'Shared tag changed concurrently; pinned gate is safe but tenant image selection needs operator review')
         self.deployed = True
@@ -975,6 +1010,8 @@ def main():
     parser.add_argument('--password-secret-file', help='Private external file passed only as BuildKit axonos_password secret')
     parser.add_argument('--nvidia-package', help='Explicit production container package version')
     parser.add_argument('--health-timeout', type=int, default=300, help='Health/init wait seconds (1..1800)')
+    parser.add_argument('--preserve-session', action='append', default=[], metavar='ID',
+                        help='Explicit CAPI-off maintenance: preserve this running renter; repeat for every renter')
     args = parser.parse_args()
     require(1 <= args.health_timeout <= 1800, 'Health timeout must be 1..1800 seconds')
     require(not (args.build_only and (args.check or args.with_capi_backend)),

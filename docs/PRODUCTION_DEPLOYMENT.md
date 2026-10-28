@@ -7,6 +7,31 @@ profile `x-capi`, project `axonos`, and the authorized checkout's explicit `.env
 A base-only gate recreation can omit context-key, runtime, and privacy-fence
 mounts. Do not substitute a generic `docker compose up -d --build`.
 
+For explicitly approved CAPI-off gate maintenance with existing renters, repeat
+`--preserve-session ID` for every running renter (for example,
+`--preserve-session 549 --preserve-session 555`). The default still refuses active
+renters. This option requires the exact named running set and compares container
+IDs, image IDs, start times, restart counts, mounts, GPU/device assignments and
+network attachments at each admission check and after rollout. Any change refuses
+the operation; it never stops or recreates a renter. Gate connections can drop
+and need to reconnect. Existing gate-startup liveness accounting protects against
+counting gate downtime as missed renter heartbeats; normal paid/demo deadlines
+remain effective. This option does not freeze new admissions or roll back a
+failed gate: the external admission window and operator recovery procedure are
+still required. A postflight failure reports failure, not guaranteed continuity.
+Release this controller change as a clean reviewed revision before use; the
+clean-tree and image revision checks remain enforced.
+
+For later X CAPI activation, the proposed host token file is
+`/etc/axonos/x-capi-access-token`, outside this checkout. It must be a single-link
+regular file owned by UID 10001, mode 0400, containing only the pixel token with
+no trailing newline. A separately reviewed activation change must mount it
+read-only into the worker at `/run/secrets/x_capi_access_token`; the current
+CAPI-off overlay has no such mount. Do not put the token in `.env` or mount it
+into the gate. Creating this file alone does not enable delivery. See
+[the activation runbook](X_CAPI_LIVE_TRANSPORT.md) for the other keys and required
+configuration. Keep `X_CAPI_MODE=off` and `X_HANDOFF_ENABLED=false` for this release.
+
 This is an operator-triggered update tool for an **already provisioned, healthy
 deployment**, not a fresh installer, repair tool, PostgreSQL upgrader, or
 unattended release system. It does not promise zero downtime or transactional
