@@ -47,18 +47,67 @@ provisioned, use a clean checkout at the same commit as the intended rollout:
 
 ```bash
 ./scripts/deploy-production.sh --build-only \
+  --builder "$DEDICATED_BUILDER" --builder-id "$BUILDER_CONTAINER_ID" \
   --password-secret-file /secure/operator-provisioned-password \
   --nvidia-package 580.173.02-1ubuntu1
 ```
 
 The path is illustrative; provision the real file privately, outside the build
 context, without shell tracing or credential dumps. Build-only does not require
-`.env` or an existing Compose deployment. It retains a private candidate under
-the existing newest-three retention policy and prints the validated image ID.
+`.env` or an existing Compose deployment. It prepares the gate and one worker/privacy image under
+the shared newest-three candidate retention policy and prints both immutable IDs.
+The worker Dockerfile contains the required privacy initializer and bootstrap script;
+validation compiles its Python components without executing their application code.
 It creates only disposable isolated validators and performs bounded candidate
 housekeeping. It never calls Compose, initializers, migrations, or rollout.
-`--build-only --prevalidated-image "$VALIDATED_IMAGE_ID"` revalidates without
-building (also supply the NVIDIA package option).
+`--build-only --prevalidated-image "$VALIDATED_IMAGE_ID"
+--prevalidated-worker-image "$VALIDATED_WORKER_IMAGE_ID"` revalidates both without
+building (also supply the NVIDIA package option). Image reuse needs no builder
+or password file. Gate-only rollout still accepts just the gate ID.
+
+### Dedicated builder admission
+
+Every build requires `--builder` and the full 64-character `--builder-id` of an
+already running container. Admission never bootstraps or configures a builder.
+It refuses the default builder, non-`docker-container` drivers, multiple nodes,
+nonliteral endpoints (including context aliases), and identity mismatches.
+The sole endpoint must be `unix:///var/run/docker.sock` on the approved build host.
+Buildx environment overrides are stripped; each Bake invocation selects the
+admitted builder explicitly. Read-only `buildx inspect` text is parsed strictly;
+unsupported or ambiguous output fails closed. See the upstream
+[inspect implementation](https://github.com/docker/buildx/blob/master/commands/inspect.go).
+
+Required provisioned boundaries: at most 4 CPUs, 16 GiB RAM, 1024 PIDs, no swap,
+private PID/cgroup namespaces, no device requests, and enabled OOM killing.
+The controller checks Docker metadata and effective cgroup-v2 limits. Its only
+mount must be the node's dedicated local BuildKit state volume. No bind mounts,
+volume driver options, or other containers sharing that volume are accepted.
+The volume data directory must itself be a separate filesystem mount, on a
+different device from its parent; inaccessible host metadata fails closed.
+Provisioning that storage and ensuring its capacity is an operator prerequisite,
+not a controller operation. The Docker image store used by `--load` also requires
+capacity planning on the isolated build host; state isolation does not reserve
+space for exported images. Never run preparation on the production host.
+
+The daemon entrypoint must be `buildkitd`, with exactly
+`--config /etc/buildkit/buildkitd.toml`, no `BUILDKITD_*` environment overrides,
+and this configuration (whitespace is checked):
+
+```toml
+root = "/var/lib/buildkit"
+[worker.oci]
+  enabled = true
+  max-parallelism = 1
+[worker.containerd]
+  enabled = false
+```
+
+[BuildKit's max-parallelism](https://docs.docker.com/build/buildkit/toml-configuration/)
+limits execution steps to one; gate and worker builds are issued sequentially.
+The host deployment lock serializes controller clients. Docker administrators
+remain trusted: prohibit unrelated clients from using the dedicated builder;
+this controller cannot lock out arbitrary Docker administrators. No automatic
+fallback, provisioning, Docker setting changes, or infrastructure creation occurs.
 
 Later, the separately authorized production invocation uses `--prevalidated-image`
 as shown above. It repeats the original complete deployment preflight and drift
@@ -66,8 +115,59 @@ checks and image validators. It requires matching source revision, so preparatio
 and deployment must use the same clean commit. Labels are trusted-local controller
 metadata, not signed provenance: Docker administrators can forge them. Only accept
 an operator-selected image from the trusted build/transfer chain. The controller
-does not pull or transfer images and does not activate CAPI or handoff. Keep
+does not pull or transfer prepared gate/worker images; backend rollout still
+fetches its configured pinned PostgreSQL/bootstrap dependencies. It does not
+activate CAPI or handoff. Keep
 `X_CAPI_MODE=off` and `X_HANDOFF_ENABLED=false` for this release.
+
+### Controller correction review (2026-10-28)
+
+Implementation starts from verified controller commit
+`2efc255bb3c566e217c5053c26c09f8eb4e0abc3` in a separate implementation worktree.
+Independent read-only review found and resolved two issues: worker candidates now
+share the bounded retention policy, and prepared worker/privacy image identities
+are checked before execution. Re-review found no blocking code issues. A separate
+filesystem check also closes the gap between a dedicated volume name and storage
+isolation. Validator cleanup retains each container's own image identity even if
+worker validation fails and control returns to the gate image.
+
+Validation uses fake Docker/Git executables, metadata mocks and disposable local
+HTTP/Unix sockets. No synthetic or production image build was repeated. The
+frozen manifest SHA256 remains
+`085953bf44b097d571c99aff4dc18ff92fe539b3cddec6bf2727f2f56ab447d8`;
+all 52 recorded contract hashes match. Payment, x402, session, CAPI and default-off
+runtime source is unchanged by these controller corrections.
+
+Final validation inventory: **1,111 passed, 174 explicitly skipped**, no
+remaining test failures. This comprises 80 controller orchestration tests,
+1,119 tests across the other 45 selected controller/payment/session/CAPI modules
+(including 17 focused builder/provenance tests), and 86 disposable socket tests.
+The socket tests initially hit sandbox `PermissionError`; all 86 passed when
+rerun with disposable localhost/Unix socket permission. The skips require
+unprovisioned PostgreSQL, browser/process, privileged metadata or opt-in fixtures.
+No production credentials, real image builds, database migrations, restarts,
+GitHub pushes, GitOps changes, Docker configuration changes or deployment occurred.
+The original integration worktree and production checkout remain clean.
+
+**Repository verdict: `PRODUCTION_CONTROLLER_READY`.** This is controller-code
+readiness, not authorization or evidence of a completed production rollout.
+
+Remaining rollout blockers are deliberately outside this repository task:
+
+- An approved isolated host with an already provisioned dedicated builder,
+  separate state filesystem, inspectable metadata, effective cgroup-v2 limits,
+  sufficient export/image-store space and controlled access. These real-host
+  properties were not inspected or provisioned during this correction.
+- Separately authorized preparation of production images from the final clean
+  commit using the private password file and exact NVIDIA package, followed by
+  trusted transfer of both immutable images to the rollout host. Previous
+  synthetic image evidence does not replace this step.
+- Separately approved production preflight, admissions/maintenance window and
+  rollout. Backend initialization remains an explicit persistent mutation;
+  image preparation never authorizes it. CAPI and handoff stay disabled.
+- Database/process/browser integration tests that require separately provisioned
+  fixtures are reported as skips, not live validation. GPU, WebRTC and ingress
+  operation still require the established separately approved checks.
 
 NVIDIA compatibility evidence (2026-10-28): host driver `580.173.02`, host package
 `580.173.02-0ubuntu0.22.04.1`, and previously attested container closure
@@ -777,8 +877,10 @@ git pull --ff-only
 | --- | --- |
 | `--check` | Read-only preflight, including the fixed privileged secret-metadata helper, Engine/store/effective-API admission, existing-image/network capability probes, and metadata-only exec checks in the existing gate and dedicated PostgreSQL. No image build, candidate cleanup, validator container creation, service mutation, or initialization. |
 | `--with-capi-backend` | Explicitly update the already provisioned CAPI initializers/worker before gate rollout. |
-| `--build-only` | Build/validate a private image without reading production Compose configuration, initializing databases, or replacing services. Mutually exclusive with check/backend flags. |
+| `--build-only` | Build/validate private gate and worker/privacy images without reading production Compose configuration, initializing databases, or replacing services. Mutually exclusive with check/backend flags. |
 | `--prevalidated-image ID` | Reuse an immutable local image ID, verify source/package/nonce metadata, and rerun image validation. Tags are refused. |
+| `--builder NAME`, `--builder-id ID` | Required for any build; admit the existing bounded dedicated builder before building. |
+| `--prevalidated-worker-image ID` | Reattest/revalidate the immutable local worker/privacy image; required alongside gate reuse in build-only/backend mode. |
 | `--password-secret-file PATH` | Canonical private nonempty regular file outside the checkout; passed as BuildKit secret `axonos_password`, never read by controller. Required when building. |
 | `--nvidia-package VERSION` | Required explicit selection: `580.173.02-1ubuntu1`. No automatic fallback. |
 | `--health-timeout SECONDS` | Health/init polling deadline; default 300, permitted range 1–1800. |
@@ -788,7 +890,7 @@ For a reviewed backend change:
 
 ```bash
 ./scripts/deploy-production.sh --check --with-capi-backend
-./scripts/deploy-production.sh --with-capi-backend --prevalidated-image "$VALIDATED_IMAGE_ID" --nvidia-package 580.173.02-1ubuntu1
+./scripts/deploy-production.sh --with-capi-backend --prevalidated-image "$VALIDATED_IMAGE_ID" --prevalidated-worker-image "$VALIDATED_WORKER_IMAGE_ID" --nvidia-package 580.173.02-1ubuntu1
 ```
 
 Drain sessions before rollout. The active-session override has been removed. Active tenants are
@@ -807,14 +909,14 @@ succeed; all later gates remain mandatory.
 
 ## Exact immutable-image flow
 
-1. Attest the bounded private-candidate inventory and apply the retention policy
+1. Admit the explicit dedicated builder, then attest the bounded private-candidate inventory and apply the retention policy
    below before admitting another build. Construct a single Bake target from the
    checkout Dockerfile, with only full-build, driver branch/package, and fresh
    credential-cache nonce arguments. Compose build arguments are not forwarded.
    Pass the external password file as required BuildKit secret `axonos_password`.
    Use one random private `axonos-deploy-candidate:<run-id>` tag and local output.
    Add ownership, run-ID, creation-time, source revision, package and nonce labels.
-   Send the plan to `docker buildx bake --file - --load axonos` through stdin,
+   Send the plan to `docker buildx bake --builder NAME --file - --load axonos` through stdin,
    not a credential-bearing on-disk file. Full scientific applications and normal
    build caching are retained. This does **not** publish `axonos:latest`.
 2. Inspect the private candidate once and capture its immutable `sha256:` image
@@ -830,8 +932,11 @@ succeed; all later gates remain mandatory.
 
    Validators are explicit create/start/inspect operations with unique run-owned
    names/labels, `runc`, no GPU/network/production mounts, read-only root, dropped
-   capabilities, no-new-privileges, and bounded `/tmp` tmpfs. Success requires an
-   exited container with exit code zero. The scientific validator's existing
+   capabilities, no-new-privileges, bounded `/tmp` tmpfs, 1 CPU, 1 GiB memory,
+   no swap and 128 PIDs. The worker validator uses the same restrictions with
+   `/usr/local/bin/python3`, compiles all shipped Python components and imports
+   its pinned third-party dependencies; it never runs either initializer. Docker resource capabilities must also be available; otherwise validation is
+   refused before container creation. Success requires an exited container with exit code zero. The scientific validator's existing
    warning handling is unchanged. These checks attest image contents, not live
    GPU/host-driver or WebRTC operation.
 3. Remove each validator with identity/label/image checks. Revalidate clean Git,
@@ -1048,14 +1153,18 @@ the shared lock coordinates this tool, not arbitrary Docker access.
 database storage/credentials, or reset privacy state. Dedicated database drift
 is rejected before stopping the worker and rechecked afterward. The sequence is:
 
-1. Build worker/privacy-initializer images and fetch the configured pinned
+1. Prepare and validate (or revalidate the supplied immutable ID of) the single
+   worker/privacy image before backend mutation. Fetch the configured pinned
    PostgreSQL/bootstrap images while the existing healthy worker stays running.
+   Backend rollout performs no Compose builds; every backend `up` uses an
+   immutable override for both worker and privacy initializer.
    Recheck resources, dedicated database readiness, configuration, and sessions.
 2. Prepare **only the two replacement initializers**, without starting them,
    using targeted `up --no-start --no-deps --no-build --pull never --force-recreate`.
    Recheck again while the original worker remains healthy. This preparation
    replaces initializer containers but does not run DB/privacy initialization.
-   Record the new initializer container IDs for this deployment attempt.
+   Record the new initializer container IDs for this deployment attempt. Verify
+   the privacy initializer image ID before stopping the original worker.
 3. Verify the worker still has the original recorded ID and is healthy. Stop
    that exact ID with a 60-second grace period, then recheck resource/DB readiness.
 4. Announce and mark the **persistent mutation boundary before issuing** any
@@ -1066,7 +1175,8 @@ is rejected before stopping the worker and rechecked afterward. The sequence is:
 5. Verify that both recorded **current-attempt** initializer IDs exited zero,
    then prepare the replacement worker without starting dependencies. Recheck
    resource/database readiness, unchanged dedicated database identity, and those exact initializer IDs/completion again
-   immediately before starting the worker. Start only the worker with
+   immediately before starting the worker, including its immutable image ID.
+   Start only the worker with
    `--no-deps --no-recreate`, so Compose cannot replay completed one-shot
    initializers during this second `up`. This is not a dependency bypass:
    fresh initialization in this attempt and successful dependency checks are

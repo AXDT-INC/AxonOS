@@ -66,6 +66,22 @@ class PreparationAdmissionTests(unittest.TestCase):
                     with self.assertRaises(deploy.Refusal):
                         self.controller.attest_image()
 
+    def test_worker_reuse_requires_worker_role_and_same_provenance(self):
+        document = self.provenance()
+        self.controller.docker.side_effect = None
+        self.controller.docker.return_value = json.dumps(document)
+        with self.assertRaises(deploy.Refusal):
+            self.controller.attest_image('worker')
+        document[0]['Config']['Labels'][deploy.ROLE_LABEL] = 'worker'
+        self.controller.docker.return_value = json.dumps(document)
+        self.controller.attest_image('worker')
+        for field in (deploy.REVISION_LABEL, deploy.NVIDIA_LABEL, deploy.NONCE_LABEL):
+            bad = copy.deepcopy(document)
+            bad[0]['Config']['Labels'][field] = 'wrong'
+            self.controller.docker.return_value = json.dumps(bad)
+            with self.subTest(field=field), self.assertRaises(deploy.Refusal):
+                self.controller.attest_image('worker')
+
     def test_tag_is_refused_before_docker_inspection(self):
         self.controller.image_id = 'axonos:latest'
         with self.assertRaises(deploy.Refusal):
