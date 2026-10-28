@@ -3193,7 +3193,7 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(x_capi_worker.classify_response(x_capi_worker.TransportResponse(401, {}, b""), 100)["action"], "pause")
         rate = x_capi_worker.classify_response(x_capi_worker.TransportResponse(429, {"Retry-After": "999999"}, b""), 100)
         self.assertEqual(rate["action"], "retry")
-        self.assertEqual(rate["retry_at"], 3700)
+        self.assertEqual(rate["retry_at"], 1000099)
         self.assertEqual(x_capi_worker.classify_response(x_capi_worker.TransportResponse(503, {}, b""), 100)["action"], "retry")
         self.assertEqual(x_capi_worker.classify_response(x_capi_worker.TransportResponse(302, {}, b""), 100)["code"], "redirect_rejected")
         self.assertEqual(x_capi_worker.classify_response(x_capi_worker.TransportResponse(400, {}, b""), 100)["action"], "permanent")

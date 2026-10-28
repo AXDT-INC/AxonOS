@@ -252,7 +252,7 @@ class TransportResponse:
 
 
 class RequestsTransport:
-    """Dedicated-token HTTPS adapter; the existing activation block still applies.
+    """Dedicated-token HTTPS adapter with an independent production gate.
 
     The historical class name is retained for the test-injection boundary. The
     standard-library client has no ambient proxy, netrc, cookie, redirect, or
@@ -265,7 +265,8 @@ class RequestsTransport:
 
     def send(self, pixel_id: str, token: str, payload: Dict[str, Any]) -> TransportResponse:
         cfg = x_capi.load_config()
-        if cfg.mode != "live" or not cfg.producer_ready or cfg.errors:
+        if (cfg.mode != "live" or not cfg.producer_ready or cfg.errors
+                or not x_capi.production_transport_enabled()):
             raise RuntimeError(LIVE_DELIVERY_BLOCK_REASON)
         body = _serialize_request(pixel_id, payload, cfg)
         # Read only the protected worker file, including for direct adapter
@@ -351,6 +352,7 @@ def _tls_context() -> ssl.SSLContext:
     )):
         raise ValueError("unsupported_transport_tls_environment")
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_default_certs(ssl.Purpose.SERVER_AUTH)
     return context
 
@@ -454,7 +456,7 @@ def _read_private_file(
             return None, f"{label} file must be mounted below /run/secrets"
     except (OSError, ValueError):
         return None, f"{label} file path is invalid"
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0) | os.O_NONBLOCK
     try:
         fd = os.open(candidate, flags)
     except OSError:
@@ -1792,13 +1794,15 @@ def worker_readiness() -> Dict[str, Any]:
     if status["mode"] in ("dry_run", "live"):
         hash_key_ok = x_capi.keyed_internal_hash("readiness", "probe") is not None
     live_delivery_blocked_reason = (
-        LIVE_DELIVERY_BLOCK_REASON if status["mode"] == "live" else None
+        LIVE_DELIVERY_BLOCK_REASON if status["mode"] == "live"
+        and not x_capi.production_transport_enabled() else None
     )
     if status["mode"] == "live":
-        # No normative X contract currently proves that a supplied twclid is
-        # authentic campaign provenance. Do not even open the delivery token
-        # while the production path is structurally disabled.
-        token_error = live_delivery_blocked_reason
+        if live_delivery_blocked_reason is None and status["producer_ready"]:
+            token, token_error = read_token()
+            token_ok = token is not None and token_error is None
+        else:
+            token_error = live_delivery_blocked_reason or "invalid_live_configuration"
     runtime_secure, listener_present, consent_listener_present = _ingest_runtime_state()
     privacy_fence_secure = _privacy_fence_runtime_secure()
     try:
@@ -4635,13 +4639,13 @@ def _retry_after(headers: Mapping[str, str], now: float) -> Optional[float]:
     raw = str(value).strip()
     try:
         seconds = int(raw)
-        return now + max(1, min(3600, seconds))
+        return now + max(1, min(253_402_300_799, seconds))
     except ValueError:
         try:
             parsed = email.utils.parsedate_to_datetime(raw)
             if parsed.tzinfo is None:
                 parsed = parsed.replace(tzinfo=timezone.utc)
-            return now + max(1, min(3600, parsed.timestamp() - now))
+            return now + max(1, parsed.timestamp() - now)
         except (TypeError, ValueError, OverflowError):
             return None
 
@@ -4759,13 +4763,16 @@ def finish_job(
             return False
         if action not in ("retry", "pause"):
             _decrement_outbox_capacity_on_cursor(cur, 1, now)
-        if action == "pause":
+        if action == "pause" or (action == "retry" and code == "rate_limited"):
+            # For rate_limited only, paused_at stores the cooldown deadline.
+            # This durable singleton fences every job, including new arrivals,
+            # and survives process replacement without adding schema objects.
             cur.execute(
                 """INSERT INTO x_capi_worker_state (singleton, paused_reason, paused_at, updated_at)
                    VALUES (TRUE,%s,%s,%s) ON CONFLICT (singleton) DO UPDATE SET
                    paused_reason=EXCLUDED.paused_reason, paused_at=EXCLUDED.paused_at,
                    updated_at=EXCLUDED.updated_at""",
-                (code, now, now),
+                (code, retry_at if code == "rate_limited" else now, now),
             )
         cur.execute(
             """INSERT INTO x_capi_counters(reason,count,updated_at) VALUES(%s,1,%s)
@@ -4914,10 +4921,16 @@ def expire_and_cleanup(
     conn.commit()
 
 
-def _is_paused(conn) -> bool:
+def _is_paused(conn, now=None) -> bool:
     with conn.cursor() as cur:
-        cur.execute("SELECT paused_reason FROM x_capi_worker_state WHERE singleton=TRUE")
+        cur.execute("SELECT paused_reason,paused_at FROM x_capi_worker_state WHERE singleton=TRUE")
         row = cur.fetchone()
+        current = time.time() if now is None else now
+        if row and row[0] == "rate_limited" and row[1] is not None and row[1] <= current:
+            cur.execute("""UPDATE x_capi_worker_state SET paused_reason=NULL,
+                paused_at=NULL,updated_at=%s WHERE singleton=TRUE
+                AND paused_reason='rate_limited' AND paused_at<=%s""", (current, current))
+            row = None
     conn.commit()
     return bool(row and row[0])
 
@@ -5101,17 +5114,16 @@ def run_once(
                     return privacy_state
             if cfg.mode != "live":
                 return "maintenance"
-            # Official X documentation currently supplies no normative
-            # authenticity/provenance mechanism for twclid. The normal worker
-            # invocation never crosses this boundary, regardless of live env
-            # settings or token presence. Tests must inject a non-production
-            # transport *and* enable the existing isolated-secret test guard.
             if not injected_test_transport:
-                return LIVE_DELIVERY_BLOCK_REASON
+                if not x_capi.production_transport_enabled():
+                    return LIVE_DELIVERY_BLOCK_REASON
+                if transport is not None and type(transport) is not RequestsTransport:
+                    return LIVE_DELIVERY_BLOCK_REASON
+                transport = RequestsTransport()
             token, token_error = read_token()
             if token_error or token is None:
                 return "disabled"
-            if _is_paused(conn):
+            if _is_paused(conn, float(now_fn())):
                 return "paused"
             if cfg.policy_version == "x-capi-handoff-v2" and (
                 _handoff_runtime is None or not _handoff_runtime.dispatch_fresh()

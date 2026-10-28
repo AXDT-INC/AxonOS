@@ -52,7 +52,16 @@ _EVENT_ENV = {
     MILESTONE_SESSION_STARTED: "X_CAPI_EVENT_SESSION_STARTED",
 }
 _MODE_VALUES = frozenset({"off", "dry_run", "live"})
-LIVE_MODE_UNAVAILABLE_REASON = "live_delivery_blocked_untrusted_twclid_provenance"
+LIVE_MODE_UNAVAILABLE_REASON = "live_delivery_disabled"
+
+def production_transport_enabled(environ=None):
+    """Separate opt-in; test authority must never reach the real network."""
+    env = os.environ if environ is None else environ
+    return (env.get("X_CAPI_PRODUCTION_TRANSPORT") == "pixel-token-v1"
+            and not any(str(value) not in ("", "0")
+                        for name, value in env.items()
+                        if name.startswith("X_CAPI_ALLOW_TEST_")))
+
 _ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _TWCLID_ALPHABETS = {
     "lower_alnum": re.compile(r"^[a-z0-9]+$"),
@@ -232,11 +241,7 @@ class Config:
 
     @property
     def producer_ready(self) -> bool:
-        # This build has no callable live transport and no normative way to
-        # establish that a caller-supplied twclid has authentic X campaign
-        # provenance.  Treating live as producer-ready would still mint grant
-        # tickets and persist raw click IDs even though delivery can never run.
-        return self.mode == "dry_run" and not self.errors
+        return self.mode in ("dry_run", "live") and not self.errors
 
 
 def load_config(environ: Optional[Mapping[str, str]] = None) -> Config:
@@ -354,9 +359,13 @@ def load_config(environ: Optional[Mapping[str, str]] = None) -> Config:
     if mode == "live" and (not min_length_raw or not max_length_raw):
         errors.append("X_CAPI_TWCLID length bounds must be explicitly pinned in live mode")
     if mode == "live":
-        # Live collection is disabled together with live delivery.  This is an
-        # implementation invariant, not an operator-configurable kill switch.
-        errors.append(LIVE_MODE_UNAVAILABLE_REASON)
+        if not production_transport_enabled(env):
+            errors.append(LIVE_MODE_UNAVAILABLE_REASON)
+        # Only the frozen, authenticated landing observation and independent
+        # app grant may establish live eligibility. A click is matching data,
+        # never evidence of payment, identity, or authentic campaign origin.
+        if policy_version != "x-capi-handoff-v2" or allowed_origin != "https://app.axonos.io":
+            errors.append("live transport requires the production handoff v2 policy and origin")
     if mode in ("dry_run", "live"):
         if not pixel_id:
             errors.append("X_CAPI_PIXEL_ID is required")

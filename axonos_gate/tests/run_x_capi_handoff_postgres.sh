@@ -55,4 +55,4 @@ sh "$repo_dir/axonos_gate/migrations/apply_x_capi_migrations.sh" handoff_owner h
 export X_HANDOFF_TEST_DSN="host=$test_dir/socket port=55439 dbname=capi_handoff_test user=cluadmin"
 export X_HANDOFF_TEST_DISPOSABLE_CONFIRM=DESTROY_TMP_HANDOFF_DATABASE
 cd "$repo_dir"
-python3 -m unittest axonos_gate.tests.test_x_capi_handoff_store axonos_gate.tests.test_x_capi_handoff_authority_postgres axonos_gate.tests.test_x_capi_handoff_process -v
+python3 -m unittest axonos_gate.tests.test_x_capi_handoff_store axonos_gate.tests.test_x_capi_handoff_authority_postgres axonos_gate.tests.test_x_capi_handoff_process axonos_gate.tests.test_x_capi_live_integration -v

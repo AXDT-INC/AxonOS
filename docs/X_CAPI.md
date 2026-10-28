@@ -23,32 +23,23 @@ in the [historical guide](X_CAPI_OFF_Mode_First_Deployment_Guide_Updated.md#26-c
 The [real-host baseline](PRODUCTION_DEPLOYMENT.md#first-time-host-provisioning-and-verified-production-baseline)
 records a successful deployment-script `--check` with CAPI `off`. This updates
 infrastructure status only; it does not establish activation or testing against
-X, and the live block below remains in force.
+X; the current transport controls are described below.
 
-**Real live collection and delivery are structurally disabled.** The reviewed official X
-materials provide no normative mechanism for proving the authenticity or
-campaign provenance of a `twclid`. Consequently the normal worker invocation
-(`transport=None`) returns
-`live_delivery_blocked_untrusted_twclid_provenance` before opening any delivery
-credential, claiming a row, or constructing an HTTP request. The gate also
-treats `live` as producer-unready, so it cannot mint a grant or persist a raw
-click ID merely because an operator selected an unavailable mode. Live
-readiness is always false with that explicit reason. Environment settings
-cannot override this.
-Only an explicitly injected non-production transport together with the
-isolated-test secret guard can exercise retry/idempotency code. `off` and
-`dry_run` remain available for staging. Enabling real delivery requires a new
-reviewed provenance contract and code change; it is not an operator toggle.
+**Production transport implementation:** Live delivery is now available only
+behind `X_CAPI_PRODUCTION_TRANSPORT=pixel-token-v1`, the frozen handoff v2 policy,
+exact production app origin and all existing consent/authority/privacy checks.
+It remains off by default and rejects every active test-authority switch. See
+[X CAPI production transport activation](X_CAPI_LIVE_TRANSPORT.md) for the current
+configuration, operator credential provisioning, limitations and rollback.
+A captured click is matching input, not cryptographic proof of X provenance.
 
-A dedicated Conversion API token is confirmed in this account's X Events
-Manager configuration. The transport therefore implements X's official server-side
+Production credentials have not been provisioned. The transport implements X's official server-side
 GTM token contract: `POST https://ads-api.x.com/12/measurement/conversions/{pixel_id}`,
 `Content-Type: application/json`, and `X-Pixel-Token`. Its four-field JSON uses
 `conversion_timestamp` as integral Unix milliseconds, preserving the original
 event time across retries. It does not implement OAuth or `conversion_time`.
-This account-specific authentication decision does not resolve the separate
-click-provenance activation block above. The normal worker, direct adapter,
-producer readiness, and Compose network/mount configuration remain blocked.
+The normal worker and adapter require explicit production configuration. Existing
+Compose network/mount configuration remains off pending operator approval.
 Automated tests replace HTTP with a fake and use generated synthetic tokens;
 no real token is needed, read, or submitted during testing.
 

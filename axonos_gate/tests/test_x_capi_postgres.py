@@ -481,13 +481,16 @@ class PostgresOutboxTests(unittest.TestCase):
             return connection
 
         class FakeTransport:
-            # The production activation block remains intact. This explicitly
-            # injected wrapper exercises the concrete adapter only with the
-            # test guard, mocked configuration, file reader, and HTTPS client.
+            # Only this test wrapper removes test switches while exercising
+            # the adapter. The file reader and HTTPS connection remain mocked.
             def send(self, pixel_id, token, payload):
-                return x_capi_worker.RequestsTransport().send(
-                    pixel_id, token, payload
-                )
+                env = {k: v for k, v in os.environ.items()
+                       if not k.startswith("X_CAPI_ALLOW_TEST_")}
+                env["X_CAPI_PRODUCTION_TRANSPORT"] = "pixel-token-v1"
+                with patch.dict(os.environ, env, clear=True):
+                    return x_capi_worker.RequestsTransport().send(
+                        pixel_id, token, payload
+                    )
 
         with ExitStack() as stack:
             runtime = stack.enter_context(
@@ -1352,7 +1355,7 @@ class PostgresOutboxTests(unittest.TestCase):
                     cur.fetchone(), ("retrying", 1, 27.0, "click_12345678")
                 )
             conn.commit()
-            self.assertEqual(worker.run(26.0), "idle")
+            self.assertEqual(worker.run(26.0), "paused")
             self.assertEqual(len(worker.requests), 1)
             self.assertEqual(worker.run(27.0), "accepted")
             self.assertEqual(len(worker.requests), 2)

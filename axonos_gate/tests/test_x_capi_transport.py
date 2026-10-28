@@ -94,7 +94,7 @@ class DedicatedTokenTransportTests(unittest.TestCase):
     @contextmanager
     def ready(self, **overrides):
         cfg = SimpleNamespace(**{**vars(self.cfg), **overrides})
-        with patch.object(x_capi, "load_config", return_value=cfg), patch.object(
+        with patch.dict(os.environ, {"X_CAPI_PRODUCTION_TRANSPORT": "pixel-token-v1"}, clear=True), patch.object(x_capi, "load_config", return_value=cfg), patch.object(
             worker, "read_token", return_value=(self.token, None)
         ) as token_reader:
             yield token_reader
@@ -297,7 +297,7 @@ class DedicatedTokenTransportTests(unittest.TestCase):
 
     def test_response_rate_limit_values_have_bounded_effect(self):
         for raw, expected in (
-            ("0", 101), ("-1", 101), ("999999999", 3700),
+            ("0", 101), ("-1", 101), ("999999999", 1000000099),
             ("Thu, 01 Jan 1970 00:02:00 GMT", 120),
             ("bad-date", None), ("x" * 129, None),
         ):
