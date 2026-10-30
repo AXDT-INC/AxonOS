@@ -71,6 +71,9 @@ function makeElement(tagName, elementsById) {
         querySelector(selector) {
             return findDescendant(element, selector)[0] || null;
         },
+        contains(child) {
+            return child === element || allDescendants(element).includes(child);
+        },
         focus() {},
         click() {
             for (const listener of listeners.click || []) listener.call(element);
@@ -110,6 +113,9 @@ function createRuntime({ landingClick = '', stored = {}, fetchImpl }) {
     const documentListeners = Object.create(null);
     const elementsById = new Map();
     const body = makeElement('body', elementsById);
+    const preferences = makeElement('div', elementsById);
+    preferences.id = 'axonos-attribution-preferences';
+    body.appendChild(preferences);
     const document = {
         body,
         readyState: 'loading',

@@ -13,13 +13,18 @@ scrubs the URL before rendering/analytics. An ordinary app-link click navigates
 directly to the fixed app origin in the same tab, without a landing prompt,
 with the click in a fragment; fragments do not reach the HTTP server. The app
 scrubs it before loading resources and exposes an optional Conversion sharing
-control. No consent panel opens automatically, including on page-cache restoration.
+control in the app's footer privacy section. No choices open automatically,
+including on page-cache restoration.
 Sharing stays off unless the visitor opens that control and explicitly allows it;
 ignoring the control or declining leaves the app usable.
-The visitor-requested choice is a nonblocking panel that does not take keyboard focus. Both
-pages include expandable X attribution privacy information. In the app, “Not
-now” dismisses the panel with sharing off; it does not record a decline. The
-Conversion sharing control allows the visitor to reopen it or revoke a grant.
+The visitor-requested choices expand in the normal page flow: no floating panel,
+overlay or nested scroll area covers the wallet or app controls. Actions appear
+before expandable data and retention details. Both pages include expandable X
+attribution privacy information. In the app, “Not now” closes the choices with
+sharing off; it does not record a decline. The Conversion sharing control allows
+the visitor to reopen them or revoke a grant. Closing choices returns keyboard
+focus to that control if focus was inside them. Existing tab-scoped choices and
+expiry rules remain unchanged; this is not a site-wide consent manager.
 These notices describe this integration, not a complete site-wide privacy policy.
 
 Ordinary visitors see no attribution panel. Modified clicks, middle clicks,

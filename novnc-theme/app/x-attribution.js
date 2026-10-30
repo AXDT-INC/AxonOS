@@ -1015,6 +1015,11 @@ const initializeXAttribution = (initialLandingClick) => {
 
     function removeDialog() {
         var old = document.getElementById('axonos-x-consent');
+        var control = document.getElementById('axonos-x-privacy-control');
+        if (control) {
+            control.setAttribute('aria-expanded', 'false');
+            if (old && old.contains(document.activeElement)) control.focus();
+        }
         if (old && old.parentNode) old.parentNode.removeChild(old);
     }
 
@@ -1022,7 +1027,7 @@ const initializeXAttribution = (initialLandingClick) => {
         var button = document.createElement('button');
         button.type = 'button';
         button.textContent = label;
-        button.style.cssText = 'min-width:9rem;padding:.7rem 1rem;border-radius:.45rem;border:1px solid #8fa2b7;' +
+        button.style.cssText = 'min-width:8rem;min-height:44px;padding:.7rem 1rem;border-radius:.45rem;border:1px solid #8fa2b7;' +
             (primary ? 'background:#f6f8fa;color:#111827;' : 'background:#171d25;color:#f6f8fa;');
         button.addEventListener('click', onClick);
         return button;
@@ -1069,6 +1074,8 @@ const initializeXAttribution = (initialLandingClick) => {
 
     function showChoices(hasClick) {
         removeDialog();
+        var host = document.getElementById('axonos-attribution-preferences');
+        if (!host) return;
         // Snapshot only eligibility, never a mutable/global identifier. The
         // server already sealed the module-private landing click into the ticket.
         var dialogHasLandingClick = hasClick === true && landingClickEligible && !!landingClick;
@@ -1076,9 +1083,9 @@ const initializeXAttribution = (initialLandingClick) => {
         root.id = 'axonos-x-consent';
         root.setAttribute('role', 'region');
         root.setAttribute('aria-labelledby', 'axonos-x-consent-title');
-        root.style.cssText = 'position:fixed;right:1rem;bottom:4rem;width:calc(100% - 2rem);max-width:25rem;max-height:55vh;overflow:auto;z-index:2147483000;';
+        root.style.cssText = 'margin-top:.75rem;';
         var panel = document.createElement('div');
-        panel.style.cssText = 'background:#10151c;color:#f6f8fa;border:1px solid #526172;border-radius:.75rem;padding:1rem;font:14px/1.5 system-ui,sans-serif;';
+        panel.style.cssText = 'color:#f6f8fa;font:14px/1.5 system-ui,sans-serif;overflow-wrap:anywhere;';
         var title = document.createElement('h2');
         title.id = 'axonos-x-consent-title';
         var canChooseCurrent = dialogHasLandingClick &&
@@ -1088,19 +1095,19 @@ const initializeXAttribution = (initialLandingClick) => {
             newLifecycleAvailable && !gpcActive && !revocationPending;
         title.textContent = (state === 'granted' || revocationPending || canStartNewLifecycle)
             ? 'Conversion sharing choices' : 'Share approved conversions with X?';
-        title.style.marginTop = '0';
+        title.style.cssText = 'margin:0;font-size:1rem;';
         var copy = document.createElement('p');
         copy.textContent = revocationPending
-            ? 'Sharing is blocked in this tab, but AxonOS has not yet confirmed deletion of the stored click ID and cancellation of unsent conversions.'
+            ? 'Sharing is off in this tab. Retry to confirm deletion of the click ID and cancellation of unsent events.'
             : (state === 'granted'
-                ? 'Sharing is currently allowed for this tab. Revoking deletes the stored click ID and cancels unsent conversions. An event already sent or in flight may not be recallable.'
+                ? 'Sharing is on for this tab. You can turn it off and cancel unsent events.'
                 : (canStartNewLifecycle
-                    ? 'A previous attribution lifecycle in this tab is closed. Starting a new choice first retires that lifecycle; it does not reuse its click, consent time, wallet binding, or expiry.'
+                    ? 'Your previous sharing period has ended. You can make a fresh choice for this ad visit.'
                     : (canChooseCurrent
-                        ? 'If you allow, AxonOS will store this ad-click identifier ' + retentionCopy() + ' and its server may share only wallet verification, completed paid deposit, and newly started session conversions with X. AxonOS remains fully usable if you decline.'
+                        ? 'Allow AxonOS to use this ad-click ID to share wallet verification, paid deposit and session-start events with X to measure ads? Your choice does not affect app access.'
                         : (revocationAvailable
                             ? 'Conversion sharing is off. You can still remove any stored click ID for this tab and cancel unsent conversions.'
-                            : 'No X ad-click identifier is available in this tab. AxonOS will not manufacture or substitute another identifier.'))));
+                            : 'No eligible X ad visit is available in this tab. Sharing is off.'))));
         var error = document.createElement('p');
         error.id = 'axonos-x-consent-error';
         error.setAttribute('role', 'alert');
@@ -1150,10 +1157,13 @@ const initializeXAttribution = (initialLandingClick) => {
         }
         panel.appendChild(title);
         panel.appendChild(copy);
+        panel.appendChild(error);
+        panel.appendChild(actions);
         var privacy = document.createElement('details');
         var summary = document.createElement('summary');
-        summary.textContent = 'How X attribution uses your data';
+        summary.textContent = 'Data shared and retention';
         summary.style.cursor = 'pointer';
+        privacy.style.marginTop = '.75rem';
         var explanation = document.createElement('p');
         explanation.textContent = 'With your permission, AxonOS connects an X ad-click ID to eligible app activity to measure advertising. ' +
             'X receives the click ID, conversion type, time and a deduplication identifier. This integration does not send wallet addresses, transaction amounts or desktop contents to X. ' +
@@ -1178,11 +1188,11 @@ const initializeXAttribution = (initialLandingClick) => {
         xControls.style.cssText = 'display:block;color:#b8c9ff;';
         privacy.appendChild(xControls);
         panel.appendChild(privacy);
-        panel.appendChild(error);
-        panel.appendChild(actions);
         root.appendChild(panel);
-        document.body.appendChild(root);
-        // This optional region must not take keyboard focus or block app controls.
+        host.appendChild(root);
+        var control = document.getElementById('axonos-x-privacy-control');
+        if (control) control.setAttribute('aria-expanded', 'true');
+        // Choices expand in the page flow, without covering wallet or app controls.
     }
 
     function installPrivacyControl(force) {
@@ -1194,14 +1204,22 @@ const initializeXAttribution = (initialLandingClick) => {
             }, { once: true });
             return;
         }
+        var host = document.getElementById('axonos-attribution-preferences');
+        if (!host) return;
         var button = makeButton(
             revocationPending ? 'Conversion privacy action needed' : 'Conversion sharing',
             false,
-            function () { showChoices(landingClickEligible && !!landingClick); }
+            function () {
+                var choices = document.getElementById('axonos-x-consent');
+                if (choices && choices.parentNode) removeDialog();
+                else showChoices(landingClickEligible && !!landingClick);
+            }
         );
         button.id = 'axonos-x-privacy-control';
-        button.style.cssText += 'position:fixed;left:.75rem;bottom:.75rem;z-index:2147482000;opacity:.92;min-width:auto;font-size:.78rem;';
-        document.body.appendChild(button);
+        button.setAttribute('aria-expanded', 'false');
+        button.setAttribute('aria-controls', 'axonos-x-consent');
+        button.style.cssText += 'min-width:auto;font-size:.875rem;';
+        host.appendChild(button);
     }
 
     function initializeAttribution() {

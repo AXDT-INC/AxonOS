@@ -498,7 +498,7 @@ class XcapiFrontendPrivacyTests(unittest.TestCase):
         self.assertIn("state === 'granted'", exposure)
         self.assertIn("REVOCATION_PENDING_KEY", self.bridge)
         self.assertIn("setRevocationPending(true)", self.bridge)
-        self.assertIn("Sharing is blocked in this tab", self.bridge)
+        self.assertIn("Sharing is off in this tab. Retry to confirm deletion", self.bridge)
         self.assertIn("data.gpc_applied === true", self.bridge)
         self.assertIn("String(data.state || '') === 'revocation_required'", self.bridge)
         self.assertGreaterEqual(self.bridge.count("browserGpcIsActive();"), 2)
@@ -568,7 +568,7 @@ class XcapiFrontendPrivacyTests(unittest.TestCase):
 
     def test_later_click_is_only_kept_for_unset_or_explicit_new_lifecycle(self):
         startup = self.bridge.split("function initializeAttribution()", 1)[1]
-        self.assertIn("state === 'unset'", startup)
+        self.assertIn("if (state !== 'unset' && !newLifecycleAvailable)", startup)
         self.assertIn("newLifecycleAvailable", startup)
         self.assertIn("landingClickEligible", startup)
         self.assertIn("var landingClick", self.bridge)
@@ -589,7 +589,7 @@ class XcapiFrontendPrivacyTests(unittest.TestCase):
         self.assertIn("canStartNewLifecycle", choices)
         self.assertIn("Start a new choice", choices)
         self.assertIn("update('new_lifecycle')", choices)
-        self.assertIn("it does not reuse its click, consent time", choices)
+        self.assertIn("You can make a fresh choice for this ad visit", choices)
 
     def test_landing_click_is_first_party_header_only_and_never_in_grant_body(self):
         status = self.between(

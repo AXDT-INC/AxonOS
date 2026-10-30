@@ -52,7 +52,7 @@ class BrowserTransferJourney(unittest.TestCase):
         else: raise RuntimeError('Disposable landing did not start')
         source = (ROOT/'novnc-theme/vnc.html').read_text()
         scripts = re.findall(r'<script>\s*([\s\S]*?)</script>', source)[:2]
-        notice = re.search(r'<details id="axonos-attribution-privacy"[\s\S]*?</details>', source).group(0)
+        notice = re.search(r'<section id="axonos-attribution-settings"[\s\S]*?</section>', source).group(0)
         cls.app_html = '<!doctype html><html><head><meta name="referrer" content="no-referrer">' + ''.join(
             '<script>'+script+'</script>' for script in scripts) + '</head><body>App test' + \
             '<button id="app-action" onclick="this.textContent=\'App action works\'">App action</button>' + notice + '</body></html>'
@@ -163,7 +163,7 @@ class BrowserTransferJourney(unittest.TestCase):
             self.assertEqual(grants, [])
 
     def test_notice_and_optional_choice_leave_app_usable_on_desktop_and_mobile(self):
-        for width, height in ((1440, 1000), (390, 844)):
+        for width, height in ((1440, 1000), (390, 844), (320, 568), (844, 390)):
             with self.subTest(width=width), self.journey() as (page, seen, grants):
                 page.set_viewport_size({'width': width, 'height': height})
                 page.goto('https://axonos.io/?twclid='+CLICK)
@@ -182,12 +182,29 @@ class BrowserTransferJourney(unittest.TestCase):
                 page.get_by_role('button', name='Allow sharing', exact=True).wait_for()
                 self.assertEqual(page.locator('[aria-modal="true"]').count(), 0)
                 self.assertFalse(page.locator('#axonos-x-consent').evaluate('(el) => el.contains(document.activeElement)'))
+                control = page.get_by_role('button', name='Conversion sharing', exact=True)
+                self.assertEqual(control.get_attribute('aria-expanded'), 'true')
+                self.assertTrue(page.locator('#axonos-attribution-preferences #axonos-x-consent').count())
+                self.assertTrue(page.locator('#axonos-x-consent').evaluate('''el => {
+                    const style = getComputedStyle(el);
+                    return style.position === 'static' && style.maxHeight === 'none' &&
+                        style.overflowY === 'visible';
+                }'''))
+                self.assertFalse(page.evaluate('document.documentElement.scrollWidth > innerWidth'))
+                # Keyboard users reach the choice actions before the optional details.
+                control.focus()
+                page.keyboard.press('Tab')
+                self.assertEqual(page.evaluate('document.activeElement.textContent'), 'Decline')
+                page.keyboard.press('Tab')
+                self.assertEqual(page.evaluate('document.activeElement.textContent'), 'Allow sharing')
                 page.locator('#axonos-x-consent summary').click()
                 self.assertIn('Global Privacy Control', page.locator('#axonos-x-consent details').inner_text())
                 page.get_by_role('button', name='Not now', exact=True).click()
                 self.assertEqual(page.locator('#axonos-x-consent').count(), 0)
                 self.assertEqual(grants, [])
                 self.assertFalse(page.evaluate('!!window.axonosAttributionContext'))
+                self.assertEqual(control.get_attribute('aria-expanded'), 'false')
+                self.assertEqual(page.evaluate('document.activeElement.id'), 'axonos-x-privacy-control')
                 page.get_by_role('button', name='Conversion sharing', exact=True).click()
                 page.get_by_role('button', name='Allow sharing', exact=True).wait_for()
                 self.assertEqual(grants, [])
