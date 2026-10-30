@@ -361,11 +361,16 @@ def load_config(environ: Optional[Mapping[str, str]] = None) -> Config:
     if mode == "live":
         if not production_transport_enabled(env):
             errors.append(LIVE_MODE_UNAVAILABLE_REASON)
-        # Only the frozen, authenticated landing observation and independent
-        # app grant may establish live eligibility. A click is matching data,
-        # never evidence of payment, identity, or authentic campaign origin.
-        if policy_version != "x-capi-handoff-v2" or allowed_origin != "https://app.axonos.io":
-            errors.append("live transport requires the production handoff v2 policy and origin")
+        # Browser transfer uses the existing app-owned consent lifecycle; v2
+        # additionally requires authenticated server-side source observations.
+        # Neither policy treats a click as payment, identity or campaign proof.
+        if policy_version not in ("x-capi-handoff-v2", "x-capi-browser-v1") or allowed_origin != "https://app.axonos.io":
+            errors.append("live transport requires a supported production consent policy and origin")
+        if policy_version == "x-capi-browser-v1":
+            if contract_version != "browser-click-v1":
+                errors.append("browser consent requires the browser-click-v1 click contract")
+            if get("X_HANDOFF_ENABLED", "false").lower() not in ("0", "false", "no", "off"):
+                errors.append("browser consent requires X_HANDOFF_ENABLED=false")
     if mode in ("dry_run", "live"):
         if not pixel_id:
             errors.append("X_CAPI_PIXEL_ID is required")

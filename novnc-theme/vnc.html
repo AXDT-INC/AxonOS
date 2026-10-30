@@ -54,9 +54,31 @@ Copyright (C) 2019 The noVNC Authors
             // If parsing or History API rewriting fails, discard the entire
             // query. Initialize this before touching URLSearchParams so even a
             // constructor failure cannot leave a click or confused key behind.
-            var attributionFallbackClean = window.location.pathname +
-                (window.location.hash || '');
+            var attributionFallbackClean = window.location.pathname;
             try {
+                // Landing forwards only after an explicit click. Fragments do
+                // not enter HTTP requests; scrub synchronously before resources.
+                // This is matching data, never consent or authenticated origin.
+                var attributionHash = String(window.location.hash || '');
+                var fragmentClick = '';
+                var fragmentAttribution = /axonos_x_click|twclid/i.test(attributionHash);
+                try {
+                    if (attributionHash.length > 8192) throw new Error('fragment too large');
+                    var decodedFragment = attributionHash;
+                    for (var fragmentDepth = 0; fragmentDepth < 8; fragmentDepth += 1) {
+                        var nextFragment = decodeURIComponent(decodedFragment);
+                        fragmentAttribution = fragmentAttribution || /axonos_x_click|twclid/i.test(nextFragment);
+                        if (nextFragment === decodedFragment) break;
+                        decodedFragment = nextFragment;
+                    }
+                    if (fragmentDepth === 8) fragmentAttribution = true;
+                } catch (e) { fragmentAttribution = true; }
+                if (fragmentAttribution) {
+                    var fragmentMatch = /^#axonos_x_click=([A-Za-z0-9_-]{8,256})$(?![\s\S])/.exec(attributionHash);
+                    fragmentClick = fragmentMatch ? fragmentMatch[1] : '';
+                    attributionHash = '';
+                }
+                attributionFallbackClean = window.location.pathname + attributionHash;
                 var rawAttributionQuery = String(window.location.search || '').replace(/^\?/, '');
                 if (rawAttributionQuery.length > 8192) {
                     throw new Error('query too large to scrub safely');
@@ -160,6 +182,10 @@ Copyright (C) 2019 The noVNC Authors
                 var clickCandidate = clickCandidates.length === 1 &&
                     rawExactTwclidCount === 1 && !rawConfusedTwclid
                     ? clickCandidates[0] : '';
+                if (fragmentAttribution) {
+                    clickCandidate = rawExactTwclidCount === 0 && !rawConfusedTwclid && clickCandidates.length === 0
+                        ? fragmentClick : '';
+                }
                 var walletShaped = /^(?:0x)?[0-9a-f]{40}$/i.test(clickCandidate);
                 var prefixedDigestShaped = /^0x[0-9a-f]{64}$/i.test(clickCandidate);
                 var uuidShaped = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clickCandidate);
@@ -188,7 +214,7 @@ Copyright (C) 2019 The noVNC Authors
                 var attributionQuery = attributionParams.toString();
                 var attributionClean = window.location.pathname +
                     (attributionQuery ? '?' + attributionQuery : '') +
-                    (window.location.hash || '');
+                    attributionHash;
                 var attributionCurrent = window.location.pathname +
                     window.location.search + window.location.hash;
                 if (attributionClean !== attributionCurrent) {

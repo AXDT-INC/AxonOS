@@ -1602,6 +1602,49 @@ class DeploymentMetadataTests(unittest.TestCase):
                 with self.assertRaises(self.checks.Refusal):
                     self.checks.config_check(invalid, REPO, 'live')
 
+    def test_live_policy_selector_requires_one_supported_literal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'synthetic-settings'
+            for value in ('x-capi-browser-v1', 'x-capi-handoff-v2'):
+                path.write_text('X_CAPI_CONSENT_POLICY_VERSION="' + value + '" # selected\n')
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    self.checks.env_policy(path)
+                self.assertEqual(output.getvalue().strip(), value)
+            for text in ('', 'X_CAPI_CONSENT_POLICY_VERSION=${SELECTOR}\n',
+                         'X_CAPI_CONSENT_POLICY_VERSION=x-capi-v1\n',
+                         'X_CAPI_CONSENT_POLICY_VERSION=x-capi-browser-v1\n' * 2):
+                path.write_text(text)
+                with self.assertRaises(self.checks.Refusal):
+                    self.checks.env_policy(path)
+
+    def test_browser_live_requires_token_but_no_new_handoff_secrets(self):
+        config = configuration(REPO)
+        worker = config['services']['x-capi-worker']
+        for name in ('axonos', 'x-capi-worker'):
+            config['services'][name]['environment'].update(
+                X_CAPI_MODE='live', X_HANDOFF_ENABLED='false',
+                X_CAPI_CONSENT_POLICY_VERSION='x-capi-browser-v1')
+        worker['environment']['X_CAPI_ACCESS_TOKEN_FILE'] = '/run/secrets/x_capi_access_token'
+        worker['volumes'].append(volume('/run/secrets/x_capi_access_token',
+            '/etc/axonos/x-capi-access-token', 'bind', True))
+        worker['networks']['x_capi_egress'] = None
+        config['networks']['x_capi_egress'] = {'name': 'axonos_x_capi_egress', 'driver': 'bridge'}
+        capi = types.SimpleNamespace(load_config=lambda env: types.SimpleNamespace(errors=[]))
+        with mock.patch.object(self.checks, 'capi_module', return_value=capi), \
+                mock.patch.object(self.checks, 'secret_metadata', return_value=('synthetic',)), \
+                redirect_stdout(io.StringIO()):
+            self.checks.config_check(config, REPO, 'live')
+            for change in (
+                lambda c: c['services']['x-capi-worker']['environment'].update(X_HANDOFF_ENABLED='true'),
+                lambda c: c['services']['axonos']['environment'].update(X_CAPI_CONSENT_POLICY_VERSION='x-capi-handoff-v2'),
+                lambda c: c['services']['x-capi-worker']['volumes'].pop(),
+            ):
+                invalid = copy.deepcopy(config)
+                change(invalid)
+                with self.assertRaises(self.checks.Refusal):
+                    self.checks.config_check(invalid, REPO, 'live')
+
     def test_worker_contract_detects_handoff_configuration_drift(self):
         env = {'X_HANDOFF_SOURCE_GENERATION': 'first', 'X_HANDOFF_ENABLED': 'true'}
         baseline = self.checks.worker_contract(env, [], [], True, '10001:10001')

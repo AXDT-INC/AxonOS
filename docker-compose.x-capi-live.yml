@@ -11,30 +11,7 @@ services:
       X_CAPI_PRODUCTION_TRANSPORT: ${X_CAPI_PRODUCTION_TRANSPORT:-}
       X_CAPI_ACCESS_TOKEN_FILE: /run/secrets/x_capi_access_token
       X_HANDOFF_ENABLED: ${X_HANDOFF_ENABLED:-false}
-      X_HANDOFF_PROTOCOL: axonos-first-party-handoff-v2
-      X_HANDOFF_WITHDRAWAL_POLICY: B
-      X_HANDOFF_SOURCE_GENERATION: ${X_HANDOFF_SOURCE_GENERATION:-}
-      X_HANDOFF_SERVICE_KEYRING_FILE: /run/secrets/x_handoff_service_keyring
-      X_HANDOFF_SOURCE_DATA_KEYRING_FILE: /run/secrets/x_handoff_source_data_keyring
-      X_HANDOFF_SOCKET: /run/axonos-x-capi/handoff.sock
-      X_HANDOFF_LEASE_MS: "30000"
-      X_HANDOFF_RENEW_INTERVAL_MS: "10000"
-      X_HANDOFF_TRANSACTION_TTL_MS: "300000"
-      X_HANDOFF_OBSERVATION_TTL_MS: "120000"
-      X_HANDOFF_MAX_CLOCK_ERROR_MS: "5000"
     volumes:
-      - type: bind
-        source: /etc/axonos/x-handoff-service-keyring
-        target: /run/secrets/x_handoff_service_keyring
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: bind
-        source: /etc/axonos/x-handoff-source-data-keyring
-        target: /run/secrets/x_handoff_source_data_keyring
-        read_only: true
-        bind:
-          create_host_path: false
       - type: bind
         source: /etc/axonos/x-capi-access-token
         target: /run/secrets/x_capi_access_token

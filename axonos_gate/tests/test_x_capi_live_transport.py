@@ -28,6 +28,19 @@ class ProductionControls(unittest.TestCase):
             self.assertFalse(x_capi.load_config({**env, **extra}).producer_ready)
         self.assertFalse(x_capi.load_config({}).producer_ready)
 
+    def test_browser_policy_is_explicit_and_cannot_mix_with_server_handoff(self):
+        env = {**production_env(), 'X_CAPI_CONSENT_POLICY_VERSION': 'x-capi-browser-v1',
+               'X_CAPI_TWCLID_CONTRACT_VERSION': 'browser-click-v1', 'X_HANDOFF_ENABLED': 'false'}
+        self.assertTrue(x_capi.load_config(env).producer_ready)
+        for changes in ({'X_HANDOFF_ENABLED': 'true'},
+                        {'X_CAPI_TWCLID_CONTRACT_VERSION': 'handoff-v2-observation'},
+                        {'X_CAPI_CONSENT_POLICY_VERSION': 'x-capi-v1'},
+                        {'X_CAPI_ALLOWED_ORIGIN': 'https://axonos.io'},
+                        {'X_CAPI_SEND_VALUES': 'true'}):
+            self.assertFalse(x_capi.load_config({**env, **changes}).producer_ready)
+        self.assertNotEqual(x_capi.load_config(env).audience_scope,
+                            x_capi.load_config(production_env()).audience_scope)
+
     def test_every_test_authority_switch_blocks_real_adapter_before_secret_read(self):
         for name in ('SECRETS', 'DB_URL', 'CONFIG_GUARD_BYPASS', 'PRIVACY_FENCE',
                      'SOCKET', 'FUTURE_SWITCH'):
@@ -52,7 +65,15 @@ class ProductionControls(unittest.TestCase):
         self.assertTrue(worker._is_paused(conn, 10000))
 
     def test_normal_worker_selects_adapter_and_fails_closed_without_token(self):
-        env = production_env()
+        self.assert_worker_delivery(production_env())
+
+    def test_browser_policy_delivers_without_a_handoff_runtime(self):
+        self.assert_worker_delivery({**production_env(),
+            'X_CAPI_CONSENT_POLICY_VERSION': 'x-capi-browser-v1',
+            'X_CAPI_TWCLID_CONTRACT_VERSION': 'browser-click-v1',
+            'X_HANDOFF_ENABLED': 'false'})
+
+    def assert_worker_delivery(self, env):
         with patch.dict(os.environ, env, clear=True), ExitStack() as stack:
             conn = MagicMock()
             stack.enter_context(patch.object(x_capi, '_db_url', return_value='synthetic'))
@@ -65,7 +86,8 @@ class ProductionControls(unittest.TestCase):
                 stack.enter_context(patch.object(worker, name))
             stack.enter_context(patch.object(worker, 'drain_ingest_until_empty', return_value=({}, True)))
             stack.enter_context(patch.object(worker, '_is_paused', return_value=False))
-            stack.enter_context(patch.object(worker, '_handoff_runtime', MagicMock()))
+            stack.enter_context(patch.object(worker, '_handoff_runtime',
+                MagicMock() if env['X_CAPI_CONSENT_POLICY_VERSION'] == 'x-capi-handoff-v2' else None))
             fence = MagicMock()
             fence.prepare.return_value = fence.consume.return_value = 'clear'
             fence.dispatch_boundary.return_value.__enter__.return_value = True
@@ -85,3 +107,36 @@ class ProductionControls(unittest.TestCase):
                 send.assert_called_once()
                 self.assertEqual(send.call_args.args[2]['conversions'][0]['conversion_id'],
                                  claim.return_value['conversion_id'])
+
+
+class BrowserConsentLifecycle(unittest.TestCase):
+    def test_live_browser_requires_app_grant_and_keeps_durable_revocation(self):
+        from cryptography.fernet import Fernet
+        from time import time
+        cipher = Fernet(Fernet.generate_key())
+        env = {**production_env(), 'X_CAPI_CONSENT_POLICY_VERSION': 'x-capi-browser-v1',
+               'X_CAPI_TWCLID_CONTRACT_VERSION': 'browser-click-v1', 'X_HANDOFF_ENABLED': 'false'}
+        click = 'syntheticclick1234567890'
+        with patch.dict(os.environ, env, clear=True), \
+                patch.object(x_capi, '_context_ciphers', return_value=((cipher,), None)), \
+                patch.object(x_capi, 'config_guard_current', return_value=True), \
+                patch.object(x_capi, '_request_worker_consent', return_value={'v': 1, 'ok': True, 'state': 'revoked'}) as revoke, \
+                patch.object(x_capi, '_persist_privacy_fence_status', return_value='published'):
+            self.assertNotIn('context', x_capi.attribution_status())
+            initial = x_capi.attribution_status(landing_twclid=click)
+            ticket = x_capi.decode_context_ticket(initial['context'])
+            self.assertIsNone(ticket['twclid'])
+            self.assertFalse(worker._event_ticket_is_current(ticket, x_capi.load_config(), int(time()*1000), time()))
+            granted, code = x_capi.update_consent(context_token=initial['context'],
+                csrf_token=initial['csrf'], action='grant', landing_twclid=click, origin='https://app.axonos.io')
+            self.assertEqual(code, 200)
+            ticket = x_capi.decode_context_ticket(granted['context'])
+            self.assertEqual(ticket['twclid'], click)
+            self.assertTrue(worker._event_ticket_is_current(ticket, x_capi.load_config(), int(time()*1000)+1, time()))
+            revoke.assert_not_called()
+            revoked, code = x_capi.update_consent(context_token=granted['context'],
+                csrf_token=granted['csrf'], action='revoke', origin='https://app.axonos.io')
+            self.assertEqual(code, 200)
+            self.assertEqual(revoked['state'], 'revoked')
+            self.assertIsNone(x_capi.decode_context_ticket(revoked['context'])['twclid'])
+            revoke.assert_called_once()

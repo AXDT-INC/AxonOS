@@ -1,4 +1,82 @@
-# Completing production handoff activation
+# Landing-to-app attribution
+
+## Browser transfer (preferred for a new source)
+
+Use `x-capi-browser-v1` when the landing page does not need to retain attribution
+across visits. This path uses the existing AxonOS CAPI database, worker, encrypted
+consent tickets and privacy fence. It needs **no new Vault objects, landing
+control database, shared handoff keyrings, source generation or privacy sidecar**.
+The existing X token remains backend-worker-only.
+
+The landing keeps an eligible `twclid` in memory for at most two minutes and
+scrubs the URL before rendering/analytics. An ordinary app-link click opens a
+small transfer choice. Declining opens the app normally. Allowing navigates in
+the same tab to the fixed app origin with the click in a fragment; fragments do
+not reach the HTTP server. The app scrubs it before loading resources and asks
+for its own conversion-sharing consent. Nothing is automatically granted.
+
+Ordinary visitors see no attribution panel. Modified clicks, middle clicks,
+context-menu links, expired clicks, reloads and restored pages use ordinary
+navigation without attribution. The landing does not retain a click or consent
+cookie across visits. Attribution withdrawal after an app grant is owned by the
+app's Conversion sharing control and existing durable worker revocation path.
+GPC suppresses transfer and conversion sharing. No X tracking script is loaded.
+The click is untrusted matching data, not signed campaign provenance, wallet
+identity or payment authority. Existing verified-human conversion checks remain.
+
+### Configuration and rollout
+
+Keep the existing pixel/event IDs, protected token and other CAPI configuration.
+For the new backend release, explicitly select:
+
+```dotenv
+X_CAPI_MODE=live
+X_CAPI_PRODUCTION_TRANSPORT=pixel-token-v1
+X_CAPI_CONSENT_POLICY_VERSION=x-capi-browser-v1
+X_CAPI_TWCLID_CONTRACT_VERSION=browser-click-v1
+X_CAPI_ALLOWED_ORIGIN=https://app.axonos.io
+X_CAPI_TWCLID_CHARSET=url_safe
+X_CAPI_TWCLID_MIN_LENGTH=8
+X_CAPI_TWCLID_MAX_LENGTH=256
+X_HANDOFF_ENABLED=false
+X_CAPI_SEND_VALUES=false
+```
+
+Increase `X_CAPI_CONSENT_POLICY_EPOCH` above the previously deployed epoch when
+switching policies (for example, 1 to 2); do not reset it or reuse old consent.
+The worker's durable configuration guard must accept the new epoch/audience.
+The production controller selects the token-only live overlay for this policy.
+The separate `docker-compose.x-capi-handoff.yml` remains specific to v2.
+
+1. Confirm the source has no existing v2 landing obligations/generation before
+   retiring its privacy service. An already-used v2 source needs a deliberate
+   closure/retirement process; do not switch it off to hide pending withdrawals.
+2. Test/build the backend release and deploy through the existing controller.
+   Keep its admission, provenance, renter protection and recovery checks. No
+   core/payment database migration is needed; preserve the existing schema-5 DB.
+3. Build the updated landing image and set its runtime
+   `X_ATTRIBUTION_TRANSFER=browser-click-v1` using the existing GitOps deployment.
+   Do not activate the old handoff component or provision its Vault objects.
+   Do not mix the browser selector with v2 keyrings/generation configuration.
+4. Verify the real landing UI, transfer, app grant, wallet binding, revocation,
+   worker health and renter continuity. `handoff_required=false` is expected for
+   browser transfer; CAPI live readiness and the existing privacy controls remain
+   mandatory. Also verify ingress logs do not retain landing click queries.
+5. With operator-approved real traffic, separately verify event creation, worker
+   delivery, X acceptance and ad attribution. Local tests or mocked acceptance
+   cannot establish X account reporting. Page views are not conversion events in
+   this implementation. Do not manufacture conversions to activate a dashboard.
+
+Do not apply the changed production configuration to services until the corresponding images are ready.
+A policy change makes prior consent ineligible; returning users need a fresh
+eligible click and explicit choice. Retain revocation capability during rollback,
+and do not lower the policy epoch.
+
+## Existing server-to-server handoff v2
+
+The instructions below apply only to `x-capi-handoff-v2`. They are not needed for
+the browser transfer above.
+
 
 `X_CAPI_MODE=live` and an X access token are not enough to establish attribution.
 The landing must capture an eligible click with consent, transfer attribution to

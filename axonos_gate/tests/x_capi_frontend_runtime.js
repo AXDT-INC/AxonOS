@@ -217,17 +217,17 @@ const PENDING_KEY = 'axonos_x_attribution_revoke_pending_v1';
 const OWNER_KEY = 'axonos_x_attribution_tab_owner_v1';
 const WALLET_COMMITMENT_KEY = 'axonos_x_attribution_wallet_commitment_v1';
 
-function runUrlBootstrap(search, { failRewrite = false } = {}) {
+function runUrlBootstrap(search, { failRewrite = false, hash = '#viewer', gpc = false } = {}) {
     const replacements = [];
     const rewrites = [];
     const values = new Map();
     const runtime = {
         URLSearchParams,
-        navigator: { globalPrivacyControl: false },
+        navigator: { globalPrivacyControl: gpc },
         location: {
             pathname: '/vnc.html',
             search,
-            hash: '#viewer',
+            hash,
             replace(value) { replacements.push(String(value)); },
         },
         history: {
@@ -1053,6 +1053,25 @@ async function testLaunchRequestIdClearsOnlyOnDefinitiveMatchingEvidence() {
 
 (async () => {
     testUrlScrubFallbackStopsUnsafeReparse();
+    for (const [hash, search, expected, gpc] of [
+        ['#axonos_x_click=Synthetic_Click_123', '', 'Synthetic_Click_123', false],
+        ['#axonos_x_click=Synthetic_Click_123', '?twclid=Other_Click_123', '', false],
+        ['#axonos_x_click=Synthetic_Click_123', '', '', true],
+        ['#axonos_x_click=Synthetic_Click_123&consent=true', '', '', false],
+        ['#axonos_x_click=%53ynthetic_Click_123', '', '', false],
+        ['#AXONOS_X_CLICK=Synthetic_Click_123', '', '', false],
+        ['#%2561xonos_x_click=Synthetic_Click_123', '', '', false],
+        ['#axonos_x_click=' + 'x'.repeat(9000), '', '', false],
+        ['#axonos_x_click=' + 'a'.repeat(40), '', '', false],
+    ]) {
+        const boot = runUrlBootstrap(search, { hash, gpc });
+        assert(boot.runtime.axonosPendingTwclid === expected, 'fragment admission mismatch');
+        assert(boot.rewrites[0] === '/vnc.html', 'fragment must be scrubbed before resources');
+        assert(boot.values.size === 0, 'bootstrap must not persist matching data');
+    }
+    const failedFragment = runUrlBootstrap('', { hash: '#axonos_x_click=Synthetic_Click_123', failRewrite: true });
+    assert(failedFragment.runtime.axonosPendingTwclid === '', 'failed scrub must discard');
+    assert(failedFragment.replacements[0] === '/vnc.html', 'failed scrub must navigate clean');
     await testUnsetIsEphemeralAndGrantUsesHeader();
     await testLateGpcSuppressesAndRevokes();
     await testLateGpcUsesCompleteCapabilityDuringStatusRace();

@@ -52,6 +52,18 @@ def env_mode(path):
     print(mode)
 
 
+def env_policy(path):
+    """Read only a literal selector for automatic Compose overlay selection."""
+    lines = Path(path).read_text().splitlines()
+    matches = [line for line in lines if re.match(r"^\s*(?:export\s+)?X_CAPI_CONSENT_POLICY_VERSION\s*=", line)]
+    require(len(matches) == 1, '.env must contain one explicit live consent policy')
+    match = re.fullmatch(r"\s*(?:export\s+)?X_CAPI_CONSENT_POLICY_VERSION\s*=\s*(?:'([a-z0-9-]+)'|\"([a-z0-9-]+)\"|([a-z0-9-]+))\s*(?:#.*)?", matches[0])
+    require(match is not None, 'Live consent policy must be literal')
+    policy = next(value for value in match.groups() if value is not None)
+    require(policy in ('x-capi-handoff-v2', 'x-capi-browser-v1'), 'Unsupported live consent policy')
+    print(policy)
+
+
 def metadata_helper_contract():
     """Only a separately installed root-controlled script may run with sudo.
 
@@ -150,7 +162,10 @@ def config_check(document, root, mode, snapshot=None):
     require(not gate_env.get('X_CAPI_ACCESS_TOKEN_FILE'), 'Gate must not receive an X access token')
     enabled = str(gate_env.get('X_HANDOFF_ENABLED', '')).strip().lower() in ('1', 'true', 'yes', 'on')
     worker_enabled = str(worker_env.get('X_HANDOFF_ENABLED', '')).strip().lower() in ('1', 'true', 'yes', 'on')
-    require(enabled == worker_enabled == (mode == 'live'), 'Handoff must be explicit, consistent, and enabled only for live mode')
+    policy = worker_env.get('X_CAPI_CONSENT_POLICY_VERSION')
+    require(gate_env.get('X_CAPI_CONSENT_POLICY_VERSION') == policy, 'Gate/worker consent policies differ')
+    handoff = mode == 'live' and policy == 'x-capi-handoff-v2'
+    require(enabled == worker_enabled == handoff, 'Handoff must match the selected live consent policy')
     for key, target in (('X_CAPI_DB_URL_FILE', 'x_capi_db_url'), ('X_CAPI_CONTEXT_KEY_FILE', 'x_capi_context_key'),
                         ('X_CAPI_HASH_KEY_FILE', 'x_capi_hash_key')):
         require(worker['environment'].get(key) == '/run/secrets/' + target, 'Incorrect worker secret-file path')
@@ -166,9 +181,7 @@ def config_check(document, root, mode, snapshot=None):
     context = volume(gate, '/run/secrets/x_capi_context_key', 'bind', SECRET_PATHS['x_capi_context_key'], True)
     require(volume(worker, '/run/secrets/x_capi_context_key', 'bind', readonly=True) == context, 'Gate/worker context keys differ')
     specs = [(context, 10001, 44, 4096)]
-    if mode == 'live':
-        require(worker_env.get('X_CAPI_CONSENT_POLICY_VERSION') == 'x-capi-handoff-v2',
-                'Live deployment requires handoff v2')
+    if handoff:
         require(re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}',
                              worker_env.get('X_HANDOFF_SOURCE_GENERATION', '') or ''),
                 'Live handoff requires an operator-provisioned UUIDv4 generation shared with landing')
@@ -186,6 +199,8 @@ def config_check(document, root, mode, snapshot=None):
             require(not gate_env.get(setting), 'Handoff keyrings must remain worker-only')
             require(worker_env.get(setting) == '/run/secrets/' + target, 'Incorrect handoff keyring path')
             specs.append((volume(worker, '/run/secrets/' + target, 'bind', SECRET_PATHS[target], True), 10001, 1, 8192))
+    if mode == 'live':
+        require(policy in ('x-capi-browser-v1', 'x-capi-handoff-v2'), 'Unsupported live policy')
         require(worker_env.get('X_CAPI_ACCESS_TOKEN_FILE') == '/run/secrets/x_capi_access_token',
                 'Live worker token-file path differs from reviewed configuration')
         specs.append((volume(worker, '/run/secrets/x_capi_access_token', 'bind',
@@ -200,7 +215,7 @@ def config_check(document, root, mode, snapshot=None):
         specs.append((path, 0, 16, 8192))
         if target.endswith('bootstrap_password'):
             volume(services['x-capi-postgres'], '/run/secrets/' + target, 'bind', path, True)
-    require(len(worker.get('volumes', [])) == (8 if mode == 'live' else 5), 'Unreviewed worker mounts')
+    require(len(worker.get('volumes', [])) == (8 if handoff else 6 if mode == 'live' else 5), 'Unreviewed worker mounts')
     require(set(worker.get('networks', {})) == ({'x_capi_db', 'x_capi_egress'} if mode == 'live' else {'x_capi_db'}),
             'Worker network isolation differs from reviewed mode')
     for name in ('x-capi-postgres', 'x-capi-db-init'):

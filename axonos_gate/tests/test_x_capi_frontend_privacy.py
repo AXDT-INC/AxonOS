@@ -168,7 +168,7 @@ class XcapiFrontendPrivacyTests(unittest.TestCase):
             scrub.index("var attributionFallbackClean"),
             scrub.index("new URLSearchParams"),
         )
-        self.assertIn("window.location.pathname +\n                (window.location.hash || '')", scrub)
+        self.assertIn("attributionFallbackClean = window.location.pathname + attributionHash", scrub)
         self.assertIn("walletShaped", scrub)
         self.assertIn("phoneShaped", scrub)
         self.assertIn("secretShaped", scrub)

@@ -498,6 +498,11 @@ class Deployment:
             require(live_overlay.is_file() and not live_overlay.is_symlink(),
                     'Missing or symlinked live CAPI overlay')
             self.compose.extend(('-f', str(live_overlay)))
+            if checked_output(checks.env_policy, self.root / '.env') == 'x-capi-handoff-v2':
+                handoff_overlay = self.root / 'docker-compose.x-capi-handoff.yml'
+                require(handoff_overlay.is_file() and not handoff_overlay.is_symlink(),
+                        'Missing or symlinked handoff CAPI overlay')
+                self.compose.extend(('-f', str(handoff_overlay)))
         info = json.loads(self.docker('info', '--format', '{{json .}}', capture=True, label='Local Docker image store'))
         store = candidate_store(info)
         version = json.loads(self.docker('version', '--format', '{{json .}}', capture=True, label='Effective Docker API'))
