@@ -14,6 +14,11 @@ directly to the fixed app origin in the same tab, without a landing prompt,
 with the click in a fragment; fragments do not reach the HTTP server. The app
 scrubs it before loading resources and presents the single conversion-sharing
 consent choice. Nothing is automatically granted; declining leaves the app usable.
+The app choice is a nonblocking panel that does not take keyboard focus. Both
+pages include expandable X attribution privacy information. In the app, “Not
+now” dismisses the panel with sharing off; it does not record a decline. The
+Conversion sharing control allows the visitor to reopen it or revoke a grant.
+These notices describe this integration, not a complete site-wide privacy policy.
 
 Ordinary visitors see no attribution panel. Modified clicks, middle clicks,
 context-menu links, expired clicks, reloads and restored pages use ordinary

@@ -1074,12 +1074,11 @@ const initializeXAttribution = (initialLandingClick) => {
         var dialogHasLandingClick = hasClick === true && landingClickEligible && !!landingClick;
         var root = document.createElement('div');
         root.id = 'axonos-x-consent';
-        root.setAttribute('role', 'dialog');
-        root.setAttribute('aria-modal', 'true');
+        root.setAttribute('role', 'region');
         root.setAttribute('aria-labelledby', 'axonos-x-consent-title');
-        root.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(4,7,12,.82);display:flex;align-items:center;justify-content:center;padding:1rem;';
+        root.style.cssText = 'position:fixed;right:1rem;bottom:4rem;width:calc(100% - 2rem);max-width:25rem;max-height:55vh;overflow:auto;z-index:2147483000;';
         var panel = document.createElement('div');
-        panel.style.cssText = 'max-width:36rem;background:#10151c;color:#f6f8fa;border:1px solid #526172;border-radius:.75rem;padding:1.4rem;font:16px/1.45 system-ui,sans-serif;';
+        panel.style.cssText = 'background:#10151c;color:#f6f8fa;border:1px solid #526172;border-radius:.75rem;padding:1rem;font:14px/1.5 system-ui,sans-serif;';
         var title = document.createElement('h2');
         title.id = 'axonos-x-consent-title';
         var canChooseCurrent = dialogHasLandingClick &&
@@ -1117,6 +1116,7 @@ const initializeXAttribution = (initialLandingClick) => {
                 submitChoice('grant',
                     'Your choice could not be saved. No conversion sharing was enabled; you may retry.');
             }));
+            actions.appendChild(makeButton('Not now', false, removeDialog));
         } else if (canStartNewLifecycle) {
             actions.appendChild(makeButton('Ignore this click', false, function () {
                 discardLandingClick();
@@ -1150,12 +1150,39 @@ const initializeXAttribution = (initialLandingClick) => {
         }
         panel.appendChild(title);
         panel.appendChild(copy);
+        var privacy = document.createElement('details');
+        var summary = document.createElement('summary');
+        summary.textContent = 'How X attribution uses your data';
+        summary.style.cursor = 'pointer';
+        var explanation = document.createElement('p');
+        explanation.textContent = 'With your permission, AxonOS connects an X ad-click ID to eligible app activity to measure advertising. ' +
+            'X receives the click ID, conversion type, time and a deduplication identifier. This integration does not send wallet addresses, transaction amounts or desktop contents to X. ' +
+            'The app uses tab-scoped browser storage for the encrypted consent context and keeps attribution ' + retentionCopy() + '. ' +
+            'Declining or choosing Not now does not limit app access. Not now leaves sharing off and does not save a decline. ' +
+            'Use Conversion sharing to revisit your choice or revoke it. Revoking deletes the stored click ID and cancels unsent conversions; events already sent or in flight may not be recallable. ' +
+            'Global Privacy Control blocks sharing. This notice covers optional X attribution, not all AxonOS data processing.';
+        var xPrivacy = document.createElement('a');
+        xPrivacy.href = 'https://x.com/en/privacy';
+        xPrivacy.target = '_blank';
+        xPrivacy.rel = 'noopener noreferrer';
+        xPrivacy.textContent = 'X privacy policy';
+        xPrivacy.style.color = '#b8c9ff';
+        privacy.appendChild(summary);
+        privacy.appendChild(explanation);
+        privacy.appendChild(xPrivacy);
+        var xControls = document.createElement('a');
+        xControls.href = 'https://help.x.com/en/safety-and-security/privacy-controls-for-tailored-ads';
+        xControls.target = '_blank';
+        xControls.rel = 'noopener noreferrer';
+        xControls.textContent = 'X advertising privacy controls';
+        xControls.style.cssText = 'display:block;color:#b8c9ff;';
+        privacy.appendChild(xControls);
+        panel.appendChild(privacy);
         panel.appendChild(error);
         panel.appendChild(actions);
         root.appendChild(panel);
         document.body.appendChild(root);
-        var first = actions.querySelector('button');
-        if (first) first.focus();
+        // This optional region must not take keyboard focus or block app controls.
     }
 
     function installPrivacyControl(force) {

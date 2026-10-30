@@ -52,8 +52,10 @@ class BrowserTransferJourney(unittest.TestCase):
         else: raise RuntimeError('Disposable landing did not start')
         source = (ROOT/'novnc-theme/vnc.html').read_text()
         scripts = re.findall(r'<script>\s*([\s\S]*?)</script>', source)[:2]
+        notice = re.search(r'<details id="axonos-attribution-privacy"[\s\S]*?</details>', source).group(0)
         cls.app_html = '<!doctype html><html><head><meta name="referrer" content="no-referrer">' + ''.join(
-            '<script>'+script+'</script>' for script in scripts) + '</head><body>App test</body></html>'
+            '<script>'+script+'</script>' for script in scripts) + '</head><body>App test' + \
+            '<button id="app-action" onclick="this.textContent=\'App action works\'">App action</button>' + notice + '</body></html>'
 
     @classmethod
     def stop_server(cls):
@@ -118,7 +120,7 @@ class BrowserTransferJourney(unittest.TestCase):
             page.wait_for_function('document.querySelector("a[data-axonos-app-entry]") !== null')
             self.assertEqual(page.locator('dialog:visible, .attribution-panel:visible').count(), 0)
             self.assertNotIn('Provisional consent copy', page.locator('body').inner_text())
-            page.locator('a[data-axonos-app-entry]').first.click()
+            page.locator('a[data-axonos-app-entry]:visible').first.click()
             page.wait_for_url('https://app.axonos.io/')
             page.get_by_role('button', name='Allow sharing', exact=True).wait_for()
             self.assertEqual(grants, [])
@@ -135,7 +137,7 @@ class BrowserTransferJourney(unittest.TestCase):
         with self.journey() as (page, seen, grants):
             page.goto('https://axonos.io/?twclid='+CLICK)
             page.wait_for_function('window.axonosLandingHandoff?.snapshot().eligible')
-            page.locator('a[data-axonos-app-entry]').first.click()
+            page.locator('a[data-axonos-app-entry]:visible').first.click()
             page.wait_for_url('https://app.axonos.io/')
             decline = page.get_by_role('button', name='Decline', exact=True)
             decline.wait_for()
@@ -147,6 +149,38 @@ class BrowserTransferJourney(unittest.TestCase):
             self.assertFalse(page.evaluate('!!window.axonosAttributionContext'))
             self.assertIn('App test', page.locator('body').inner_text())
             self.assertFalse(any(CLICK in value for value in seen if 'app.axonos.io' in value))
+            page.reload()
+            page.wait_for_function('window.axonosAttributionReady === true')
+            self.assertEqual(page.locator('#axonos-x-consent').count(), 0)
+            self.assertEqual(grants, [])
+
+    def test_notice_and_optional_choice_leave_app_usable_on_desktop_and_mobile(self):
+        for width, height in ((1440, 1000), (390, 844)):
+            with self.subTest(width=width), self.journey() as (page, seen, grants):
+                page.set_viewport_size({'width': width, 'height': height})
+                page.goto('https://axonos.io/?twclid='+CLICK)
+                page.wait_for_function('window.axonosLandingHandoff?.snapshot().eligible')
+                page.locator('#x-attribution-privacy summary').click()
+                self.assertTrue(page.locator('#x-attribution-privacy').evaluate('(el) => el.open'))
+                self.assertIn('Opening the app does not grant permission', page.locator('#x-attribution-privacy').inner_text())
+                page.locator('a[data-axonos-app-entry]:visible').first.click()
+                page.wait_for_url('https://app.axonos.io/')
+                page.get_by_role('button', name='Allow sharing', exact=True).wait_for()
+                self.assertEqual(page.locator('[aria-modal="true"]').count(), 0)
+                self.assertFalse(page.locator('#axonos-x-consent').evaluate('(el) => el.contains(document.activeElement)'))
+                page.get_by_role('button', name='App action', exact=True).click()
+                self.assertEqual(page.locator('#app-action').inner_text(), 'App action works')
+                page.locator('#axonos-x-consent summary').click()
+                self.assertIn('Global Privacy Control', page.locator('#axonos-x-consent details').inner_text())
+                page.get_by_role('button', name='Not now', exact=True).click()
+                self.assertEqual(page.locator('#axonos-x-consent').count(), 0)
+                self.assertEqual(grants, [])
+                self.assertFalse(page.evaluate('!!window.axonosAttributionContext'))
+                page.get_by_role('button', name='Conversion sharing', exact=True).click()
+                page.get_by_role('button', name='Allow sharing', exact=True).wait_for()
+                self.assertEqual(grants, [])
+                page.locator('#axonos-attribution-privacy summary').click()
+                self.assertTrue(page.locator('#axonos-attribution-privacy').evaluate('(el) => el.open'))
 
     def test_ordinary_and_gpc_visitors_do_not_see_the_broken_panel(self):
         for gpc, query in ((False, ''), (True, '?twclid='+CLICK)):
