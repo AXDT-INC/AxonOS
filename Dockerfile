@@ -712,6 +712,8 @@ COPY novnc-theme/axonos-theme.css /usr/share/novnc/app/styles/
 COPY novnc-theme/vnc.html /usr/share/novnc/
 COPY novnc-theme/ui.js /usr/share/novnc/app/
 COPY novnc-theme/app/x-attribution.js /usr/share/novnc/app/x-attribution.js
+COPY novnc-theme/privacy-preferences.html /usr/share/novnc/privacy-preferences.html
+COPY novnc-theme/app/privacy-preferences.js novnc-theme/app/privacy-preferences-entry.js /usr/share/novnc/app/
 COPY novnc-theme/app/x-handoff-bridge.js /usr/share/novnc/app/x-handoff-bridge.js
 COPY novnc-theme/app/fonts/ /usr/share/novnc/app/fonts/
 COPY novnc-theme/app/webrtc/axonos-webrtc.js /usr/share/novnc/app/webrtc/axonos-webrtc.js

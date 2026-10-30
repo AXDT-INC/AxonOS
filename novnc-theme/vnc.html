@@ -344,7 +344,7 @@ Copyright (C) 2019 The noVNC Authors
 
             var moduleRequest;
             try {
-                moduleRequest = import('./app/x-attribution.js?v=5');
+                moduleRequest = import('./app/x-attribution.js?v=6');
             } catch (e) {
                 takeInitialClick();
                 return;
@@ -362,6 +362,14 @@ Copyright (C) 2019 The noVNC Authors
                 takeInitialClick();
             });
         })();
+    </script>
+
+    <script>
+        // Only preferences are shared across sites. Attribution grants remain
+        // app-owned and separately bound to an eligible click and wallet.
+        window.axonosPrivacyReady = import('./app/privacy-preferences.js?v=1')
+            .then(function (module) { return module.initializePrivacyPreferences(); })
+            .catch(function () { return { unavailable: true, permitted: function () { return false; } }; });
     </script>
 
     <!-- Icons - Using AxonOS icon.png -->
@@ -863,6 +871,8 @@ Copyright (C) 2019 The noVNC Authors
                         wallet</button>
                 </div>
             </header>
+
+            <div id="axonos-privacy-banner" style="max-width:48rem;margin:0 auto;padding:0 1rem;"></div>
 
             <!-- Hero: headline + rotating dotted globe -->
             <section class="axonos-hero">
@@ -1763,15 +1773,15 @@ Copyright (C) 2019 The noVNC Authors
                 <details id="axonos-attribution-privacy">
                     <summary style="cursor:pointer;">X attribution privacy</summary>
                     <p>Optional X attribution helps measure which ads lead to wallet verification, completed paid deposits
-                        and newly started sessions. Use Conversion sharing above to allow or decline sharing when an eligible
-                        ad visit is available. Opening the app or connecting a wallet does not enable sharing.
+                        and newly started sessions. Use the privacy controls above to choose sharing preferences.
+                        Opening the app or connecting a wallet does not create permission; a valid saved choice can be reused.
                         Your choice does not affect app access.</p>
                     <p>The landing page can hold an ad-click ID in memory for up to two minutes and pass it directly to this app
                         when you open it. The app removes it from the address bar. If you allow sharing, AxonOS links the click to
                         eligible app activity and sends X the click ID, conversion type, time and a deduplication identifier.
                         This integration does not send wallet addresses, transaction amounts or desktop contents to X.</p>
                     <p>The app keeps an encrypted consent context in tab-scoped browser storage. The sharing choice shows the
-                        attribution retention period or expiry, which is not renewed automatically. Use Conversion sharing to
+                        attribution retention period or expiry, which is not renewed automatically. Use the privacy controls to
                         review or revoke your choice. Revoking deletes the stored click ID and cancels unsent conversions;
                         events already sent or in flight may not be recallable. Global Privacy Control blocks sharing.</p>
                     <p>This section covers optional X attribution, not all AxonOS data processing.

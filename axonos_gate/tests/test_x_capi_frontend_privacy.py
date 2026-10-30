@@ -187,17 +187,17 @@ class XcapiFrontendPrivacyTests(unittest.TestCase):
         self.assertIn("initialClick = ''", loader)
         self.assertIn("window.performance.now()", loader)
         self.assertIn("now < clickDeadline", loader)
-        self.assertIn("import('./app/x-attribution.js?v=5')", loader)
+        self.assertIn("import('./app/x-attribution.js?v=6')", loader)
         self.assertIn("initialize(click)", loader)
         self.assertIn("window.addEventListener('pagehide'", loader)
         self.assertIn("window.removeEventListener('pagehide'", loader)
         self.assertLess(
             loader.index("delete window.axonosPendingTwclid"),
-            loader.index("import('./app/x-attribution.js?v=5')"),
+            loader.index("import('./app/x-attribution.js?v=6')"),
         )
         self.assertLess(
             loader.index("retentionTimer = setTimeout"),
-            loader.index("import('./app/x-attribution.js?v=5')"),
+            loader.index("import('./app/x-attribution.js?v=6')"),
         )
         self.assertLess(
             self.page.index("loadAxonosAttributionBridge"),
@@ -277,7 +277,7 @@ class XcapiFrontendPrivacyTests(unittest.TestCase):
                             content_type="text/html; charset=utf-8",
                             body=synthetic_page,
                         )
-                    elif url == "https://app.example/app/x-attribution.js?v=5":
+                    elif url == "https://app.example/app/x-attribution.js?v=6":
                         # Intentionally leave the optional module request open.
                         held_module_routes.append(route)
                     else:
@@ -383,7 +383,7 @@ class XcapiFrontendPrivacyTests(unittest.TestCase):
                                 content_type="text/html; charset=utf-8",
                                 body=monotonic_html,
                             )
-                        elif url == "https://app.example/app/x-attribution.js?v=5":
+                        elif url == "https://app.example/app/x-attribution.js?v=6":
                             held_after_deadline.append(route)
                         else:
                             route.abort()
@@ -440,7 +440,7 @@ class XcapiFrontendPrivacyTests(unittest.TestCase):
                                 content_type="text/html; charset=utf-8",
                                 body=pagehide_html,
                             )
-                        elif url == "https://app.example/app/x-attribution.js?v=5":
+                        elif url == "https://app.example/app/x-attribution.js?v=6":
                             held_after_pagehide.append(route)
                         else:
                             route.abort()

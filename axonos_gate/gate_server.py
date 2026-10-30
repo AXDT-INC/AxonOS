@@ -844,8 +844,23 @@ def after_request(response):
             )
         )
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
-    response.headers["X-Frame-Options"] = "DENY"
+    privacy_frame = (
+        x_capi.browser_preferences_config().get("landing_origin", "")
+        if x_capi is not None and request.path == '/privacy-preferences.html'
+        and not request.query_string and request.method in ('GET', 'HEAD') else ""
+    )
+    if privacy_frame:
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "connect-src 'self'; base-uri 'none'; object-src 'none'; "
+            "frame-ancestors 'self' " + privacy_frame
+        )
+        response.headers.pop("X-Frame-Options", None)
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Cache-Control"] = "no-store, private"
+    else:
+        response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+        response.headers["X-Frame-Options"] = "DENY"
     if request_is_effectively_https(
         request.remote_addr,
         request.headers.get("X-Forwarded-For"),

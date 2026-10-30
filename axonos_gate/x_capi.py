@@ -334,6 +334,9 @@ def load_config(environ: Optional[Mapping[str, str]] = None) -> Config:
     contract_version = get("X_CAPI_TWCLID_CONTRACT_VERSION")
     if contract_version and not _POLICY_RE.fullmatch(contract_version):
         errors.append("X_CAPI_TWCLID_CONTRACT_VERSION has an invalid format")
+    privacy_landing = get("X_CAPI_PRIVACY_LANDING_ORIGIN")
+    if privacy_landing and not _privacy_origin_valid(privacy_landing, allowed_origin, contract_version):
+        errors.append("X_CAPI_PRIVACY_LANDING_ORIGIN requires an exact HTTPS same-site landing origin and browser-click-v1")
     charset_raw = get("X_CAPI_TWCLID_CHARSET")
     charset = (charset_raw or "url_safe").lower()
     if charset not in _TWCLID_ALPHABETS:
@@ -1262,6 +1265,41 @@ def attribution_cors_origin(
     return None
 
 
+def _privacy_origin_valid(landing, allowed_origin, contract_version):
+    try:
+        app = urlsplit(allowed_origin or "")
+        source = urlsplit(landing)
+        return bool(
+            landing and source.scheme == app.scheme == "https"
+            and source.hostname and "." in source.hostname
+            and app.hostname == "app." + source.hostname
+            and source.netloc == source.hostname and app.netloc == app.hostname
+            and not source.path and not source.query and not source.fragment
+            and contract_version == "browser-click-v1"
+        )
+    except ValueError:
+        return False
+
+
+def browser_preferences_config(config=None) -> Dict[str, Any]:
+    """Public configuration for the optional app-owned, same-site privacy UI.
+
+    The landing only embeds this UI; it never receives attribution capabilities.
+    No wildcard origins or cross-site storage exceptions are admitted.
+    """
+    cfg = config or load_config()
+    landing = os.environ.get("X_CAPI_PRIVACY_LANDING_ORIGIN", "").strip()
+    valid = _privacy_origin_valid(landing, cfg.allowed_origin, cfg.twclid_contract_version)
+    return {
+        "enabled": valid,
+        "app_origin": cfg.allowed_origin,
+        "landing_origin": landing if valid else "",
+        "policy_version": cfg.policy_version,
+        "policy_epoch": cfg.policy_epoch,
+        "ttl_days": cfg.attribution_ttl_days,
+    }
+
+
 def attribution_status(
     context_token: Any = None, *, landing_twclid: Any = None, gpc: bool = False
 ) -> Dict[str, Any]:
@@ -1285,6 +1323,7 @@ def attribution_status(
         "state": "unavailable",
         "attribution_ttl_days": cfg.attribution_ttl_days,
         "revocation_available": bool(ticket),
+        "preferences": browser_preferences_config(cfg),
     }
     if ticket:
         base.update({"context": supplied, "csrf": ticket["csrf"]})

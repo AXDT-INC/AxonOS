@@ -1392,8 +1392,21 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             super().send_header('Pragma', 'no-cache')
             self._response_no_cache = False
         if not getattr(self, '_handoff_response', False):
-            super().send_header('Content-Security-Policy', "frame-ancestors 'none'")
-            super().send_header('X-Frame-Options', 'DENY')
+            privacy_frame = (
+                x_capi.browser_preferences_config().get('landing_origin', '')
+                if x_capi is not None and self.path == '/privacy-preferences.html'
+                and self.command in ('GET', 'HEAD') else ''
+            )
+            if privacy_frame:
+                super().send_header('Content-Security-Policy',
+                    "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                    "connect-src 'self'; base-uri 'none'; object-src 'none'; "
+                    "frame-ancestors 'self' " + privacy_frame)
+                super().send_header('Referrer-Policy', 'no-referrer')
+                super().send_header('Cache-Control', 'no-store, private')
+            else:
+                super().send_header('Content-Security-Policy', "frame-ancestors 'none'")
+                super().send_header('X-Frame-Options', 'DENY')
         peer_ip = self.client_address[0] if getattr(self, "client_address", None) else None
         request_headers = getattr(self, "headers", {})
         direct_scheme = "https" if getattr(self.server, "ssl_only", False) else "http"

@@ -61,6 +61,11 @@ const initializeXAttribution = (initialLandingClick) => {
     var activeUpdateController = null;
     var activeUpdateSequence = 0;
     var updateInFlight = false;
+    var sharedPreferences = null;
+    var sharedPreferencesLoaded = false;
+    var sharedTracked = false;
+    var sharedGrantActive = false;
+    var sharedSubscribed = false;
     var suppressionRequestScheduled = false;
     var bindAttemptKey = '';
     var boundWallet = '';
@@ -455,6 +460,8 @@ const initializeXAttribution = (initialLandingClick) => {
     }
 
     function maybeBindVerifiedWallet() {
+        if (!sharedPreferencesLoaded || (sharedPreferences &&
+            (!sharedTracked || !sharedPreferences.permitted()))) return;
         var wallet = String(window.verifiedWalletAddress || '').trim().toLowerCase();
         var authToken = String(window.verifiedWalletAuthToken || '').trim();
         if (state !== 'granted' || gpcActive || revocationPending ||
@@ -598,6 +605,8 @@ const initializeXAttribution = (initialLandingClick) => {
             (!!boundWallet && boundWallet === verifiedWallet)
         );
         var mayExpose = ownershipEstablished && !revokeOnlyLifecycle &&
+            sharedPreferencesLoaded && (!sharedPreferences ||
+                (sharedTracked && sharedPreferences.permitted())) &&
             !gpcActive && !revocationPending && enabled &&
             state === 'granted' && !!context && walletCompatible;
         window.axonosAttributionContext = mayExpose ? context : '';
@@ -847,6 +856,20 @@ const initializeXAttribution = (initialLandingClick) => {
     }
 
     function update(action) {
+        if (action === 'grant' && sharedPreferences && !sharedGrantActive) {
+            if (!sharedPreferences.track) return Promise.reject(new Error('Privacy preferences unavailable'));
+            return sharedPreferences.track({ context: context, csrf: csrf, expires: attributionExpiresAt }, function () {
+                sharedGrantActive = true;
+                sharedTracked = true;
+                return update(action).then(function (result) {
+                    sharedGrantActive = false;
+                    return result;
+                }, function (error) {
+                    sharedGrantActive = false;
+                    throw error;
+                });
+            });
+        }
         var suppressing = action === 'revoke' || action === 'decline';
         if (!suppressing) {
             var newlyLatchedGpc = false;
@@ -1196,6 +1219,7 @@ const initializeXAttribution = (initialLandingClick) => {
     }
 
     function installPrivacyControl(force) {
+        if (!sharedPreferencesLoaded || sharedPreferences) return;
         if ((!force && !enabled && !revocationAvailable) ||
             document.getElementById('axonos-x-privacy-control')) return;
         if (!document.body) {
@@ -1254,7 +1278,15 @@ const initializeXAttribution = (initialLandingClick) => {
             setRevocationPending(true);
             window.axonosAttributionContext = '';
         }
-        contextOwnershipReady().then(function () {
+        Promise.resolve(window.axonosPrivacyReady).then(function (preferences) {
+            sharedPreferences = preferences || null;
+            sharedPreferencesLoaded = true;
+            if (sharedPreferences && sharedPreferences.subscribe && !sharedSubscribed) {
+                sharedSubscribed = true;
+                sharedPreferences.subscribe(applySharedPreference);
+            }
+            return contextOwnershipReady();
+        }).then(function () {
             if (bootGeneration !== attributionBootGeneration) return { stale: true };
             // Ownership arbitration may have discarded a copied, non-revocable
             // context. Recheck laziness after that asynchronous decision.
@@ -1269,6 +1301,14 @@ const initializeXAttribution = (initialLandingClick) => {
         }).then(function (result) {
             if (bootGeneration !== attributionBootGeneration ||
                 (result && result.stale === true)) return;
+            if (sharedPreferences) {
+                if (state === 'granted' && sharedPreferences.permitted()) {
+                    return sharedPreferences.track({ context: context, csrf: csrf, expires: attributionExpiresAt })
+                        .then(function () { sharedTracked = true; applySharedPreference(); });
+                }
+                applySharedPreference();
+                return;
+            }
             installPrivacyControl(revocationPending || gpcActive);
             if (revocationPending) {
                 scheduleSuppressionRequest();
@@ -1297,6 +1337,28 @@ const initializeXAttribution = (initialLandingClick) => {
                 installPrivacyControl(true);
             }
         });
+    }
+
+    function applySharedPreference() {
+        if (!sharedPreferences) return;
+        if (!sharedPreferences.permitted()) {
+            window.axonosAttributionContext = '';
+            if (state === 'granted' || revokeCapability.context) {
+                latchSuppression(false, true);
+                scheduleSuppressionRequest();
+            } else if (sharedPreferences.choice && sharedPreferences.choice() === 'deny') {
+                discardLandingClick();
+            }
+        } else if (enabled && state === 'unset' && landingClickBoundToCurrentLifecycle && !updateInFlight) {
+            // This uses the saved category choice, never an URL flag or wallet
+            // connection. The backend still validates click, CSRF and policy.
+            update('grant').catch(function () {
+                window.axonosAttributionContext = '';
+                if (sharedPreferences.reportError) sharedPreferences.reportError();
+            });
+        } else {
+            synchronizePublicContext();
+        }
     }
 
     if (document.readyState === 'loading') {

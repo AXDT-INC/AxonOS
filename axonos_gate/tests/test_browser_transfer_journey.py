@@ -51,7 +51,7 @@ class BrowserTransferJourney(unittest.TestCase):
                 time.sleep(.1)
         else: raise RuntimeError('Disposable landing did not start')
         source = (ROOT/'novnc-theme/vnc.html').read_text()
-        scripts = re.findall(r'<script>\s*([\s\S]*?)</script>', source)[:2]
+        scripts = re.findall(r'<script>\s*([\s\S]*?)</script>', source)[:3 if getattr(cls, 'SHARED', False) else 2]
         notice = re.search(r'<section id="axonos-attribution-settings"[\s\S]*?</section>', source).group(0)
         cls.app_html = '<!doctype html><html><head><meta name="referrer" content="no-referrer">' + ''.join(
             '<script>'+script+'</script>' for script in scripts) + '</head><body>App test' + \
@@ -75,6 +75,8 @@ class BrowserTransferJourney(unittest.TestCase):
         env = {**production_env(), 'X_CAPI_CONSENT_POLICY_VERSION': 'x-capi-browser-v1',
             'X_CAPI_TWCLID_CONTRACT_VERSION': 'browser-click-v1', 'X_HANDOFF_ENABLED': 'false',
             'X_CAPI_TWCLID_CHARSET': 'url_safe', 'X_CAPI_TWCLID_MIN_LENGTH': '8', 'X_CAPI_TWCLID_MAX_LENGTH': '256'}
+        if getattr(self, 'SHARED', False):
+            env['X_CAPI_PRIVACY_LANDING_ORIGIN'] = 'https://axonos.io'
         context = self.browser.new_context(viewport={'width': 1440, 'height': 1000})
         if gpc: context.add_init_script('Object.defineProperty(navigator,"globalPrivacyControl",{get:()=>true})')
         page = context.new_page(); page.set_default_timeout(10000)
@@ -94,6 +96,8 @@ class BrowserTransferJourney(unittest.TestCase):
                         landing_twclid=headers.get('x-axonos-landing-click'), gpc=headers.get('sec-gpc') == '1')
                     return request_route.fulfill(json=body)
                 if url.path == '/api/x-attribution/consent':
+                    if getattr(self, 'fail_revoke', False) and request.post_data_json['action'] == 'revoke':
+                        return request_route.fulfill(status=503, json={'ok': False})
                     body, code = x_capi.update_consent(context_token=headers.get('x-axonos-attribution'),
                         csrf_token=headers.get('x-axonos-csrf'), action=request.post_data_json['action'],
                         origin=headers.get('origin'), landing_twclid=headers.get('x-axonos-landing-click'))
@@ -101,6 +105,10 @@ class BrowserTransferJourney(unittest.TestCase):
                     return request_route.fulfill(status=code, json=body)
                 if url.path == '/app/x-attribution.js':
                     return request_route.fulfill(content_type='text/javascript', body=(ROOT/'novnc-theme/app/x-attribution.js').read_text())
+                if url.path in ('/app/privacy-preferences.js', '/app/privacy-preferences-entry.js'):
+                    return request_route.fulfill(content_type='text/javascript', body=(ROOT/'novnc-theme'/url.path.lstrip('/')).read_text())
+                if url.path == '/privacy-preferences.html':
+                    return request_route.fulfill(content_type='text/html', body=(ROOT/'novnc-theme/privacy-preferences.html').read_text())
                 if url.path == '/': return request_route.fulfill(content_type='text/html', body=self.app_html)
             request_route.abort()
         with patch.dict(os.environ, env, clear=True), \
@@ -109,7 +117,7 @@ class BrowserTransferJourney(unittest.TestCase):
                 patch.object(x_capi, '_request_worker_consent', side_effect=lambda action, *_: {
                     'v': 1, 'ok': True, 'state': 'denied' if action == 'decline' else 'revoked'}), \
                 patch.object(x_capi, '_persist_privacy_fence_status', return_value='published'):
-            page.route('**/*', route)
+            context.route('**/*', route)
             try: yield page, seen, grants
             finally: context.close()
 

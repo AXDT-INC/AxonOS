@@ -1,5 +1,74 @@
 # Landing-to-app attribution
 
+## Shared browser privacy preferences
+
+The optional shared flow collects one advertising-measurement choice for the
+landing page and app. The landing embeds `/privacy-preferences.html` from the
+app origin. Its controls offer **Accept optional**, **Reject optional**, and
+**Preferences** with an X conversion-sharing category. A valid saved choice is
+reused on arrival in the app; direct app visitors receive the same controls.
+Privacy settings remain available on both pages. Navigation and wallet access
+do not depend on accepting, and an unanswered choice does not permit sharing.
+
+This uses the existing gate, context encryption, CAPI worker and schema 5. It
+does not require landing keyrings, Vault objects, a landing database, a separate
+privacy worker, or the legacy `X_HANDOFF_ENABLED=true` protocol. The X access
+token remains worker-only. No new GitOps secret resources are needed.
+
+The app-host `__Host-axonos_privacy_v1` cookie contains only the choice, policy
+version/epoch and a fixed deadline (at most the configured attribution TTL,
+capped at 90 days). It is Secure, SameSite=Strict, Path=/, with no Domain. It is
+readable by the app's preference script, not the landing script. The frame sends
+only bounded sizing information to its exact configured parent; it accepts no
+postMessage commands to grant sharing. No click ID or grant is passed to it.
+
+Each app tab still obtains its own server-encrypted attribution ticket and
+passes the existing click, CSRF, policy and verified-wallet checks. Before a
+grant can be used, its withdrawal capability is saved in a bounded app-origin
+localStorage registry under an origin-wide Web Lock. The registry is used only
+for withdrawal, never to restore a grant or wallet binding into another tab.
+Rejecting on either page blocks browser producers, then revokes all registered
+unexpired handles through the existing worker. Pending withdrawals persist and
+remain suppressed until acknowledged. A new acceptance cannot erase them.
+The registry holds at most 16 live handles; storage failure or exhaustion blocks
+new sharing. Expired capabilities are removed at the next privacy check without
+extending their lifetime. A separate rejection marker persists until a new
+explicit acceptance, so a failed cookie write cannot resurrect an older allow
+choice on reload. No new grant is issued while withdrawal is pending.
+
+Choices apply to this browser and storage partition, not another device.
+Blocked cookies/storage or missing Web Locks leave sharing off. If a browser
+isolates frame storage, a missing choice in the app must be collected again;
+it is never inferred from navigation. Clearing browser storage also removes
+its withdrawal capabilities; previously sent/in-flight events cannot be
+recalled. GPC suppresses sharing. These controls manage X attribution only,
+not unrelated trackers or a complete site-wide privacy policy.
+
+### Activating the shared flow
+
+1. Build the updated backend through the production controller.
+   Keep the browser-click-v1 contract and `X_HANDOFF_ENABLED=false`.
+2. Set **one additional non-secret backend configuration value**, without a
+   trailing slash: `X_CAPI_PRIVACY_LANDING_ORIGIN=https://your-domain.example`
+   where `X_CAPI_ALLOWED_ORIGIN=https://app.your-domain.example`. Only this exact
+   HTTPS same-site parent may frame the preferences document. Other app/API
+   routes retain their frame denial. Invalid configured parents fail config
+   validation. Empty preserves the app-only controls below.
+3. Increment the existing consent policy epoch for this notice/storage change
+   through the controller's normal worker recovery/configuration checks. Do not
+   reuse an older epoch or reinterpret existing grants as shared preferences.
+   This retires earlier grants that were not registered for browser-wide
+   withdrawal. Keep the supported `x-capi-browser-v1` policy version. Deploy the
+   backend with these settings before publishing the landing update.
+4. Publish the landing build with the shared frame and browser-transfer
+   selector. The landing's CSP permits frames only from the app origin in this
+   mode. An ingress must preserve the preferences document's narrow frame CSP
+   rather than add a blanket X-Frame-Options DENY to that document.
+5. Verify a genuine acceptance -> app -> eligible conversion journey, rejection,
+   direct app entry, cross-tab withdrawal and withdrawal retry. Confirm X
+   acceptance separately; synthetic browser tests do not establish delivery or
+   attribution in X Ads Manager. Do not change production credentials to test.
+
 ## Browser transfer (preferred for a new source)
 
 Use `x-capi-browser-v1` when the landing page does not need to retain attribution
@@ -13,7 +82,8 @@ scrubs the URL before rendering/analytics. An ordinary app-link click navigates
 directly to the fixed app origin in the same tab, without a landing prompt,
 with the click in a fragment; fragments do not reach the HTTP server. The app
 scrubs it before loading resources and exposes an optional Conversion sharing
-control in the app's footer privacy section. No choices open automatically,
+control in the app's footer privacy section when shared preferences are disabled.
+In that app-only fallback, no choices open automatically,
 including on page-cache restoration.
 Sharing stays off unless the visitor opens that control and explicitly allows it;
 ignoring the control or declining leaves the app usable.
