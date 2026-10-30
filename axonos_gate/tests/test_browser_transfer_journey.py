@@ -104,23 +104,21 @@ class BrowserTransferJourney(unittest.TestCase):
         with patch.dict(os.environ, env, clear=True), \
                 patch.object(x_capi, '_context_ciphers', return_value=((cipher,), None)), \
                 patch.object(x_capi, 'config_guard_current', return_value=True), \
-                patch.object(x_capi, '_request_worker_consent', return_value={'v': 1, 'ok': True, 'state': 'revoked'}), \
+                patch.object(x_capi, '_request_worker_consent', side_effect=lambda action, *_: {
+                    'v': 1, 'ok': True, 'state': 'denied' if action == 'decline' else 'revoked'}), \
                 patch.object(x_capi, '_persist_privacy_fence_status', return_value='published'):
             page.route('**/*', route)
             try: yield page, seen, grants
             finally: context.close()
 
-    def test_packaged_landing_to_app_requires_two_explicit_choices_and_revokes(self):
+    def test_packaged_landing_to_app_requires_single_app_consent_and_revokes(self):
         with self.journey() as (page, seen, grants):
             page.goto('https://axonos.io/?twclid='+CLICK)
             page.wait_for_function('window.axonosLandingHandoff?.snapshot().eligible')
             page.wait_for_function('document.querySelector("a[data-axonos-app-entry]") !== null')
-            self.assertEqual(page.locator('.attribution-panel:visible').count(), 0)
+            self.assertEqual(page.locator('dialog:visible, .attribution-panel:visible').count(), 0)
             self.assertNotIn('Provisional consent copy', page.locator('body').inner_text())
             page.locator('a[data-axonos-app-entry]').first.click()
-            page.get_by_role('dialog').wait_for(state='visible')
-            self.assertEqual(grants, [])
-            page.get_by_role('button', name='Continue with attribution', exact=True).click()
             page.wait_for_url('https://app.axonos.io/')
             page.get_by_role('button', name='Allow sharing', exact=True).wait_for()
             self.assertEqual(grants, [])
@@ -132,6 +130,23 @@ class BrowserTransferJourney(unittest.TestCase):
             page.get_by_role('button', name='Conversion sharing', exact=True).click()
             page.get_by_role('button', name='Revoke sharing', exact=True).click()
             page.wait_for_function('!window.axonosAttributionContext')
+
+    def test_declining_in_app_does_not_grant_sharing_or_block_app(self):
+        with self.journey() as (page, seen, grants):
+            page.goto('https://axonos.io/?twclid='+CLICK)
+            page.wait_for_function('window.axonosLandingHandoff?.snapshot().eligible')
+            page.locator('a[data-axonos-app-entry]').first.click()
+            page.wait_for_url('https://app.axonos.io/')
+            decline = page.get_by_role('button', name='Decline', exact=True)
+            decline.wait_for()
+            self.assertEqual(grants, [])
+            self.assertFalse(page.evaluate('(click) => Object.values(sessionStorage).some(v => v.includes(click))', CLICK))
+            decline.click()
+            decline.wait_for(state='hidden')
+            self.assertEqual(grants, [])
+            self.assertFalse(page.evaluate('!!window.axonosAttributionContext'))
+            self.assertIn('App test', page.locator('body').inner_text())
+            self.assertFalse(any(CLICK in value for value in seen if 'app.axonos.io' in value))
 
     def test_ordinary_and_gpc_visitors_do_not_see_the_broken_panel(self):
         for gpc, query in ((False, ''), (True, '?twclid='+CLICK)):

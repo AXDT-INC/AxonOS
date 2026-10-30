@@ -9,11 +9,11 @@ control database, shared handoff keyrings, source generation or privacy sidecar*
 The existing X token remains backend-worker-only.
 
 The landing keeps an eligible `twclid` in memory for at most two minutes and
-scrubs the URL before rendering/analytics. An ordinary app-link click opens a
-small transfer choice. Declining opens the app normally. Allowing navigates in
-the same tab to the fixed app origin with the click in a fragment; fragments do
-not reach the HTTP server. The app scrubs it before loading resources and asks
-for its own conversion-sharing consent. Nothing is automatically granted.
+scrubs the URL before rendering/analytics. An ordinary app-link click navigates
+directly to the fixed app origin in the same tab, without a landing prompt,
+with the click in a fragment; fragments do not reach the HTTP server. The app
+scrubs it before loading resources and presents the single conversion-sharing
+consent choice. Nothing is automatically granted; declining leaves the app usable.
 
 Ordinary visitors see no attribution panel. Modified clicks, middle clicks,
 context-menu links, expired clicks, reloads and restored pages use ordinary
