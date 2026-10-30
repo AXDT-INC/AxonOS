@@ -1261,11 +1261,9 @@ const initializeXAttribution = (initialLandingClick) => {
                 synchronizePublicContext();
                 return;
             }
-            if (landingClickEligible && enabled &&
-                ((state === 'unset' && landingClickBoundToCurrentLifecycle) ||
-                    newLifecycleAvailable) && !gpcActive) {
-                showChoices(true);
-            } else if (state !== 'unset' && !newLifecycleAvailable) {
+            // Optional choices open only from the visitor's privacy control.
+            // Arrival from an ad must neither interrupt app use nor grant sharing.
+            if (state !== 'unset' && !newLifecycleAvailable) {
                 discardLandingClick();
             }
         }).catch(function () {

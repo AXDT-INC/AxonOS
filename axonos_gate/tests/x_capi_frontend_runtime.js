@@ -377,7 +377,8 @@ async function testUnsetIsEphemeralAndGrantUsesHeader() {
         },
     });
     env.dispatchDocument('DOMContentLoaded');
-    await eventually(() => !!env.button('Allow sharing'), 'allow choice did not render');
+    await eventually(() => !!env.button('Conversion sharing'), 'privacy control did not render');
+    assert(!env.button('Allow sharing'), 'arrival automatically opened consent choices');
     assert(env.values.get(STORAGE_KEY) === undefined, 'unset context was persisted');
     assert(env.values.get(CAPABILITY_KEY) === undefined, 'unset revoke capability was persisted');
     assert(env.runtime.axonosPendingTwclid === undefined, 'raw click global survived bridge load');
@@ -415,6 +416,9 @@ async function testUnsetIsEphemeralAndGrantUsesHeader() {
     assert([...reloaded.values.values()].every((value) => !String(value).includes(CLICK)),
         'reload storage retained the raw click');
 
+    assert(!env.button('Allow sharing'), 'page-cache resume automatically opened consent choices');
+    env.button('Conversion sharing').click();
+    await eventually(() => !!env.button('Allow sharing'), 'requested choice did not render');
     env.button('Allow sharing').click();
     await eventually(() => calls.length === 3, 'grant request was not sent');
     const grant = calls[2];

@@ -12,9 +12,11 @@ The landing keeps an eligible `twclid` in memory for at most two minutes and
 scrubs the URL before rendering/analytics. An ordinary app-link click navigates
 directly to the fixed app origin in the same tab, without a landing prompt,
 with the click in a fragment; fragments do not reach the HTTP server. The app
-scrubs it before loading resources and presents the single conversion-sharing
-consent choice. Nothing is automatically granted; declining leaves the app usable.
-The app choice is a nonblocking panel that does not take keyboard focus. Both
+scrubs it before loading resources and exposes an optional Conversion sharing
+control. No consent panel opens automatically, including on page-cache restoration.
+Sharing stays off unless the visitor opens that control and explicitly allows it;
+ignoring the control or declining leaves the app usable.
+The visitor-requested choice is a nonblocking panel that does not take keyboard focus. Both
 pages include expandable X attribution privacy information. In the app, “Not
 now” dismisses the panel with sharing off; it does not record a decline. The
 Conversion sharing control allows the visitor to reopen it or revoke a grant.
