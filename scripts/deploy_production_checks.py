@@ -20,7 +20,8 @@ SECRET_METADATA_COMMAND = ('/usr/bin/sudo', '-n', '--', '/usr/bin/python3', '-I'
                            SECRET_METADATA_HELPER)
 SECRET_PATHS = {name.replace('-', '_'): '/etc/axonos/' + name for name in (
     'x-capi-access-token', 'x-capi-context-key', 'x-capi-db-url', 'x-capi-hash-key',
-    'x-capi-postgres-bootstrap-password', 'x-capi-postgres-worker-password')}
+    'x-capi-postgres-bootstrap-password', 'x-capi-postgres-worker-password',
+    'x-handoff-service-keyring', 'x-handoff-source-data-keyring')}
 
 
 class Refusal(Exception):
@@ -94,7 +95,8 @@ def secret_metadata(path, root, uid, low, high, snapshot=None):
     if snapshot is not None:
         # No host path traversal by the unprivileged operator. The helper has
         # walked the fixed path components without following any symlinks.
-        require(secret_attestation.FILES.get(str(path)) == (uid, low, high), 'Secret is outside the reviewed helper allowlist')
+        require({**secret_attestation.FILES, **secret_attestation.OPTIONAL_FILES}.get(str(path)) == (uid, low, high), 'Secret is outside the reviewed helper allowlist')
+        require(str(path) in snapshot['files'], 'Required handoff secret metadata missing; provision keyrings and update installed metadata helper')
         info = snapshot['files'][str(path)]
         return (str(path), *(info[field] for field in secret_attestation.FIELDS))
     # Retained for direct, read-only diagnostic callers. Deployment itself
@@ -165,6 +167,25 @@ def config_check(document, root, mode, snapshot=None):
     require(volume(worker, '/run/secrets/x_capi_context_key', 'bind', readonly=True) == context, 'Gate/worker context keys differ')
     specs = [(context, 10001, 44, 4096)]
     if mode == 'live':
+        require(worker_env.get('X_CAPI_CONSENT_POLICY_VERSION') == 'x-capi-handoff-v2',
+                'Live deployment requires handoff v2')
+        require(re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}',
+                             worker_env.get('X_HANDOFF_SOURCE_GENERATION', '') or ''),
+                'Live handoff requires an operator-provisioned UUIDv4 generation shared with landing')
+        for key, value in {
+            'X_HANDOFF_PROTOCOL': 'axonos-first-party-handoff-v2',
+            'X_HANDOFF_WITHDRAWAL_POLICY': 'B', 'X_HANDOFF_SOCKET': '/run/axonos-x-capi/handoff.sock',
+            'X_HANDOFF_LEASE_MS': '30000', 'X_HANDOFF_RENEW_INTERVAL_MS': '10000',
+            'X_HANDOFF_TRANSACTION_TTL_MS': '300000', 'X_HANDOFF_OBSERVATION_TTL_MS': '120000',
+            'X_HANDOFF_MAX_CLOCK_ERROR_MS': '5000',
+        }.items():
+            require(str(worker_env.get(key, '')) == value, 'Live handoff protocol/policy/timing configuration differs')
+        for name in ('service', 'source_data'):
+            target = 'x_handoff_' + name + '_keyring'
+            setting = 'X_HANDOFF_' + name.upper() + '_KEYRING_FILE'
+            require(not gate_env.get(setting), 'Handoff keyrings must remain worker-only')
+            require(worker_env.get(setting) == '/run/secrets/' + target, 'Incorrect handoff keyring path')
+            specs.append((volume(worker, '/run/secrets/' + target, 'bind', SECRET_PATHS[target], True), 10001, 1, 8192))
         require(worker_env.get('X_CAPI_ACCESS_TOKEN_FILE') == '/run/secrets/x_capi_access_token',
                 'Live worker token-file path differs from reviewed configuration')
         specs.append((volume(worker, '/run/secrets/x_capi_access_token', 'bind',
@@ -179,7 +200,7 @@ def config_check(document, root, mode, snapshot=None):
         specs.append((path, 0, 16, 8192))
         if target.endswith('bootstrap_password'):
             volume(services['x-capi-postgres'], '/run/secrets/' + target, 'bind', path, True)
-    require(len(worker.get('volumes', [])) == (6 if mode == 'live' else 5), 'Unreviewed worker mounts')
+    require(len(worker.get('volumes', [])) == (8 if mode == 'live' else 5), 'Unreviewed worker mounts')
     require(set(worker.get('networks', {})) == ({'x_capi_db', 'x_capi_egress'} if mode == 'live' else {'x_capi_db'}),
             'Worker network isolation differs from reviewed mode')
     for name in ('x-capi-postgres', 'x-capi-db-init'):
@@ -273,7 +294,7 @@ def database_check(document, expected):
 
 def worker_contract(env, mounts, networks, readonly, user):
     keys = ('AXGT_REVENUE_WALLET', 'AXONOS_TEST_CREDIT_WALLETS', 'AXONOS_WHITELISTED_WALLETS', 'AXONOS_GUEST_INVITE_MINTERS')
-    settings = {key: value for key, value in env.items() if key.startswith('X_CAPI_') or key in keys}
+    settings = {key: value for key, value in env.items() if key.startswith(('X_CAPI_', 'X_HANDOFF_')) or key in keys}
     return hashlib.sha256(json.dumps([settings, sorted(mounts), sorted(networks), readonly, user], sort_keys=True).encode()).hexdigest()
 
 

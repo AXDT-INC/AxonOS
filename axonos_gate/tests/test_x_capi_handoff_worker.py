@@ -127,6 +127,18 @@ class RuntimeBoundaryTests(unittest.TestCase):
         self.runtime.positive_allowed = lambda: False
         self.assertFalse(self.runtime.dispatch_fresh())
 
+    def test_readiness_never_renews_a_missing_lease_and_tracks_clock_and_retirement(self):
+        self.runtime.positive_allowed = lambda: True
+        self.assertFalse(self.runtime.readiness()['ready'])
+        self.assertFalse(self.lease.allows_dispatch())
+        self.runtime.lease.allows_dispatch = lambda: True
+        self.assertTrue(self.runtime.readiness()['ready'])
+        self.runtime.clock_assured = lambda: False
+        self.assertFalse(self.runtime.readiness()['ready'])
+        self.runtime.clock_assured = lambda: True
+        self.runtime.positive_allowed = lambda: False
+        self.assertFalse(self.runtime.readiness()['ready'])
+
 
     def test_high_water_retires_and_drains_without_in_process_boot_replacement(self):
         import uuid

@@ -1754,6 +1754,21 @@ def _privacy_fence_runtime_secure(now: Optional[float] = None) -> bool:
         fence.close()
 
 
+def _handoff_readiness() -> Dict[str, bool]:
+    """Probe the running worker, not a newly constructed healthcheck runtime."""
+    unavailable = {"ready": False, "positive_allowed": False,
+                   "clock_trusted": False, "lease_fresh": False}
+    try:
+        try:
+            from .x_capi_handoff_rpc import HandoffRpcClient
+        except ImportError:
+            from x_capi_handoff_rpc import HandoffRpcClient
+        response = HandoffRpcClient().request({"kind": "readiness"})
+        return response["body"] if response["status"] == 200 else unavailable
+    except Exception:
+        return unavailable
+
+
 def worker_readiness() -> Dict[str, Any]:
     cfg = x_capi.load_config()
     status = x_capi.config_status()
@@ -1809,6 +1824,9 @@ def worker_readiness() -> Dict[str, Any]:
         allowed_uid_ok = int(os.getenv("X_CAPI_INGEST_ALLOWED_UID", "0")) == 0
     except ValueError:
         allowed_uid_ok = False
+    handoff_required = status["mode"] in ("live", "dry_run") and cfg.policy_version == "x-capi-handoff-v2"
+    handoff = _handoff_readiness() if handoff_required else None
+    handoff_ready = not handoff_required or handoff["ready"]
     live_ready = bool(
         status["mode"] == "live"
         and status["producer_ready"]
@@ -1821,6 +1839,7 @@ def worker_readiness() -> Dict[str, Any]:
         and privacy_fence_secure
         and allowed_uid_ok
         and live_delivery_blocked_reason is None
+        and handoff_ready
     )
     dry_run_ready = bool(
         status["mode"] == "dry_run"
@@ -1832,6 +1851,7 @@ def worker_readiness() -> Dict[str, Any]:
         and runtime_secure
         and privacy_fence_secure
         and allowed_uid_ok
+        and handoff_ready
     )
     off_ready = bool(
         status["mode"] == "off"
@@ -1866,6 +1886,10 @@ def worker_readiness() -> Dict[str, Any]:
         "dry_run_ready": dry_run_ready,
         "live_ready": live_ready,
         "worker_ready": worker_ready,
+        "handoff_required": handoff_required,
+        "handoff_ready": handoff["ready"] if handoff else None,
+        "handoff_clock_trusted": handoff["clock_trusted"] if handoff else None,
+        "handoff_lease_fresh": handoff["lease_fresh"] if handoff else None,
     }
 
 

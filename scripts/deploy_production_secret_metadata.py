@@ -23,6 +23,10 @@ FILES = {
     '/etc/axonos/x-capi-postgres-bootstrap-password': (0, 16, 8192),
     '/etc/axonos/x-capi-postgres-worker-password': (0, 16, 8192),
 }
+OPTIONAL_FILES = {
+    '/etc/axonos/x-handoff-service-keyring': (10001, 1, 8192),
+    '/etc/axonos/x-handoff-source-data-keyring': (10001, 1, 8192),
+}
 FIELDS = ('dev', 'ino', 'uid', 'gid', 'mode', 'nlink', 'size', 'mtime_ns', 'ctime_ns')
 
 
@@ -50,21 +54,23 @@ def validate_snapshot(snapshot):
     require(isinstance(snapshot, dict) and set(snapshot) == {'version', 'directories', 'files'})
     require(type(snapshot['version']) is int and snapshot['version'] == VERSION)
     require(isinstance(snapshot['directories'], dict) and set(snapshot['directories']) == set(DIRECTORIES))
-    require(isinstance(snapshot['files'], dict) and set(snapshot['files']) == set(FILES))
+    require(isinstance(snapshot['files'], dict) and set(FILES) <= set(snapshot['files'])
+            and set(snapshot['files']) <= set(FILES) | set(OPTIONAL_FILES))
     for path, info in snapshot['directories'].items():
         validate_record(info)
         require(stat.S_ISDIR(info['mode']) and info['uid'] == info['gid'] == 0)
         require(stat.S_IMODE(info['mode']) & 0o7022 == 0)
         if path == '/etc/axonos':
             require(stat.S_IMODE(info['mode']) == 0o700)
-    for path, (uid, low, high) in FILES.items():
+    for path in snapshot['files']:
+        uid, low, high = {**FILES, **OPTIONAL_FILES}[path]
         info = snapshot['files'][path]
         validate_record(info)
         require(stat.S_ISREG(info['mode']) and info['nlink'] == 1)
         require(info['uid'] == info['gid'] == uid and stat.S_IMODE(info['mode']) in (0o400, 0o600))
         require(low <= info['size'] <= high)
     # Aliasing reviewed roles to one inode is not an acceptable secret set.
-    require(len({(item['dev'], item['ino']) for item in snapshot['files'].values()}) == len(FILES))
+    require(len({(item['dev'], item['ino']) for item in snapshot['files'].values()}) == len(snapshot['files']))
     return snapshot
 
 
@@ -78,10 +84,15 @@ def _open_snapshot(handles):
         handles.append((descriptor, directories, path))
         directories[path] = record(os.fstat(descriptor))
         parent = descriptor
-    for path in FILES:
+    for path in {**FILES, **OPTIONAL_FILES}:
         # O_PATH never grants a content-readable descriptor. O_NOFOLLOW can
         # return a symlink descriptor, so the regular-file check is essential.
-        descriptor = os.open(path.rsplit('/', 1)[1], flags, dir_fd=parent)
+        try:
+            descriptor = os.open(path.rsplit('/', 1)[1], flags, dir_fd=parent)
+        except FileNotFoundError:
+            if path in OPTIONAL_FILES:
+                continue
+            raise
         handles.append((descriptor, files, path))
         files[path] = record(os.fstat(descriptor))
     return validate_snapshot({'version': VERSION, 'directories': directories, 'files': files})

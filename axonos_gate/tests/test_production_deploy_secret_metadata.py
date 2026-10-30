@@ -29,11 +29,16 @@ HELPER = REPO / 'scripts/deploy_production_secret_metadata.py'
 MARKER = 'SYNTHETIC_SECRET_MUST_NEVER_BE_EMITTED'
 FIELDS = {'dev', 'ino', 'uid', 'gid', 'mode', 'nlink', 'size', 'mtime_ns', 'ctime_ns'}
 FILES = {
+    '/etc/axonos/x-capi-access-token': (10001, 16, 8192),
     '/etc/axonos/x-capi-context-key': (10001, 44, 4096),
     '/etc/axonos/x-capi-db-url': (10001, 1, 8192),
     '/etc/axonos/x-capi-hash-key': (10001, 32, 256),
     '/etc/axonos/x-capi-postgres-bootstrap-password': (0, 16, 8192),
     '/etc/axonos/x-capi-postgres-worker-password': (0, 16, 8192),
+}
+OPTIONAL_FILES = {
+    '/etc/axonos/x-handoff-service-keyring': (10001, 1, 8192),
+    '/etc/axonos/x-handoff-source-data-keyring': (10001, 1, 8192),
 }
 DIRECTORIES = ('/', '/etc', '/etc/axonos')
 
@@ -86,7 +91,7 @@ class MetadataFilesystem:
             path = posixpath.join(self.descriptors[dir_fd][0], path)
         normalized = posixpath.normpath(path)
         self.case.assertEqual(path, normalized, 'paths must not contain traversal')
-        self.case.assertIn(path, (*DIRECTORIES, *FILES), 'helper accessed an unreviewed path')
+        self.case.assertIn(path, (*DIRECTORIES, *FILES, *OPTIONAL_FILES), 'helper accessed an unreviewed path')
         return path
 
     def open(self, path, flags, mode=0o777, *, dir_fd=None):
@@ -183,6 +188,15 @@ class SecretMetadataHelperTests(unittest.TestCase):
                 self.assertEqual(value, filesystem.entries[path])
         self.assertNotIn(MARKER, json.dumps(snapshot))
         self.assertCountEqual(filesystem.opened, filesystem.closed)
+
+    def test_optional_handoff_keyrings_are_metadata_only_and_validated_when_present(self):
+        filesystem = MetadataFilesystem(self)
+        for number, path in enumerate(OPTIONAL_FILES, 100):
+            filesystem.entries[path] = record(number, uid=10001)
+        snapshot = self.collect(filesystem)
+        self.assertEqual(set(snapshot['files']), set(FILES) | set(OPTIONAL_FILES))
+        filesystem.entries[next(iter(OPTIONAL_FILES))]['mode'] = stat.S_IFREG | 0o644
+        self.assert_refusal(filesystem)
 
     def test_every_file_rejects_type_owner_group_permissions_link_count_and_size(self):
         for path, (uid, low, high) in FILES.items():

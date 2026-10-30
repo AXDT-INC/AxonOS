@@ -39,7 +39,10 @@ def _error(exc: HandoffError, request_id=None):
 def validate_frame(frame):
     if not isinstance(frame, dict):
         raise HandoffError("INVALID_REQUEST")
-    if frame.get("kind") == "source":
+    if frame.get("kind") == "readiness":
+        if frame != {"kind": "readiness"}:
+            raise HandoffError("INVALID_REQUEST")
+    elif frame.get("kind") == "source":
         if set(frame) != {"kind", "raw_body", "kid", "mac"} or any(not isinstance(frame[key], str) for key in ("raw_body", "kid", "mac")):
             raise HandoffError("INVALID_REQUEST")
         if len(frame["raw_body"]) > BODY_MAX:
@@ -214,7 +217,15 @@ class HandoffRpcClient:
                     or set(response["headers"]) - {"X-AxonOS-Handoff-Key-Id", "X-AxonOS-Handoff-MAC"}
                     or any(not isinstance(x, str) or len(x) > 43 or any(ord(c) < 32 or ord(c) > 126 for c in x) for x in response["headers"].values())):
                 raise HandoffError("DEPENDENCY_UNAVAILABLE")
-            validate_schema("source-success" if frame["kind"] == "source" else "browser-success", response["body"]) if response["status"] == 200 else validate_schema("error", response["body"])
+            if frame["kind"] == "readiness" and response["status"] == 200:
+                body = response["body"]
+                if (set(body) != {"ready", "clock_trusted", "lease_fresh", "positive_allowed"}
+                        or any(type(value) is not bool for value in body.values())
+                        or body["ready"] != all(body[key] for key in ("clock_trusted", "lease_fresh", "positive_allowed"))
+                        or response["headers"]):
+                    raise HandoffError("DEPENDENCY_UNAVAILABLE")
+            else:
+                validate_schema("source-success" if frame["kind"] == "source" else "browser-success", response["body"]) if response["status"] == 200 else validate_schema("error", response["body"])
             if len(canonical_json(response["body"])) > BODY_MAX:
                 raise HandoffError("BODY_TOO_LARGE")
             return response
@@ -230,10 +241,12 @@ def request(frame):
 
 class HandoffRpcServer:
     """Finite admission, independent reserved closure slots, one frame per peer."""
-    def __init__(self, path: str, dispatch: Callable, *, allowed_uid: int, positive_slots: int = 8, closure_slots: int = 2, reject_handler: Optional[Callable] = None):
+    def __init__(self, path: str, dispatch: Callable, *, allowed_uid: int, positive_slots: int = 8, closure_slots: int = 2, reject_handler: Optional[Callable] = None, readiness: Optional[Callable] = None):
         if not 1 <= positive_slots <= 8 or not 1 <= closure_slots <= 2:
             raise ValueError("invalid_rpc_admission")
         self.path, self.dispatch, self.allowed_uid = path, dispatch, allowed_uid
+        self.readiness = readiness
+        self.health_uid = os.geteuid()
         self.reject = reject_handler or getattr(getattr(dispatch, "__self__", None), "reject", None)
         self._positive = threading.BoundedSemaphore(positive_slots)
         self._closure = threading.BoundedSemaphore(closure_slots)
@@ -312,7 +325,8 @@ class HandoffRpcServer:
                 connection, _address = listener.accept()
                 started = time.monotonic()
                 try:
-                    if _peer_uid(connection) != self.allowed_uid:
+                    peer = _peer_uid(connection)
+                    if peer not in (self.allowed_uid, self.health_uid):
                         connection.close()
                         continue
                     connection.settimeout(0.05)
@@ -321,6 +335,15 @@ class HandoffRpcServer:
                         raise HandoffError("BODY_TOO_LARGE")
                     frame = strict_json_loads(raw, canonical=True, max_bytes=RPC_MAX)
                     validate_frame(frame)
+                    # Only the worker's own UID may ask for aggregate health.
+                    # This does not grant it access to gate/source operations.
+                    if frame["kind"] == "readiness":
+                        if peer != self.health_uid or self.readiness is None:
+                            connection.close()
+                            continue
+                    elif peer != self.allowed_uid:
+                        connection.close()
+                        continue
                     admission = self._closure if self._is_close(frame) else self._positive
                     if not admission.acquire(blocking=False):
                         response = self.reject(frame, "RATE_LIMITED") if self.reject else _error(HandoffError("RATE_LIMITED"))
@@ -355,7 +378,9 @@ class HandoffRpcServer:
 
     def _handle(self, connection, frame, admission, started):
         try:
-            self._send(connection, self.dispatch(frame), started)
+            response = ({"status": 200, "body": self.readiness(), "headers": {}}
+                        if frame["kind"] == "readiness" else self.dispatch(frame))
+            self._send(connection, response, started)
         except Exception:
             pass
         finally:

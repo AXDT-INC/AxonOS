@@ -160,6 +160,43 @@ class SocketTests(ServiceTests):
         self.assertIn('X-AxonOS-Handoff-MAC', result['headers'])
         self.assertEqual(self.client.request(app_frame())['body']['state'], 'prepared')
 
+    def test_readiness_reports_running_lease_without_dispatching_mutations(self):
+        state = dict(ready=False, clock_trusted=True, positive_allowed=True, lease_fresh=False)
+        self.server.readiness = lambda: dict(state)
+        self.assertFalse(self.client.request({'kind': 'readiness'})['body']['ready'])
+        state.update(ready=True, lease_fresh=True)
+        self.assertTrue(self.client.request({'kind': 'readiness'})['body']['ready'])
+        state.update(ready=False, lease_fresh=False)
+        self.assertFalse(self.client.request({'kind': 'readiness'})['body']['ready'])
+        self.assertEqual(self.seen, [])
+
+    def test_readiness_missing_callback_or_wrong_health_uid_fails_closed(self):
+        with self.assertRaises(h.HandoffError):
+            self.client.request({'kind': 'readiness'})
+        self.server.readiness = lambda: dict(ready=True, clock_trusted=True, positive_allowed=True, lease_fresh=True)
+        self.server.health_uid = os.getuid() + 1
+        with self.assertRaises(h.HandoffError):
+            self.client.request({'kind': 'readiness'})
+        self.assertEqual(self.client.request(app_frame('withdraw'))['status'], 200)
+
+    def test_readiness_cannot_return_secrets_or_inconsistent_success(self):
+        for state in ({'ready': True, 'secret': 'synthetic'},
+                      dict(ready=True, clock_trusted=True, positive_allowed=True, lease_fresh=False)):
+            self.server.readiness = lambda: state
+            with self.assertRaises(h.HandoffError):
+                self.client.request({'kind': 'readiness'})
+        with self.assertRaises(h.HandoffError):
+            self.client.request({'kind': 'readiness', 'op': 'prepare'})
+
+    def test_health_peer_does_not_gain_gate_or_source_authority(self):
+        self.server.allowed_uid = os.getuid() + 1
+        self.server.readiness = lambda: dict(ready=True, clock_trusted=True, positive_allowed=True, lease_fresh=True)
+        self.assertTrue(self.client.request({'kind': 'readiness'})['body']['ready'])
+        for frame in (app_frame('withdraw'), self.frame(source())):
+            with self.assertRaises(h.HandoffError):
+                self.client.request(frame)
+        self.assertEqual(self.seen, [])
+
     def test_wrong_server_uid_and_socket_mode_fail_closed(self):
         wrong = rpc.HandoffRpcClient(self.path, expected_uid=os.getuid() + 1)
         with self.assertRaises(h.HandoffError):

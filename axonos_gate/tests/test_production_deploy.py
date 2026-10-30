@@ -1562,6 +1562,53 @@ class DeploymentMetadataTests(unittest.TestCase):
                       st_mtime_ns=3, st_ctime_ns=4)
         return types.SimpleNamespace(**dict(values, **changes))
 
+    def test_live_handoff_wiring_required_before_deployment(self):
+        config = configuration(REPO)
+        worker = config['services']['x-capi-worker']
+        for name in ('axonos', 'x-capi-worker'):
+            config['services'][name]['environment'].update(
+                X_CAPI_MODE='live', X_HANDOFF_ENABLED='true',
+                X_CAPI_CONSENT_POLICY_VERSION='x-capi-handoff-v2')
+        worker['environment'].update(
+            X_HANDOFF_SOURCE_GENERATION='11111111-1111-4111-8111-111111111111',
+            X_HANDOFF_PROTOCOL='axonos-first-party-handoff-v2', X_HANDOFF_WITHDRAWAL_POLICY='B',
+            X_HANDOFF_SOCKET='/run/axonos-x-capi/handoff.sock',
+            X_HANDOFF_LEASE_MS='30000', X_HANDOFF_RENEW_INTERVAL_MS='10000',
+            X_HANDOFF_TRANSACTION_TTL_MS='300000', X_HANDOFF_OBSERVATION_TTL_MS='120000',
+            X_HANDOFF_MAX_CLOCK_ERROR_MS='5000')
+        for name in ('x_capi_access_token', 'x_handoff_service_keyring', 'x_handoff_source_data_keyring'):
+            worker['environment'][name.upper() + '_FILE'] = '/run/secrets/' + name
+            worker['volumes'].append(volume('/run/secrets/' + name,
+                '/etc/axonos/' + name.replace('_', '-'), 'bind', True))
+        worker['networks']['x_capi_egress'] = None
+        config['networks']['x_capi_egress'] = {'name': 'axonos_x_capi_egress', 'driver': 'bridge'}
+        capi = types.SimpleNamespace(load_config=lambda env: types.SimpleNamespace(errors=[]))
+        # Pure CAPI config validation has separate tests. Here exercise the real
+        # mount/protocol/generation admission, without opening any secret file.
+        with mock.patch.object(self.checks, 'capi_module', return_value=capi), \
+                mock.patch.object(self.checks, 'secret_metadata', return_value=('synthetic',)), \
+                redirect_stdout(io.StringIO()):
+            self.checks.config_check(config, REPO, 'live')
+            variants = [
+                lambda c: c['services']['x-capi-worker']['environment'].pop('X_HANDOFF_SOURCE_GENERATION'),
+                lambda c: c['services']['x-capi-worker']['environment'].update(X_HANDOFF_WITHDRAWAL_POLICY='A'),
+                lambda c: c['services']['x-capi-worker']['volumes'].pop(),
+                lambda c: c['services']['x-capi-worker']['volumes'][-1].update(read_only=False),
+                lambda c: c['services']['axonos']['environment'].update(X_HANDOFF_SERVICE_KEYRING_FILE='/key'),
+            ]
+            for change in variants:
+                invalid = copy.deepcopy(config)
+                change(invalid)
+                with self.assertRaises(self.checks.Refusal):
+                    self.checks.config_check(invalid, REPO, 'live')
+
+    def test_worker_contract_detects_handoff_configuration_drift(self):
+        env = {'X_HANDOFF_SOURCE_GENERATION': 'first', 'X_HANDOFF_ENABLED': 'true'}
+        baseline = self.checks.worker_contract(env, [], [], True, '10001:10001')
+        for name in env:
+            changed = dict(env, **{name: 'changed'})
+            self.assertNotEqual(baseline, self.checks.worker_contract(changed, [], [], True, '10001:10001'))
+
     def test_secret_metadata_never_reads_contents(self):
         with mock.patch.object(Path, 'resolve', lambda path: path), \
                 mock.patch.object(Path, 'lstat', return_value=self.metadata()), \

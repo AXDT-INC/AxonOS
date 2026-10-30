@@ -271,10 +271,19 @@ class WorkerHandoffRuntime:
     def dispatch_fresh(self):
         return self.positive_allowed() and self.clock_assured() and self.lease.allows_dispatch()
 
+    def readiness(self):
+        """Observe this process's real lease; never create or renew authority."""
+        positive = bool(self.positive_allowed())
+        clock = bool(self.clock_assured())
+        fresh = bool(self.lease.allows_dispatch())
+        return {"ready": positive and clock and fresh, "positive_allowed": positive,
+                "clock_trusted": clock, "lease_fresh": fresh}
+
     def start(self):
         self.lease.invalidate()
         self.server = HandoffRpcServer(DEFAULT_SOCKET, self.service.dispatch,
-                                      allowed_uid=int(os.getenv("X_CAPI_INGEST_ALLOWED_UID", "0")))
+                                      allowed_uid=int(os.getenv("X_CAPI_INGEST_ALLOWED_UID", "0")),
+                                      readiness=self.readiness)
         self.server.start()
 
     def prepare_restart_if_needed(self):
