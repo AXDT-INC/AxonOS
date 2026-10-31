@@ -108,7 +108,7 @@ class SharedPrivacyJourney(unittest.TestCase):
             self.assertNotIn(CLICK, str(page.context.cookies('https://app.axonos.io')))
             page.goto('https://axonos.io/')
             frame = page.frame_locator('iframe[title="AxonOS privacy preferences"]')
-            frame.get_by_role('button', name='Privacy settings', exact=True).click()
+            page.get_by_role('button', name='Privacy settings', exact=True).click()
             frame.get_by_role('button', name='Reject optional', exact=True).click()
             frame.get_by_role('button', name='Reject optional', exact=True).wait_for(state='hidden')
             app_frame = next(f for f in page.frames if 'privacy-preferences.html' in f.url)
@@ -133,7 +133,7 @@ class SharedPrivacyJourney(unittest.TestCase):
             other = page.context.new_page()
             other.goto('https://axonos.io/')
             frame = other.frame_locator('iframe[title="AxonOS privacy preferences"]')
-            frame.get_by_role('button', name='Privacy settings', exact=True).click()
+            other.get_by_role('button', name='Privacy settings', exact=True).click()
             frame.get_by_role('button', name='Reject optional', exact=True).click()
             frame.get_by_role('button', name='Reject optional', exact=True).wait_for(state='hidden')
             page.wait_for_function('!window.axonosAttributionContext')
@@ -147,7 +147,7 @@ class SharedPrivacyJourney(unittest.TestCase):
             self.fail_revoke = True
             page.goto('https://axonos.io/')
             frame = page.frame_locator('iframe[title="AxonOS privacy preferences"]')
-            frame.get_by_role('button', name='Privacy settings', exact=True).click()
+            page.get_by_role('button', name='Privacy settings', exact=True).click()
             frame.get_by_role('button', name='Reject optional', exact=True).click()
             frame.get_by_role('status').wait_for()
             app_frame = next(f for f in page.frames if 'privacy-preferences.html' in f.url)
@@ -220,6 +220,53 @@ class SharedPrivacyJourney(unittest.TestCase):
     def test_gpc_blocks_acceptance(self):
         with self.journey(gpc=True) as (page, seen, grants):
             page.goto('https://app.axonos.io/#axonos_x_click=' + CLICK)
+            page.get_by_role('button', name='Privacy settings', exact=True).click()
             page.get_by_text('Your browser privacy signal', exact=False).wait_for()
             self.assertEqual(page.get_by_role('button', name='Accept optional', exact=True).count(), 0)
+            self.assertEqual(grants, [])
+
+    def test_choice_hides_landing_card_and_footer_reopens_without_granting(self):
+        with self.journey() as (page, seen, grants):
+            frame = self.landing(page)
+            frame.get_by_role('button', name='Reject optional', exact=True).click()
+            page.wait_for_function('() => getComputedStyle(document.getElementById("privacy-preferences")).visibility === "hidden"')
+            self.assertEqual(grants, [])
+            page.get_by_role('button', name='Privacy settings', exact=True).click()
+            frame.get_by_role('button', name='Preferences', exact=True).click()
+            frame.get_by_role('switch', name='Advertising measurement', exact=True).wait_for()
+            self.assertFalse(frame.get_by_role('switch', name='Advertising measurement', exact=True).is_checked())
+            frame.get_by_role('button', name='Save preferences', exact=True).click()
+            page.wait_for_function('() => getComputedStyle(document.getElementById("privacy-preferences")).visibility === "hidden"')
+            self.assertEqual(grants, [])
+
+    def test_close_and_escape_do_not_create_permission(self):
+        with self.journey() as (page, seen, grants):
+            page.goto('https://app.axonos.io/#axonos_x_click=' + CLICK)
+            page.get_by_role('button', name='Close privacy preferences', exact=True).click()
+            self.assertEqual(page.get_by_role('dialog').count(), 0)
+            self.assertEqual(page.context.cookies('https://app.axonos.io'), [])
+            page.get_by_role('button', name='Privacy settings', exact=True).click()
+            page.get_by_role('button', name='Preferences', exact=True).click()
+            page.keyboard.press('Escape')
+            self.assertEqual(page.get_by_role('dialog').count(), 0)
+            self.assertEqual(page.context.cookies('https://app.axonos.io'), [])
+            self.assertEqual(grants, [])
+            self.assertEqual(page.evaluate('document.activeElement.id'), 'axonos-privacy-trigger')
+
+    def test_footer_open_waits_for_a_slow_privacy_frame(self):
+        with self.journey() as (page, seen, grants):
+            page.goto('https://app.axonos.io/')
+            page.get_by_role('button', name='Reject optional', exact=True).click()
+            page.get_by_role('button', name='Reject optional', exact=True).wait_for(state='hidden')
+            held = []
+            page.route('**/privacy-preferences.html', lambda route: held.append(route))
+            page.goto('https://axonos.io/', wait_until='domcontentloaded')
+            trigger = page.get_by_role('button', name='Privacy settings', exact=True)
+            trigger.click()
+            self.assertEqual(len(held), 1)
+            held[0].fallback()
+            frame = page.frame_locator('iframe[title="AxonOS privacy preferences"]')
+            frame.get_by_role('button', name='Close privacy preferences', exact=True).click()
+            page.wait_for_function('() => getComputedStyle(document.getElementById("privacy-preferences")).visibility === "hidden"')
+            self.assertTrue(trigger.evaluate('el => el === document.activeElement'))
             self.assertEqual(grants, [])

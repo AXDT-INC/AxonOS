@@ -367,7 +367,7 @@ Copyright (C) 2019 The noVNC Authors
     <script>
         // Only preferences are shared across sites. Attribution grants remain
         // app-owned and separately bound to an eligible click and wallet.
-        window.axonosPrivacyReady = import('./app/privacy-preferences.js?v=1')
+        window.axonosPrivacyReady = import('./app/privacy-preferences.js?v=2')
             .then(function (module) { return module.initializePrivacyPreferences(); })
             .catch(function () { return { unavailable: true, permitted: function () { return false; } }; });
     </script>
@@ -871,8 +871,6 @@ Copyright (C) 2019 The noVNC Authors
                         wallet</button>
                 </div>
             </header>
-
-            <div id="axonos-privacy-banner" style="max-width:48rem;margin:0 auto;padding:0 1rem;"></div>
 
             <!-- Hero: headline + rotating dotted globe -->
             <section class="axonos-hero">
@@ -1767,33 +1765,12 @@ Copyright (C) 2019 The noVNC Authors
                 </div>
             </div>
 
-            <section id="axonos-attribution-settings" aria-label="Attribution privacy"
-                style="max-width:48rem;margin:1rem auto;padding:0 1rem;color:#b8bfd2;font:14px/1.6 system-ui,sans-serif;">
-                <div id="axonos-attribution-preferences" style="margin-bottom:.75rem;"></div>
-                <details id="axonos-attribution-privacy">
-                    <summary style="cursor:pointer;">X attribution privacy</summary>
-                    <p>Optional X attribution helps measure which ads lead to wallet verification, completed paid deposits
-                        and newly started sessions. Use the privacy controls above to choose sharing preferences.
-                        Opening the app or connecting a wallet does not create permission; a valid saved choice can be reused.
-                        Your choice does not affect app access.</p>
-                    <p>The landing page can hold an ad-click ID in memory for up to two minutes and pass it directly to this app
-                        when you open it. The app removes it from the address bar. If you allow sharing, AxonOS links the click to
-                        eligible app activity and sends X the click ID, conversion type, time and a deduplication identifier.
-                        This integration does not send wallet addresses, transaction amounts or desktop contents to X.</p>
-                    <p>The app keeps an encrypted consent context in tab-scoped browser storage. The sharing choice shows the
-                        attribution retention period or expiry, which is not renewed automatically. Use the privacy controls to
-                        review or revoke your choice. Revoking deletes the stored click ID and cancels unsent conversions;
-                        events already sent or in flight may not be recallable. Global Privacy Control blocks sharing.</p>
-                    <p>This section covers optional X attribution, not all AxonOS data processing.
-                        See <a href="https://x.com/en/privacy" target="_blank" rel="noopener noreferrer" style="color:#b8c9ff;">X's privacy policy</a>
-                        and <a href="https://help.x.com/en/safety-and-security/privacy-controls-for-tailored-ads"
-                            target="_blank" rel="noopener noreferrer" style="color:#b8c9ff;">X's advertising privacy controls</a>.
-                    </p>
-                </details>
-            </section>
-
             <!-- Footer banner (matching axonos-web exactly) -->
             <div class="axonos-footer-banner axonos-view-landing">
+                <section id="axonos-attribution-settings" aria-label="Attribution privacy" style="display:contents;">
+                    <button id="axonos-privacy-trigger" type="button" hidden>Privacy settings</button>
+                    <div id="axonos-attribution-preferences"></div>
+                </section>
                 <span id="axonos_session_timer" class="axonos-session-timer axonos-session-timer--hidden"
                     title="Estimated compute time from your balance and active billing rate"><span class="axonos-session-timer__label">Est. compute
                         remaining</span>&nbsp;<span id="axonos_session_timer_value"

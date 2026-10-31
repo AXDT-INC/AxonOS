@@ -32,13 +32,21 @@ async function start() {
     if (!config || !config.enabled) return null;
     if (location.origin !== config.app_origin) throw new Error('Privacy origin mismatch');
     const embedded = window.parent !== window;
-    const banner = document.getElementById('axonos-privacy-banner');
+    const trigger = document.getElementById('axonos-privacy-trigger');
     const listeners = new Set();
     let message = '';
     let busy = false;
     let expanded = false;
+    let opened = false;
+    let dismissed = false;
+    let returnFocus = null;
     let unavailable = false;
     let lastRender = '';
+    installStyles();
+    host.classList.add('axp-host', embedded ? 'axp-embedded' : 'axp-app');
+    // The app shell uses transforms, which would anchor a fixed card to the
+    // footer instead of the viewport. Keep only its trigger in the footer.
+    if (!embedded) document.body.append(host);
     const lifetime = Math.min(Number(config.ttl_days) * 86400000, 90 * 86400000);
     if (!(lifetime > 0) || !navigator.locks) {
         host.textContent = 'Optional sharing is unavailable in this browser. You can still use AxonOS.';
@@ -103,7 +111,7 @@ async function start() {
 
     function resize() {
         if (embedded) window.parent.postMessage({ type: 'axonos-privacy-size-v1',
-            height: Math.ceil(document.body.getBoundingClientRect().height) }, config.landing_origin);
+            height: host.childElementCount ? Math.ceil(host.getBoundingClientRect().height) : 0 }, config.landing_origin);
     }
 
     async function revokeAll() {
@@ -163,12 +171,14 @@ async function start() {
             if (cookieFailed) throw new Error('Preference could not be saved');
             unavailable = false;
             expanded = false;
+            opened = false;
+            dismissed = true;
         } catch (_) {
             message = 'Your change could not be fully confirmed. Sharing stays off. Retry in Privacy settings.';
             unavailable = true;
         } finally {
             busy = false; notify(); render();
-            host.querySelector('button')?.focus();
+            if (!message) restoreFocus();
         }
     }
 
@@ -191,67 +201,127 @@ async function start() {
         });
     }
 
-    function button(label, action) {
+    function button(label, action, className = 'axp-button') {
         const b = document.createElement('button');
         b.type = 'button'; b.textContent = label; b.disabled = busy;
-        b.style.cssText = 'padding:.5rem .75rem;min-height:44px;border:1px solid #8fa2b7;border-radius:6px;background:#171d25;color:#f6f8fa;cursor:pointer;font:inherit;';
+        b.className = className;
         b.addEventListener('click', action); return b;
     }
 
-    function render() {
-        const signature = JSON.stringify([readChoice(), permitted(), gpc(), busy, expanded, message]);
-        if (signature === lastRender) return;
-        lastRender = signature;
-        if (banner && !readChoice() && host.parentNode !== banner) {
-            banner.append(host);
-        }
-        host.replaceChildren();
-        const toggle = button('Privacy settings', () => {
-            expanded = !expanded; render(); host.querySelector('button')?.focus();
-        });
-        toggle.setAttribute('aria-expanded', String(expanded || !readChoice()));
-        host.append(toggle);
-        if (readChoice() && !expanded && !message && !gpc()) {
-            const saved = document.createElement('span');
-            saved.textContent = permitted() ? ' Advertising measurement allowed.' : ' Optional sharing is off.';
-            host.append(saved);
-        }
-        if (!readChoice() || expanded || message || gpc()) {
-            const text = document.createElement('p');
-            text.textContent = gpc()
-                ? 'Your browser privacy signal keeps optional X conversion sharing off.'
-                : 'Optional X measurement connects ads to app activity. Accepting covers this landing page and the app; your choice is saved in a cookie. AxonOS works if you reject.';
-            host.append(text);
-            const actions = document.createElement('div');
-            actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:.5rem;';
-            if (!gpc() && status.enabled) actions.append(button('Accept optional', () => choose('allow')));
-            actions.append(button('Reject optional', () => choose('deny')));
-            actions.append(button('Preferences', () => { expanded = true; renderDetails(); }));
-            host.append(actions);
-            if (expanded) renderDetails();
-        }
-        if (message) {
-            const error = document.createElement('p'); error.setAttribute('role', 'status');
-            error.textContent = message; host.append(error);
-        }
-        resize();
+    function restoreFocus() {
+        if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+        returnFocus = null;
     }
 
-    function renderDetails() {
-        if (host.querySelector('[data-privacy-details]')) return;
-        const section = document.createElement('div'); section.dataset.privacyDetails = '';
-        const label = document.createElement('label');
-        const box = document.createElement('input'); box.type = 'checkbox';
-        box.checked = permitted(); box.disabled = gpc() || !status.enabled || busy;
-        label.append(box, ' Advertising measurement — X conversion sharing');
-        const info = document.createElement('p');
-        info.textContent = 'Essential app storage stays enabled. Optional sharing sends X a click ID, event type, time and deduplication ID, not wallet addresses, payment amounts or desktop contents. Your choice is saved in an app-host cookie for up to ' +
-            Math.floor(lifetime / 86400000) + ' days across the landing and app. Encrypted withdrawal capabilities stay in app-origin browser storage until their attribution periods expire. Rejecting cancels unsent events after server confirmation; sent or in-flight events may not be recallable. Clearing browser storage removes these browser-held withdrawal capabilities. This preference covers this browser, not other devices.';
-        const link = document.createElement('a'); link.href = 'https://x.com/en/privacy';
-        link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = 'X privacy policy';
-        section.append(label, info, link, button('Save preferences', () => choose(box.checked ? 'allow' : 'deny')));
-        host.append(section); resize();
+    function openPreferences() {
+        if (busy) return;
+        returnFocus = embedded ? null : document.activeElement;
+        opened = true; expanded = false; render();
+        host.querySelector('h2')?.focus({ preventScroll: true });
     }
+
+    function closePreferences() {
+        if (busy) return;
+        opened = false; expanded = false; dismissed = true;
+        // Dismissing is not a consent choice. Failed withdrawals remain visible.
+        render(); restoreFocus();
+    }
+
+    function element(tag, className, text) {
+        const node = document.createElement(tag);
+        node.className = className;
+        if (text) node.textContent = text;
+        return node;
+    }
+
+    function render() {
+        const visible = busy || opened || (!readChoice() && !dismissed) || !!message;
+        const signature = JSON.stringify([readChoice(), permitted(), gpc(), busy, expanded, message, visible]);
+        if (signature === lastRender) return;
+        lastRender = signature;
+        if (trigger) trigger.setAttribute('aria-expanded', String(visible));
+        host.replaceChildren();
+        if (!visible) { resize(); return; }
+        const card = element('section', 'axp-card');
+        card.setAttribute('role', 'dialog');
+        card.setAttribute('aria-modal', 'false');
+        card.setAttribute('aria-labelledby', 'axp-title');
+        card.setAttribute('aria-describedby', 'axp-description');
+        card.setAttribute('aria-busy', String(busy));
+        const heading = element('div', 'axp-heading');
+        const title = element('h2', 'axp-title', expanded ? 'Privacy preferences' : 'Your privacy, your choice');
+        title.id = 'axp-title'; title.tabIndex = -1;
+        const close = button('×', closePreferences, 'axp-close');
+        close.setAttribute('aria-label', 'Close privacy preferences');
+        heading.append(title, close); card.append(heading);
+        const text = element('p', 'axp-description', gpc()
+            ? 'Your browser privacy signal keeps optional X conversion sharing off.'
+            : 'We use essential storage to run AxonOS. With your permission, X can measure which ads lead to activity in the app.');
+        text.id = 'axp-description'; card.append(text);
+        if (expanded) renderDetails(card);
+        else {
+            card.append(element('p', 'axp-caption', 'Optional sharing is your choice. You can use AxonOS either way.'));
+            const actions = element('div', 'axp-actions');
+            actions.append(button('Reject optional', () => choose('deny')));
+            if (!gpc() && status.enabled) actions.append(button('Accept optional', () => choose('allow')));
+            card.append(actions);
+            const bottom = element('div', 'axp-bottom');
+            bottom.append(element('span', 'axp-scope', 'One choice for the landing page and app.'),
+                button('Preferences', () => { expanded = true; render(); host.querySelector('h2')?.focus({ preventScroll: true }); }, 'axp-link'));
+            card.append(bottom);
+        }
+        if (message) {
+            const error = element('p', 'axp-error', message);
+            error.setAttribute('role', 'status'); card.append(error);
+        }
+        host.append(card); resize();
+    }
+
+    function renderDetails(card) {
+        const categories = element('div', 'axp-categories');
+        const essential = element('div', 'axp-category');
+        const essentialCopy = element('div', 'axp-category-copy');
+        essentialCopy.append(element('strong', '', 'Essential'), element('p', '', 'Keeps the app working and remembers your privacy choice.'));
+        essential.append(essentialCopy, element('span', 'axp-badge', 'Always on'));
+        const optional = element('label', 'axp-category');
+        const optionalCopy = element('div', 'axp-category-copy');
+        optionalCopy.append(element('strong', '', 'Advertising measurement'), element('p', '', 'Share eligible app activity with X to measure ads.'));
+        const box = document.createElement('input'); box.type = 'checkbox';
+        box.className = 'axp-switch'; box.setAttribute('role', 'switch');
+        box.setAttribute('aria-label', 'Advertising measurement');
+        box.checked = permitted(); box.disabled = gpc() || !status.enabled || busy;
+        optional.append(optionalCopy, box); categories.append(essential, optional);
+        card.append(categories);
+        const details = element('details', 'axp-notice');
+        details.append(element('summary', '', 'How your data is used'));
+        details.append(element('p', '', 'If you allow sharing, X receives an ad-click ID, conversion type, time and deduplication ID for eligible wallet verifications, paid deposits and session starts. We do not send wallet addresses, payment amounts or desktop contents.'));
+        details.append(element('p', '', 'Your choice is saved in an app-host cookie for up to ' + Math.floor(lifetime / 86400000) + ' days and applies to this browser on the landing page and app. Attribution uses encrypted browser-held contexts; withdrawal capabilities remain until their attribution periods expire.'));
+        details.append(element('p', '', 'You can change your choice here at any time. Rejecting stops new sharing and cancels unsent events after server confirmation. Sent or in-flight events may not be recallable. Clearing browser storage removes its withdrawal capabilities. Global Privacy Control keeps sharing off.'));
+        details.append(element('p', '', 'These preferences cover X attribution, not all AxonOS data processing.'));
+        const link = element('a', '', 'X privacy policy'); link.href = 'https://x.com/en/privacy';
+        link.target = '_blank'; link.rel = 'noopener noreferrer'; details.append(link);
+        card.append(details);
+        const actions = element('div', 'axp-actions');
+        actions.append(button('Back', () => { expanded = false; render(); host.querySelector('h2')?.focus({ preventScroll: true }); }),
+            button('Save preferences', () => choose(box.checked ? 'allow' : 'deny')));
+        card.append(actions);
+    }
+
+    if (trigger) {
+        trigger.hidden = false; trigger.classList.add('axp-trigger');
+        trigger.setAttribute('aria-controls', host.id);
+        trigger.addEventListener('click', openPreferences);
+    }
+    host.addEventListener('keydown', event => {
+        if (event.key === 'Escape') { event.preventDefault(); closePreferences(); }
+    });
+    if (embedded) window.addEventListener('message', event => {
+        // A parent may only open the UI. It cannot supply a preference or grant.
+        if (event.origin === config.landing_origin && event.source === window.parent &&
+            event.data?.type === 'axonos-privacy-open-v1' && Object.keys(event.data).length === 1) {
+            openPreferences();
+        }
+    });
 
     async function refresh() {
         try {
@@ -298,5 +368,55 @@ async function start() {
             message = 'Optional sharing is unavailable. Your app access is unchanged. Retry in Privacy settings.';
             notify(); render();
         },
-        show() { expanded = true; render(); }, refresh });
+        show: openPreferences, refresh });
+}
+
+function installStyles() {
+    if (document.getElementById('axp-styles')) return;
+    const style = document.createElement('style'); style.id = 'axp-styles';
+    style.textContent = `
+.axp-host { color:#e9edf5; font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; text-align:left; }
+.axp-host * { box-sizing:border-box; }
+.axp-app { display:contents; }
+.axp-card { padding:24px; background:#101722; border:1px solid #2a3546; border-radius:16px; width:100%; }
+.axp-app .axp-card { position:fixed; z-index:990; right:24px; bottom:24px; width:480px; max-width:calc(100vw - 32px); max-height:calc(100dvh - 48px); overflow:auto; box-shadow:0 16px 60px #0008; }
+.axp-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:10px; }
+.axp-host .axp-title { font:600 19px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:#f4f7fb; margin:0; letter-spacing:-.3px; }
+.axp-title:focus { outline:none; }
+.axp-host p { margin:0; }
+.axp-description { color:#bcc7d7; }
+.axp-caption { color:#8f9eb2; font-size:12px; padding-top:8px; }
+.axp-actions { display:flex; gap:10px; margin-top:20px; }
+.axp-host button { font:inherit; cursor:pointer; transition:background .15s,border-color .15s; }
+.axp-button { flex:1; min-height:44px; padding:10px 14px; border:1px solid #415369; border-radius:8px; background:#1b2839; color:#f0f5fb; font-weight:600!important; }
+.axp-button:hover { background:#26394e; border-color:#66c7d3; }
+.axp-host button:focus-visible,.axp-host input:focus-visible,.axp-host summary:focus-visible,.axp-host a:focus-visible,.axp-trigger:focus-visible { outline:2px solid #6dd5e1; outline-offset:3px; }
+.axp-host button:disabled { opacity:.55; cursor:wait; }
+.axp-close { flex:none; border:0; background:transparent; color:#9cabc0; padding:0; margin:-6px -6px 0 0; width:32px; height:32px; font-size:24px!important; line-height:1!important; border-radius:6px; }
+.axp-close:hover { background:#243044; color:white; }
+.axp-bottom { display:flex; gap:12px; justify-content:space-between; align-items:center; margin-top:14px; }
+.axp-scope { color:#8f9eb2; font-size:11px; }
+.axp-link { color:#a8dbe3; border:0; padding:6px 0; background:transparent; font-size:12px!important; text-decoration:underline; text-underline-offset:3px; }
+.axp-trigger { font:inherit; font-size:12px; color:inherit; background:none; border:0; padding:4px 0; cursor:pointer; text-underline-offset:3px; }
+.axp-trigger:hover { color:#b7e3ec; text-decoration:underline; }
+.axp-categories { margin-top:18px; border:1px solid #2a3546; border-radius:10px; overflow:hidden; }
+.axp-category { display:flex; align-items:center; gap:16px; justify-content:space-between; padding:15px; }
+.axp-category + .axp-category { border-top:1px solid #2a3546; }
+.axp-category-copy strong { font-weight:600; font-size:13px; color:#eef3fa; }
+.axp-category-copy p { font-size:12px; color:#99a9bd; margin-top:3px; }
+.axp-badge { font-size:10px; color:#9fbcbb; white-space:nowrap; }
+.axp-switch { appearance:none; flex:none; width:36px; height:22px; margin:0; border:1px solid #65748a; border-radius:20px; background:#273448; position:relative; cursor:pointer; }
+.axp-switch::after { content:""; position:absolute; width:14px; height:14px; top:3px; left:3px; border-radius:50%; background:#c7d1de; transition:transform .15s; }
+.axp-switch:checked { background:#3aabbc; border-color:#3aabbc; }
+.axp-switch:checked::after { transform:translateX(14px); background:#07151e; }
+.axp-switch:disabled { opacity:.5; cursor:not-allowed; }
+.axp-notice { color:#a9b7ca; font-size:12px; margin-top:16px; }
+.axp-notice summary { cursor:pointer; padding:4px 0; color:#bbd0e3; }
+.axp-notice p { margin:12px 0; }
+.axp-notice a { color:#a8dbe3; text-underline-offset:3px; }
+.axp-error { margin-top:14px!important; padding:12px; border:1px solid #725842; border-radius:8px; color:#f2cca9; font-size:12px; background:#30251d; }
+@media(max-width:520px) { .axp-card { padding:20px; border-radius:12px; } .axp-app .axp-card { right:16px; bottom:16px; max-height:calc(100dvh - 32px); } .axp-host .axp-title { font-size:17px; } .axp-bottom { align-items:flex-start; } .axp-scope { max-width:190px; } }
+@media(prefers-reduced-motion:reduce) { .axp-host *, .axp-host *::after { transition:none!important; } }
+`;
+    document.head.append(style);
 }

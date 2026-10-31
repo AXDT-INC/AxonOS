@@ -7,8 +7,12 @@ landing page and app. The landing embeds `/privacy-preferences.html` from the
 app origin. Its controls offer **Accept optional**, **Reject optional**, and
 **Preferences** with an X conversion-sharing category. A valid saved choice is
 reused on arrival in the app; direct app visitors receive the same controls.
-Privacy settings remain available on both pages. Navigation and wallet access
-do not depend on accepting, and an unanswered choice does not permit sharing.
+The compact card disappears after a successful choice; a discreet footer Privacy
+settings control reopens it on either site. Detailed categories and the data
+notice are available through Preferences. Closing the card without choosing
+does not grant permission. Failed saves/withdrawals remain visible for retry.
+Navigation and wallet access do not depend on accepting, and an unanswered
+choice does not permit sharing.
 
 This uses the existing gate, context encryption, CAPI worker and schema 5. It
 does not require landing keyrings, Vault objects, a landing database, a separate
@@ -20,7 +24,9 @@ version/epoch and a fixed deadline (at most the configured attribution TTL,
 capped at 90 days). It is Secure, SameSite=Strict, Path=/, with no Domain. It is
 readable by the app's preference script, not the landing script. The frame sends
 only bounded sizing information to its exact configured parent; it accepts no
-postMessage commands to grant sharing. No click ID or grant is passed to it.
+postMessage commands to grant sharing. Its only accepted parent command is an
+exact-origin, exact-window UI-open request; this cannot select a preference.
+No click ID or grant is passed to it.
 
 Each app tab still obtains its own server-encrypted attribution ticket and
 passes the existing click, CSRF, policy and verified-wallet checks. Before a

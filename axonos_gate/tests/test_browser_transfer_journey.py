@@ -216,8 +216,8 @@ class BrowserTransferJourney(unittest.TestCase):
                 page.get_by_role('button', name='Conversion sharing', exact=True).click()
                 page.get_by_role('button', name='Allow sharing', exact=True).wait_for()
                 self.assertEqual(grants, [])
-                page.locator('#axonos-attribution-privacy summary').click()
-                self.assertTrue(page.locator('#axonos-attribution-privacy').evaluate('(el) => el.open'))
+                page.locator('#axonos-x-consent summary').click()
+                self.assertTrue(page.locator('#axonos-x-consent details').evaluate('(el) => el.open'))
 
     def test_ordinary_and_gpc_visitors_do_not_see_the_broken_panel(self):
         for gpc, query in ((False, ''), (True, '?twclid='+CLICK)):
