@@ -112,6 +112,20 @@ class BootstrapPassfileScopeTests(unittest.TestCase):
             self.assertFalse(passfile.exists(), "passfile survived shell exit")
 
 
+class PostgreSQLImagePolicyTests(unittest.TestCase):
+    def test_servers_and_bootstrap_share_reviewed_security_release(self):
+        images = []
+        for filename in ("docker-compose.yml", "docker-compose.x-capi.yml"):
+            images.extend(re.findall(
+                r"^    image: (postgres:\S+)$",
+                (ROOT / filename).read_text(encoding="utf-8"), re.MULTILINE,
+            ))
+        self.assertEqual(len(images), 3)
+        self.assertEqual(len(set(images)), 1,
+                         "Core, CAPI server, and bootstrap client must stay aligned")
+        self.assertRegex(images[0], r"^postgres:15\.20-alpine@sha256:[a-f0-9]{64}$")
+
+
 @unittest.skipUnless(
     os.getenv("X_CAPI_RUN_BOOTSTRAP_DOCKER_TESTS") == "1",
     "explicit disposable Docker bootstrap opt-in is required",
@@ -127,7 +141,7 @@ class BootstrapDockerIntegrationTests(unittest.TestCase):
         overlay = (ROOT / "docker-compose.x-capi.yml").read_text(encoding="utf-8")
         service = overlay.split("  x-capi-postgres:", 1)[1].split("  x-capi-db-init:", 1)[0]
         image = re.search(r"^    image: (\S+)$", service, re.MULTILINE).group(1)
-        self.assertRegex(image, r"^postgres:15-alpine@sha256:[a-f0-9]{64}$")
+        self.assertRegex(image, r"^postgres:15\.20-alpine@sha256:[a-f0-9]{64}$")
         init_service = overlay.split("  x-capi-db-init:", 1)[1].split("  x-capi-worker:", 1)[0]
         self.assertEqual(re.search(r"^    image: (\S+)$", init_service, re.MULTILINE).group(1), image)
         run_id = secrets.token_hex(10)

@@ -54,7 +54,7 @@ services:
   # network. Its bootstrap superuser secret is never mounted into the worker.
   x-capi-postgres:
     profiles: ["x-capi"]
-    image: postgres:15-alpine@sha256:5fe8ca7fc662071188c30271cb870d1ce9a6ec4578c934b064697ae77a9241e1
+    image: postgres:15.20-alpine@sha256:5cb339462bde5e6b617acedf6c2a3008f3aadc44a3c0507dd22226ee1279aee8
     container_name: axonos_x_capi_postgres
     environment:
       POSTGRES_DB: ${X_CAPI_POSTGRES_DB:-axonos_x_capi}
@@ -98,7 +98,7 @@ services:
 
   x-capi-db-init:
     profiles: ["x-capi"]
-    image: postgres:15-alpine@sha256:5fe8ca7fc662071188c30271cb870d1ce9a6ec4578c934b064697ae77a9241e1
+    image: postgres:15.20-alpine@sha256:5cb339462bde5e6b617acedf6c2a3008f3aadc44a3c0507dd22226ee1279aee8
     entrypoint: ["/bin/sh", "/opt/axonos/bootstrap_x_capi_db.sh"]
     environment:
       POSTGRES_DB: ${X_CAPI_POSTGRES_DB:-axonos_x_capi}

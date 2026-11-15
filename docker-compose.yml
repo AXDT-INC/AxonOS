@@ -192,7 +192,8 @@ services:
       - axonos_stack
 
   postgres:
-    image: postgres:15-alpine
+    # PostgreSQL 15.20 security update; keep server and CAPI client images aligned.
+    image: postgres:15.20-alpine@sha256:5cb339462bde5e6b617acedf6c2a3008f3aadc44a3c0507dd22226ee1279aee8
     container_name: axonos_postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-axonos_gate}
