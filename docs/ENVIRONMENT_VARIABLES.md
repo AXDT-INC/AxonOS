@@ -33,6 +33,9 @@ IDs. Only `off` and synthetic `dry_run` are stageable.
 |---|---|---|
 | `X_CAPI_MODE` | `off` | `off` or synthetic `dry_run` are usable. `live` is accepted only to expose a fail-closed readiness error; it cannot collect or send. |
 | `X_CAPI_PIXEL_ID` | blank | Exact Events Manager event-source/Pixel ID; not a token. |
+| `X_CAPI_EVENT_LANDING_PAGE_VIEWED` | blank | Optional server-side landing view event ID for revised shared consent. |
+| `X_CAPI_EVENT_APP_LAUNCH_CLICKED` | blank | Optional server-side Launch click event ID for revised shared consent. |
+| `X_CAPI_EVENT_APP_PAGE_VIEWED` | blank | Optional server-side app arrival event ID for revised shared consent. |
 | `X_CAPI_EVENT_WALLET_VERIFIED` | blank | Exact CAPI event ID; blank disables this milestone. |
 | `X_CAPI_EVENT_DEPOSIT_COMPLETED` | blank | Exact primary paid-conversion event ID. |
 | `X_CAPI_EVENT_SESSION_STARTED` | blank | Exact new-session activation event ID. |

@@ -51,6 +51,8 @@ _EVENT_ENV = {
     MILESTONE_DEPOSIT_COMPLETED: "X_CAPI_EVENT_DEPOSIT_COMPLETED",
     MILESTONE_SESSION_STARTED: "X_CAPI_EVENT_SESSION_STARTED",
 }
+FUNNEL_EVENTS = ("landing_page_viewed", "app_launch_clicked", "app_page_viewed")
+_EVENT_ENV.update({name: "X_CAPI_EVENT_" + name.upper() for name in FUNNEL_EVENTS})
 _MODE_VALUES = frozenset({"off", "dry_run", "live"})
 LIVE_MODE_UNAVAILABLE_REASON = "live_delivery_disabled"
 
@@ -449,6 +451,7 @@ def load_config(environ: Optional[Mapping[str, str]] = None) -> Config:
                 "event_ids": {
                     milestone: event_ids[milestone]
                     for milestone in sorted(event_ids)
+                    if milestone not in FUNNEL_EVENTS
                 },
                 "twclid_contract_version": contract_version,
                 "twclid_charset": charset,
@@ -485,7 +488,7 @@ def load_config(environ: Optional[Mapping[str, str]] = None) -> Config:
 
 def config_status(environ: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
     cfg = load_config(environ)
-    disabled = [name for name in MILESTONES if not cfg.event_ids.get(name)]
+    disabled = [name for name in (*MILESTONES, *FUNNEL_EVENTS) if not cfg.event_ids.get(name)]
     return {
         "mode": cfg.mode,
         "producer_ready": cfg.producer_ready,
@@ -495,7 +498,7 @@ def config_status(environ: Optional[Mapping[str, str]] = None) -> Dict[str, Any]
         "policy_epoch": cfg.policy_epoch,
         "event_mappings": {
             name: "configured" if cfg.event_ids.get(name) else "disabled"
-            for name in MILESTONES
+            for name in (*MILESTONES, *FUNNEL_EVENTS)
         },
         "disabled_milestones": disabled,
         "errors": list(cfg.errors),
@@ -1292,6 +1295,7 @@ def browser_preferences_config(config=None) -> Dict[str, Any]:
     valid = _privacy_origin_valid(landing, cfg.allowed_origin, cfg.twclid_contract_version)
     return {
         "enabled": valid,
+        "funnel_events": [e for e in FUNNEL_EVENTS if cfg.event_ids.get(e)],
         "app_origin": cfg.allowed_origin,
         "landing_origin": landing if valid else "",
         "policy_version": cfg.policy_version,
@@ -1701,6 +1705,34 @@ def privacy_signal_rate_key(context_token: Any) -> Optional[str]:
     return _hash(ticket["handle"])
 
 
+def funnel_proof(envelope):
+    """Authenticate the gate's revised-consent decision for this exact local event."""
+    key = rate_limit_digest_key()
+    if not key:
+        return None
+    body = json.dumps({name: value for name, value in envelope.items() if name != "proof"},
+                      sort_keys=True, separators=(",", ":")).encode("ascii")
+    return hmac.new(key, b"AxonOS funnel consent v2\0" + body, hashlib.sha256).hexdigest()
+
+
+def revised_preference_allows(raw_cookie, cfg, now):
+    from urllib.parse import unquote
+    if not browser_preferences_config(cfg)["enabled"] or not isinstance(raw_cookie, str):
+        return False
+    values = [part.strip().partition("=")[2] for part in raw_cookie.split(";")
+              if part.strip().partition("=")[0] == "__Host-axonos_privacy_v1"]
+    if len(values) != 1 or len(values[0]) > 1024:
+        return False
+    try:
+        p = json.loads(unquote(values[0]))
+        return (isinstance(p, dict) and p.get("v") == 2 and p.get("choice") == "allow"
+                and p.get("policy") == cfg.policy_version and p.get("epoch") == cfg.policy_epoch
+                and type(p.get("at")) is int and type(p.get("until")) is int
+                and p["at"] <= now * 1000 < p["until"] <= p["at"] + cfg.attribution_ttl_days * 86400000)
+    except (ValueError, TypeError):
+        return False
+
+
 def update_consent(
     *,
     context_token: Any,
@@ -1711,6 +1743,7 @@ def update_consent(
     origin: Any,
     gpc: bool = False,
     offload_worker_rpc: bool = True,
+    preference_cookie=None,
 ) -> Tuple[Dict[str, Any], int]:
     """Apply a stateless grant or a worker-isolated durable privacy transition."""
     cfg = load_config()
@@ -1720,7 +1753,7 @@ def update_consent(
     # alive while simultaneously asserting the privacy signal.
     if gpc:
         requested = "revoke"
-    if requested not in ("grant", "decline", "revoke", "new_lifecycle"):
+    if requested not in FUNNEL_EVENTS and requested not in ("grant", "decline", "revoke", "new_lifecycle"):
         return {"ok": False, "error": "Invalid consent action"}, 400
     revocation_action = requested in ("decline", "revoke")
     if cfg.mode == "off" and requested not in ("decline", "revoke"):
@@ -1763,6 +1796,16 @@ def update_consent(
 
     now = time.time()
     effective = _effective_ticket_state(ticket, cfg, now)
+    if requested in FUNNEL_EVENTS:
+        if (effective != "granted" or not cfg.event_ids.get(requested)
+                or not revised_preference_allows(preference_cookie, cfg, now)):
+            return {"ok": False, "error": "Funnel measurement unavailable"}, 403
+        envelope = {"action": "funnel", "v": 1, "milestone": requested,
+                    "event_id": cfg.event_ids[requested], "context_token": supplied,
+                    "event_timestamp_ms": int(now * 1000)}
+        envelope["proof"] = funnel_proof(envelope)
+        queued = bool(envelope["proof"] and _send_local_envelope(envelope))
+        return {"ok": queued}, 202 if queued else 503
     if requested == "new_lifecycle":
         if gpc:
             return {"ok": False, "state": "denied", "error": "GPC is active"}, 409

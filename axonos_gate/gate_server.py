@@ -1159,6 +1159,7 @@ def x_attribution_consent():
         context_token=context_token,
         csrf_token=request.headers.get("X-AxonOS-CSRF"),
         action=data.get("action"),
+        preference_cookie=request.headers.get("Cookie"),
         twclid=data.get("twclid"),
         landing_twclid=request.headers.get("X-AxonOS-Landing-Click"),
         origin=request.headers.get("Origin"),

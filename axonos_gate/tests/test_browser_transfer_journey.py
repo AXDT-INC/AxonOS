@@ -77,6 +77,9 @@ class BrowserTransferJourney(unittest.TestCase):
             'X_CAPI_TWCLID_CHARSET': 'url_safe', 'X_CAPI_TWCLID_MIN_LENGTH': '8', 'X_CAPI_TWCLID_MAX_LENGTH': '256'}
         if getattr(self, 'SHARED', False):
             env['X_CAPI_PRIVACY_LANDING_ORIGIN'] = 'https://axonos.io'
+        if getattr(self, 'FUNNEL', False):
+            for name in x_capi.FUNNEL_EVENTS:
+                env['X_CAPI_EVENT_' + name.upper()] = name
         context = self.browser.new_context(viewport={'width': 1440, 'height': 1000})
         if gpc: context.add_init_script('Object.defineProperty(navigator,"globalPrivacyControl",{get:()=>true})')
         page = context.new_page(); page.set_default_timeout(10000)
@@ -100,7 +103,7 @@ class BrowserTransferJourney(unittest.TestCase):
                         return request_route.fulfill(status=503, json={'ok': False})
                     body, code = x_capi.update_consent(context_token=headers.get('x-axonos-attribution'),
                         csrf_token=headers.get('x-axonos-csrf'), action=request.post_data_json['action'],
-                        origin=headers.get('origin'), landing_twclid=headers.get('x-axonos-landing-click'))
+                        preference_cookie=headers.get('cookie'), origin=headers.get('origin'), landing_twclid=headers.get('x-axonos-landing-click'))
                     if body.get('state') == 'granted': grants.append(x_capi.decode_context_ticket(body['context']))
                     return request_route.fulfill(status=code, json=body)
                 if url.path == '/app/x-attribution.js':

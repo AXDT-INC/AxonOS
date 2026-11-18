@@ -112,11 +112,16 @@ if [ "$schema_version" = "4" ]; then
     psql -X -w -v ON_ERROR_STOP=1 \
         -v owner_role="$1" -v worker_role="$2" \
         -f "$migration_dir/008_x_capi_handoff.sql"
-elif [ "$schema_version" = "5" ]; then
-    # A restart verifies the exact v5 catalog/ACL without reinterpreting v4.
-    { printf '%s\n' 'BEGIN;' ; cat "$migration_dir/008_x_capi_v5_postflight.sql"; printf '%s\n' 'ROLLBACK;'; } |
+    schema_version=5
+fi
+if [ "$schema_version" = "5" ]; then
+    psql -X -w -v ON_ERROR_STOP=1 -v owner_role="$1" -v worker_role="$2" \
+        -f "$migration_dir/009_x_capi_funnel.sql"
+elif [ "$schema_version" = "6" ]; then
+    # A restart verifies the exact v6 catalog/ACL without reinterpreting v4.
+    { printf '%s\n' 'BEGIN;' ; cat "$migration_dir/009_x_capi_v6_postflight.sql"; printf '%s\n' 'ROLLBACK;'; } |
         psql -X -w -v ON_ERROR_STOP=1 -v owner_role="$1" -v worker_role="$2"
 else
-    echo "unsupported existing X CAPI schema; reviewed schema 4 or 5 required" >&2
+    echo "unsupported existing X CAPI schema; reviewed schema 4, 5 or 6 required" >&2
     exit 65
 fi

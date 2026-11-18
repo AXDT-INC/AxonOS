@@ -53,7 +53,8 @@ def _handoff_migration_text(schema, owner, worker):
     """Expand reviewed psql includes for a disposable psycopg2 transaction."""
     root = Path(__file__).resolve().parents[1] / "migrations"
     text = (root / "008_x_capi_handoff.sql").read_text()
-    for name in ("008_x_capi_v4_preflight.sql", "008_x_capi_v5_postflight.sql"):
+    text += "\n" + (root / "009_x_capi_funnel.sql").read_text()
+    for name in ("008_x_capi_v4_preflight.sql", "008_x_capi_v5_postflight.sql", "009_x_capi_v6_postflight.sql"):
         text = text.replace("\\ir " + name, (root / name).read_text())
     text = text.replace(_MIGRATION_SEARCH_PATH, 'SET LOCAL search_path = "' + schema + '";')
     for variable, role in (("owner_role", owner), ("worker_role", worker)):
@@ -288,7 +289,8 @@ class PostgresOutboxTests(unittest.TestCase):
             start = handoff.index("CREATE TABLE x_capi_handoff_generations")
             end = handoff.index("-- PostgreSQL foreign-key enforcement")
             cur.execute(handoff[start:end])
-            cur.execute("UPDATE x_capi_schema_meta SET schema_version=5 WHERE singleton=TRUE")
+            funnel = (Path(__file__).resolve().parents[1] / "migrations" / "009_x_capi_funnel.sql").read_text()
+            cur.execute(funnel[funnel.index("ALTER TABLE"):funnel.index("\\ir 009_")])
         conn.commit()
         conn.close()
 

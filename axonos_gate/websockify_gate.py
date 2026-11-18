@@ -2645,6 +2645,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                 context_token=context_token,
                 csrf_token=self.headers.get("X-AxonOS-CSRF"),
                 action=data.get("action"),
+                preference_cookie=self.headers.get("Cookie"),
                 twclid=data.get("twclid"),
                 landing_twclid=self.headers.get("X-AxonOS-Landing-Click"),
                 origin=self.headers.get("Origin"),

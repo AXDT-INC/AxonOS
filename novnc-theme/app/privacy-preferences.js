@@ -60,7 +60,8 @@ async function start() {
             const values = document.cookie.split(';').map(s => s.trim()).filter(s => s.startsWith(COOKIE + '='));
             if (values.length !== 1) return null;
             const p = JSON.parse(decodeURIComponent(values[0].slice(COOKIE.length + 1)));
-            if (p.v !== 1 || p.policy !== config.policy_version || p.epoch !== config.policy_epoch ||
+            if (![1, 2].includes(p.v) || p.policy !== config.policy_version ||
+                (p.epoch !== config.policy_epoch && !(p.choice === 'deny' && Number.isInteger(p.epoch) && p.epoch < config.policy_epoch)) ||
                 !['allow', 'deny'].includes(p.choice) || !Number.isFinite(p.at) ||
                 !Number.isFinite(p.until) || p.at > now() || p.until <= now() ||
                 p.until > p.at + lifetime || Object.keys(p).length !== 6) return null;
@@ -70,11 +71,11 @@ async function start() {
 
     function saveChoice(choice) {
         const at = now();
-        const p = { v: 1, policy: config.policy_version, epoch: config.policy_epoch,
+        const p = { v: 2, policy: config.policy_version, epoch: config.policy_epoch,
             choice, at, until: at + lifetime };
         document.cookie = COOKIE + '=' + encodeURIComponent(JSON.stringify(p)) +
             '; Path=/; Secure; SameSite=Strict; Max-Age=' + Math.floor(lifetime / 1000);
-        if (readChoice()?.choice !== choice) throw new Error('Preference cookie blocked');
+        if (readChoice()?.v !== 2 || readChoice()?.choice !== choice) throw new Error('Preference cookie blocked');
     }
 
     function registry() {
@@ -103,9 +104,61 @@ async function start() {
         } catch (_) { return false; }
     }
 
+    const funnelEvents = new Set(config.funnel_events || []);
+    let landingTicket = null;
+    let offeredClick = false;
+
+    function funnelPermitted() {
+        return permitted() && readChoice()?.v === 2;
+    }
+
+    async function reportFunnel(action, context, csrf) {
+        if (!funnelEvents.has(action) || !funnelPermitted()) return false;
+        const response = await fetch('/api/x-attribution/consent', {
+            method: 'POST', credentials: 'same-origin', cache: 'no-store', keepalive: true,
+            referrerPolicy: 'no-referrer', headers: { 'Content-Type': 'application/json',
+                'X-AxonOS-Attribution': context, 'X-AxonOS-CSRF': csrf },
+            body: JSON.stringify({ action }), signal: AbortSignal.timeout(5000)
+        });
+        return response.status === 202;
+    }
+
+    function inviteLandingClick() {
+        if (!embedded) return;
+        if (!funnelPermitted()) {
+            offeredClick = false;
+            landingTicket = null;
+        } else if (!offeredClick && (funnelEvents.has('landing_page_viewed') || funnelEvents.has('app_launch_clicked'))) {
+            offeredClick = true;
+            window.parent.postMessage({ type: 'axonos-funnel-request-v1' }, config.landing_origin);
+        }
+    }
+
+    async function prepareLanding(click) {
+        const options = { credentials: 'same-origin', cache: 'no-store', referrerPolicy: 'no-referrer' };
+        const headers = { 'X-AxonOS-Landing-Click': click };
+        const response = await fetch('/api/x-attribution/status', { ...options, headers });
+        if (!response.ok || !funnelPermitted()) return null;
+        const unset = await response.json();
+        if (!unset.landing_click_accepted || unset.state !== 'unset') return null;
+        return track({ context: unset.context, csrf: unset.csrf, expires: unset.expires_at }, async () => {
+            if (!funnelPermitted()) return null;
+            const r = await fetch('/api/x-attribution/consent', { ...options, method: 'POST',
+                headers: { ...headers, 'Content-Type': 'application/json',
+                    'X-AxonOS-Attribution': unset.context, 'X-AxonOS-CSRF': unset.csrf },
+                body: JSON.stringify({ action: 'grant' }) });
+            if (!r.ok || !funnelPermitted()) return null;
+            const grant = await r.json();
+            if (grant.state !== 'granted') return null;
+            await reportFunnel('landing_page_viewed', grant.context, grant.csrf);
+            return grant;
+        });
+    }
+
     function notify() {
         for (const fn of listeners) { try { fn(permitted()); } catch (_) {} }
         try { localStorage.setItem(SIGNAL, String(now()) + ':' + Math.random()); } catch (_) {}
+        inviteLandingClick();
         resize();
     }
 
@@ -235,7 +288,9 @@ async function start() {
     }
 
     function render() {
-        const visible = busy || opened || (!readChoice() && !dismissed) || !!message;
+        const choice = readChoice();
+        const needsChoice = !choice || (funnelEvents.size > 0 && choice.v === 1 && choice.choice === 'allow');
+        const visible = busy || opened || (needsChoice && !dismissed) || !!message;
         const signature = JSON.stringify([readChoice(), permitted(), gpc(), busy, expanded, message, visible]);
         if (signature === lastRender) return;
         lastRender = signature;
@@ -256,7 +311,7 @@ async function start() {
         heading.append(title, close); card.append(heading);
         const text = element('p', 'axp-description', gpc()
             ? 'Your browser privacy signal keeps optional X conversion sharing off.'
-            : 'We use essential storage to run AxonOS. With your permission, X can measure which ads lead to activity in the app.');
+            : 'We use essential storage to run AxonOS. With your permission, X can measure ad visits to our landing page and app, Launch clicks, and eligible activity in the app.');
         text.id = 'axp-description'; card.append(text);
         if (expanded) renderDetails(card);
         else {
@@ -285,16 +340,16 @@ async function start() {
         essential.append(essentialCopy, element('span', 'axp-badge', 'Always on'));
         const optional = element('label', 'axp-category');
         const optionalCopy = element('div', 'axp-category-copy');
-        optionalCopy.append(element('strong', '', 'Advertising measurement'), element('p', '', 'Share eligible app activity with X to measure ads.'));
+        optionalCopy.append(element('strong', '', 'Advertising measurement'), element('p', '', 'Share eligible landing-page and app activity with X to measure ads.'));
         const box = document.createElement('input'); box.type = 'checkbox';
         box.className = 'axp-switch'; box.setAttribute('role', 'switch');
         box.setAttribute('aria-label', 'Advertising measurement');
-        box.checked = permitted(); box.disabled = gpc() || !status.enabled || busy;
+        box.checked = funnelEvents.size ? funnelPermitted() : permitted(); box.disabled = gpc() || !status.enabled || busy;
         optional.append(optionalCopy, box); categories.append(essential, optional);
         card.append(categories);
         const details = element('details', 'axp-notice');
         details.append(element('summary', '', 'How your data is used'));
-        details.append(element('p', '', 'If you allow sharing, X receives an ad-click ID, conversion type, time and deduplication ID for eligible wallet verifications, paid deposits and session starts. We do not send wallet addresses, payment amounts or desktop contents.'));
+        details.append(element('p', '', 'If you allow sharing, X receives an ad-click ID, conversion type, time and deduplication ID for landing-page views, Launch clicks, app page views, wallet verifications, paid deposits and new sessions. We do not send wallet addresses, payment amounts or desktop contents.'));
         details.append(element('p', '', 'Your choice is saved in an app-host cookie for up to ' + Math.floor(lifetime / 86400000) + ' days and applies to this browser on the landing page and app. Attribution uses encrypted browser-held contexts; withdrawal capabilities remain until their attribution periods expire.'));
         details.append(element('p', '', 'You can change your choice here at any time. Rejecting stops new sharing and cancels unsent events after server confirmation. Sent or in-flight events may not be recallable. Clearing browser storage removes its withdrawal capabilities. Global Privacy Control keeps sharing off.'));
         details.append(element('p', '', 'These preferences cover X attribution, not all AxonOS data processing.'));
@@ -316,7 +371,16 @@ async function start() {
         if (event.key === 'Escape') { event.preventDefault(); closePreferences(); }
     });
     if (embedded) window.addEventListener('message', event => {
-        // A parent may only open the UI. It cannot supply a preference or grant.
+        if (event.origin !== config.landing_origin || event.source !== window.parent) return;
+        if (event.data?.type === 'axonos-funnel-click-v1' && offeredClick && !landingTicket &&
+            funnelPermitted() && typeof event.data.click === 'string' && /^[A-Za-z0-9_-]{8,256}$/.test(event.data.click)) {
+            landingTicket = prepareLanding(event.data.click).catch(() => null);
+        }
+        if (event.data?.type === 'axonos-funnel-launch-v1' && landingTicket && funnelPermitted()) {
+            landingTicket.then(grant => grant && reportFunnel('app_launch_clicked', grant.context, grant.csrf))
+                .catch(() => false).finally(() => window.parent.postMessage(
+                    { type: 'axonos-funnel-launch-done-v1' }, config.landing_origin));
+        }
         if (event.origin === config.landing_origin && event.source === window.parent &&
             event.data?.type === 'axonos-privacy-open-v1' && Object.keys(event.data).length === 1) {
             openPreferences();
@@ -345,6 +409,7 @@ async function start() {
     }
     window.addEventListener('storage', event => {
         if ([REGISTRY, SIGNAL, BLOCKED].includes(event.key)) {
+            inviteLandingClick();
             for (const fn of listeners) { try { fn(permitted()); } catch (_) {} }
             render();
         }
@@ -360,7 +425,8 @@ async function start() {
     });
     if (embedded) new ResizeObserver(resize).observe(host);
     await refresh();
-    return Object.freeze({ permitted, track, choice: () =>
+    inviteLandingClick();
+    return Object.freeze({ permitted, track, funnelPermitted, reportFunnel, choice: () =>
         localStorage.getItem(BLOCKED) === '1' ? 'deny' : readChoice()?.choice || 'unset',
         subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
         reportError() {

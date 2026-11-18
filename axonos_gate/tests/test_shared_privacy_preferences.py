@@ -270,3 +270,64 @@ class SharedPrivacyJourney(unittest.TestCase):
             page.wait_for_function('() => getComputedStyle(document.getElementById("privacy-preferences")).visibility === "hidden"')
             self.assertTrue(trigger.evaluate('el => el === document.activeElement'))
             self.assertEqual(grants, [])
+
+
+@unittest.skipUnless(BUILD and NODE, 'requires disposable landing build and Node')
+class FunnelJourney(unittest.TestCase):
+    SHARED = True
+    FUNNEL = True
+    setUpClass = SharedPrivacyJourney.__dict__['setUpClass']
+    stop_server = SharedPrivacyJourney.__dict__['stop_server']
+    get_landing = SharedPrivacyJourney.__dict__['get_landing']
+    journey = SharedPrivacyJourney.journey
+    landing = SharedPrivacyJourney.landing
+    launch = SharedPrivacyJourney.launch
+
+    def test_landing_view_before_navigation_then_launch_and_arrival(self):
+        with patch.object(x_capi, 'rate_limit_digest_key', return_value=b'synthetic'), \
+                patch.object(x_capi, '_send_local_envelope', return_value=True) as queued, self.journey() as (page, _, grants):
+            frame = self.landing(page)
+            self.assertFalse(queued.called)
+            frame.get_by_role('button', name='Accept optional', exact=True).click()
+            def milestones():
+                return [call.args[0]['milestone'] for call in queued.call_args_list if call.args[0]['action'] == 'funnel']
+            for _ in range(100):
+                page.wait_for_timeout(50)
+                if milestones(): break
+            self.assertEqual(milestones(), ['landing_page_viewed'])
+            self.launch(page)
+            for _ in range(100):
+                page.wait_for_timeout(50)
+                if 'app_page_viewed' in milestones(): break
+            self.assertEqual(milestones(), ['landing_page_viewed', 'app_launch_clicked', 'app_page_viewed'])
+
+    def test_old_choices_keep_their_scope(self):
+        import json
+        import time
+        from urllib.parse import quote
+        for choice in ('deny', 'allow'):
+            with self.subTest(choice=choice), patch.object(x_capi, 'rate_limit_digest_key', return_value=b'synthetic'), \
+                    patch.object(x_capi, '_send_local_envelope', return_value=True) as queued, self.journey() as (page, _, grants):
+                cfg = x_capi.load_config()
+                at = int(time.time() * 1000)
+                cookie = dict(v=1, policy=cfg.policy_version, epoch=cfg.policy_epoch,
+                              choice=choice, at=at, until=at + 600000)
+                page.context.add_cookies([dict(name='__Host-axonos_privacy_v1', value=quote(json.dumps(cookie)),
+                                               url='https://app.axonos.io/', secure=True, sameSite='Strict')])
+                page.goto('https://app.axonos.io/#axonos_x_click=' + CLICK)
+                page.wait_for_function('window.axonosAttributionReady')
+                accept = page.get_by_role('button', name='Accept optional', exact=True)
+                if choice == 'allow':
+                    page.wait_for_function('!!window.axonosAttributionContext')
+                    self.assertEqual(len(grants), 1)
+                    accept.wait_for()
+                    self.assertFalse(queued.called)
+                    accept.click()
+                    for _ in range(100):
+                        page.wait_for_timeout(50)
+                        if queued.called: break
+                    self.assertEqual(queued.call_args.args[0]['milestone'], 'app_page_viewed')
+                else:
+                    self.assertEqual(accept.count(), 0)
+                    self.assertEqual(grants, [])
+                    self.assertFalse(queued.called)

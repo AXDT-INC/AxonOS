@@ -67,8 +67,8 @@ class HandoffPostgresTests(unittest.TestCase):
                     and not recovery and (db,user)==("capi_handoff_test","cluadmin")):
                 raise RuntimeError("refuse unverified database")
             cur.execute("SELECT schema_version FROM x_capi_schema_meta WHERE singleton")
-            if cur.fetchone()!=(5,):
-                raise RuntimeError("reviewed schema 5 required")
+            if cur.fetchone()!=(6,):
+                raise RuntimeError("reviewed schema 6 required")
         cls.worker_dsn = dict(parts,user="handoff_worker")
 
     @classmethod
@@ -603,8 +603,8 @@ class HandoffPostgresTests(unittest.TestCase):
             new.prepare(cur,"b"*64,request(choice="grant",policy="app-x-v2"),new_owner=True)
             self.assertEqual(new.begin(cur,"b"*64,request(choice="grant",policy="app-x-v2",destination="desktop"))["state"],"app_granted")
 
-    def test_schema5_postflight_rejects_catalog_and_acl_drift(self):
-        pre=(ROOT/"migrations/008_x_capi_v5_postflight.sql").read_text()
+    def test_schema6_postflight_rejects_catalog_and_acl_drift(self):
+        pre=(ROOT/"migrations/009_x_capi_v6_postflight.sql").read_text()
         pre=pre.replace(':"owner_role"','"handoff_owner"').replace(':"worker_role"','"handoff_worker"').replace(":'owner_role'","'handoff_owner'").replace(":'worker_role'","'handoff_worker'")
         with self.admin.cursor() as cur:
             cur.execute("BEGIN");cur.execute(pre);cur.execute("ROLLBACK")

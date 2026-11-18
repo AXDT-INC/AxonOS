@@ -36,6 +36,7 @@ const initializeXAttribution = (initialLandingClick) => {
     // before registering any of them.
     initialLandingClick = '';
 
+    var arrivalPending = false;
     var landingClickEligible = !!landingClick;
     var landingClickStatusSent = false;
     var landingClickBoundToCurrentLifecycle = false;
@@ -599,6 +600,11 @@ const initializeXAttribution = (initialLandingClick) => {
     };
 
     function synchronizePublicContext() {
+        if (arrivalPending && ownershipEstablished && !revokeOnlyLifecycle && enabled && state === 'granted' && context && csrf && sharedTracked &&
+            sharedPreferences?.funnelPermitted?.() && !revocationPending && !gpcActive) {
+            arrivalPending = false;
+            sharedPreferences.reportFunnel('app_page_viewed', context, csrf).catch(function () {});
+        }
         var verifiedWallet = String(window.verifiedWalletAddress || '').trim().toLowerCase();
         var walletCompatible = !bindWalletPending && (
             !WALLET_RE.test(verifiedWallet) ||
@@ -800,6 +806,7 @@ const initializeXAttribution = (initialLandingClick) => {
                 sentLandingClick && data.landing_click_accepted === true &&
                 responseState === 'unset' && validPair
             );
+            if (landingClickBoundToCurrentLifecycle) arrivalPending = true;
             revocationAvailable = data.revocation_available === true ||
                 !!revokeCapability.context;
 

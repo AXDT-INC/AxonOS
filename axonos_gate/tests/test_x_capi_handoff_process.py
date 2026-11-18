@@ -411,7 +411,7 @@ class ProcessReplacementPostgresTests(unittest.TestCase):
             self.assertFalse(any(e['event']=='ready' for e in failed['events']))
             self.assertEqual(self.lifecycle(),('dirty',token))
         finally:
-            with self.admin.cursor() as cur:cur.execute('UPDATE x_capi_schema_meta SET schema_version=5')
+            with self.admin.cursor() as cur:cur.execute('UPDATE x_capi_schema_meta SET schema_version=%s', (worker.EXPECTED_SCHEMA_VERSION,))
         with self.admin.cursor() as cur:cur.execute("UPDATE x_capi_handoff_generations SET state='quarantined'")
         replacement=self.launch()
         result=self.source_rpc('lease_challenge')

@@ -44,7 +44,7 @@ LEASE_SECONDS = 45
 WORKER_STATEMENT_TIMEOUT_MS = 5_000
 WORKER_LOCK_TIMEOUT_MS = 500
 CLEANUP_STATEMENT_TIMEOUT_MS = 750
-EXPECTED_SCHEMA_VERSION = 5
+EXPECTED_SCHEMA_VERSION = 6
 SCHEMA_ATTESTATION_TTL_SECONDS = 30.0
 MIN_ATTEMPT_INTERVAL_SECONDS = 0.25
 LIVE_DELIVERY_BLOCK_REASON = x_capi.LIVE_MODE_UNAVAILABLE_REASON
@@ -90,7 +90,7 @@ _schema_attestation_until = 0.0
 # mutable "schema version" row would let an existing trigger, rewrite rule,
 # RLS policy, or weakened constraint survive a grants-only migration.
 _EXPECTED_SCHEMA_CATALOG_SHA256 = (
-    "c506596582b67345ae4ecc7140ce5695f3037ed5fa8c7a1449e28a795b062436"
+    "d58adf2343b30d51c08643f3f772f825ed45798f23289b54ab810491b47b83e0"
 )
 _SCHEMA_CATALOG_SQL = r"""
 WITH target AS (
@@ -1924,6 +1924,17 @@ def _validate_ingest_envelope(document: Any) -> Optional[Dict[str, Any]]:
         except Exception:
             return None
     action = document.get("action")
+    if action == "funnel":
+        if (v2 or set(document) != _REVOKE_KEYS | {"milestone", "event_id", "proof"}
+                or document["milestone"] not in x_capi.FUNNEL_EVENTS
+                or type(document["event_id"]) is not str or not x_capi._valid_vendor_id(document["event_id"])
+                or type(document["proof"]) is not str or not re.fullmatch(r"[a-f0-9]{64}", document["proof"])
+                or not isinstance(document["context_token"], str)
+                or not x_capi._OPAQUE_RE.fullmatch(document["context_token"])
+                or type(document["event_timestamp_ms"]) is not int
+                or not 0 < document["event_timestamp_ms"] < 10**16):
+            return None
+        return dict(document)
     if action == "revoke" and v2:
         return None
     if action == "revoke":
@@ -2165,7 +2176,8 @@ def _ingest_event(
     # internal callers. Bind proof covers the original bind action, before its
     # internal wallet milestone normalization below.
     envelope = _validate_ingest_envelope(envelope)
-    if envelope is None or envelope["action"] != ("bind" if bind_only else "event"):
+    funnel = bool(envelope and envelope["action"] == "funnel" and not bind_only)
+    if envelope is None or (not funnel and envelope["action"] != ("bind" if bind_only else "event")):
         return "invalid_envelope"
     imported_policy = cfg.policy_version == "x-capi-handoff-v2"
     if (envelope["v"] == 2) != imported_policy:
@@ -2175,7 +2187,12 @@ def _ingest_event(
         or not _handoff_runtime.clock_assured()
     ):
         return "handoff_authority_unavailable"
-    if not x_capi.wallet_authority_valid(envelope, now):
+    if funnel and (cfg.event_ids.get(envelope["milestone"]) != envelope["event_id"]
+                  or not x_capi.browser_preferences_config(cfg)["enabled"]):
+        return "mapping_disabled"
+    if funnel and not hmac.compare_digest(x_capi.funnel_proof(envelope) or "", envelope["proof"]):
+        return "invalid_funnel_authority"
+    if not funnel and not x_capi.wallet_authority_valid(envelope, now):
         return "invalid_wallet_authority"
     # Retain the exact producer-covered envelope for a post-lock authority
     # check; bind normalization below must not discard that proof's subject.
@@ -2206,18 +2223,18 @@ def _ingest_event(
         ticket, cfg, int(envelope["event_timestamp_ms"]), now
     ):
         return "invalid_or_stale_ticket"
-    wallet = str(envelope["wallet_address"])
+    wallet = None if funnel else str(envelope["wallet_address"])
     click_id = str(ticket["twclid"])
-    if x_capi.twclid_conflicts_with_wallet(click_id, wallet):
+    if wallet and x_capi.twclid_conflicts_with_wallet(click_id, wallet):
         return "identifier_conflicts_with_wallet"
-    wallet_hash = x_capi.keyed_internal_hash("wallet", wallet)
+    wallet_hash = x_capi.keyed_internal_hash("wallet", wallet) if wallet else None
     logical_hash = x_capi.keyed_internal_hash(
-        "event:" + str(envelope["milestone"]), str(envelope["source_key"])
+        "event:" + str(envelope["milestone"]), click_id if funnel else str(envelope["source_key"])
     )
     hash_key_fingerprint = _hash_key_fingerprint()
     context_key_fingerprint = _context_key_fingerprint()
     if (
-        wallet_hash is None
+        (not funnel and wallet_hash is None)
         or logical_hash is None
         or hash_key_fingerprint is None
         or context_key_fingerprint is None
@@ -2272,10 +2289,11 @@ def _ingest_event(
                 "SELECT pg_advisory_xact_lock(%s)",
                 (_handle_advisory_key(handle_hash),),
             )
-            cur.execute(
-                "SELECT pg_advisory_xact_lock(%s)",
-                (_wallet_advisory_key(wallet_hash),),
-            )
+            if wallet_hash:
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock(%s)",
+                    (_wallet_advisory_key(wallet_hash),),
+                )
             cur.execute(
                 """SELECT 1 FROM x_capi_revocation_tombstones
                     WHERE handle_hash=%s FOR UPDATE""",
@@ -2312,7 +2330,7 @@ def _ingest_event(
                 conn.rollback()
                 return "handoff_context_missing"
             if not row:
-                if not (
+                if not funnel and not (
                     milestone == x_capi.MILESTONE_WALLET_VERIFIED
                     and envelope["metadata"]["allow_context_binding"]
                 ):
@@ -2394,7 +2412,7 @@ def _ingest_event(
                         cfg.policy_version, cfg.policy_epoch, cfg.audience_scope,
                         float(ticket["lifecycle_expires_at"]), click_id,
                         float(ticket["consented_at"]), float(ticket["expires_at"]),
-                        wallet_hash, now, float(ticket["issued_at"]), now,
+                        wallet_hash, now if wallet_hash else None, float(ticket["issued_at"]), now,
                     ),
                 )
                 bound_wallet = wallet_hash
@@ -2509,9 +2527,7 @@ def _ingest_event(
                     )
                     bound_row = cur.fetchone()
                     bound_wallet = bound_row[0] if bound_row else None
-            if not bound_wallet or not hmac.compare_digest(
-                str(bound_wallet), wallet_hash
-            ):
+            if not funnel and (not bound_wallet or not hmac.compare_digest(str(bound_wallet), wallet_hash)):
                 _count_on_cursor(cur, "wallet_or_lifecycle_mismatch", now)
                 conn.commit()
                 return "wallet_or_lifecycle_mismatch"
@@ -2605,6 +2621,11 @@ def _ingest_event(
             admission_error = revalidate_admission()
             if admission_error:
                 return admission_error
+            if not inserted and funnel:
+                # A repeat from a fresh tab may have reserved an anonymous
+                # context as well as queue capacity. Neither is needed.
+                conn.rollback()
+                return "duplicate"
             if not inserted:
                 _decrement_outbox_capacity_on_cursor(cur, 1, now)
                 _count_on_cursor(cur, "duplicate_" + milestone, now)
@@ -5158,6 +5179,11 @@ def run_once(
             job = claim_job(conn, identity, claim_now)
             if not job:
                 return "idle"
+            if (job.get("milestone") in x_capi.FUNNEL_EVENTS
+                    and cfg.event_ids.get(job["milestone"]) != job["event_id"]):
+                finish_job(conn, job, {"action": "cancel", "code": "funnel_mapping_changed"},
+                           float(now_fn()), rng)
+                return "funnel_mapping_changed"
             decision = begin_dispatch(
                 conn,
                 job,

@@ -462,3 +462,58 @@ class ImportedAuthorityPostgresTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+@unittest.skipUnless(fixtures.DSN and fixtures.CONFIRMED, "requires disposable PostgreSQL")
+class BrowserFunnelPostgresTests(unittest.TestCase):
+    setUpClass = ImportedAuthorityPostgresTests.__dict__['setUpClass']
+    tearDownClass = ImportedAuthorityPostgresTests.__dict__['tearDownClass']
+
+    def test_revised_grant_dedup_and_revocation(self):
+        from urllib.parse import quote
+        click = 'Synthetic_Click_123'
+        env = config_fixtures.ConfigTests.enabled_env(
+            X_CAPI_ALLOWED_ORIGIN='https://app.axonos.io',
+            X_CAPI_PRIVACY_LANDING_ORIGIN='https://axonos.io',
+            X_CAPI_CONSENT_POLICY_VERSION='x-capi-browser-v1',
+            X_CAPI_TWCLID_CONTRACT_VERSION='browser-click-v1',
+            X_CAPI_HASH_KEY='synthetic-funnel-worker-hash-key-0001',
+            **{'X_CAPI_EVENT_' + name.upper(): name for name in x_capi.FUNNEL_EVENTS})
+        with patch.dict(os.environ, env, clear=True), self.pg.connect(**self.worker_dsn) as conn:
+            cfg = x_capi.load_config()
+            with self.admin.cursor() as cur:
+                cur.execute('TRUNCATE x_capi_outbox, x_capi_attribution_contexts, x_capi_dedup, x_capi_revocation_tombstones CASCADE')
+                cur.execute('UPDATE x_capi_capacity SET outbox_active_count=0, context_count=0, tombstone_count=0')
+                cur.execute('TRUNCATE x_capi_config_guard')
+                cur.execute('INSERT INTO x_capi_config_guard VALUES(TRUE,%s,%s,%s,%s,%s,%s,%s,1)',
+                            (cfg.policy_epoch, worker._deployment_id_hash(cfg), cfg.mode, cfg.policy_version,
+                             cfg.audience_scope, worker._hash_key_fingerprint(), worker._context_key_fingerprint()))
+            unset = x_capi.attribution_status(landing_twclid=click)
+            def update(ticket, action, **extra):
+                return x_capi.update_consent(context_token=ticket['context'], csrf_token=ticket['csrf'],
+                    origin=cfg.allowed_origin, action=action, **extra)
+            grant, code = update(unset, 'grant', landing_twclid=click)
+            self.assertEqual(code, 200)
+            now = int(time.time() * 1000)
+            def cookie(version, choice):
+                return '__Host-axonos_privacy_v1=' + quote(json.dumps(dict(v=version, choice=choice,
+                    at=now - 1000, until=now + 60000, epoch=cfg.policy_epoch, policy=cfg.policy_version)))
+            with patch.object(x_capi, '_send_local_envelope', return_value=True) as submit:
+                for pref in (None, cookie(1, 'allow'), cookie(2, 'deny')):
+                    self.assertEqual(update(grant, 'landing_page_viewed', preference_cookie=pref)[1], 403)
+                submit.assert_not_called()
+                for name in x_capi.FUNNEL_EVENTS:
+                    self.assertEqual(update(grant, name, preference_cookie=cookie(2, 'allow'))[1], 202)
+                    event = submit.call_args.args[0]
+                    self.assertEqual(worker.process_ingest_envelope(conn, dict(event, proof='0'*64)), 'invalid_funnel_authority')
+                    self.assertEqual(worker.process_ingest_envelope(conn, event), 'dry_run')
+                    self.assertEqual(worker.process_ingest_envelope(conn, event), 'duplicate')
+            with conn.cursor() as cur:
+                cur.execute('SELECT count(*) FROM x_capi_outbox')
+                self.assertEqual(cur.fetchone(), (3,))
+            self.assertEqual(worker.process_ingest_envelope(conn, dict(v=1, action='revoke',
+                context_token=grant['context'], event_timestamp_ms=int(time.time()*1000))), 'revoked')
+            self.assertEqual(worker.process_ingest_envelope(conn, event), 'wallet_or_lifecycle_mismatch')
+            with conn.cursor() as cur:
+                cur.execute("SELECT DISTINCT status,twclid FROM x_capi_outbox")
+                self.assertEqual(cur.fetchall(), [('cancelled', None)])

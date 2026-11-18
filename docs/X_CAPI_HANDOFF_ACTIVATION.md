@@ -14,7 +14,7 @@ does not grant permission. Failed saves/withdrawals remain visible for retry.
 Navigation and wallet access do not depend on accepting, and an unanswered
 choice does not permit sharing.
 
-This uses the existing gate, context encryption, CAPI worker and schema 5. It
+This uses the existing gate, context encryption, CAPI worker and schema 6. It
 does not require landing keyrings, Vault objects, a landing database, a separate
 privacy worker, or the legacy `X_HANDOFF_ENABLED=true` protocol. The X access
 token remains worker-only. No new GitOps secret resources are needed.
@@ -22,11 +22,35 @@ token remains worker-only. No new GitOps secret resources are needed.
 The app-host `__Host-axonos_privacy_v1` cookie contains only the choice, policy
 version/epoch and a fixed deadline (at most the configured attribution TTL,
 capped at 90 days). It is Secure, SameSite=Strict, Path=/, with no Domain. It is
-readable by the app's preference script, not the landing script. The frame sends
-only bounded sizing information to its exact configured parent; it accepts no
-postMessage commands to grant sharing. Its only accepted parent command is an
-exact-origin, exact-window UI-open request; this cannot select a preference.
-No click ID or grant is passed to it.
+readable by the app's preference script, not the landing script. The frame accepts messages from its configured landing origin and parent window.
+After a revised grant, it can request the in-memory click and receive a Launch
+notification. It keeps the consent choice, CSRF token and withdrawal capability
+on the app origin.
+
+### Optional ad funnel events
+
+| Observed action | Backend event ID configuration |
+|---|---|
+| Consented landing visit | `X_CAPI_EVENT_LANDING_PAGE_VIEWED` |
+| Consented ordinary Launch click | `X_CAPI_EVENT_APP_LAUNCH_CLICKED` |
+| Eligible app arrival | `X_CAPI_EVENT_APP_PAGE_VIEWED` |
+
+Supply each desired X event ID to the gate and worker. Blank disables that
+event. The landing repo uses the existing app-origin preferences frame and
+needs no X event IDs. Schema migration 009 extends the outbox and deduplication
+constraints. The gate authenticates each new observation to the worker, which
+deduplicates each milestone per click ID. The revised shared preference
+covers all six events. A valid earlier acceptance continues to cover wallet,
+deposit and session milestones. An earlier rejection continues to suppress
+sharing. Enabling these optional mappings on an existing shared deployment
+does not require rotating the consent epoch. The original grant scope stays
+bound to its existing configuration. The worker checks the funnel event ID at
+ingestion and before dispatch.
+
+The landing frame can report a consented view while the visitor is still on
+the landing page. Measurement is best effort. Unanswered choices, GPC, a
+closed page before submission or an expired landing click can leave gaps.
+Launching never waits longer than 300 ms for an optional Launch report.
 
 Each app tab still obtains its own server-encrypted attribution ticket and
 passes the existing click, CSRF, policy and verified-wallet checks. Before a
