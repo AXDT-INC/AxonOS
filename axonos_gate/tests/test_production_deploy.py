@@ -45,12 +45,13 @@ def configuration(root):
     runtime = volume('/run/axonos-x-capi', 'x_capi_runtime')
     privacy = volume('/run/axonos-x-capi-privacy', 'x_capi_privacy_fence')
     key = volume('/run/secrets/x_capi_context_key', context, 'bind', True)
+    socket_dir = volume('/root/axonai', '/var/lib/axonai-socket', 'bind', True)
     env = {'X_CAPI_MODE': 'off', 'X_CAPI_CONTEXT_KEY_FILE': key['target'],
            'X_CAPI_PRIVACY_FENCE_DIR': privacy['target'],
            'X_CAPI_INGEST_SOCKET': '/run/axonos-x-capi/events.sock',
            'X_CAPI_CONSENT_SOCKET': '/run/axonos-x-capi/consent.sock'}
     gate = {'image': 'axonos:latest', 'build': {'context': str(root)},
-            'environment': env, 'volumes': [dict(runtime, read_only=True), privacy, key],
+            'environment': env, 'volumes': [dict(runtime, read_only=True), privacy, key, socket_dir],
             'networks': {'axonos_control': None, 'axonos_stack': None}}
     core_url = 'postgresql://synthetic:' + SECRET + '@postgres:5432/synthetic'
     gate['environment'].update(AXGT_CHALLENGE_DB_URL=core_url,
@@ -516,6 +517,9 @@ elif tool == 'docker':
         mounts = [dict(Destination='/run/axonos-x-capi', Type='volume', Name='axonos_x_capi_runtime', RW=False),
             dict(Destination='/run/axonos-x-capi-privacy', Type='volume', Name='axonos_x_capi_privacy_fence', RW=True),
             dict(Destination='/run/secrets/x_capi_context_key', Type='bind', Source='/etc/axonos/x-capi-context-key', RW=False)]
+        if service == 'axonos' and state.get('rolled'):
+            mounts.append(dict(Destination='/root/axonai', Type='bind', Source='/var/lib/axonai-socket',
+                               RW=bool(scenario.get('post_socket_writable'))))
         if scenario.get('post_mount') and state.get('rolled'): mounts[0]['RW'] = True
         image = 'sha256:' + ('b' if scenario.get('post_image') and state.get('rolled') else 'a') * 64
         if service == 'x-capi-privacy-init' and state.get('initializers_prepared') or service == 'x-capi-worker' and state.get('worker_prepared'):
@@ -566,6 +570,7 @@ import deploy_production_checks as checks
 # All secret validation/fingerprinting is real. Only installation attestation
 # and the exact privileged command are substituted with synthetic boundaries.
 checks.metadata_helper_contract = lambda: None
+checks.check_axonai_socket_directory = lambda: None  # The synthetic rollout has no host bind.
 actual_secret_metadata = checks.secret_metadata
 def fixture_secret_metadata(path, root, uid, low, high, snapshot=None):
     # An omitted controller snapshot must fail the test, never fall through to
@@ -1099,7 +1104,7 @@ class DeploymentOrchestrationTests(unittest.TestCase):
         self.assert_failed(self.run_script(), 'Missing/ambiguous service: axonos')
 
     def test_mode_image_mount_metadata_and_http_postflight_fail_closed(self):
-        for key in ('post_mode', 'post_image', 'post_mount', 'mount_check_fail', 'curl_fail', 'http'):
+        for key in ('post_mode', 'post_image', 'post_mount', 'post_socket_writable', 'mount_check_fail', 'curl_fail', 'http'):
             with self.subTest(failure=key):
                 for path in ('fake-state.json', 'commands.jsonl'):
                     (self.root / path).unlink(missing_ok=True)
@@ -1682,6 +1687,19 @@ class DeploymentMetadataTests(unittest.TestCase):
             with self.assertRaises(self.checks.Refusal):
                 self.checks.secret_metadata('/synthetic/link', REPO, 10001, 44, 4096)
 
+    def test_private_axonai_socket_directory(self):
+        expected = dict(st_mode=stat.S_IFDIR | 0o700, st_uid=1000, st_gid=1000)
+        with mock.patch.object(Path, 'lstat', return_value=self.metadata(**expected)):
+            self.checks.check_axonai_socket_directory()
+        for change in (dict(st_mode=stat.S_IFLNK | 0o700), dict(st_mode=stat.S_IFDIR | 0o755),
+                       dict(st_uid=0), dict(st_gid=0)):
+            info = self.metadata(**{**expected, **change})
+            with self.subTest(change=change), mock.patch.object(Path, 'lstat', return_value=info), \
+                    self.assertRaises(self.checks.Refusal):
+                self.checks.check_axonai_socket_directory()
+        with mock.patch.object(Path, 'lstat', side_effect=FileNotFoundError), self.assertRaises(self.checks.Refusal):
+            self.checks.check_axonai_socket_directory()
+
     def test_config_real_validator_rejects_security_boundary_changes(self):
         valid = configuration(REPO)
         changes = [
@@ -1693,6 +1711,10 @@ class DeploymentMetadataTests(unittest.TestCase):
             lambda c: c['services']['axonos']['environment'].update(X_CAPI_ALLOW_TEST_IDS='true'),
             lambda c: c['services']['axonos']['volumes'][0].update(read_only=False),
             lambda c: c['services']['axonos']['volumes'][2]['bind'].update(create_host_path=True),
+            lambda c: c['services']['axonos']['volumes'][-1].update(source='/tmp'),
+            lambda c: c['services']['axonos']['volumes'][-1].update(target='/run/axonai'),
+            lambda c: c['services']['axonos']['volumes'][-1].update(read_only=False),
+            lambda c: c['services']['axonos']['volumes'][-1]['bind'].update(create_host_path=True),
             lambda c: c['services']['x-capi-worker']['volumes'].append(volume('/x-token', '/token', 'bind', True)),
             lambda c: c['networks']['x_capi_db'].update(internal=False),
             lambda c: c['services']['x-capi-worker'].update(networks={'default': None}),

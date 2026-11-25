@@ -15,6 +15,8 @@ import sys
 import deploy_production_secret_metadata as secret_attestation
 
 
+AXONAI_SOCKET_SOURCE = '/var/lib/axonai-socket'
+AXONAI_SOCKET_TARGET = '/root/axonai'
 SECRET_METADATA_HELPER = '/usr/local/libexec/axonos-deploy-secret-metadata.py'
 SECRET_METADATA_COMMAND = ('/usr/bin/sudo', '-n', '--', '/usr/bin/python3', '-I', '-S', '-B',
                            SECRET_METADATA_HELPER)
@@ -130,15 +132,25 @@ def secret_metadata(path, root, uid, low, high, snapshot=None):
 
 def volume(service, target, kind, source=None, readonly=False):
     found = [item for item in service.get('volumes', []) if item.get('target') == target]
-    require(len(found) == 1, 'Required CAPI mount missing or duplicated')
+    require(len(found) == 1, 'Required mount missing or duplicated: ' + target)
     item = found[0]
     require(item.get('type') == kind and bool(item.get('read_only', False)) == readonly,
-            'Required CAPI mount type/access differs from reviewed configuration')
+            'Required mount type/access differs from reviewed configuration: ' + target)
     if source is not None:
-        require(item.get('source') == source, 'Unexpected CAPI mount source')
+        require(item.get('source') == source, 'Unexpected mount source for ' + target)
     if kind == 'bind':
-        require(item.get('bind', {}).get('create_host_path') is False, 'Secret bind must not create host paths')
+        require(item.get('bind', {}).get('create_host_path') is False, 'Bind must not create host paths: ' + target)
     return item['source']
+
+
+def check_axonai_socket_directory():
+    try:
+        info = Path(AXONAI_SOCKET_SOURCE).lstat()
+    except OSError:
+        raise Refusal('AxonAI socket directory must be provisioned before gate rollout') from None
+    require(stat.S_ISDIR(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o700
+            and info.st_uid == info.st_gid == 1000,
+            'AxonAI socket directory must be owned by 1000:1000 with mode 0700')
 
 
 def config_check(document, root, mode, snapshot=None):
@@ -177,7 +189,8 @@ def config_check(document, root, mode, snapshot=None):
         volume(worker, target, 'volume', name)
         volume(services['x-capi-privacy-init'], target, 'volume', name)
         require(document['volumes'][name]['name'] == 'axonos_' + name, 'Unexpected persistent CAPI volume name')
-    require(len(gate.get('volumes', [])) == 3, 'Unreviewed central mounts; review the production contract')
+    require(len(gate.get('volumes', [])) == 4, 'Unreviewed central mounts; review the production contract')
+    volume(gate, AXONAI_SOCKET_TARGET, 'bind', AXONAI_SOCKET_SOURCE, readonly=True)
     context = volume(gate, '/run/secrets/x_capi_context_key', 'bind', SECRET_PATHS['x_capi_context_key'], True)
     require(volume(worker, '/run/secrets/x_capi_context_key', 'bind', readonly=True) == context, 'Gate/worker context keys differ')
     specs = [(context, 10001, 44, 4096)]
@@ -343,7 +356,10 @@ def gate_check(document, root, mode, image, snapshot=None):
                        ('X_CAPI_CONSENT_SOCKET', '/run/axonos-x-capi/consent.sock')):
         require(env.get(key) == value, 'Central CAPI path environment mismatch')
     mounts = {m['Destination']: m for m in item['Mounts']}
-    require(len(mounts) == 3, 'Unexpected central container mounts')
+    require(len(item['Mounts']) == 4, 'Unexpected central container mounts')
+    socket_dir = mounts.get(AXONAI_SOCKET_TARGET, {})
+    require(socket_dir.get('Type') == 'bind' and socket_dir.get('Source') == AXONAI_SOCKET_SOURCE
+            and socket_dir.get('RW') is False, 'AxonAI socket directory read-only bind mismatch')
     for target, name, writable in (('/run/axonos-x-capi', 'axonos_x_capi_runtime', False),
                                    ('/run/axonos-x-capi-privacy', 'axonos_x_capi_privacy_fence', True)):
         mount = mounts.get(target, {})
@@ -358,7 +374,7 @@ def gate_check(document, root, mode, image, snapshot=None):
         except secret_attestation.MetadataRefusal:
             raise Refusal('Secret metadata snapshot does not satisfy the reviewed contract') from None
     secret_metadata(key['Source'], Path(root).resolve(), 10001, 44, 4096, snapshot)
-    print('Central image, mode and required CAPI mounts verified')
+    print('Central image, mode and required mounts verified')
 
 
 def sessions(lines):

@@ -450,6 +450,7 @@ class Deployment:
             note('Active tenant sessions: none')
 
     def load_config(self):
+        checks.check_axonai_socket_directory()
         config = json.loads(self.compose_run('config', '--format', 'json', capture=True, label='Combined Compose configuration'))
         fingerprint = checked_output(checks.config_check, config, self.root, self.mode, self.secret_snapshot())
         resources.validate_shared(config, self.root)

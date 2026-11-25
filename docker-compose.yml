@@ -233,6 +233,8 @@ services:
     environment:
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: utility
+      # Physical GPUs 1 and 2 are reserved for standalone AxonAI inference.
+      AXGT_GPU_DEVICE_IDS: "0,3,4,5,6,7"
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       STRIPE_MIN_AMOUNT_USD: ${STRIPE_MIN_AMOUNT_USD:-1}
@@ -345,6 +347,14 @@ services:
       WEBRTC_MAX_RECONNECT_ATTEMPTS: ${WEBRTC_MAX_RECONNECT_ATTEMPTS:-5}
       WEBRTC_SIGNAL_RATE_LIMIT_PER_MIN: ${WEBRTC_SIGNAL_RATE_LIMIT_PER_MIN:-60}
       WEBRTC_ANSWER_WAIT_MS: ${WEBRTC_ANSWER_WAIT_MS:-180000}
+    volumes:
+      # The inference service owns this directory (1000:1000, mode 0700).
+      - type: bind
+        source: /var/lib/axonai-socket
+        target: /root/axonai
+        read_only: true
+        bind:
+          create_host_path: false
     depends_on:
       postgres:
         condition: service_healthy
