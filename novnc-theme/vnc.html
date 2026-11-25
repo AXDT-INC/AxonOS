@@ -1211,6 +1211,7 @@ Copyright (C) 2019 The noVNC Authors
                         <h1 class="axonos-dashboard-title">Your workspace</h1>
                     </div>
                     <div class="axonos-dashboard-header__actions">
+                        <a href="/intelligence" id="axonos_dashboard_intelligence" class="axonos-dashboard-guest-btn" hidden>Intelligence</a>
                         <button type="button" id="axonos_dashboard_guest_invite_btn"
                             class="axonos-dashboard-guest-btn" hidden>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -8822,6 +8823,10 @@ Copyright (C) 2019 The noVNC Authors
                     if (verifyOptions.releaseOnly === true && st < 400) {
                         return true;
                     }
+                    if (window.location.search === '?view=intelligence') {
+                        window.location.replace('/intelligence');
+                        return true;
+                    }
                     var balanceDisplay = (data.balance_axgt != null) ? (String(data.balance_axgt) + ' AXGT') : ((typeof data.remaining_minutes === 'number') ? (data.remaining_minutes + ' min prepaid') : '—');
                     var vmsg = document.getElementById('axonos_verify_deposit_msg');
                     if (vmsg) vmsg.textContent = '';
@@ -12721,6 +12726,10 @@ Copyright (C) 2019 The noVNC Authors
 
         // Handler when wallet is verified
         function axonosOnWalletVerified(walletAddress, data) {
+            if (window.location.search === '?view=intelligence' && !axonosIsGuestAddress(walletAddress)) {
+                window.location.replace('/intelligence');
+                return;
+            }
             console.log('[AxonOS] Wallet verified:', walletAddress);
             axonosSetGuestInviteEligibility(data);
             if (typeof axonosHandleCardReturn === 'function') axonosHandleCardReturn();
@@ -12803,6 +12812,8 @@ Copyright (C) 2019 The noVNC Authors
         // Load and render the dashboard workspace
         function axonosLoadDashboard() {
             const wallet = axonosCurrentVerifiedWallet();
+            const intelligenceLink = document.getElementById('axonos_dashboard_intelligence');
+            if (intelligenceLink) intelligenceLink.hidden = !wallet || axonosIsGuestAddress(wallet);
             if (!wallet) {
                 axonosDashboardRequestGeneration += 1;
                 return Promise.resolve(null);

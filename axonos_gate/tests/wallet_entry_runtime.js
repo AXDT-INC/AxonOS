@@ -176,7 +176,7 @@ function browser(screen = 'landing') {
         context.axonosFetchWalletAccessStatus = () => Promise.resolve({ ok: true, data: { remaining_minutes: 71 } });
         vm.runInContext(exportedFunction('axonosLoadDashboard'), context);
     }
-    function useRealVerify() {
+    function useRealVerify(remainingMinutes = 71) {
         context.axonosAttributionContextForWalletRequest = noop;
         context.axonosPaymentOperationGeneration = 0;
         context.axonosTestCreditBusy = false;
@@ -189,7 +189,7 @@ function browser(screen = 'landing') {
             return Promise.resolve({ status: 200, ok: true, data:
                 path === '/api/auth/challenge'
                     ? { challenge: 'local-test-challenge' }
-                    : { verified: true, auth_token: 'signed-test-token', remaining_minutes: 71 },
+                    : { verified: remainingMinutes > 0, auth_token: 'signed-test-token', remaining_minutes: remainingMinutes },
             });
         };
         vm.runInContext(between('function axonosRequireWalletVerifyAttempt(',
@@ -198,11 +198,24 @@ function browser(screen = 'landing') {
             'function axonosActivateGuestSession('), context);
         vm.runInContext(between('function runVerify(',
             'var axonosPaymentOperationGeneration = 0;'), context);
+        vm.runInContext(between('function axonosIsGuestAddress(', 'function axonosClearGuestSession('), context);
     }
     return { context, window, state, elements, root, authenticate, restore, observeCredentials, response, currentScreen, advanceTime, useRealDashboard, useRealVerify };
 }
 
 async function run() {
+    // A deep link returns to Intelligence after signing, including with no Compute credit.
+    for (const credit of [0, 71]) {
+        const b = browser();
+        b.useRealVerify(credit);
+        let destination;
+        b.window.location.search = '?view=intelligence';
+        b.window.location.replace = path => { destination = path; };
+        await b.context.runVerify(WALLET, { request: noop });
+        assert.equal(destination, '/intelligence');
+        assert.deepEqual(b.state.authRequests, ['/api/auth/challenge', '/api/auth/verify-wallet']);
+        assert.equal(b.state.refreshes, 0);
+    }
     // Initial/switch-wallet dashboard setup runs synchronously inside wallet
     // verification. An exception here would be caught as failed authentication
     // and erase the freshly verified identity, requiring another signature.

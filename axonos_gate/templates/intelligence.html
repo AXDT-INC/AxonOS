@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Intelligence · AxonOS</title>
+    <link rel="icon" href="/icon.png">
+    <link rel="stylesheet" href="/app/styles/axonos-theme.css">
+    <style>
+        * { box-sizing: border-box; }
+        html { color-scheme: dark; }
+        body { margin: 0; background: var(--bg-0); color: var(--ink); font: 1rem/1.55 var(--font-body); }
+        header { display: flex; align-items: center; justify-content: space-between; padding: .8rem clamp(1rem, 5vw, 4rem); border-bottom: 1px solid var(--rule-strong); }
+        header a { color: var(--ink-dim); text-decoration: none; }
+        header .brand { display: inline-flex; align-items: center; gap: .6rem; color: var(--ink); font: 700 1.5rem Brutal, sans-serif; }
+        .brand img { width: 2rem; height: 2rem; object-fit: contain; }
+        .brand span { color: var(--violet); }
+        main { max-width: 52rem; padding: clamp(1rem, 4vw, 2.5rem); margin: auto; }
+        .heading, .controls { display: flex; gap: .8rem; align-items: center; justify-content: space-between; }
+        h1 { margin: 0; font: 700 clamp(2rem, 6vw, 3.4rem)/1.15 Brutal, sans-serif; }
+        .model { margin: .4rem 0; color: var(--ink-dim); }
+        #thread { min-height: 26vh; margin: 1.4rem 0; }
+        article { padding: 1rem 0; }
+        article + article { border-top: 1px solid var(--rule-strong); }
+        article strong { color: var(--mint-soft); }
+        article p { white-space: pre-wrap; overflow-wrap: anywhere; margin: .35rem 0 0; }
+        form { padding: 1rem; border: 1px solid var(--rule-strong); border-radius: 1rem; background: var(--bg-2); }
+        form:focus-within { border-color: var(--violet); }
+        label { font-weight: 600; }
+        textarea { width: 100%; min-height: 5rem; resize: vertical; margin: .5rem 0; padding: .5rem; font: inherit; color: var(--ink); background: var(--bg-1); border: 0; border-radius: .4rem; }
+        #status { margin: 0; color: var(--ink-dim); font-size: .9rem; }
+        button:disabled { opacity: .55; cursor: wait; }
+        a:focus-visible, button:focus-visible, textarea:focus-visible { outline: 2px solid var(--mint-soft); outline-offset: 2px; }
+    </style>
+    <script src="/app/intelligence.js" defer></script>
+</head>
+<body data-wallet="{{ wallet }}">
+    <header>
+        <a class="brand" href="/" aria-label="AxonOS workspace"><img src="/axon-x.png" alt=""><b>Axon<span>OS</span></b></a>
+        <a href="/">Workspace</a>
+    </header>
+    <main>
+        <div class="heading">
+            <div><h1>Intelligence</h1><p class="model">AxonAI-v1</p></div>
+            <button id="reset" class="axonos-dashboard-guest-btn" type="button">New chat</button>
+        </div>
+        <section id="thread" role="log" aria-label="Conversation" aria-live="polite"></section>
+        <form>
+            <label for="prompt">Message AxonAI</label>
+            <textarea id="prompt" rows="3" placeholder="Ask a question…" required></textarea>
+            <div class="controls">
+                <p id="status" role="status"></p>
+                <button id="send" class="axonos-dashboard-new-btn" type="submit">Send</button>
+            </div>
+        </form>
+    </main>
+</body>
+</html>

@@ -1387,7 +1387,8 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         super().send_header(keyword, value)
 
     def end_headers(self):
-        if getattr(self, '_response_no_cache', False) and not getattr(self, '_handoff_response', False):
+        if (getattr(self, '_response_no_cache', False) and not getattr(self, '_handoff_response', False)
+                and self.path != '/intelligence'):
             super().send_header('Cache-Control', 'no-cache, must-revalidate')
             super().send_header('Pragma', 'no-cache')
             self._response_no_cache = False
@@ -1657,6 +1658,8 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
 
         request_path = _up_cfg(self.path).path
         self._observe_request_gpc_early(request_path)
+        if request_path == '/intelligence':
+            return self._proxy_intelligence('GET')
         if request_path.startswith('/api/x-attribution/handoff/') or request_path in ('/attribution/entry', '/attribution/callback'):
             return self._handle_handoff_request('GET')
         if request_path.startswith('/api/payments/stripe/'):
@@ -2318,6 +2321,53 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
 
         return super().do_GET()
 
+    def _proxy_intelligence(self, method):
+        """6080 serves the same authenticated page and API as the public Flask gate."""
+        target = '/intelligence' if method == 'GET' else '/api/intelligence/generate'
+        self.close_connection = True
+        if self.path != target:
+            return self._send_json(400, {"error": "Unexpected request target."}, no_cache=True)
+        headers = {name: self.headers[name] for name in
+                   ('Cookie', 'X-AXGT-Auth-Token', 'X-Wallet-Address', 'Sec-Fetch-Site')
+                   if self.headers.get(name)}
+        body = None
+        if method == 'POST':
+            if self.headers.get_content_type() != 'application/json':
+                return self._send_json(415, {"error": "Send a JSON request."}, no_cache=True)
+            if len(self.headers.get_all('Content-Length') or []) != 1:
+                return self._send_json(400, {"error": "A single Content-Length is required."}, no_cache=True)
+            try:
+                data, error = self._read_bounded_json_body(65536, read_timeout_seconds=5)
+                if error == 'too_large':
+                    return self._send_json(413, {"error": "The conversation exceeds 64 KiB."}, no_cache=True)
+                if error:
+                    raise ValueError
+                body = json.dumps(data, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+            except (ValueError, RecursionError):
+                return self._send_json(400, {"error": "Invalid JSON request."}, no_cache=True)
+            headers['Content-Type'] = 'application/json'
+
+        upstream = http.client.HTTPConnection('127.0.0.1', int(os.getenv('GATE_PORT') or '8889'), timeout=160)
+        try:
+            upstream.request(method, target, body=body, headers=headers)
+            response = upstream.getresponse()
+            result = response.read(131073)
+            if len(result) > 131072:
+                raise ValueError
+        except (ValueError, OSError, http.client.HTTPException):
+            return self._send_json(503, {"error": "Intelligence is temporarily unavailable."}, no_cache=True)
+        finally:
+            upstream.close()
+        self.send_response(response.status)
+        self.send_header('Content-Type', response.getheader('Content-Type'))
+        self.send_header('Content-Length', str(len(result)))
+        self.send_header('Cache-Control', 'no-store, private')
+        if response.status == 302:
+            self.send_header('Location', '/?view=intelligence')
+        self.send_header('Connection', 'close')
+        self.end_headers()
+        self.wfile.write(result)
+
     def _proxy_stripe_request(self, method: str):
         """Forward bounded payment requests to the public local Flask gate.
 
@@ -2569,6 +2619,8 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         pu = urlsplit(self.path)
         ponly = pu.path
         self._observe_request_gpc_early(ponly)
+        if ponly == '/api/intelligence/generate':
+            return self._proxy_intelligence('POST')
         if ponly.startswith('/api/x-attribution/handoff/') or ponly in ('/attribution/entry', '/attribution/callback'):
             return self._handle_handoff_request('POST')
         if ponly.startswith('/api/payments/stripe/'):

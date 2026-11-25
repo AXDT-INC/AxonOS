@@ -14,14 +14,15 @@ import threading
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from flask import Flask, Response, request, jsonify, send_from_directory, stream_with_context
+from flask import Flask, Response, request, jsonify, redirect, render_template, send_from_directory, stream_with_context
 from flask_cors import CORS
 
 try:
-    from . import stripe_payments, funding_ledger
+    from . import stripe_payments, funding_ledger, intelligence
 except ImportError:
     import stripe_payments
     import funding_ledger
+    import intelligence
 
 from security_utils import (
     SimpleRateLimiter,
@@ -869,9 +870,8 @@ def after_request(response):
     ):
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     # WebRTC status must never be cached (CDN/browser); stale JSON caused endless polling on wrong state.
-    if request.path.startswith("/api/payments/") or is_x_capi or request.path.startswith("/api/webrtc/status") or request.path.startswith(
-        "/api/terminal/"
-    ):
+    if (is_x_capi or request.path in ("/intelligence", "/api/intelligence/generate")
+            or request.path.startswith(("/api/payments/", "/api/webrtc/status", "/api/terminal/"))):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
         response.headers["Pragma"] = "no-cache"
     return response
@@ -1722,6 +1722,10 @@ _CARD_BODY_DEADLINE_SECONDS = 5.0
 
 
 def _card_request_body(limit):
+    return _bounded_request_body(limit, _CARD_BODY_DEADLINE_SECONDS)
+
+
+def _bounded_request_body(limit, seconds):
     """Bound body bytes and read time on the production gevent transport."""
     try:
         from gevent import Timeout
@@ -1729,7 +1733,7 @@ def _card_request_body(limit):
         # Production already refuses to start without gevent. This fallback is
         # only for the explicitly enabled development WSGI server/unit tests.
         return request.stream.read(limit + 1)
-    with Timeout(_CARD_BODY_DEADLINE_SECONDS, TimeoutError("Payment body read timed out")):
+    with Timeout(seconds, TimeoutError("Request body read timed out")):
         return request.stream.read(limit + 1)
 
 
@@ -1740,8 +1744,12 @@ def _card_authenticated_wallet():
     Checkout Session. Guests and unverified browser wallet hints are excluded.
     """
     token = (request.headers.get("X-AXGT-Auth-Token") or "").strip()
+    return _authenticated_wallet_for_token(token, "Verify your wallet before paying by card")
+
+
+def _authenticated_wallet_for_token(token, denied):
     if not token or len(token) > 512:
-        return None, (jsonify({"error": "Verify your wallet before paying by card"}), 401)
+        return None, (jsonify({"error": denied}), 401)
     if not _gate_pg_init_once():
         return None, (jsonify({"error": "Identity database unavailable"}), 503)
     conn = _gate_pg_get_connection()
@@ -1764,7 +1772,40 @@ def _card_authenticated_wallet():
         return None, (jsonify({"error": "Identity database unavailable"}), 503)
     finally:
         conn.close()
-    return None, (jsonify({"error": "Verify your wallet before paying by card"}), 401)
+    return None, (jsonify({"error": denied}), 401)
+
+
+@app.get('/intelligence')
+def intelligence_page():
+    wallet, error = _authenticated_wallet_for_token(
+        request.cookies.get(_auth_cookie_name()), "Sign in with your wallet to open Intelligence.")
+    if error:
+        return redirect('/?view=intelligence') if error[1] == 401 else error
+    return render_template('intelligence.html', wallet=wallet)
+
+
+@app.post('/api/intelligence/generate')
+def intelligence_generate():
+    wallet = (request.headers.get("X-Wallet-Address") or "").strip()
+    if request.query_string or not validate_wallet_address(wallet) or _is_guest_shaped(wallet):
+        return jsonify(error="Sign in with your wallet to use Intelligence."), 401
+    if request.headers.get("Sec-Fetch-Site") not in (None, "same-origin"):
+        return jsonify(error="Open Intelligence on the AxonOS app."), 403
+    error = _require_auth_token(wallet)
+    if error:
+        return error
+    if request.mimetype != 'application/json':
+        return jsonify(error="Send a JSON request."), 415
+    if request.content_length is None or request.headers.get("Transfer-Encoding"):
+        return jsonify(error="A Content-Length is required."), 400
+    if request.content_length > intelligence.MAX_BODY:
+        return jsonify(error="The conversation exceeds 64 KiB. Shorten it or start a new chat."), 413
+    try:
+        raw = _bounded_request_body(intelligence.MAX_BODY, 5)
+    except TimeoutError:
+        return jsonify(error="Request body timed out."), 408
+    payload, status = intelligence.generate(raw)
+    return jsonify(payload), status
 
 
 @app.route('/api/payments/stripe/checkout', methods=['POST', 'OPTIONS'])
