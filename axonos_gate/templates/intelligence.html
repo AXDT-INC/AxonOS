@@ -3,56 +3,65 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Explore AxonAI-v1, AxonDAO’s experimental scientific research model. Connect a verified wallet to chat.">
     <title>Intelligence · AxonOS</title>
     <link rel="icon" href="/icon.png">
     <link rel="stylesheet" href="/app/styles/axonos-theme.css">
-    <style>
-        * { box-sizing: border-box; }
-        html { color-scheme: dark; }
-        body { margin: 0; background: var(--bg-0); color: var(--ink); font: 1rem/1.55 var(--font-body); }
-        header { display: flex; align-items: center; justify-content: space-between; padding: .8rem clamp(1rem, 5vw, 4rem); border-bottom: 1px solid var(--rule-strong); }
-        header a { color: var(--ink-dim); text-decoration: none; }
-        header .brand { display: inline-flex; align-items: center; gap: .6rem; color: var(--ink); font: 700 1.5rem Brutal, sans-serif; }
-        .brand img { width: 2rem; height: 2rem; object-fit: contain; }
-        .brand span { color: var(--violet); }
-        main { max-width: 52rem; padding: clamp(1rem, 4vw, 2.5rem); margin: auto; }
-        .heading, .controls { display: flex; gap: .8rem; align-items: center; justify-content: space-between; }
-        h1 { margin: 0; font: 700 clamp(2rem, 6vw, 3.4rem)/1.15 Brutal, sans-serif; }
-        .model { margin: .4rem 0; color: var(--ink-dim); }
-        #thread { min-height: 26vh; margin: 1.4rem 0; }
-        article { padding: 1rem 0; }
-        article + article { border-top: 1px solid var(--rule-strong); }
-        article strong { color: var(--mint-soft); }
-        article p { white-space: pre-wrap; overflow-wrap: anywhere; margin: .35rem 0 0; }
-        form { padding: 1rem; border: 1px solid var(--rule-strong); border-radius: 1rem; background: var(--bg-2); }
-        form:focus-within { border-color: var(--violet); }
-        label { font-weight: 600; }
-        textarea { width: 100%; min-height: 5rem; resize: vertical; margin: .5rem 0; padding: .5rem; font: inherit; color: var(--ink); background: var(--bg-1); border: 0; border-radius: .4rem; }
-        #status { margin: 0; color: var(--ink-dim); font-size: .9rem; }
-        button:disabled { opacity: .55; cursor: wait; }
-        a:focus-visible, button:focus-visible, textarea:focus-visible { outline: 2px solid var(--mint-soft); outline-offset: 2px; }
-    </style>
+    <link rel="stylesheet" href="/app/intelligence.css">
+    {% if wallet %}
+    <script src="/app/vendor/intelligence/markdown-it.umd.min.js" defer></script>
+    <script src="/app/vendor/intelligence/plugin-tex.min.js" defer></script>
+    <script src="/app/vendor/intelligence/katex.min.js" defer></script>
     <script src="/app/intelligence.js" defer></script>
+    {% endif %}
 </head>
-<body data-wallet="{{ wallet }}">
-    <header>
-        <a class="brand" href="/" aria-label="AxonOS workspace"><img src="/axon-x.png" alt=""><b>Axon<span>OS</span></b></a>
-        <a href="/">Workspace</a>
+<body data-wallet="{{ wallet or '' }}">
+    <header class="top">
+        <a class="brand" href="/" aria-label="AxonOS workspace"><img src="/axon-x.png" alt="">Axon<span>OS</span></a>
+        <span class="section-name">Intelligence</span>
+        <a class="workspace" href="/">Workspace</a>
     </header>
     <main>
-        <div class="heading">
-            <div><h1>Intelligence</h1><p class="model">AxonAI-v1</p></div>
+        {% if wallet %}
+        <div class="chat-heading">
+            <h1>Chat with AxonAI-v1</h1>
             <button id="reset" class="axonos-dashboard-guest-btn" type="button">New chat</button>
         </div>
-        <section id="thread" role="log" aria-label="Conversation" aria-live="polite"></section>
+        <div class="conversation">
+            <section id="thread" role="log" aria-label="Conversation" aria-live="polite"></section>
+            <div class="empty"><img src="/axon-x.png" alt=""><h2>What are you investigating?</h2>
+                <p>Ask about a research method, a calculation or the evidence behind a claim.</p></div>
+        </div>
         <form>
             <label for="prompt">Message AxonAI</label>
-            <textarea id="prompt" rows="3" placeholder="Ask a question…" required></textarea>
-            <div class="controls">
-                <p id="status" role="status"></p>
-                <button id="send" class="axonos-dashboard-new-btn" type="submit">Send</button>
-            </div>
+            <textarea id="prompt" rows="2" placeholder="Ask a scientific question…" required></textarea>
+            <div class="controls"><p id="status" role="status"></p>
+                <button id="send" class="axonos-dashboard-new-btn" type="submit">Send</button></div>
         </form>
+        <details><summary>About the model and its limits</summary>
+        {% endif %}
+        <section class="intro" aria-label="About AxonAI-v1">
+            <div>
+                {% if wallet %}<h2>AxonAI-v1</h2>{% else %}<h1>AxonAI-v1</h1>{% endif %}
+                <p class="lead">An experimental scientific research assistant from AxonDAO, fine-tuned from Qwen3.8-27B.</p>
+                <p>Explore how a method works, compare interpretations of a result, or trace the assumptions behind a scientific calculation.</p>
+                <nav class="actions" aria-label="Model access and release">
+                    {% if not wallet and not auth_unavailable %}<a class="axonos-dashboard-new-btn" href="/?view=intelligence">Connect wallet to chat</a>{% endif %}
+                    <a href="https://github.com/AXDT-INC/AxonIntelligence">GitHub source</a>
+                    <a href="https://huggingface.co/AxonDAO/AxonAI-v1-27B">Hugging Face model</a>
+                </nav>
+                {% if auth_unavailable %}<p role="status">Wallet verification is temporarily unavailable. Reload to try again.</p>{% endif %}
+            </div>
+            <dl class="specs">
+                <div><dt>Parameters</dt><dd>27B</dd></div>
+                <div><dt>Training examples</dt><dd>10,684</dd></div>
+                <div><dt>Source articles</dt><dd>4,230</dd></div>
+            </dl>
+        </section>
+        <section class="limitations"><h2>Research limits</h2>
+            <p>Production inference has been validated. Answers can contain incorrect reasoning or invented citations. Check claims against the original evidence. Clinical validity and scientific superiority over the base model remain unestablished.</p>
+        </section>
+        {% if wallet %}</details>{% endif %}
     </main>
 </body>
 </html>

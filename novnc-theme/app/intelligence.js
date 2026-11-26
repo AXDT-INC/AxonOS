@@ -10,6 +10,22 @@
     const turns = [];
     let active = true;
 
+    // Render only assistant output. Keep the transcript sent to the API as plain text.
+    function createRenderer() {
+        if (!window.markdownit || !window.mdItPluginTex || !window.katex) return null;
+        const markdown = window.markdownit({html: false}).disable('image');
+        markdown.validateLink = url => /^https?:\/\//i.test(url);
+        markdown.use(window.mdItPluginTex.tex, {
+            delimiters: 'all',
+            render: (tex, displayMode) => window.katex.renderToString(tex, {
+                displayMode, output: 'mathml', trust: false, throwOnError: false,
+                maxSize: 10, maxExpand: 500, strict: 'ignore'
+            })
+        });
+        return markdown;
+    }
+    const markdown = createRenderer();
+
     function clearChat() {
         turns.length = 0;
         thread.replaceChildren();
@@ -35,9 +51,19 @@
     function message(author, text) {
         const entry = document.createElement('article');
         const name = document.createElement('strong');
-        const content = document.createElement('p');
+        const content = document.createElement('div');
+        content.className = 'content';
         name.textContent = author;
-        content.textContent = text;
+        if (author === 'You') entry.className = 'user';
+        if (author === 'AxonAI' && markdown) {
+            try {
+                content.innerHTML = markdown.render(text);
+            } catch {
+                content.textContent = text;
+            }
+        } else {
+            content.textContent = text;
+        }
         entry.append(name, content);
         thread.append(entry);
         return entry;
@@ -89,7 +115,7 @@
         } finally {
             if (active) {
                 send.disabled = reset.disabled = input.readOnly = false;
-                input.focus();
+                input.focus({preventScroll: true});
             }
         }
     });

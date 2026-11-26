@@ -14,7 +14,7 @@ import threading
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from flask import Flask, Response, request, jsonify, redirect, render_template, send_from_directory, stream_with_context
+from flask import Flask, Response, request, jsonify, render_template, send_from_directory, stream_with_context
 from flask_cors import CORS
 
 try:
@@ -1779,9 +1779,7 @@ def _authenticated_wallet_for_token(token, denied):
 def intelligence_page():
     wallet, error = _authenticated_wallet_for_token(
         request.cookies.get(_auth_cookie_name()), "Sign in with your wallet to open Intelligence.")
-    if error:
-        return redirect('/?view=intelligence') if error[1] == 401 else error
-    return render_template('intelligence.html', wallet=wallet)
+    return render_template('intelligence.html', wallet=wallet, auth_unavailable=bool(error and error[1] == 503))
 
 
 @app.post('/api/intelligence/generate')

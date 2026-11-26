@@ -88,14 +88,29 @@ class IntelligenceTests(unittest.TestCase):
         client.set_cookie(gate._auth_cookie_name(), token)
         return client
 
-    def test_private_page_reuses_wallet_cookie(self):
+    def test_page_is_public_and_chat_requires_wallet_cookie(self):
         for token in ('', 'expired', 'guest'):
             response = self.client(token).get('/intelligence')
-            self.assertEqual((response.status_code, response.location), (302, '/?view=intelligence'))
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(b'href="/?view=intelligence"', response.data)
+            self.assertNotIn(b'<textarea', response.data)
+            self.assertNotIn(b'src="/app/intelligence.js"', response.data)
+            self.assertIn('no-store', response.headers['Cache-Control'])
+            for link in (b'https://github.com/AXDT-INC/AxonIntelligence', b'https://huggingface.co/AxonDAO/AxonAI-v1-27B'):
+                self.assertIn(link, response.data)
         response = self.client('alice').get('/intelligence')
         self.assertEqual(response.status_code, 200)
+        self.assertIn(b'<textarea', response.data)
         self.assertIn(f'data-wallet="{ALICE}"'.encode(), response.data)
         self.assertIn('no-store', response.headers['Cache-Control'])
+        self.assertFalse(self.server.calls)
+
+    def test_public_introduction_when_identity_store_unavailable(self):
+        with patch.object(gate, '_gate_pg_init_once', return_value=False):
+            response = self.client('alice').get('/intelligence')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'Wallet verification is temporarily unavailable', response.data)
+        self.assertNotIn(b'<textarea', response.data)
         self.assertFalse(self.server.calls)
 
     def test_unauthorized_requests_never_reach_socket(self):
@@ -103,6 +118,9 @@ class IntelligenceTests(unittest.TestCase):
             with self.subTest(token=token):
                 response = self.client(token).post(API, headers={'X-Wallet-Address': wallet}, json={'prompt': 'hi'})
                 self.assertEqual(response.status_code, 401)
+        response = self.client('alice').post(API, headers={'X-Wallet-Address': ALICE, 'Sec-Fetch-Site': 'cross-site'},
+                                             json={'prompt': 'hi'})
+        self.assertEqual(response.status_code, 403)
         self.assertFalse(self.server.calls)
 
     def test_concurrent_wallets_only_receive_their_own_replies(self):
@@ -129,7 +147,8 @@ class IntelligenceTests(unittest.TestCase):
         client = self.client('alice')
         headers = {'X-Wallet-Address': ALICE}
         for payload in ({'prompt': ' '}, {'prompt': 'hi', 'max_new_tokens': True},
-                        {'prompt': 'hi', 'max_new_tokens': 257}, {'prompt': 'hi', 'wallet': BOB}):
+                        {'prompt': 'hi', 'max_new_tokens': 257}, {'prompt': 'hi', 'wallet': BOB},
+                        {'prompt': 'hi', 'system': 'client instruction'}):
             self.assertEqual(client.post(API, headers=headers, json=payload).status_code, 400)
         self.assertEqual(client.post(API, headers=headers, json={'prompt': 'x' * 65536}).status_code, 413)
         self.assertEqual(client.post(API, headers=headers, data='hi').status_code, 415)

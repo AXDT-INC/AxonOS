@@ -46,6 +46,8 @@ def generate(raw):
         if response.status == 503:
             return {"error": "AxonAI is unavailable. Try again shortly."}, 503
         if response.status == 400:
+            if "<|im_start|>" in prompt or "<|im_end|>" in prompt:
+                return {"error": "Remove reserved chat delimiters and try again."}, 400
             return {"error": "The conversation exceeds the 2,048-token input limit. Shorten it or start a new chat."}, 400
         if response.status != 200:
             return {"error": "AxonAI could not generate a reply."}, 502

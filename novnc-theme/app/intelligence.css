@@ -1,0 +1,65 @@
+* { box-sizing: border-box; }
+html { color-scheme: dark; }
+body { margin: 0; font: 1rem/1.6 var(--font-body); }
+.top, main { position: relative; z-index: 2; }
+.top { display: flex; align-items: center; gap: 1rem; padding: 1rem clamp(1rem, 5vw, 5rem); border-bottom: 1px solid var(--rule-strong); }
+.top a { text-decoration: none; }
+.brand { display: inline-flex; align-items: center; color: var(--ink); font: 700 1.5rem var(--font-display); }
+.brand img { width: 2rem; margin-right: .5rem; }
+.brand span, a { color: var(--violet-fg); }
+.section-name { border-left: 1px solid var(--rule-strong); padding-left: 1rem; color: var(--ink-dim); }
+.workspace { margin-left: auto; }
+main { width: min(100% - 2rem, 64rem); margin: 0 auto; padding: clamp(2rem, 7vh, 5rem) 0 3rem; }
+h1, h2, p, dl, dd { margin: 0; }
+h1, h2 { font-family: var(--font-display); line-height: 1.12; }
+h1 { font-size: clamp(2.75rem, 8vw, 5.5rem); letter-spacing: -.04em; }
+h2 { font-size: 1.45rem; }
+p { color: var(--ink-dim); }
+.intro { display: grid; grid-template-columns: minmax(0, 1fr) minmax(12rem, .4fr); gap: clamp(2rem, 6vw, 5rem); align-items: center; padding: clamp(1rem, 5vh, 4rem) 0; }
+.lead { font-size: clamp(1.2rem, 2.6vw, 1.65rem); line-height: 1.4; color: var(--ink); margin: 1rem 0 .8rem; }
+.actions, .controls, .chat-heading { display: flex; align-items: center; gap: 1rem; }
+.actions { flex-wrap: wrap; margin: 1.6rem 0 .5rem; font-weight: 600; }
+.actions a { text-underline-offset: .25em; }
+.actions .axonos-dashboard-new-btn { text-decoration: none; }
+.specs { border-left: 2px solid var(--hair-mint); padding-left: 1.5rem; }
+.specs div + div { margin-top: .8rem; }
+.specs dt { font-size: .88rem; color: var(--ink-dim); }
+.specs dd { font: 700 1.8rem var(--font-display); }
+.limitations { border-top: 1px solid var(--rule-strong); padding-top: 1.3rem; }
+.limitations p { max-width: 70ch; margin-top: .65rem; }
+body[data-wallet]:not([data-wallet=""]) main { max-width: 51rem; padding-top: 2rem; }
+.chat-heading, .controls { justify-content: space-between; }
+.chat-heading h1 { font-size: clamp(1.7rem, 5vw, 2.5rem); }
+.conversation { margin: 1.2rem 0; }
+.empty { text-align: center; padding: clamp(2rem, 8vh, 5rem) 1rem; background: var(--violet-bg); border-radius: 1rem; }
+.empty img { width: 3rem; margin-bottom: .65rem; }
+.empty p { margin: .7rem auto 0; max-width: 42ch; }
+#thread:not(:empty) + .empty { display: none; }
+article { padding: 1rem; min-width: 0; overflow-wrap: anywhere; }
+article.user { border-radius: .8rem; background: var(--bg-2); }
+article > strong { color: var(--violet-fg); font-size: .88rem; }
+.user .content { white-space: pre-wrap; }
+.content { margin: .3rem 0 0; overflow-x: auto; }
+.content > :first-child { margin-top: 0; }
+.content p + p { margin-top: .65rem; }
+.content pre, .content math[display="block"] { max-width: 100%; overflow-x: auto; }
+.content code { font: .9em var(--font-mono); color: var(--ink); }
+.content pre { padding: .9rem; border-radius: .5rem; background: var(--bg-2); }
+.content blockquote { margin-left: 0; padding-left: 1rem; border-left: 2px solid var(--violet); }
+form { padding: 1rem; border: 1px solid var(--rule-strong); border-radius: 1rem; background: var(--bg-2); }
+form:focus-within { border-color: var(--violet); }
+label, summary { font-weight: 600; }
+textarea { display: block; width: 100%; min-height: 3.5rem; resize: vertical; margin: .5rem 0; padding: .6rem; font: inherit; color: var(--ink); background: var(--bg-1); border: 0; border-radius: .4rem; }
+#status { font-size: .9rem; }
+button:disabled { opacity: .6; cursor: wait; }
+details { margin-top: 1.5rem; }
+summary { cursor: pointer; color: var(--ink-dim); }
+:focus-visible { outline: 2px solid var(--violet-fg); outline-offset: 3px; }
+@media (max-width: 620px) {
+    .intro { grid-template-columns: minmax(0, 1fr); }
+    .specs { display: flex; flex-wrap: wrap; gap: 1rem; }
+    .specs div + div { margin: 0; }
+    .specs dd { font-size: 1.4rem; }
+    .top { gap: .6rem; }
+    .section-name { padding-left: .6rem; }
+}
