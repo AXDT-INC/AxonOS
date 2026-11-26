@@ -537,7 +537,7 @@ ENV __GLX_VENDOR_LIBRARY_NAME=nvidia
 ENV LIBGL_DRI3_DISABLE=1
 
 # VirtualGL: GPU-accelerated OpenGL for apps (e.g. PyMOL) over VNC. Uses X :0 with nvidia driver.
-# PackageCloud has no jammy repo; install from SourceForge .deb (3.0.2).
+# PackageCloud has no jammy repo; install the official VirtualGL 3.0.2 release package.
 RUN apt update && apt install -y wget libxv1 && \
     wget \
       --progress=dot:giga \
@@ -547,8 +547,9 @@ RUN apt update && apt install -y wget libxv1 && \
       --waitretry=5 \
       --retry-connrefused \
       --retry-on-http-error=429,500,502,503,504 \
-      "https://downloads.sourceforge.net/project/virtualgl/3.0.2/virtualgl_3.0.2_amd64.deb" \
+      "https://github.com/VirtualGL/virtualgl/releases/download/3.0.2/virtualgl_3.0.2_amd64.deb" \
       -O /tmp/virtualgl.deb && \
+    echo "8a97cb655a350ffcb46007125b438bee1db3bbdecb15458937dfaa0a4e253fe1  /tmp/virtualgl.deb" | sha256sum -c - && \
     apt install -y /tmp/virtualgl.deb && \
     rm /tmp/virtualgl.deb && \
     apt clean && rm -rf /var/lib/apt/lists/*
