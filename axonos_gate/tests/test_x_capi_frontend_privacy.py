@@ -194,17 +194,17 @@ class XcapiFrontendPrivacyTests(unittest.TestCase):
         self.assertIn("initialClick = ''", loader)
         self.assertIn("window.performance.now()", loader)
         self.assertIn("now < clickDeadline", loader)
-        self.assertIn("import('./app/x-attribution.js?v=9')", loader)
+        self.assertIn("import('./app/x-attribution.js?v=10')", loader)
         self.assertIn("initialize(click)", loader)
         self.assertIn("window.addEventListener('pagehide'", loader)
         self.assertIn("window.removeEventListener('pagehide'", loader)
         self.assertLess(
             loader.index("delete window.axonosPendingTwclid"),
-            loader.index("import('./app/x-attribution.js?v=9')"),
+            loader.index("import('./app/x-attribution.js?v=10')"),
         )
         self.assertLess(
             loader.index("retentionTimer = setTimeout"),
-            loader.index("import('./app/x-attribution.js?v=9')"),
+            loader.index("import('./app/x-attribution.js?v=10')"),
         )
         self.assertLess(
             self.page.index("loadAxonosAttributionBridge"),
@@ -284,7 +284,7 @@ class XcapiFrontendPrivacyTests(unittest.TestCase):
                             content_type="text/html; charset=utf-8",
                             body=synthetic_page,
                         )
-                    elif url == "https://app.example/app/x-attribution.js?v=9":
+                    elif url == "https://app.example/app/x-attribution.js?v=10":
                         # Intentionally leave the optional module request open.
                         held_module_routes.append(route)
                     else:
@@ -390,7 +390,7 @@ class XcapiFrontendPrivacyTests(unittest.TestCase):
                                 content_type="text/html; charset=utf-8",
                                 body=monotonic_html,
                             )
-                        elif url == "https://app.example/app/x-attribution.js?v=9":
+                        elif url == "https://app.example/app/x-attribution.js?v=10":
                             held_after_deadline.append(route)
                         else:
                             route.abort()
@@ -447,7 +447,7 @@ class XcapiFrontendPrivacyTests(unittest.TestCase):
                                 content_type="text/html; charset=utf-8",
                                 body=pagehide_html,
                             )
-                        elif url == "https://app.example/app/x-attribution.js?v=9":
+                        elif url == "https://app.example/app/x-attribution.js?v=10":
                             held_after_pagehide.append(route)
                         else:
                             route.abort()
@@ -580,7 +580,7 @@ class XcapiFrontendPrivacyTests(unittest.TestCase):
         self.assertIn("landingClickEligible", startup)
         self.assertIn("var landingClick", self.bridge)
         self.assertIn(
-            "const initializeXAttribution = (initialLandingClick) =>", self.bridge
+            "const initializeXAttribution = (initialLandingClick, onLandingReady) =>", self.bridge
         )
         self.assertIn("initialLandingClick = '';", self.bridge)
         self.assertIn("function discardLandingClick()", self.bridge)

@@ -326,6 +326,61 @@ class FunnelJourney(unittest.TestCase):
                 expected = [] if direct else ['landing_page_viewed', 'intelligence_launch_clicked']
                 self.assertEqual(milestones, expected + ['intelligence_page_viewed'])
 
+    def test_each_ad_destination_resumes_the_same_journey_across_all_three_pages(self):
+        for entry in ('landing', 'compute', 'intelligence'):
+            with self.subTest(entry=entry), patch.object(x_capi, 'rate_limit_digest_key', return_value=b'synthetic'), \
+                    patch.object(x_capi, '_send_local_envelope', return_value=True) as queued, self.journey() as (page, _, grants):
+                observed = []
+                submitted_clicks = []
+                def record_click(request):
+                    click = request.headers.get('x-axonos-landing-click')
+                    if click: submitted_clicks.append(click)
+                page.on('request', record_click)
+                def check(*actions):
+                    observed.extend(actions)
+                    for _ in range(100):
+                        page.wait_for_timeout(40)
+                        actual = [call.args[0]['milestone'] for call in queued.call_args_list
+                                  if call.args[0]['action'] == 'funnel']
+                        if len(actual) >= len(observed): break
+                    self.assertEqual(actual, observed)
+                if entry == 'landing':
+                    self.landing(page).get_by_role('button', name='Accept optional', exact=True).click()
+                    check('landing_page_viewed')
+                    page.get_by_role('link', name='Launch AxonOS', exact=True).first.click()
+                    check('app_launch_clicked', 'app_page_viewed')
+                else:
+                    path = '/intelligence' if entry == 'intelligence' else '/'
+                    page.goto('https://app.axonos.io' + path + '?twclid=' + CLICK)
+                    page.get_by_role('dialog').wait_for()
+                    self.assertEqual(page.get_by_role('dialog').count(), 1)
+                    self.assertFalse(submitted_clicks or grants or queued.called)
+                    page.get_by_role('button', name='Accept optional', exact=True).click()
+                    check('intelligence_page_viewed' if entry == 'intelligence' else 'app_page_viewed')
+                    if entry == 'intelligence':
+                        page.get_by_role('link', name='Workspace', exact=True).click()
+                        check('app_launch_clicked', 'app_page_viewed')
+                page.get_by_role('link', name='Intelligence', exact=True).click()
+                check('intelligence_launch_clicked', 'intelligence_page_viewed')
+                page.get_by_role('link', name='Workspace', exact=True).click()
+                check('app_launch_clicked', 'app_page_viewed')
+                page.goto('https://axonos.io/')
+                check('landing_page_viewed')
+                page.get_by_role('link', name='Launch AxonIntelligence', exact=True).first.click()
+                check('intelligence_launch_clicked', 'intelligence_page_viewed')
+                self.assertEqual(page.url, 'https://app.axonos.io/intelligence')
+                self.assertEqual(page.get_by_role('dialog').count(), 0)
+                self.assertEqual(len(grants), 1)
+                self.assertTrue(page.evaluate('!!window.axonosAttributionContext'))
+                page.get_by_role('button', name='Privacy settings', exact=True).click()
+                page.get_by_role('button', name='Reject optional', exact=True).click()
+                page.get_by_role('button', name='Reject optional', exact=True).wait_for(state='hidden')
+                page.get_by_role('link', name='Workspace', exact=True).click()
+                page.wait_for_function('window.axonosAttributionReady')
+                self.assertFalse(page.evaluate('!!window.axonosAttributionContext'))
+                self.assertEqual(page.get_by_role('dialog').count(), 0)
+                check()
+
     def test_old_choices_keep_their_scope(self):
         import json
         import time

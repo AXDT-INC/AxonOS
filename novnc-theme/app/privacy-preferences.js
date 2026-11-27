@@ -105,7 +105,7 @@ async function start() {
     }
 
     const funnelEvents = new Set(config.funnel_events || []);
-    let landingTicket = null;
+    let landingJourney = null;
     let offeredClick = false;
 
     function funnelPermitted() {
@@ -127,7 +127,6 @@ async function start() {
         if (!embedded) return;
         if (!funnelPermitted()) {
             offeredClick = false;
-            landingTicket = null;
         } else if (!offeredClick && (funnelEvents.has('landing_page_viewed') || funnelEvents.has('app_launch_clicked') ||
                 funnelEvents.has('intelligence_launch_clicked'))) {
             offeredClick = true;
@@ -135,25 +134,19 @@ async function start() {
         }
     }
 
-    async function prepareLanding(click) {
-        const options = { credentials: 'same-origin', cache: 'no-store', referrerPolicy: 'no-referrer' };
-        const headers = { 'X-AxonOS-Landing-Click': click };
-        const response = await fetch('/api/x-attribution/status', { ...options, headers });
-        if (!response.ok || !funnelPermitted()) return null;
-        const unset = await response.json();
-        if (!unset.landing_click_accepted || unset.state !== 'unset') return null;
-        return track({ context: unset.context, csrf: unset.csrf, expires: unset.expires_at }, async () => {
-            if (!funnelPermitted()) return null;
-            const r = await fetch('/api/x-attribution/consent', { ...options, method: 'POST',
-                headers: { ...headers, 'Content-Type': 'application/json',
-                    'X-AxonOS-Attribution': unset.context, 'X-AxonOS-CSRF': unset.csrf },
-                body: JSON.stringify({ action: 'grant' }) });
-            if (!r.ok || !funnelPermitted()) return null;
-            const grant = await r.json();
-            if (grant.state !== 'granted') return null;
-            await reportFunnel('landing_page_viewed', grant.context, grant.csrf);
-            return grant;
-        });
+    function startLandingJourney(click) {
+        if (landingJourney || !funnelPermitted()) return;
+        // The app-origin frame uses the same tab lock, encrypted session ticket
+        // and withdrawal registry as Compute and Intelligence. Only completion
+        // signals cross origins.
+        landingJourney = import('./x-attribution.js?v=10').then(bridge => new Promise(resolve => {
+            if (!funnelPermitted()) return resolve(null);
+            bridge.initializeXAttribution(click, reportLaunch => {
+                window.parent.postMessage({ type: 'axonos-funnel-ready-v1' }, config.landing_origin);
+                resolve(reportLaunch);
+            });
+            click = '';
+        })).catch(() => null);
     }
 
     function notify() {
@@ -373,15 +366,17 @@ async function start() {
     });
     if (embedded) window.addEventListener('message', event => {
         if (event.origin !== config.landing_origin || event.source !== window.parent) return;
-        if (event.data?.type === 'axonos-funnel-click-v1' && offeredClick && !landingTicket &&
+        if (event.data?.type === 'axonos-funnel-click-v1' && offeredClick && !landingJourney &&
             funnelPermitted() && typeof event.data.click === 'string' && /^[A-Za-z0-9_-]{8,256}$/.test(event.data.click)) {
-            landingTicket = prepareLanding(event.data.click).catch(() => null);
+            startLandingJourney(event.data.click);
+        } else if (event.data?.type === 'axonos-funnel-resume-v1' && offeredClick) {
+            startLandingJourney('');
         }
         const desktopLaunch = event.data?.type === 'axonos-funnel-launch-v1';
         const intelligenceLaunch = event.data?.type === 'axonos-funnel-intelligence-launch-v1';
-        if ((desktopLaunch || intelligenceLaunch) && landingTicket && funnelPermitted()) {
+        if ((desktopLaunch || intelligenceLaunch) && landingJourney && funnelPermitted()) {
             const milestone = intelligenceLaunch ? 'intelligence_launch_clicked' : 'app_launch_clicked';
-            landingTicket.then(grant => grant && reportFunnel(milestone, grant.context, grant.csrf))
+            landingJourney.then(report => report && report(milestone))
                 .catch(() => false).finally(() => window.parent.postMessage(
                     { type: 'axonos-funnel-launch-done-v1' }, config.landing_origin));
         }

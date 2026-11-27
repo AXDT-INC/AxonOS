@@ -3,23 +3,23 @@
  */
 var axonosXAttributionInitialized = false;
 
-const initializeXAttribution = (initialLandingClick) => {
+const initializeXAttribution = (initialLandingClick, onLandingReady) => {
     'use strict';
 
     if (axonosXAttributionInitialized) return;
     axonosXAttributionInitialized = true;
 
-    if (window.location?.pathname === '/intelligence' && initialLandingClick) {
-        waitForIntelligenceConsent(initialLandingClick);
+    if (!onLandingReady && initialLandingClick && (window.axonosPrivacyReady || window.location?.pathname === '/intelligence')) {
+        waitForSharedConsent(initialLandingClick);
     } else {
-        startXAttribution(initialLandingClick);
+        startXAttribution(initialLandingClick, onLandingReady);
     }
 };
 
-// Keep an Intelligence arrival in page memory until the shared app popup or a
+// Keep a direct app arrival in page memory until the shared app popup or a
 // saved preference permits ad measurement. The anonymous configuration request
 // can render the popup without transmitting the candidate or creating a ticket.
-function waitForIntelligenceConsent(click) {
+function waitForSharedConsent(click) {
     const deadline = performance.now() + 120000;
     let pending = true;
     let unsubscribe;
@@ -40,10 +40,12 @@ function waitForIntelligenceConsent(click) {
 
     Promise.resolve(window.axonosPrivacyReady).then(preferences => {
         if (!pending) return;
+        // Deployments without shared preferences retain the desktop's explicit app-only flow.
+        if (preferences === null && window.location?.pathname !== '/intelligence') return finish(true);
         if (!preferences?.subscribe || !preferences.funnelPermitted) return discard();
         function reconsider() {
             if (navigator.globalPrivacyControl === true || preferences.choice() === 'deny') discard();
-            else if (preferences.funnelPermitted()) finish(true);
+            else if (preferences.permitted()) finish(true);
         }
         unsubscribe = preferences.subscribe(reconsider);
         window.axonosAttributionReady = true;
@@ -51,7 +53,7 @@ function waitForIntelligenceConsent(click) {
     }).catch(discard);
 }
 
-const startXAttribution = (initialLandingClick) => {
+const startXAttribution = (initialLandingClick, onLandingReady) => {
     'use strict';
 
     var STORAGE_KEY = 'axonos_x_attribution_context_v1';
@@ -81,7 +83,7 @@ const startXAttribution = (initialLandingClick) => {
     // before registering any of them.
     initialLandingClick = '';
 
-    var arrivalPending = false;
+    var arrivalPending = true;
     var landingClickEligible = !!landingClick;
     var intelligenceEntry = window.location?.pathname === '/intelligence';
     var landingClickStatusSent = false;
@@ -653,12 +655,39 @@ const startXAttribution = (initialLandingClick) => {
         synchronizePublicContext();
     };
 
+    function mayReportFunnel() {
+        return ownershipEstablished && !revokeOnlyLifecycle && enabled && state === 'granted' &&
+            !!context && !!csrf && sharedTracked && sharedPreferences?.funnelPermitted?.() &&
+            !revocationPending && !browserGpcIsActive() && !gpcActive;
+    }
+
+    function reportProductLaunch(milestone) {
+        if (!mayReportFunnel() || !['app_launch_clicked', 'intelligence_launch_clicked'].includes(milestone)) {
+            return Promise.resolve(false);
+        }
+        return sharedPreferences.reportFunnel(milestone, context, csrf);
+    }
+
+    // Only explicit product links represent launches. Redirects and ordinary
+    // page loads report their own views through the restored, tab-owned grant.
+    document.addEventListener('click', function (event) {
+        if (!event.isTrusted || event.defaultPrevented || event.button !== 0 ||
+            event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+        var link = event.target?.closest?.('a[data-axonos-product-launch]');
+        if (!link || link.origin !== window.location.origin) return;
+        var target = link.getAttribute('href');
+        if (target === '/' || target === '/intelligence') {
+            reportProductLaunch(target === '/' ? 'app_launch_clicked' : 'intelligence_launch_clicked').catch(function () {});
+        }
+    });
+
     function synchronizePublicContext() {
-        if (arrivalPending && ownershipEstablished && !revokeOnlyLifecycle && enabled && state === 'granted' && context && csrf && sharedTracked &&
-            sharedPreferences?.funnelPermitted?.() && !revocationPending && !gpcActive) {
+        if (arrivalPending && mayReportFunnel()) {
             arrivalPending = false;
-            var milestone = intelligenceEntry ? 'intelligence_page_viewed' : 'app_page_viewed';
+            var milestone = onLandingReady ? 'landing_page_viewed' :
+                intelligenceEntry ? 'intelligence_page_viewed' : 'app_page_viewed';
             sharedPreferences.reportFunnel(milestone, context, csrf).catch(function () {});
+            if (onLandingReady) onLandingReady(reportProductLaunch);
         }
         var verifiedWallet = currentVerifiedWallet();
         var walletCompatible = !bindWalletPending && (
@@ -794,7 +823,7 @@ const startXAttribution = (initialLandingClick) => {
         var sentLandingClick = false;
         var revalidatingLiveUnset = usedPrivateContext && state === 'unset' &&
             landingClickBoundToCurrentLifecycle;
-        if (landingClickEligible && landingClick && (!intelligenceEntry || sharedPreferences?.funnelPermitted?.()) &&
+        if (landingClickEligible && landingClick && (!sharedPreferences || sharedPreferences.permitted()) &&
             ((!usedPrivateContext && !landingClickStatusSent) || revalidatingLiveUnset) &&
             !gpcActive && !revocationPending) {
             requestHeaders['X-AxonOS-Landing-Click'] = landingClick;
@@ -861,7 +890,6 @@ const startXAttribution = (initialLandingClick) => {
                 sentLandingClick && data.landing_click_accepted === true &&
                 responseState === 'unset' && validPair
             );
-            if (landingClickBoundToCurrentLifecycle) arrivalPending = true;
             revocationAvailable = data.revocation_available === true ||
                 !!revokeCapability.context;
 
@@ -975,7 +1003,7 @@ const startXAttribution = (initialLandingClick) => {
         var requestHeaders = privateRequestHeaders(true);
         requestHeaders['Content-Type'] = 'application/json';
         if ((action === 'grant' || action === 'new_lifecycle') &&
-            landingClickEligible && landingClick && (!intelligenceEntry || sharedPreferences?.funnelPermitted?.()) &&
+            landingClickEligible && landingClick && (!sharedPreferences || sharedPreferences.permitted()) &&
             !gpcActive && !revocationPending) {
             requestHeaders['X-AxonOS-Landing-Click'] = landingClick;
         }

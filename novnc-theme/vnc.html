@@ -293,7 +293,7 @@ Copyright (C) 2019 The noVNC Authors
 
             var moduleRequest;
             try {
-                moduleRequest = import('./app/x-attribution.js?v=9');
+                moduleRequest = import('./app/x-attribution.js?v=10');
             } catch (e) {
                 takeInitialClick();
                 return;
@@ -316,7 +316,7 @@ Copyright (C) 2019 The noVNC Authors
     <script>
         // Only preferences are shared across sites. Attribution grants remain
         // app-owned and separately bound to an eligible click and wallet.
-        window.axonosPrivacyReady = import('./app/privacy-preferences.js?v=4')
+        window.axonosPrivacyReady = import('./app/privacy-preferences.js?v=5')
             .then(function (module) { return module.initializePrivacyPreferences(); })
             .catch(function () { return { unavailable: true, permitted: function () { return false; } }; });
     </script>
@@ -1217,7 +1217,7 @@ Copyright (C) 2019 The noVNC Authors
                         <h1 class="axonos-dashboard-title">Your workspace</h1>
                     </div>
                     <div class="axonos-dashboard-header__actions">
-                        <a href="/intelligence" id="axonos_dashboard_intelligence" class="axonos-dashboard-guest-btn" hidden>Intelligence</a>
+                        <a href="/intelligence" data-axonos-product-launch id="axonos_dashboard_intelligence" class="axonos-dashboard-guest-btn" hidden>Intelligence</a>
                         <button type="button" id="axonos_dashboard_guest_invite_btn"
                             class="axonos-dashboard-guest-btn" hidden>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">

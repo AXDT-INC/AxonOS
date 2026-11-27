@@ -14,7 +14,7 @@ does not grant permission. Failed saves/withdrawals remain visible for retry.
 Navigation and wallet access do not depend on accepting, and an unanswered
 choice does not permit sharing.
 
-This uses the existing gate, context encryption, CAPI worker and schema 6. It
+This uses the existing gate, context encryption, CAPI worker and schema 7. It
 does not require landing keyrings, Vault objects, a landing database, a separate
 privacy worker, or the legacy `X_HANDOFF_ENABLED=true` protocol. The X access
 token remains worker-only. No new GitOps secret resources are needed.
@@ -32,10 +32,13 @@ on the app origin.
 | Observed action | Backend event ID configuration |
 |---|---|
 | Consented landing visit | `X_CAPI_EVENT_LANDING_PAGE_VIEWED` |
-| Consented ordinary Launch click | `X_CAPI_EVENT_APP_LAUNCH_CLICKED` |
-| Eligible AxonOS desktop arrival | `X_CAPI_EVENT_APP_PAGE_VIEWED` |
-| Consented Launch AxonIntelligence click | `X_CAPI_EVENT_INTELLIGENCE_LAUNCH_CLICKED` |
+| Consented Launch AxonOS or open Compute workspace click | `X_CAPI_EVENT_APP_LAUNCH_CLICKED` |
+| Eligible Compute page view, including a direct X ad | `X_CAPI_EVENT_APP_PAGE_VIEWED` |
+| Consented Launch AxonIntelligence or open Intelligence click | `X_CAPI_EVENT_INTELLIGENCE_LAUNCH_CLICKED` |
 | Eligible Intelligence arrival, including direct X ads | `X_CAPI_EVENT_INTELLIGENCE_PAGE_VIEWED` |
+| Verified wallet authentication | `X_CAPI_EVENT_WALLET_VERIFIED` |
+| Confirmed paid deposit | `X_CAPI_EVENT_DEPOSIT_COMPLETED` |
+| Committed new session | `X_CAPI_EVENT_SESSION_STARTED` |
 
 Supply each desired X event ID to the gate and worker. Blank disables that
 event. The landing repo uses the existing app-origin preferences frame and
@@ -52,7 +55,7 @@ ingestion and before dispatch.
 The landing frame can report a consented view while the visitor is still on
 the landing page. Measurement is best effort. Unanswered choices, GPC, a
 closed page before submission or an expired landing click can leave gaps.
-Launching never waits longer than 300 ms for an optional Launch report. Direct ad arrivals on `/intelligence` record only the eligible Intelligence page view. Shared conversation links do not initialize attribution.
+Launching never waits longer than 300 ms for an optional Launch report. A direct ad arrival on either product records its own eligible view. Opening the other product through a product link observes the launch and the destination view. The app and the landing preferences frame restore the same tab-owned, consented attribution context on subsequent navigation. Returning to the landing page can therefore record its view and a later launch even without another ad URL. Each observation still uses the worker’s existing per-click and milestone deduplication. Wallet, deposit and session events come only from their successful backend actions. Shared conversation links do not initialize attribution.
 
 Each app tab still obtains its own server-encrypted attribution ticket and
 passes the existing click, CSRF, policy and verified-wallet checks. Before a

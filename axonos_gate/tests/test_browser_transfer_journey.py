@@ -53,9 +53,12 @@ class BrowserTransferJourney(unittest.TestCase):
         source = (ROOT/'novnc-theme/vnc.html').read_text()
         scripts = re.findall(r'<script>\s*([\s\S]*?)</script>', source)[:3 if getattr(cls, 'SHARED', False) else 2]
         notice = re.search(r'<section id="axonos-attribution-settings"[\s\S]*?</section>', source).group(0)
+        product_link = re.search(r'<a href="/intelligence" data-axonos-product-launch[^>]*>Intelligence</a>', source).group(0)
+        # The real dashboard reveals this control after wallet authentication.
+        product_link = product_link.replace(' hidden>', '>')
         cls.app_html = '<!doctype html><html><head><meta name="referrer" content="no-referrer">' + ''.join(
             '<script>'+script+'</script>' for script in scripts) + '</head><body>App test' + \
-            '<button id="app-action" onclick="this.textContent=\'App action works\'">App action</button>' + notice + '</body></html>'
+            '<button id="app-action" onclick="this.textContent=\'App action works\'">App action</button>' + product_link + notice + '</body></html>'
 
     @classmethod
     def stop_server(cls):
