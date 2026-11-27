@@ -29,7 +29,7 @@
     <script src="/app/intelligence.js?v=4" defer></script>
     {% endif %}
 </head>
-<body data-wallet="{{ wallet or '' }}" class="{% if shared_conversation or shared_error %}shared-page{% elif wallet %}chat-page{% else %}public-page{% endif %}">
+<body {% if restricted %}data-intelligence-restricted="true" {% endif %}data-wallet="{{ wallet or '' }}" class="{% if shared_conversation or shared_error %}shared-page{% elif wallet %}chat-page{% else %}public-page{% endif %}">
     <svg class="symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false"><defs>
         <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></symbol>
         <symbol id="i-new" viewBox="0 0 24 24"><path d="M11 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-5m-9 1 1-4 7-7 3 3-7 7-4 1Zm6-9 3 3"/></symbol>
@@ -45,7 +45,14 @@
         <symbol id="i-flask" viewBox="0 0 24 24"><path d="M9 3h6m-5 0v7l-6 9a1 1 0 0 0 1 2h14a1 1 0 0 0 1-2l-6-9V3M7 15h10"/></symbol>
         <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-9v.1"/></symbol>
     </defs></svg>
-    {% if shared_error %}
+    {% if restricted %}
+    <header class="public-bar">{{ brand() }}<button type="button" id="axonos-privacy-trigger" class="text-button" hidden>Privacy settings</button></header>
+    <main class="public-main"><h1>Intelligence access</h1>
+        {% if g.intelligence_auth_unavailable %}<p>Wallet verification is temporarily unavailable.</p>
+        {% elif sign_in %}<p>Sign in with a whitelisted wallet to open Intelligence.</p><a href="/?view=intelligence" class="primary-button">Sign in to AxonOS</a>
+        {% else %}<p>Intelligence is available to whitelisted wallets.</p>{% endif %}
+    </main>
+    {% elif shared_error %}
     <header class="public-bar">{{ brand() }}</header>
     <main class="shared-main"><p class="shared-label">{{ icon('share') }} Shared conversation</p><h1>Conversation unavailable</h1>
         <p class="unavailable-message">{{ shared_error }}</p><a href="/intelligence" class="primary-button">Open Intelligence {{ icon('external') }}</a>

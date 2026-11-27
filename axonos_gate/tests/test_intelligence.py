@@ -121,7 +121,8 @@ class GateIntegrationCase(unittest.TestCase):
         thread.start()
         self.addCleanup(thread.join)
         self.addCleanup(self.server.shutdown)
-        for ctx in (patch.object(gate.intelligence, 'SOCKET_PATH', path),
+        for ctx in (patch.dict(os.environ, {'AXONOS_INTELLIGENCE_PUBLIC_ACCESS': 'true'}),
+                    patch.object(gate.intelligence, 'SOCKET_PATH', path),
                     patch.object(gate, '_gate_pg_init_once', return_value=True),
                     patch.object(gate, '_gate_pg_get_connection', side_effect=auth_connection)):
             ctx.start()
@@ -134,6 +135,33 @@ class GateIntegrationCase(unittest.TestCase):
 
 
 class IntelligenceTests(GateIntegrationCase):
+    def test_restricted_routes_use_verified_wallet_membership_before_access(self):
+        policies = {'AXONOS_INTELLIGENCE_PUBLIC_ACCESS': 'false', 'AXONOS_TEST_CREDIT_WALLETS': ALICE.upper(),
+                    'AXONOS_TEST_CREDITS_ENABLED': 'false'}
+        api_paths = [('GET', CONVERSATIONS), ('POST', CONVERSATIONS), ('POST', API),
+                     ('POST', '/api/intelligence/generations/' + str(uuid4()) + '/stop')]
+        item = CONVERSATIONS + '/' + '1' * 32
+        api_paths += [(method, item + suffix) for method, suffix in
+                      [('GET', ''), ('PATCH', ''), ('DELETE', ''), ('POST', '/messages'),
+                       ('POST', '/share'), ('DELETE', '/share')]]
+        with patch.dict(os.environ, policies), patch.object(gate, 'conversation_rpc') as store:
+            self.assertEqual(self.client('alice').get('/intelligence').status_code, 200)
+            for token, wallet, status in [('bob', BOB, 403), ('expired', ALICE, 401), ('guest', GUEST, 401)]:
+                client = self.client(token)
+                for path in ('/intelligence', '/intelligence/share/invalid'):
+                    response = client.get(path)
+                    self.assertEqual(response.status_code, status)
+                    self.assertNotIn(b'id="chat-main"', response.data)
+                for method, path in api_paths:
+                    self.assertEqual(client.open(path, method=method, json={}, headers={'X-Wallet-Address': wallet}).status_code, status)
+            self.assertEqual(self.client('bob').get(CONVERSATIONS, headers={'X-Wallet-Address': ALICE}).status_code, 401)
+            self.assertFalse(self.server.calls or store.called)
+            self.assertEqual(self.client('alice').get('/intelligence/share/invalid').status_code, 404)
+            with patch.dict(os.environ, {'AXONOS_INTELLIGENCE_PUBLIC_ACCESS': 'invalid', 'AXONOS_TEST_CREDIT_WALLETS': '',
+                                        'AXONOS_WHITELISTED_WALLETS': BOB}):
+                self.assertEqual(self.client('alice').get('/intelligence').status_code, 403)
+                self.assertEqual(self.client('bob').get('/intelligence').status_code, 200)
+
     def test_page_is_public_and_chat_requires_wallet_cookie(self):
         for token in ('', 'expired', 'guest'):
             response = self.client(token).get('/intelligence')

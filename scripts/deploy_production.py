@@ -8,6 +8,7 @@ lock serializes participating operators. Command diagnostics are never replayed.
 import argparse
 import contextlib
 import fcntl
+import hashlib
 import io
 import json
 import os
@@ -662,7 +663,71 @@ class Deployment:
         self.image_id = self.docker('image', 'inspect', self.candidate, '--format', '{{.Id}}', capture=True, label='Candidate image identity')
         require(re.fullmatch(r'sha256:[a-f0-9]{64}', self.image_id), 'Invalid immutable candidate image ID')
 
-    def attest_image(self, role='gate'):
+    def patch_intelligence_gate(self, base_id):
+        """Layer this reviewed access-policy change on the previous full gate."""
+        parent = self.git('rev-parse', '--verify', 'HEAD^')
+        self.image_id = base_id
+        self.attest_image('gate', revision=parent)
+        # Only files copied by the existing Dockerfile may enter the gate.
+        # A dependency, base image, executable or worker change needs its own build.
+        files = {
+            'axonos_gate/axgt_verifier.py', 'axonos_gate/gate_server.py',
+            'axonos_gate/templates/attribution-head.html', 'axonos_gate/templates/intelligence.html',
+            'novnc-theme/vnc.html', 'novnc-theme/app/x-attribution.js',
+            'novnc-theme/app/privacy-preferences.js', 'novnc-theme/app/privacy-preferences-entry.js',
+            'novnc-theme/privacy-preferences.html',
+        }
+        changes = self.git('diff', '--name-only', '--no-renames', parent, self.head).splitlines()
+        destinations = {}
+        for source in changes:
+            if source in files or re.fullmatch(r'axonos_gate/tests/[a-zA-Z0-9_]+\.(py|js)', source):
+                destinations[source] = ('/usr/share/novnc/' + source.removeprefix('novnc-theme/')
+                                        if source.startswith('novnc-theme/') else '/' + source)
+            else:
+                require(source in ('scripts/deploy_production.py', 'docs/PRODUCTION_DEPLOYMENT.md',
+                                   'docs/X_CAPI_HANDOFF_ACTIVATION.md'),
+                        'Change outside the Intelligence hot patch: ' + source)
+        require('axonos_gate/gate_server.py' in destinations and 'novnc-theme/vnc.html' in destinations,
+                'Incomplete Intelligence access policy hot patch')
+        self.maintain_candidates(strict=True)
+        self.candidate = CANDIDATE_PREFIX + self.run_id
+        name = 'axonos-intelligence-patch-' + self.run_id
+        note('Patch attested immutable full gate in a stopped container; validate the resulting immutable image before rollout.')
+        container = self.docker('create', '--name', name, base_id, capture=True,
+                                label='Create offline patch container')
+        require(re.fullmatch(r'[a-f0-9]{64}', container), 'Invalid offline container ID')
+        hashes = {}
+        try:
+            with tempfile.TemporaryDirectory(prefix='axonos-intelligence-overlay-') as directory:
+                payload = Path(directory) / 'payload'
+                for source, destination in destinations.items():
+                    file = self.root / source
+                    require(file.is_file() and not file.is_symlink(), 'Unsupported hot patch file')
+                    data = file.read_bytes()
+                    blob = b'blob ' + str(len(data)).encode('ascii') + b'\0' + data
+                    require(hashlib.sha1(blob).hexdigest() == self.git('rev-parse', self.head + ':' + source),
+                            'Hot patch bytes differ from the committed Git blob')
+                    payload.write_bytes(data)
+                    payload.chmod(0o755 if re.fullmatch(r'axonos_gate/[^/]+\.py', source) else 0o644)
+                    hashes[destination] = hashlib.sha256(data).hexdigest()
+                    self.docker('cp', str(payload), container + ':' + destination, label='Stage ' + source)
+            self.clean_git()
+            require(self.git('rev-parse', '--verify', 'HEAD') == self.head, 'Revision changed while patching')
+            labels = {CANDIDATE_OWNER: CANDIDATE_TOOL, CANDIDATE_RUN: self.run_id,
+                      CANDIDATE_CREATED: str(time.time_ns()), REVISION_LABEL: self.head,
+                      'com.axonos.deploy.intelligence-patch-base': base_id}
+            change_args = [part for key, value in labels.items()
+                           for part in ('--change', 'LABEL ' + key + '=' + value)]
+            self.image_id = self.docker('commit', *change_args, container, self.candidate, timeout=300,
+                                        capture=True, label='Commit immutable Intelligence hot patch')
+        finally:
+            self.docker('rm', '-v', container, label='Remove stopped patch container')
+        self.attest_image('gate')
+        self.validate_image('Intelligence', ['-c',
+            'from pathlib import Path; import hashlib; hashes = ' + repr(hashes) +
+            '; assert all(hashlib.sha256(Path(p).read_bytes()).hexdigest() == h for p,h in hashes.items())'])
+
+    def attest_image(self, role='gate', revision=None):
         require(isinstance(self.image_id, str) and re.fullmatch(r'sha256:[a-f0-9]{64}', self.image_id),
                 'Prevalidated image must be an immutable local sha256 ID')
         items = json.loads(self.docker('image', 'inspect', self.image_id, capture=True,
@@ -672,7 +737,7 @@ class Deployment:
         labels = (items[0].get('Config') or {}).get('Labels') or {}
         require(labels.get(ROLE_LABEL, 'gate') == role, 'Candidate image role mismatch')
         require(labels.get(CANDIDATE_OWNER) == CANDIDATE_TOOL
-                and labels.get(REVISION_LABEL) == self.head
+                and labels.get(REVISION_LABEL) == (revision or self.head)
                 and labels.get(NVIDIA_LABEL) == self.options.nvidia_package
                 and re.fullmatch(r'[a-f0-9]{64}', labels.get(NONCE_LABEL, '')),
                 'Candidate source/package/credential provenance mismatch')
@@ -986,7 +1051,9 @@ class Deployment:
                     return
                 require(self.options.nvidia_package == PRODUCTION_NVIDIA,
                         'Explicit production NVIDIA package 580.173.02-1ubuntu1 is required')
-                if self.options.prevalidated_image:
+                if getattr(self.options, 'intelligence_patch_base', None):
+                    self.patch_intelligence_gate(self.options.intelligence_patch_base)
+                elif self.options.prevalidated_image:
                     self.image_id = self.options.prevalidated_image
                 else:
                     self.admit_builder()
@@ -1034,6 +1101,7 @@ def main():
     parser.add_argument('--check', action='store_true', help='Read-only preflight including metadata-only exec checks')
     parser.add_argument('--with-capi-backend', action='store_true', help='Deliberately update the existing CAPI backend')
     parser.add_argument('--build-only', action='store_true', help='Prepare and validate image without production configuration or rollout')
+    parser.add_argument('--intelligence-patch-base', help='Apply the restricted Intelligence patch to the immutable full gate from the parent revision')
     parser.add_argument('--prevalidated-image', help='Reuse local immutable sha256 image; reattest and revalidate before rollout')
     parser.add_argument('--builder', help='Explicit preprovisioned docker-container builder name')
     parser.add_argument('--builder-id', help='Expected full builder container ID on the fixed local endpoint')
@@ -1047,6 +1115,9 @@ def main():
     require(1 <= args.health_timeout <= 1800, 'Health timeout must be 1..1800 seconds')
     require(not (args.build_only and (args.check or args.with_capi_backend)),
             'Build-only cannot be combined with check or backend mutation')
+    require(not args.intelligence_patch_base or (args.with_capi_backend and not args.prevalidated_image
+            and not args.password_secret_file and not args.build_only),
+            'Intelligence patch requires the existing full gate and coordinated backend rollout')
     require(not (args.prevalidated_image and args.password_secret_file),
             'Image reuse must not supply build credentials')
     require(not args.prevalidated_worker_image or (args.build_only or args.with_capi_backend),

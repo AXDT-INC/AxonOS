@@ -14,7 +14,7 @@ import threading
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from flask import Flask, Response, request, jsonify, render_template, send_from_directory, stream_with_context
+from flask import Flask, Response, g, request, jsonify, render_template, send_from_directory, stream_with_context
 from flask_cors import CORS
 
 try:
@@ -78,6 +78,8 @@ try:
         get_challenge_ttl_seconds,
         get_credit_policy,
         get_wallet_access_status,
+        intelligence_public_access,
+        intelligence_wallet_allowed,
         grant_test_credit,
         mask_wallet_address,
         test_credit_http_status,
@@ -93,6 +95,8 @@ except ImportError:
             get_challenge_ttl_seconds,
             get_credit_policy,
             get_wallet_access_status,
+            intelligence_public_access,
+            intelligence_wallet_allowed,
             grant_test_credit,
             mask_wallet_address,
             test_credit_http_status,
@@ -1783,11 +1787,41 @@ def _authenticated_wallet_for_token(token, denied):
     return None, (jsonify({"error": denied}), 401)
 
 
+@app.before_request
+def _authorize_intelligence():
+    path = request.path
+    if path.startswith('/api/intelligence/'):
+        listing = request.endpoint == 'intelligence_conversations' and request.method in ('GET', 'HEAD')
+        wallet, error = _intelligence_identity(allow_search=listing)
+        if error:
+            return error
+    elif path == '/intelligence' or path.startswith('/intelligence/'):
+        if path != '/intelligence' and intelligence_public_access():
+            return None
+        wallet, error = _authenticated_wallet_for_token(
+            request.cookies.get(_auth_cookie_name()), "Sign in with your wallet to open Intelligence.")
+        g.intelligence_auth_unavailable = bool(error and error[1] == 503)
+        if path == '/intelligence' and intelligence_public_access():
+            g.intelligence_wallet = wallet
+            return None
+        if error:
+            if path == '/intelligence':
+                return render_template('intelligence.html', restricted=True, sign_in=error[1] == 401), error[1]
+            return error
+    else:
+        return None
+    if not intelligence_wallet_allowed(wallet):
+        if path == '/intelligence':
+            return render_template('intelligence.html', restricted=True), 403
+        return jsonify(error="Intelligence is restricted to whitelisted wallets."), 403
+    g.intelligence_wallet = wallet
+    return None
+
+
 @app.get('/intelligence')
 def intelligence_page():
-    wallet, error = _authenticated_wallet_for_token(
-        request.cookies.get(_auth_cookie_name()), "Sign in with your wallet to open Intelligence.")
-    return render_template('intelligence.html', wallet=wallet, auth_unavailable=bool(error and error[1] == 503))
+    return render_template('intelligence.html', wallet=g.intelligence_wallet,
+                           auth_unavailable=g.intelligence_auth_unavailable)
 
 
 def _intelligence_identity(allow_search=False):
@@ -1850,9 +1884,7 @@ def _start_chat_stream(wallet, data, prompt, cid=None):
 
 @app.post('/api/intelligence/generations/<request_id>/stop')
 def intelligence_stop(request_id):
-    wallet, error = _intelligence_identity()
-    if error:
-        return error
+    wallet = g.intelligence_wallet
     _, error = _conversation_input(())
     if error:
         return error
@@ -1865,9 +1897,7 @@ def intelligence_stop(request_id):
 
 @app.post('/api/intelligence/generate')
 def intelligence_generate():
-    wallet, error = _intelligence_identity()
-    if error:
-        return error
+    wallet = g.intelligence_wallet
     if _wants_chat_stream():
         data, error = _conversation_input(("prompt", "request_id"))
         if error:
@@ -1917,9 +1947,7 @@ def _conversation_operation(wallet, operation, **data):
 @app.route('/api/intelligence/conversations', methods=['GET', 'POST'])
 def intelligence_conversations():
     listing = request.method in ("GET", "HEAD")
-    wallet, error = _intelligence_identity(allow_search=listing)
-    if error:
-        return error
+    wallet = g.intelligence_wallet
     if listing:
         return _conversation_operation(wallet, "list", q=request.args.get("q", ""))
     _, error = _conversation_input(())
@@ -1930,9 +1958,7 @@ def intelligence_conversations():
 @app.post('/api/intelligence/conversations/<cid>/messages', defaults={"action": "messages"})
 @app.route('/api/intelligence/conversations/<cid>/share', methods=['POST', 'DELETE'], defaults={"action": "share"})
 def intelligence_conversation(cid, action=None):
-    wallet, error = _intelligence_identity()
-    if error:
-        return error
+    wallet = g.intelligence_wallet
     if not re.fullmatch(r"[0-9a-f]{32}", cid):
         return jsonify(error="Conversation unavailable."), 404
     if request.method in ("GET", "HEAD"):

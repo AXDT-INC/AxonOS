@@ -682,7 +682,7 @@ const startXAttribution = (initialLandingClick, onLandingReady) => {
     });
 
     function synchronizePublicContext() {
-        if (arrivalPending && mayReportFunnel()) {
+        if (arrivalPending && !document.body?.dataset?.intelligenceRestricted && mayReportFunnel()) {
             arrivalPending = false;
             var milestone = onLandingReady ? 'landing_page_viewed' :
                 intelligenceEntry ? 'intelligence_page_viewed' : 'app_page_viewed';

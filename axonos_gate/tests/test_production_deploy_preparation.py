@@ -44,6 +44,24 @@ class PreparationAdmissionTests(unittest.TestCase):
             deploy.NVIDIA_LABEL: deploy.PRODUCTION_NVIDIA,
             deploy.NONCE_LABEL: 'c' * 64}}}]
 
+    def test_intelligence_patch_requires_the_parent_release_provenance(self):
+        self.controller.git = mock.Mock(return_value='d' * 40)
+        self.controller.docker.side_effect = None
+        self.controller.docker.return_value = json.dumps(self.provenance())
+        with self.assertRaises(deploy.Refusal):
+            self.controller.patch_intelligence_gate(self.controller.image_id)
+        self.assertEqual(self.controller.docker.call_count, 1)
+        self.assertEqual(self.controller.docker.call_args.args[:2], ('image', 'inspect'))
+
+    def test_intelligence_patch_rejects_unrelated_or_incomplete_changes_before_staging(self):
+        for changes in ('axonos_gate/requirements.txt', 'Dockerfile', 'novnc-theme/vnc.html'):
+            with self.subTest(changes=changes):
+                self.controller.git = mock.Mock(side_effect=['d' * 40, changes])
+                self.controller.attest_image = mock.Mock()
+                with self.assertRaises(deploy.Refusal):
+                    self.controller.patch_intelligence_gate(self.controller.image_id)
+                self.controller.docker.assert_not_called()
+
     def test_matching_immutable_provenance_is_accepted(self):
         self.controller.docker.side_effect = None
         self.controller.docker.return_value = json.dumps(self.provenance())

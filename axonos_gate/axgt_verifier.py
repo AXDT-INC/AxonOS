@@ -763,6 +763,7 @@ def get_wallet_access_status(wallet_address: str, consume_usage: bool = False) -
     test_credit_policy: Dict[str, Any] = {
         "test_credit_eligible": test_credit_eligible,
         "is_whitelisted": test_credit_eligible,
+        "intelligence_allowed": intelligence_wallet_allowed(wallet_address),
     }
     if test_credit_eligible:
         # Publish the default and per-request limit only to eligible wallets.
@@ -914,6 +915,17 @@ def _test_credit_wallet_list_raw() -> str:
     if preferred:
         return preferred
     return (os.getenv("AXONOS_WHITELISTED_WALLETS") or "").strip()
+
+
+def intelligence_public_access() -> bool:
+    return (os.getenv("AXONOS_INTELLIGENCE_PUBLIC_ACCESS") or "").strip().lower() == "true"
+
+
+def intelligence_wallet_allowed(wallet_address: str) -> bool:
+    wallet = (wallet_address or "").strip().lower()
+    if not validate_wallet_address(wallet) or _is_guest_identity(wallet):
+        return False
+    return intelligence_public_access() or wallet in _parse_test_credit_wallets(_test_credit_wallet_list_raw())
 
 
 def is_wallet_whitelisted(wallet_address: str) -> bool:

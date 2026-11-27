@@ -93,6 +93,25 @@ class ConversationProxyTests(fixtures.GateIntegrationCase):
         finally:
             conn.close()
 
+    def test_port_6080_applies_whitelist_to_entry_share_and_apis(self):
+        with patch.dict(os.environ, {'AXONOS_INTELLIGENCE_PUBLIC_ACCESS': 'false',
+                                     'AXONOS_TEST_CREDIT_WALLETS': fixtures.ALICE,
+                                     'AXONOS_TEST_CREDITS_ENABLED': 'false'}):
+            code, html, headers = self.exchange('GET', '/intelligence?utm_source=x', owner=False)
+            self.assertEqual(code, 401)
+            self.assertIn(b'data-intelligence-restricted="true"', html)
+            self.assertNotIn(b'id="chat-main"', html)
+            self.assertEqual(headers['Referrer-Policy'], 'no-referrer')
+            self.assertEqual(self.exchange('GET', '/intelligence')[0], 200)
+            self.assertEqual(self.exchange('POST', '/api/intelligence/conversations', {})[0], 201)
+            self.assertEqual(self.exchange('GET', '/intelligence/share/example', owner=False)[0], 401)
+            with patch.dict(os.environ, {'AXONOS_TEST_CREDIT_WALLETS': fixtures.BOB}):
+                for method, path, data in [('GET', '/intelligence', None), ('GET', '/intelligence/share/example', None),
+                                           ('GET', '/api/intelligence/conversations', None),
+                                           ('POST', '/api/intelligence/generate', {'prompt': 'fixture'})]:
+                    self.assertEqual(self.exchange(method, path, data)[0], 403, path)
+            self.assertFalse(self.server.calls)
+
     def test_ad_arrival_renders_without_forwarding_click_or_enabling_shared_pages(self):
         marker = 'Synthetic_Ingress_Click'
         code, body, headers = self.exchange('GET', '/intelligence?utm_source=x&twclid=' + marker, owner=False)

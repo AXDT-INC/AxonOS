@@ -1617,3 +1617,8 @@ and explicitly cleared from launcher, desktop and assistant environments. Keep
 `.env` private; do not print resolved Compose configuration or secret values.
 CARD disappears cleanly if required configuration is absent, while existing
 crypto rails remain available.
+
+
+### Intelligence access-policy hot patch
+
+The controller accepts `--intelligence-patch-base <immutable-full-gate-id>` with `--with-capi-backend` for this source change. Use the attested full gate from the immediately preceding commit and the normal builder, NVIDIA version and renter-preservation arguments. The controller copies the reviewed files into a stopped container, commits a new image, verifies the files by digest and then runs normal image validation, initialization, promotion and health checks. This path reuses the base credential layers and needs no BuildKit password. Other runtime changes require the standard build path. The runtime access and landing visibility switches are documented in [X CAPI handoff activation](X_CAPI_HANDOFF_ACTIVATION.md).

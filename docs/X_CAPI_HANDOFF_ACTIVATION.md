@@ -79,6 +79,16 @@ its withdrawal capabilities; previously sent/in-flight events cannot be
 recalled. GPC suppresses sharing. These controls manage X attribution only,
 not unrelated trackers or a complete site-wide privacy policy.
 
+### Intelligence access and landing visibility
+
+The production default admits existing whitelisted, authenticated human wallets. The gate checks every Intelligence page, shared snapshot and API before reading conversations or invoking inference. It uses the configured `AXONOS_TEST_CREDIT_WALLETS` list, with `AXONOS_WHITELISTED_WALLETS` as its existing fallback. Free-credit issuance can stay disabled. Guests have no private Intelligence access. The workspace only reveals its Intelligence link after the server confirms eligibility.
+
+To open Intelligence later, set **`AXONOS_INTELLIGENCE_PUBLIC_ACCESS=true`** in the central gate configuration and recreate the gate through the production controller. This restores the public introduction and shared links. Chat and private conversation APIs still require a verified wallet. Omit the flag or set it to `false` to restrict access again.
+
+To publish the landing CTA, set **`AXONOS_SHOW_INTELLIGENCE_LAUNCH=true`** in the landing Deployment’s production GitOps overlay and roll out the Deployment using its current image. Both copies of the light-purple button follow that flag. Omit it or set it to `false` to hide them. The app access setting is independent. For a public launch, enable and verify app access before showing the landing CTA.
+
+Direct ad arrivals at the restricted sign-in page may save a shared consent choice. The Intelligence page view is eligible only after the visitor actually opens an admitted page. Access denial, sign-in and an automatic redirect do not synthesize a product launch.
+
 ### Activating the shared flow
 
 1. Build the updated backend through the production controller.

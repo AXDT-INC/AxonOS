@@ -56,7 +56,7 @@ function browser() {
         Promise, Number, String, Array, setTimeout, clearTimeout, clearInterval,
         axonosPaymentOperationGeneration: 0, axonosWalletConnectGeneration: 0,
         axonosInvalidateWalletVerification: noop, setPayDepositButtonsBusy: noop,
-        axonosSetTestCreditEligibility: noop, axonosSetGuestInviteEligibility: noop,
+        axonosSetTestCreditEligibility: noop, axonosSetGuestInviteEligibility: noop, axonosSetIntelligenceAccess: noop,
         axonosApplyResumeConnectUi: noop, setWalletUIState: noop,
         axonosSyncWalletUnavailableIndicator: noop,
     });

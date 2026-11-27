@@ -381,6 +381,24 @@ class FunnelJourney(unittest.TestCase):
                 self.assertEqual(page.get_by_role('dialog').count(), 0)
                 check()
 
+    def test_restricted_entry_preserves_grant_without_an_intelligence_view(self):
+        self.restricted = True
+        with patch.object(x_capi, 'rate_limit_digest_key', return_value=b'synthetic'), \
+                patch.object(x_capi, '_send_local_envelope', return_value=True) as queued, self.journey() as (page, _, grants):
+            page.goto('https://app.axonos.io/intelligence?twclid=' + CLICK)
+            self.assertEqual(page.url, 'https://app.axonos.io/intelligence')
+            page.get_by_role('button', name='Accept optional', exact=True).click()
+            page.wait_for_function('!!window.axonosAttributionContext')
+            self.assertFalse(queued.called)
+            self.assertEqual(len(grants), 1)
+            self.restricted = False
+            page.goto('https://app.axonos.io/intelligence')
+            for _ in range(100):
+                page.wait_for_timeout(25)
+                if queued.called: break
+            self.assertEqual([call.args[0]['milestone'] for call in queued.call_args_list], ['intelligence_page_viewed'])
+            self.assertEqual(len(grants), 1)
+
     def test_old_choices_keep_their_scope(self):
         import json
         import time

@@ -139,7 +139,7 @@ async function start() {
         // The app-origin frame uses the same tab lock, encrypted session ticket
         // and withdrawal registry as Compute and Intelligence. Only completion
         // signals cross origins.
-        landingJourney = import('./x-attribution.js?v=10').then(bridge => new Promise(resolve => {
+        landingJourney = import('./x-attribution.js?v=11').then(bridge => new Promise(resolve => {
             if (!funnelPermitted()) return resolve(null);
             bridge.initializeXAttribution(click, reportLaunch => {
                 window.parent.postMessage({ type: 'axonos-funnel-ready-v1' }, config.landing_origin);

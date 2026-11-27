@@ -88,7 +88,7 @@ function browser(screen = 'landing') {
         verifiedWalletAddress: null,
         axonosWalletConnectGeneration: 0, axonosWalletVerifyGeneration: 0,
         axonosDashboardRequestGeneration: 0,
-        axonosSetGuestInviteEligibility: noop, axonosSetTestCreditEligibility: noop,
+        axonosSetIntelligenceAccess: noop, axonosSetGuestInviteEligibility: noop, axonosSetTestCreditEligibility: noop,
         axonosPaintSessionCardRemaining: noop, axonosTryResumeDesktopAfterCredit: noop,
         axonosInvalidateWalletVerification: () => { context.axonosWalletVerifyGeneration += 1; },
         setWalletUIState: (value) => { state.status = value; },
@@ -176,7 +176,7 @@ function browser(screen = 'landing') {
         context.axonosFetchWalletAccessStatus = () => Promise.resolve({ ok: true, data: { remaining_minutes: 71 } });
         vm.runInContext(exportedFunction('axonosLoadDashboard'), context);
     }
-    function useRealVerify(remainingMinutes = 71) {
+    function useRealVerify(remainingMinutes = 71, intelligenceAllowed = true) {
         context.axonosAttributionContextForWalletRequest = noop;
         context.axonosPaymentOperationGeneration = 0;
         context.axonosTestCreditBusy = false;
@@ -189,7 +189,7 @@ function browser(screen = 'landing') {
             return Promise.resolve({ status: 200, ok: true, data:
                 path === '/api/auth/challenge'
                     ? { challenge: 'local-test-challenge' }
-                    : { verified: remainingMinutes > 0, auth_token: 'signed-test-token', remaining_minutes: remainingMinutes },
+                    : { verified: remainingMinutes > 0, intelligence_allowed: intelligenceAllowed, auth_token: 'signed-test-token', remaining_minutes: remainingMinutes },
             });
         };
         vm.runInContext(between('function axonosRequireWalletVerifyAttempt(',
@@ -215,6 +215,20 @@ async function run() {
         assert.equal(destination, '/intelligence');
         assert.deepEqual(b.state.authRequests, ['/api/auth/challenge', '/api/auth/verify-wallet']);
         assert.equal(b.state.refreshes, 0);
+    }
+    // Changing to an unlisted or signed-out identity removes the previous wallet's link.
+    {
+        const b = browser();
+        const link = element();
+        b.elements.set('axonos_dashboard_intelligence', link);
+        b.context.axonosIsGuestAddress = () => false;
+        vm.runInContext(between('function axonosSetIntelligenceAccess(', 'function axonosSetTestCreditEligibility('), b.context);
+        b.context.axonosSetIntelligenceAccess(WALLET, { intelligence_allowed: true });
+        assert.equal(link.hidden, false);
+        b.context.axonosSetIntelligenceAccess(OTHER_WALLET, { intelligence_allowed: false });
+        assert.equal(link.hidden, true);
+        b.context.axonosSetIntelligenceAccess(null, null);
+        assert.equal(b.window.axonosIntelligenceWallet, '');
     }
     // Initial/switch-wallet dashboard setup runs synchronously inside wallet
     // verification. An exception here would be caught as failed authentication

@@ -40,7 +40,7 @@ class BrowserTransferJourney(unittest.TestCase):
         cls.server = subprocess.Popen([NODE, 'server/launch.mjs'], cwd=BUILD,
             env={'PATH': str(Path(NODE).parent)+':/usr/bin:/bin', 'NODE_ENV': 'production',
                  'HOSTNAME': '127.0.0.1', 'PORT': str(cls.port),
-                 'X_ATTRIBUTION_TRANSFER': 'browser-click-v1'},
+                 'X_ATTRIBUTION_TRANSFER': 'browser-click-v1', 'AXONOS_SHOW_INTELLIGENCE_LAUNCH': 'true'},
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         cls.addClassCleanup(cls.stop_server)
         for _ in range(100):
@@ -119,7 +119,7 @@ class BrowserTransferJourney(unittest.TestCase):
                     from jinja2 import Environment, FileSystemLoader, select_autoescape
                     template = Environment(loader=FileSystemLoader(ROOT / 'axonos_gate/templates'),
                                            autoescape=select_autoescape()).get_template('intelligence.html')
-                    return request_route.fulfill(content_type='text/html', body=template.render(wallet=None))
+                    return request_route.fulfill(content_type='text/html', body=template.render(wallet=None, restricted=getattr(self, 'restricted', False), sign_in=True, g={}))
                 if url.path == '/': return request_route.fulfill(content_type='text/html', body=self.app_html)
             request_route.abort()
         with patch.dict(os.environ, env, clear=True), \

@@ -293,7 +293,7 @@ Copyright (C) 2019 The noVNC Authors
 
             var moduleRequest;
             try {
-                moduleRequest = import('./app/x-attribution.js?v=10');
+                moduleRequest = import('./app/x-attribution.js?v=11');
             } catch (e) {
                 takeInitialClick();
                 return;
@@ -316,7 +316,7 @@ Copyright (C) 2019 The noVNC Authors
     <script>
         // Only preferences are shared across sites. Attribution grants remain
         // app-owned and separately bound to an eligible click and wallet.
-        window.axonosPrivacyReady = import('./app/privacy-preferences.js?v=5')
+        window.axonosPrivacyReady = import('./app/privacy-preferences.js?v=6')
             .then(function (module) { return module.initializePrivacyPreferences(); })
             .catch(function () { return { unavailable: true, permitted: function () { return false; } }; });
     </script>
@@ -3642,6 +3642,7 @@ Copyright (C) 2019 The noVNC Authors
         function axonosResetIdentityAfterFailedWalletAttempt() {
             axonosSetTestCreditEligibility(false);
             axonosSetGuestInviteEligibility(false);
+            axonosSetIntelligenceAccess(null, null);
             if (window.axonosGuestSession) {
                 verifiedWalletAddress = window.axonosGuestSession.address;
                 window.verifiedWalletAddress = window.axonosGuestSession.address;
@@ -4960,6 +4961,13 @@ Copyright (C) 2019 The noVNC Authors
             return !!current && current === String(wallet || '').trim().toLowerCase();
         }
 
+        function axonosSetIntelligenceAccess(wallet, data) {
+            var allowed = !!wallet && !axonosIsGuestAddress(wallet) && data?.intelligence_allowed === true;
+            window.axonosIntelligenceWallet = allowed ? String(wallet).toLowerCase() : '';
+            var link = document.getElementById('axonos_dashboard_intelligence');
+            if (link) link.hidden = !allowed;
+        }
+
         function axonosSetTestCreditEligibility(dataOrEligible) {
             var eligible = false;
             if (typeof dataOrEligible === 'boolean') {
@@ -5174,6 +5182,7 @@ Copyright (C) 2019 The noVNC Authors
                 if (!response.ok || !data.invite_url) {
                     if (data.error_code === 'not_invite_minter') {
                         axonosSetGuestInviteEligibility(false);
+                        axonosSetIntelligenceAccess(null, null);
                     }
                     throw new Error(data.error || 'Could not create the demo invite.');
                 }
@@ -5238,6 +5247,7 @@ Copyright (C) 2019 The noVNC Authors
                         if (!axonosPaymentIdentityIsCurrent(w)) {
                             return { ok: false, data: {}, stale: true };
                         }
+                        axonosSetIntelligenceAccess(w, r.ok ? data : null);
                         axonosSetTestCreditEligibility(data);
                         axonosSetGuestInviteEligibility(data);
                         // Adopt a rotated token. The HttpOnly cookie follows on
@@ -8829,7 +8839,8 @@ Copyright (C) 2019 The noVNC Authors
                     if (verifyOptions.releaseOnly === true && st < 400) {
                         return true;
                     }
-                    if (window.location.search === '?view=intelligence') {
+                    axonosSetIntelligenceAccess(walletAddress, data);
+                    if (window.location.search === '?view=intelligence' && data.intelligence_allowed === true) {
                         window.location.replace('/intelligence');
                         return true;
                     }
@@ -10437,6 +10448,7 @@ Copyright (C) 2019 The noVNC Authors
             window.verifiedWalletAuthToken = null;
             axonosSetTestCreditEligibility(false);
             axonosSetGuestInviteEligibility(false);
+            axonosSetIntelligenceAccess(null, null);
             window.axonosAllowVncConnect = false;
             window.axonosPendingResumeClaim = null;
             window.axonosPendingSessionClaim = null;
@@ -12732,7 +12744,8 @@ Copyright (C) 2019 The noVNC Authors
 
         // Handler when wallet is verified
         function axonosOnWalletVerified(walletAddress, data) {
-            if (window.location.search === '?view=intelligence' && !axonosIsGuestAddress(walletAddress)) {
+            axonosSetIntelligenceAccess(walletAddress, data);
+            if (window.location.search === '?view=intelligence' && data?.intelligence_allowed === true && !axonosIsGuestAddress(walletAddress)) {
                 window.location.replace('/intelligence');
                 return;
             }
@@ -12819,7 +12832,8 @@ Copyright (C) 2019 The noVNC Authors
         function axonosLoadDashboard() {
             const wallet = axonosCurrentVerifiedWallet();
             const intelligenceLink = document.getElementById('axonos_dashboard_intelligence');
-            if (intelligenceLink) intelligenceLink.hidden = !wallet || axonosIsGuestAddress(wallet);
+            if (intelligenceLink) intelligenceLink.hidden = !wallet || axonosIsGuestAddress(wallet) ||
+                String(wallet).toLowerCase() !== window.axonosIntelligenceWallet;
             if (!wallet) {
                 axonosDashboardRequestGeneration += 1;
                 return Promise.resolve(null);
