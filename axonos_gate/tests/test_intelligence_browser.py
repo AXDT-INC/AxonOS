@@ -336,10 +336,14 @@ class IntelligenceBrowser(unittest.TestCase):
         self.page.goto(BASE + '/intelligence?twclid=' + marker)
         self.page.wait_for_function('window.axonosAttributionReady === true')
         self.assertEqual(self.page.url, BASE + '/intelligence')
-        self.assertEqual(candidates, [marker])
+        self.assertEqual(candidates, [])
+        self.assertEqual(self.page.get_by_role('dialog').count(), 1)
+        self.assertIsNone(self.page.evaluate('sessionStorage.getItem("axonos_x_attribution_tab_owner_v1")'))
         self.assertEqual(actions, [])
         self.page.get_by_role('button', name='Reject optional').click()
-        self.assertNotIn('intelligence_page_viewed', actions)
+        self.page.get_by_role('button', name='Reject optional').wait_for(state='hidden')
+        self.assertEqual(candidates, [])
+        self.assertEqual(actions, [])
 
         # A transferred fragment arriving in a signed-in, consenting browser
         # produces the existing app milestone and uses the authenticated cookie.
@@ -353,7 +357,9 @@ class IntelligenceBrowser(unittest.TestCase):
         self.page.wait_for_function('!!window.axonosAttributionContext')
         self.page.wait_for_timeout(100)
         self.assertEqual(self.page.url, BASE + '/intelligence')
-        self.assertEqual(actions.count('intelligence_page_viewed'), 1)
+        self.assertEqual(actions, ['grant', 'intelligence_page_viewed'])
+        self.assertEqual(candidates, [marker, marker])
+        self.assertEqual(self.page.locator('#axonos-x-consent').count(), 0)
         self.assertEqual(binds, [({'wallet_address': WALLET}, None)])
         self.assertTrue(all(marker not in u.geturl() for u in self.requests if u.path != '/intelligence'))
 

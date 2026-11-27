@@ -9,6 +9,51 @@ const initializeXAttribution = (initialLandingClick) => {
     if (axonosXAttributionInitialized) return;
     axonosXAttributionInitialized = true;
 
+    if (window.location?.pathname === '/intelligence' && initialLandingClick) {
+        waitForIntelligenceConsent(initialLandingClick);
+    } else {
+        startXAttribution(initialLandingClick);
+    }
+};
+
+// Keep an Intelligence arrival in page memory until the shared app popup or a
+// saved preference permits ad measurement. The anonymous configuration request
+// can render the popup without transmitting the candidate or creating a ticket.
+function waitForIntelligenceConsent(click) {
+    const deadline = performance.now() + 120000;
+    let pending = true;
+    let unsubscribe;
+    const timeout = setTimeout(discard, 120000);
+    window.addEventListener('pagehide', discard, { once: true });
+
+    function finish(allowed) {
+        if (!pending) return;
+        pending = false;
+        const value = allowed && performance.now() < deadline ? click : '';
+        click = '';
+        clearTimeout(timeout);
+        window.removeEventListener('pagehide', discard);
+        unsubscribe?.();
+        startXAttribution(value);
+    }
+    function discard() { finish(false); }
+
+    Promise.resolve(window.axonosPrivacyReady).then(preferences => {
+        if (!pending) return;
+        if (!preferences?.subscribe || !preferences.funnelPermitted) return discard();
+        function reconsider() {
+            if (navigator.globalPrivacyControl === true || preferences.choice() === 'deny') discard();
+            else if (preferences.funnelPermitted()) finish(true);
+        }
+        unsubscribe = preferences.subscribe(reconsider);
+        window.axonosAttributionReady = true;
+        reconsider();
+    }).catch(discard);
+}
+
+const startXAttribution = (initialLandingClick) => {
+    'use strict';
+
     var STORAGE_KEY = 'axonos_x_attribution_context_v1';
     var REVOCATION_PENDING_KEY = 'axonos_x_attribution_revoke_pending_v1';
     var REVOCATION_CAPABILITY_KEY = 'axonos_x_attribution_revoke_capability_v1';
@@ -38,6 +83,7 @@ const initializeXAttribution = (initialLandingClick) => {
 
     var arrivalPending = false;
     var landingClickEligible = !!landingClick;
+    var intelligenceEntry = window.location?.pathname === '/intelligence';
     var landingClickStatusSent = false;
     var landingClickBoundToCurrentLifecycle = false;
     var context = '';
@@ -461,7 +507,7 @@ const initializeXAttribution = (initialLandingClick) => {
     // Intelligence renders this address only after authenticating the HttpOnly
     // session cookie. The bind endpoint verifies that cookie against the wallet.
     function intelligenceCookieWallet() {
-        return window.location?.pathname === '/intelligence' ? document.body?.dataset?.wallet : '';
+        return intelligenceEntry ? document.body?.dataset?.wallet : '';
     }
 
     function currentVerifiedWallet() {
@@ -611,7 +657,7 @@ const initializeXAttribution = (initialLandingClick) => {
         if (arrivalPending && ownershipEstablished && !revokeOnlyLifecycle && enabled && state === 'granted' && context && csrf && sharedTracked &&
             sharedPreferences?.funnelPermitted?.() && !revocationPending && !gpcActive) {
             arrivalPending = false;
-            var milestone = window.location?.pathname === '/intelligence' ? 'intelligence_page_viewed' : 'app_page_viewed';
+            var milestone = intelligenceEntry ? 'intelligence_page_viewed' : 'app_page_viewed';
             sharedPreferences.reportFunnel(milestone, context, csrf).catch(function () {});
         }
         var verifiedWallet = currentVerifiedWallet();
@@ -748,7 +794,7 @@ const initializeXAttribution = (initialLandingClick) => {
         var sentLandingClick = false;
         var revalidatingLiveUnset = usedPrivateContext && state === 'unset' &&
             landingClickBoundToCurrentLifecycle;
-        if (landingClickEligible && landingClick &&
+        if (landingClickEligible && landingClick && (!intelligenceEntry || sharedPreferences?.funnelPermitted?.()) &&
             ((!usedPrivateContext && !landingClickStatusSent) || revalidatingLiveUnset) &&
             !gpcActive && !revocationPending) {
             requestHeaders['X-AxonOS-Landing-Click'] = landingClick;
@@ -929,7 +975,7 @@ const initializeXAttribution = (initialLandingClick) => {
         var requestHeaders = privateRequestHeaders(true);
         requestHeaders['Content-Type'] = 'application/json';
         if ((action === 'grant' || action === 'new_lifecycle') &&
-            landingClickEligible && landingClick &&
+            landingClickEligible && landingClick && (!intelligenceEntry || sharedPreferences?.funnelPermitted?.()) &&
             !gpcActive && !revocationPending) {
             requestHeaders['X-AxonOS-Landing-Click'] = landingClick;
         }
@@ -1235,7 +1281,7 @@ const initializeXAttribution = (initialLandingClick) => {
     }
 
     function installPrivacyControl(force) {
-        if (!sharedPreferencesLoaded || sharedPreferences) return;
+        if (intelligenceEntry || !sharedPreferencesLoaded || sharedPreferences) return;
         if ((!force && !enabled && !revocationAvailable) ||
             document.getElementById('axonos-x-privacy-control')) return;
         if (!document.body) {
@@ -1295,7 +1341,7 @@ const initializeXAttribution = (initialLandingClick) => {
             window.axonosAttributionContext = '';
         }
         Promise.resolve(window.axonosPrivacyReady).then(function (preferences) {
-            sharedPreferences = preferences || null;
+            sharedPreferences = preferences || (intelligenceEntry ? { permitted: () => false } : null);
             sharedPreferencesLoaded = true;
             if (sharedPreferences && sharedPreferences.subscribe && !sharedSubscribed) {
                 sharedSubscribed = true;
