@@ -1807,7 +1807,7 @@ def intelligence_storage():
     auth_error = _require_token()
     if auth_error:
         return auth_error
-    if request.content_length is None or request.content_length > 512 * 1024:
+    if request.content_length is None or request.content_length > 8 * 1024 * 1024:
         return jsonify(error="Invalid storage request size."), 413
     body = request.get_json(silent=True)
     if not isinstance(body, dict) or set(body) != {"wallet", "operation", "data"}:

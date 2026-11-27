@@ -20,12 +20,12 @@
     <title>Intelligence · AxonOS</title>
     <link rel="icon" href="/icon.png">
     <link rel="stylesheet" href="/app/styles/axonos-theme.css">
-    <link rel="stylesheet" href="/app/intelligence.css?v=2">
+    <link rel="stylesheet" href="/app/intelligence.css?v=3">
     {% if wallet or shared_conversation %}
     <script src="/app/vendor/intelligence/markdown-it.umd.min.js" defer></script>
     <script src="/app/vendor/intelligence/plugin-tex.min.js" defer></script>
     <script src="/app/vendor/intelligence/katex.min.js" defer></script>
-    <script src="/app/intelligence.js?v=2" defer></script>
+    <script src="/app/intelligence.js?v=3" defer></script>
     {% endif %}
 </head>
 <body data-wallet="{{ wallet or '' }}" class="{% if shared_conversation or shared_error %}shared-page{% elif wallet %}chat-page{% else %}public-page{% endif %}">
@@ -35,6 +35,7 @@
         <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
         <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
         <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol>
+        <symbol id="i-stop" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor" stroke="none"/></symbol>
         <symbol id="i-external" viewBox="0 0 24 24"><path d="M6 18 18 6M7 6h11v11"/></symbol>
         <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 15V3m-4 4 4-4 4 4M7 10H5v10h14V10h-2"/></symbol>
         <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
@@ -51,7 +52,9 @@
     {% elif shared_conversation %}
     <header class="public-bar">{{ brand() }}<a href="/intelligence">Open Intelligence {{ icon('external') }}</a></header>
     <main class="shared-main"><p class="shared-label">{{ icon('share') }} Shared conversation</p><h1>{{ shared_conversation.title }}</h1>
-        <section id="thread" aria-label="Shared conversation">{% for item in shared_conversation.messages %}<article class="{{ 'user' if item.role == 'user' else 'assistant' }}"><strong>{{ 'User' if item.role == 'user' else 'AxonAI' }}</strong><div class="content">{{ item.content }}</div></article>{% endfor %}</section>
+        <section id="thread" aria-label="Shared conversation">{% for item in shared_conversation.messages %}<article class="{{ 'user' if item.role == 'user' else 'assistant' }}"><strong>{{ 'User' if item.role == 'user' else 'AxonAI' }}</strong><div class="content">{{ item.content }}</div>
+            {% if item.finish_reason == 'length' %}<p class="reply-note">Output limit reached. Start a new chat with the last passage to continue.</p>{% elif item.finish_reason == 'cancelled' %}<p class="reply-note">Generation stopped.</p>{% endif %}
+        </article>{% endfor %}</section>
     </main>
     {% elif wallet %}
     <div id="shell">
@@ -78,11 +81,14 @@
                 <section id="thread" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions"></section>
             </div>
             <div class="composer-area"><div class="composer-inner">
+                <template id="waiting-indicator"><span class="reply-wait" role="status"><i aria-hidden="true"></i><i aria-hidden="true"></i><i aria-hidden="true"></i><span class="sr-only">Waiting for AxonAI</span></span></template>
+                <button id="latest" class="icon-button" aria-label="Jump to latest message" title="Jump to latest message" type="button" hidden>{{ icon('up') }}</button>
                 <p id="temporary" hidden>Temporary chat · This wallet has no storage volume. Messages last until you leave this page.</p>
                 <form id="composer"><label for="prompt" class="sr-only">Message AxonAI</label>
                     <textarea id="prompt" rows="1" placeholder="Message AxonAI…" required></textarea>
                     <div class="composer-tools"><button type="button" class="model-button" id="model-info" aria-label="About AxonAI-v1"><span class="model-dot"></span>AxonAI-v1 {{ icon('info') }}</button>
-                    <button id="send" type="submit" aria-label="Send message" title="Send message">{{ icon('up') }}</button></div>
+                    <button id="send" type="submit" aria-label="Send message" title="Send message">{{ icon('up') }}</button>
+                    <button id="stop" type="button" aria-label="Stop generation" title="Stop generation" hidden>{{ icon('stop') }}</button></div>
                 </form>
                 <p id="status" role="status"></p>
                 <div id="starters" aria-label="Suggested questions">

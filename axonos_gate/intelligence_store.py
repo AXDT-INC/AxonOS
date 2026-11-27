@@ -13,7 +13,8 @@ from contextlib import closing
 MAX_CHATS = 256
 MAX_TITLE = 120
 MAX_PROMPT = 64 * 1024
-MAX_PACKET = 256 * 1024
+MAX_ANSWER = 1024 * 1024
+MAX_PACKET = 8 * 1024 * 1024
 ID_RE = re.compile(r"[0-9a-f]{32}")
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS conversations (
@@ -32,6 +33,13 @@ CREATE TABLE IF NOT EXISTS turns (
     answer TEXT NOT NULL,
     PRIMARY KEY(conversation_id, revision),
     UNIQUE(conversation_id, request_id)
+);
+CREATE TABLE IF NOT EXISTS turn_completions (
+    conversation_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    finish_reason TEXT NOT NULL,
+    PRIMARY KEY(conversation_id, revision),
+    FOREIGN KEY(conversation_id, revision) REFERENCES turns(conversation_id, revision) ON DELETE CASCADE
 );
 """
 
@@ -60,10 +68,14 @@ def _detail(db, row):
     result = _summary(row)
     result["share_url"] = "/intelligence/share/" + row["share_token"] if row["share_token"] else None
     result["messages"] = []
-    for question, answer in db.execute(
-        "SELECT question, answer FROM turns WHERE conversation_id=? ORDER BY revision", (row["id"],)
+    for question, answer, reason in db.execute(
+        "SELECT question, answer, finish_reason FROM turns LEFT JOIN turn_completions "
+        "USING (conversation_id,revision) WHERE conversation_id=? ORDER BY revision", (row["id"],)
     ):
-        result["messages"].extend(({"role": "user", "content": question}, {"role": "assistant", "content": answer}))
+        reply = {"role": "assistant", "content": answer}
+        if reason is not None:
+            reply["finish_reason"] = reason
+        result["messages"].extend(({"role": "user", "content": question}, reply))
     return result
 
 
@@ -98,9 +110,14 @@ def _turn(db, row, operation, data):
             raise StoreError("The conversation exceeds 64 KiB. Start a new chat.", 413)
         return {"prompt": prompt}, 200
     answer = data.get("answer")
-    if not isinstance(answer, str) or len(answer.encode()) > MAX_PROMPT:
+    if not isinstance(answer, str) or len(answer.encode()) > MAX_ANSWER:
         raise StoreError("Invalid reply.", 502)
+    reason = data.get("finish_reason")
+    if reason is not None and reason not in ("stop", "length", "cancelled"):
+        raise StoreError("Invalid completion reason.", 502)
     db.execute("INSERT INTO turns VALUES (?, ?, ?, ?, ?)", (cid, expected + 1, request_id, question, answer))
+    if reason:
+        db.execute("INSERT INTO turn_completions VALUES (?, ?, ?)", (cid, expected + 1, reason))
     title = " ".join(question.split())[:80] if expected == 0 and row["title"] == "New chat" else row["title"]
     db.execute("UPDATE conversations SET revision=revision+1, updated_at=?, title=? WHERE id=?", (time.time(), title, cid))
     return _detail(db, _row(db, cid)), 200
@@ -203,6 +220,6 @@ if __name__ == "__main__":
     packet = json.loads(sys.stdin.buffer.read(MAX_PACKET + 1))
     result, status = dispatch("/wallet", packet["operation"], packet["data"])
     output = json.dumps([result, status], ensure_ascii=False)
-    if len(output.encode("utf-8")) > 1024 * 1024:
+    if len(output.encode("utf-8")) > MAX_PACKET:
         output = json.dumps([{"error": "Conversation data exceeded the storage limit."}, 503])
     print(output)

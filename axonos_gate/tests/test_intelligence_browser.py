@@ -1,6 +1,10 @@
 """Opt-in Chromium checks using the gate template, packaged assets and simulated API replies."""
 from copy import deepcopy
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
 import os
+from queue import Queue
+from threading import Event, Thread
 from pathlib import Path
 import unittest
 from urllib.parse import parse_qs, urlsplit
@@ -32,6 +36,8 @@ class IntelligenceBrowser(unittest.TestCase):
         self.wallet = None
         self.status = 200
         self.answer = ''
+        self.finish_reason = 'stop'
+        self.stream_host = None
         self.storage = False
         self.chats = {}
         self.snapshot = None
@@ -45,7 +51,10 @@ class IntelligenceBrowser(unittest.TestCase):
     def route(self, route):
         url = urlsplit(route.request.url)
         self.requests.append(url)
-        if url.netloc != 'axonos.test':
+        if self.stream_host and url.netloc == self.stream_host:
+            if url.path == '/api/intelligence/generate' or url.path.endswith(('/stop', '/messages')):
+                return route.continue_()
+        elif url.netloc != 'axonos.test':
             return route.abort()
         if url.path == '/intelligence':
             return route.fulfill(content_type='text/html', body=self.template.render(wallet=self.wallet))
@@ -60,13 +69,23 @@ class IntelligenceBrowser(unittest.TestCase):
             return route.fulfill(content_type='text/html', body='Workspace sign-in')
         if url.path == '/api/intelligence/generate':
             self.prompts.append(route.request.post_data_json['prompt'])
-            return route.fulfill(status=self.status, json={'text': self.answer, 'error': 'Try again'})
+            return self.reply(route)
         if url.path == '/api/auth/wallet-status':
             return route.fulfill(status=self.status, json={})
         asset = THEME / url.path.lstrip('/')
         if url.path == '/app/styles/axonos-theme.css':
             asset = THEME / 'axonos-theme.css'
         return route.fulfill(path=asset) if asset.is_file() else route.fulfill(status=404, body='')
+
+    def reply(self, route, chat=None):
+        self.assertEqual(route.request.headers.get('accept'), 'application/x-ndjson')
+        if self.status != 200:
+            return route.fulfill(status=self.status, json={'error': 'Try again'})
+        done = {'type': 'done', 'text': self.answer, 'finish_reason': self.finish_reason}
+        if chat:
+            done['conversation'] = chat
+        events = [{'type': 'start'}, {'type': 'delta', 'text': self.answer}, done]
+        return route.fulfill(content_type='application/x-ndjson', body=''.join(json.dumps(e) + '\n' for e in events))
 
     def conversations(self, route, url):
         self.assertEqual(route.request.headers.get('x-wallet-address'), self.wallet)
@@ -98,8 +117,8 @@ class IntelligenceBrowser(unittest.TestCase):
                 chat['title'] = turn['prompt']
             chat['revision'] += 1
             chat['messages'].extend([{'role': 'user', 'content': turn['prompt']},
-                                     {'role': 'assistant', 'content': self.answer}])
-            return route.fulfill(json=chat)
+                                     {'role': 'assistant', 'content': self.answer, 'finish_reason': self.finish_reason}])
+            return self.reply(route, chat)
         if parts[1:] == ['share']:
             if method == 'DELETE':
                 self.snapshot = chat['share_url'] = None
@@ -116,9 +135,174 @@ class IntelligenceBrowser(unittest.TestCase):
             return route.fulfill(json={})
         return route.fulfill(json=chat)
 
-    def send(self, text):
+    def send(self, text, wait=True):
         self.page.locator('#prompt').fill(text)
         self.page.locator('#send').click()
+        if wait:
+            self.page.locator('#stop').wait_for(state='hidden')
+
+    def open_stream(self, **page_options):
+        # The browser receives a real HTTP response while the test controls each
+        # chunk, including UTF-8 splits, an early EOF and the final record.
+        chunks, cancelled = Queue(), Event()
+        requests = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                requests.append((self.path, body, self.headers.get('X-Wallet-Address')))
+                self.send_response(200)
+                if self.path.endswith('/stop'):
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(b'{}')
+                    cancelled.set()
+                    return
+                self.send_header('Content-Type', 'application/x-ndjson')
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                try:
+                    while True:
+                        piece = chunks.get(timeout=15)
+                        if piece is None:
+                            break
+                        self.wfile.write(piece)
+                        self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.addCleanup(server.server_close)
+        Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        self.addCleanup(chunks.put, None)
+        self.wallet = WALLET
+        self.stream_host = '127.0.0.1:' + str(server.server_port)
+        if page_options:
+            self.page.emulate_media(**page_options)
+        self.page.goto('http://' + self.stream_host + '/intelligence')
+        return chunks, requests, cancelled
+
+    @staticmethod
+    def record(**event):
+        return (json.dumps(event, ensure_ascii=False) + '\n').encode()
+
+    def test_generation_waits_streams_and_stops(self):
+        chunks, requests, cancelled = self.open_stream()
+        self.send('Stream a measurement', wait=False)
+        waiting = self.page.locator('#thread .assistant .reply-wait')
+        waiting.wait_for()
+        self.assertEqual(waiting.locator('[aria-hidden]').first.evaluate('(e) => getComputedStyle(e).animationName'), 'reply-pulse')
+        stop = self.page.get_by_role('button', name='Stop generation')
+        chunks.put(self.record(type='start'))
+        chunks.put(self.record(type='ping'))
+        delta = self.record(type='delta', text='**Δ** is ')
+        cut = delta.index('Δ'.encode()) + 1
+        chunks.put(delta[:cut])
+        chunks.put(delta[cut:])
+        self.page.locator('.assistant .content strong').get_by_text('Δ').wait_for()
+        self.assertFalse(waiting.is_visible())
+        self.assertTrue(stop.is_visible())
+        with self.page.expect_response(lambda response: response.url.endswith('/stop')):
+            stop.click()
+        self.page.get_by_text('Stopping generation…').wait_for()
+        self.assertTrue(stop.is_disabled())
+        self.assertTrue(cancelled.wait(3))
+        self.assertEqual(requests[1], ('/api/intelligence/generations/' + requests[0][1]['request_id'] + '/stop', {}, WALLET))
+        chunks.put(self.record(type='done', text='**Δ** is ', finish_reason='cancelled'))
+        chunks.put(None)
+        self.page.get_by_text('Generation stopped.', exact=True).wait_for()
+        self.assertEqual(self.page.locator('.assistant .content strong').inner_text(), 'Δ')
+        self.assertFalse(stop.is_visible())
+        self.assertTrue(self.page.locator('#prompt').is_editable())
+
+    def test_stop_before_admission_with_reduced_motion(self):
+        chunks, requests, cancelled = self.open_stream(reduced_motion='reduce')
+        self.send('Queued question', wait=False)
+        dots = self.page.locator('.reply-wait [aria-hidden]').first
+        dots.wait_for()
+        self.assertEqual(dots.evaluate('(e) => getComputedStyle(e).animationName'), 'none')
+        self.page.get_by_role('button', name='Stop generation').click()
+        self.page.get_by_text('Stopping generation…').wait_for()
+        self.assertFalse(any(path.endswith('/stop') for path, _, _ in requests))
+        with self.page.expect_response(lambda response: response.url.endswith('/stop')):
+            chunks.put(self.record(type='start'))
+        self.assertTrue(cancelled.wait(3))
+        chunks.put(self.record(type='done', text='', finish_reason='cancelled'))
+        chunks.put(None)
+        self.page.get_by_text('Generation stopped.', exact=True).wait_for()
+        self.assertFalse(dots.is_visible())
+
+    def test_scroll_following_and_output_limit(self):
+        chunks, _, _ = self.open_stream()
+        self.send('Long answer', wait=False)
+        chunks.put(self.record(type='start'))
+        answer = '\n\n'.join('Observation ' + str(i) for i in range(100))
+        chunks.put(self.record(type='delta', text=answer))
+        self.page.get_by_text('Observation 99', exact=True).wait_for()
+        at_bottom = "() => {const s = document.querySelector('#chat-scroll'); return s.scrollHeight - s.clientHeight - s.scrollTop <= 3}"
+        self.page.wait_for_function(at_bottom)
+        self.page.locator('#chat-scroll').evaluate('(s) => { s.scrollTop = 48 }')
+        latest = self.page.get_by_role('button', name='Jump to latest message')
+        latest.wait_for()
+        chunks.put(self.record(type='delta', text='\n\nOne more observation'))
+        self.page.get_by_text('One more observation', exact=True).wait_for()
+        self.assertAlmostEqual(self.page.locator('#chat-scroll').evaluate('s => s.scrollTop'), 48, delta=2)
+        latest.click()
+        self.page.wait_for_function(at_bottom)
+        self.page.locator('#chat-scroll').evaluate('(s) => { s.scrollTop = 75 }')
+        latest.wait_for()
+        self.page.get_by_text('Observation 3', exact=True).evaluate("""p => {
+            const range = document.createRange();
+            range.selectNodeContents(p);
+            const selection = getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }""")
+        chunks.put(self.record(type='delta', text='\n\nFinal sentence.'))
+        chunks.put(self.record(type='done', finish_reason='length', text=answer + '\n\nOne more observation\n\nFinal sentence.'))
+        chunks.put(None)
+        self.page.get_by_text('Output limit reached.', exact=False).wait_for()
+        self.assertAlmostEqual(self.page.locator('#chat-scroll').evaluate('s => s.scrollTop'), 75, delta=2)
+        self.assertEqual(self.page.evaluate('getSelection().toString()'), 'Observation 3')
+        latest.click()
+        self.page.wait_for_function(at_bottom)
+
+    def test_large_fragmented_saved_completion_replay(self):
+        self.storage = True
+        chunks, _, _ = self.open_stream()
+        self.send('Replay this saved answer', wait=False)
+        self.page.wait_for_function("new URLSearchParams(location.search).has('chat')")
+        # A valid nearly 1 MiB UTF-8 answer can need six JSON bytes per
+        # control character. A replay includes the reply twice in one frame.
+        answer = '```text\n' + '\x01' * (1024 * 1024 - 64) + '\n```\n\nReplay complete.'
+        chat = self.chats['1']
+        chat.update(title='Saved response', revision=1, messages=[
+            {'role': 'user', 'content': 'Replay this saved answer'},
+            {'role': 'assistant', 'content': answer, 'finish_reason': 'length'},
+        ])
+        frame = self.record(type='done', finish_reason='length', text=answer, conversation=chat)
+        self.assertGreater(len(frame), 11 * 1024 * 1024)
+        for start in range(0, len(frame), 64 * 1024):
+            chunks.put(frame[start:start + 64 * 1024])
+        chunks.put(None)
+        self.page.get_by_text('Replay complete.', exact=True).wait_for()
+        self.assertEqual(self.page.locator('#chat-title').inner_text(), 'Saved response')
+        self.assertIn('Output limit reached', self.page.locator('.reply-note').inner_text())
+        self.assertFalse(self.page.locator('#stop').is_visible())
+
+    def test_unfinished_stream_preserves_visible_text_and_retry_prompt(self):
+        chunks, _, _ = self.open_stream()
+        self.send('A partial answer', wait=False)
+        chunks.put(self.record(type='start') + self.record(type='delta', text='Only part of this reply'))
+        chunks.put(None)
+        self.page.get_by_text('Stream interrupted.', exact=False).wait_for()
+        self.assertEqual(self.page.locator('#prompt').input_value(), 'A partial answer')
+        self.assertEqual(self.page.locator('.assistant .content').inner_text(), 'Only part of this reply')
+        self.assertFalse(self.page.locator('#stop').is_visible())
 
     def test_public_entry_and_wallet_change(self):
         self.page.goto(BASE + '/intelligence')
@@ -199,12 +383,14 @@ $\href{https://external.test}{untrusted}$ and $\unknowncommand$."""
 
     def test_sidebar_history_and_public_snapshot(self):
         self.wallet, self.storage, self.answer = WALLET, True, '**Referenced** text'
+        self.finish_reason = 'length'
         self.page.goto(BASE + '/intelligence')
         self.send('first study')
         self.page.locator('#thread article:nth-child(2) strong').first.wait_for()
         self.page.reload()
         self.page.locator('#thread .assistant .content strong').wait_for()
         self.assertEqual(self.page.locator('#chat-title').inner_text(), 'first study')
+        self.assertIn('Output limit reached', self.page.locator('#thread .reply-note').inner_text())
         self.page.get_by_role('button', name='New chat', exact=True).click()
         self.assertEqual(self.page.locator('#thread article').count(), 0)
         self.send('second study')
@@ -235,6 +421,7 @@ $\href{https://external.test}{untrusted}$ and $\unknowncommand$."""
         self.page.goto(link)
         self.assertEqual(self.page.locator('.shared-main h1').inner_text(), 'Follow-up notes')
         self.assertEqual(self.page.locator('.assistant .content strong').inner_text(), 'Referenced')
+        self.assertIn('Output limit reached', self.page.locator('.shared-main .reply-note').inner_text())
         self.assertEqual(self.page.locator('textarea, #history').count(), 0)
         self.assertNotIn('private follow up', self.page.locator('body').inner_text())
         self.page.goto(owner_url)
@@ -271,7 +458,7 @@ $\href{https://external.test}{untrusted}$ and $\unknowncommand$."""
         self.assertEqual(self.page.locator('#prompt').input_value(), 'repeat safely')
         self.status, self.answer = 200, 'Done'
         self.page.locator('#send').click()
-        self.page.locator('#thread .assistant').wait_for()
+        self.page.locator('#thread .assistant .content').get_by_text('Done').wait_for()
         self.assertEqual(len(self.chats), 1)
         self.assertEqual(self.turn_requests[0], self.turn_requests[1])
         self.assertEqual(UUID(self.turn_requests[0]['request_id']).version, 4)

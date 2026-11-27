@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+from queue import Queue
 import socket
 import subprocess
 import sys
@@ -13,13 +14,7 @@ import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
-from werkzeug.serving import make_server, WSGIRequestHandler
 from axonos_gate.tests import test_intelligence as fixtures
-
-
-class QuietHandler(WSGIRequestHandler):
-    def log(self, *args):
-        pass
 
 
 @unittest.skipUnless(importlib.util.find_spec('websockify'), 'requires the noVNC runtime')
@@ -34,17 +29,34 @@ class ConversationProxyTests(fixtures.GateIntegrationCase):
                          patch.object(fixtures.gate, 'conversation_rpc', side_effect=storage)):
             override.start()
             self.addCleanup(override.stop)
-        gate = make_server('127.0.0.1', 0, fixtures.gate.app, request_handler=QuietHandler)
-        server_thread = threading.Thread(target=gate.serve_forever, daemon=True)
+        ready = Queue()
+        stop_gate = threading.Event()
+
+        def serve_gate():
+            import gevent
+            from gevent import pywsgi
+            from geventwebsocket.handler import WebSocketHandler
+            handler = fixtures.gate._deadline_websocket_handler(WebSocketHandler, gevent)
+            listener = pywsgi.WSGIServer(('127.0.0.1', 0), fixtures.gate._application,
+                                         handler_class=handler, log=None)
+            listener.start()
+            ready.put(listener.server_port)
+            try:
+                while not stop_gate.is_set():
+                    gevent.sleep(.02)
+            finally:
+                listener.stop(timeout=2)
+
+        server_thread = threading.Thread(target=serve_gate, daemon=True)
         server_thread.start()
-        self.addCleanup(gate.server_close)
-        self.addCleanup(server_thread.join)
-        self.addCleanup(gate.shutdown)
+        self.addCleanup(server_thread.join, 3)
+        self.addCleanup(stop_gate.set)
+        gate_port = ready.get(timeout=5)
         with socket.socket() as port:
             port.bind(('127.0.0.1', 0))
             self.port = port.getsockname()[1]
         env = dict(os.environ, WEBSOCKIFY_PORT=str(self.port), WEBSOCKIFY_HOST='127.0.0.1',
-                   GATE_PORT=str(gate.server_port), AXGT_CHALLENGE_DB_URL='')
+                   GATE_PORT=str(gate_port), AXGT_CHALLENGE_DB_URL='')
         self.log_path = self.root / 'proxy.log'
         log = self.log_path.open('wb')
         self.addCleanup(log.close)
@@ -80,6 +92,29 @@ class ConversationProxyTests(fixtures.GateIntegrationCase):
             return reply.status, body, reply.headers
         finally:
             conn.close()
+
+    def test_partial_response_reaches_browser_before_stop_at_other_connection(self):
+        row = self.exchange('POST', '/api/intelligence/conversations', {})[1]
+        item = '/api/intelligence/conversations/' + row['id']
+        packet = {'prompt': 'count', 'revision': 0, 'request_id': str(uuid4())}
+        self.server.pause = True
+        conn = http.client.HTTPConnection('127.0.0.1', self.port, timeout=3)
+        self.addCleanup(conn.close)
+        conn.request('POST', item + '/messages', json.dumps(packet), {
+            'Content-Type': 'application/json', 'Accept': 'application/x-ndjson',
+            'Cookie': fixtures.gate._auth_cookie_name() + '=alice', 'X-Wallet-Address': fixtures.ALICE})
+        with conn.getresponse() as response:
+            self.assertEqual(response.headers.get_content_type(), 'application/x-ndjson')
+            self.assertEqual(response.headers['X-Accel-Buffering'], 'no')
+            self.assertNotIn('Content-Length', response.headers)
+            self.assertEqual(json.loads(response.readline()), {'type': 'start'})
+            self.assertEqual(json.loads(response.readline()), {'type': 'delta', 'text': 'Early Δ'})
+            # The fixture refuses to finish until a separate HTTP request stops it.
+            stop = '/api/intelligence/generations/' + packet['request_id'] + '/stop'
+            self.assertEqual(self.exchange('POST', stop, {})[0], 200)
+            self.assertEqual(json.loads(response.readline())['finish_reason'], 'cancelled')
+            self.assertEqual(response.read(), b'')
+        self.assertEqual(self.exchange('GET', item)[1]['messages'][1]['finish_reason'], 'cancelled')
 
     def test_saved_chat_and_shared_snapshot_through_proxy(self):
         base = '/api/intelligence/conversations'

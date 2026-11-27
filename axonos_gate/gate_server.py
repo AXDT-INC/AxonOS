@@ -880,6 +880,8 @@ def after_request(response):
             or request.path.startswith(("/api/payments/", "/api/webrtc/status", "/api/terminal/"))):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
         response.headers["Pragma"] = "no-cache"
+        if response.mimetype == intelligence.NDJSON:
+            response.cache_control.no_transform = True
     return response
 
 @app.route('/api/auth/verify-wallet', methods=['POST', 'OPTIONS'])
@@ -1799,11 +1801,78 @@ def _intelligence_identity(allow_search=False):
     return wallet, _require_auth_token(wallet)
 
 
+def _wants_chat_stream():
+    return request.accept_mimetypes.best_match(("application/json", intelligence.NDJSON)) == intelligence.NDJSON
+
+
+def _chat_frame(event):
+    return (json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
+
+
+def _saved_chat_done(saved, revision):
+    # A retry can return a conversation that already contains later turns.
+    message = saved["messages"][2 * revision + 1]
+    return {"type": "done", "text": message["content"], "conversation": saved,
+            "finish_reason": message.get("finish_reason", "stop")}
+
+
+def _start_chat_stream(wallet, data, prompt, cid=None):
+    work_id = intelligence.worker_request_id(wallet, data["request_id"])
+    if not work_id or not isinstance(prompt, str) or not prompt.strip():
+        return jsonify(error="Send a nonempty prompt and a valid message request ID."), 400
+    events = intelligence.stream(prompt, work_id)
+    first = next(events)
+    if first["type"] == "error":
+        events.close()
+        return jsonify(error=first["error"]), first["status"]
+
+    def body():
+        try:
+            yield _chat_frame(first)
+            for event in events:
+                if event["type"] == "done" and cid is not None:
+                    saved, status = conversation_rpc(wallet, "append", id=cid, **data, answer=event["text"],
+                                                     finish_reason=event["finish_reason"])
+                    if status != 200:
+                        yield _chat_frame({"type": "error", "status": status, "error": saved["error"]})
+                        return
+                    event = _saved_chat_done(saved, data["revision"])
+                yield _chat_frame(event)
+        finally:
+            events.close()
+
+    response = Response(body(), mimetype=intelligence.NDJSON, headers={"X-Accel-Buffering": "no"})
+    # The socket is open before headers, so close it even when the downstream
+    # server abandons the response before its first iteration.
+    response.call_on_close(events.close)
+    return response
+
+
+@app.post('/api/intelligence/generations/<request_id>/stop')
+def intelligence_stop(request_id):
+    wallet, error = _intelligence_identity()
+    if error:
+        return error
+    _, error = _conversation_input(())
+    if error:
+        return error
+    work_id = intelligence.worker_request_id(wallet, request_id)
+    if not work_id:
+        return jsonify(error="Invalid message request ID."), 400
+    payload, status = intelligence.cancel(work_id)
+    return jsonify(payload), status
+
+
 @app.post('/api/intelligence/generate')
 def intelligence_generate():
     wallet, error = _intelligence_identity()
     if error:
         return error
+    if _wants_chat_stream():
+        data, error = _conversation_input(("prompt", "request_id"))
+        if error:
+            return error
+        return _start_chat_stream(wallet, data, data["prompt"])
     if request.mimetype != 'application/json':
         return jsonify(error="Send a JSON request."), 415
     if request.content_length is None or request.headers.get("Transfer-Encoding"):
@@ -1884,13 +1953,22 @@ def intelligence_conversation(cid, action=None):
         return _conversation_operation(wallet, "rename", id=cid, **data)
 
     prepared, status = conversation_rpc(wallet, "prepare", id=cid, **data)
-    if status != 200 or "conversation" in prepared:
-        return jsonify(prepared.get("conversation", prepared)), status
+    if status != 200:
+        return jsonify(prepared), status
+    if "conversation" in prepared:
+        saved = prepared["conversation"]
+        if _wants_chat_stream():
+            frame = _saved_chat_done(saved, data["revision"])
+            return Response(_chat_frame(frame), mimetype=intelligence.NDJSON)
+        return jsonify(saved)
+    if _wants_chat_stream():
+        return _start_chat_stream(wallet, data, prepared["prompt"], cid)
     raw = json.dumps({"prompt": prepared["prompt"]}, ensure_ascii=False).encode()
     reply, status = intelligence.generate(raw)
     if status != 200:
         return jsonify(reply), status
-    return _conversation_operation(wallet, "append", id=cid, answer=reply["text"], **data)
+    return _conversation_operation(wallet, "append", id=cid, answer=reply["text"],
+                                   finish_reason=reply.get("finish_reason"), **data)
 
 
 @app.get('/intelligence/share/<token>')

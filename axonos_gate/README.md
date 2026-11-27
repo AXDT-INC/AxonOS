@@ -35,6 +35,8 @@ Open `/intelligence` with a verified wallet to start a chat, search titles and m
 
 Conversations start private. **Share → Create link** publishes a snapshot of the current title and messages. Anyone with the link can read it. Later messages stay private. **Revoke link** or **Delete conversation** closes the public link. To share a newer snapshot, revoke the current link and create another. Rotating the launcher credential invalidates previously issued links.
 
+AxonAI shows a waiting indicator until the first text arrives, then displays the reply as the model generates it. **Stop generation** releases the worker and keeps the partial reply. Scrolling up pauses automatic following. A reply that reaches the output limit is labeled in the conversation and its shared snapshot. The input limit is 2,048 tokens including the chat template. If a long conversation no longer fits, start a new chat with the passage you want to discuss.
+
 ## Session lifetime
 
 Paid desktop and SSH workloads survive viewer/SSH disconnection and tab close.

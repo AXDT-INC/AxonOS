@@ -70,7 +70,7 @@ def run(wallet, operation, data, volume_prefix, enabled, fallback_image):
         # logs should ever contain a query, message, reply, or capability.
         completed = subprocess.run(cmd, input=json.dumps({"operation": operation, "data": data}, ensure_ascii=False),
                                    capture_output=True, text=True, timeout=20)
-        if completed.returncode or len(completed.stdout) > 1024 * 1024:
+        if completed.returncode or len(completed.stdout) > 8 * 1024 * 1024:
             return UNAVAILABLE
         payload, status = json.loads(completed.stdout)
         if not isinstance(payload, dict) or type(status) is not int or not 200 <= status < 600:

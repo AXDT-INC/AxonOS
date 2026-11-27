@@ -1,6 +1,7 @@
 """Request-local HTTP client for the standalone AxonAI service."""
 import http.client
 import json
+import uuid
 
 try:
     # The production gate serves greenlets without globally patching sockets.
@@ -10,6 +11,9 @@ except ImportError:
 
 SOCKET_PATH = "/root/axonai/inference.sock"
 MAX_BODY = 64 * 1024
+MAX_REPLY_BYTES = 1024 * 1024
+NDJSON = "application/x-ndjson"
+FINISH_REASONS = ("stop", "length", "cancelled")
 # The service admits one running generation and two waiting generations.
 REPLY_TIMEOUT = 150
 
@@ -39,18 +43,14 @@ def generate(raw):
 
     connection = _InferenceConnection("localhost")
     try:
-        connection.request("POST", "/generate", body=raw, headers={"Content-Type": "application/json"})
+        # The buffered API has a fixed legacy timeout. Long answers use the
+        # streaming protocol and its worker-selected production limit.
+        data["max_new_tokens"] = limit
+        body = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode()
+        connection.request("POST", "/generate", body=body, headers={"Content-Type": "application/json"})
         response = connection.getresponse()
-        if response.status == 429:
-            return {"error": "AxonAI’s queue is full. Try again shortly."}, 429
-        if response.status == 503:
-            return {"error": "AxonAI is unavailable. Try again shortly."}, 503
-        if response.status == 400:
-            if "<|im_start|>" in prompt or "<|im_end|>" in prompt:
-                return {"error": "Remove reserved chat delimiters and try again."}, 400
-            return {"error": "The conversation exceeds the 2,048-token input limit. Shorten it or start a new chat."}, 400
         if response.status != 200:
-            return {"error": "AxonAI could not generate a reply."}, 502
+            return generation_error(response.status, prompt)
         body = response.read(MAX_BODY + 1)
         if len(body) > MAX_BODY:
             raise ValueError
@@ -59,7 +59,13 @@ def generate(raw):
                 or type(reply.get("input_tokens")) is not int or not 1 <= reply["input_tokens"] <= 2048
                 or type(reply.get("output_tokens")) is not int or not 1 <= reply["output_tokens"] <= limit):
             raise ValueError
-        return {key: reply[key] for key in ("text", "input_tokens", "output_tokens")}, 200
+        result = {key: reply[key] for key in ("text", "input_tokens", "output_tokens")}
+        # Older worker installations don't report why a buffered answer ended.
+        if "finish_reason" in reply:
+            if reply["finish_reason"] not in FINISH_REASONS:
+                raise ValueError
+            result["finish_reason"] = reply["finish_reason"]
+        return result, 200
     except TimeoutError:
         return {"error": "AxonAI took too long to respond. Try again."}, 504
     except (OSError, http.client.RemoteDisconnected):
@@ -68,6 +74,114 @@ def generate(raw):
         return {"error": "AxonAI returned an invalid reply."}, 502
     finally:
         connection.close()
+
+
+def generation_error(status, prompt=""):
+    """Only gate-owned messages cross the public boundary."""
+    if status == 400:
+        if "<|im_start|>" in prompt or "<|im_end|>" in prompt:
+            return {"error": "Remove reserved chat delimiters and try again."}, 400
+        return {"error": "The conversation exceeds the 2,048-token input limit. Shorten it or start a new chat."}, 400
+    messages = {
+        409: "This message is already being generated.",
+        413: "The conversation exceeds the inference request size. Shorten it or start a new chat.",
+        429: "AxonAI’s queue is full. Try again shortly.",
+        503: "AxonAI is unavailable. Try again shortly.",
+        504: "AxonAI took too long to respond. Try again.",
+    }
+    if status in messages:
+        return {"error": messages[status]}, status
+    return {"error": "AxonAI could not generate a reply."}, 502
+
+
+def worker_request_id(wallet, request_id):
+    """Namespace cancellation and duplicate detection by the verified wallet."""
+    try:
+        if not isinstance(request_id, str) or str(uuid.UUID(request_id)) != request_id:
+            return None
+    except ValueError:
+        return None
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, "axonos/intelligence/" + wallet + "/" + request_id))
+
+
+def cancel(work_id):
+    conn = _InferenceConnection("localhost")
+    try:
+        conn.connect()
+        conn.sock.settimeout(5)
+        conn.request("POST", "/generations/" + work_id + "/stop", body=b"{}",
+                     headers={"Content-Type": "application/json"})
+        with conn.getresponse() as reply:
+            if len(reply.read(4097)) > 4096:
+                return generation_error(502)
+            if reply.status == 200:
+                return {}, 200
+            return generation_error(reply.status)
+    except (OSError, http.client.HTTPException):
+        return {"error": "AxonAI could not confirm the stop request. Try again."}, 503
+    finally:
+        conn.close()
+
+
+def stream(prompt, work_id):
+    """Read complete bounded frames. Closing this iterator disconnects its worker."""
+    conn = _InferenceConnection("localhost")
+    status = 502
+    try:
+        raw = json.dumps({"prompt": prompt, "request_id": work_id}, ensure_ascii=False).encode()
+        conn.request("POST", "/generate/stream", body=raw, headers={"Content-Type": "application/json"})
+        with conn.getresponse() as response:
+            if response.status != 200:
+                status = response.status
+            elif response.headers.get_content_type() == NDJSON:
+                started = False
+                total = 0
+                while True:
+                    # Each line is flushed by the private worker. A multi-byte
+                    # Unicode character or one frame may span several reads.
+                    line = response.readline(6 * MAX_REPLY_BYTES + 1024)
+                    if not line.endswith(b"\n"):
+                        break
+                    event = json.loads(line)
+                    if not isinstance(event, dict):
+                        break
+                    kind = event.get("type")
+                    if kind == "error":
+                        code = event.get("status")
+                        status = code if type(code) is int else 502
+                        break
+                    if not started:
+                        if kind != "start":
+                            break
+                        started = True
+                        yield {"type": "start"}
+                    elif kind == "ping":
+                        yield {"type": kind}
+                    elif kind == "delta" and isinstance(event.get("text"), str):
+                        total += len(event["text"].encode())
+                        if total > MAX_REPLY_BYTES:
+                            break
+                        yield {"type": kind, "text": event["text"]}
+                    elif kind == "done":
+                        answer = event.get("text")
+                        reason = event.get("finish_reason")
+                        if (not isinstance(answer, str) or len(answer.encode()) > MAX_REPLY_BYTES
+                                or reason not in FINISH_REASONS):
+                            break
+                        yield {"type": kind, "text": answer, "finish_reason": reason}
+                        return
+                    else:
+                        break
+    except TimeoutError:
+        status = 504
+    except OSError:
+        status = 503
+    except (http.client.HTTPException, ValueError, RecursionError):
+        status = 502
+    finally:
+        conn.close()
+    payload, code = generation_error(status, prompt)
+    yield {"type": "error", "status": code, **payload}
 
 
 def conversation_rpc(wallet, operation, **data):

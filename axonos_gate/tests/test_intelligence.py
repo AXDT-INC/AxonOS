@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from socketserver import ThreadingMixIn, UnixStreamServer
 import sys
+import sqlite3
 import tempfile
 import threading
 import time
@@ -48,9 +49,44 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+    def write_event(self, event):
+        self.wfile.write((json.dumps(event, ensure_ascii=False) + "\n").encode())
+        self.wfile.flush()
+
+    def serve_stream(self, data):
+        key = data["request_id"]
+        self.server.streams[key] = cancelled = threading.Event()
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ndjson")
+            self.end_headers()
+            self.write_event({"type": "start"})
+            self.write_event({"type": "delta", "text": self.server.first_text})
+            if self.server.interrupt:
+                return
+            if self.server.pause:
+                if not cancelled.wait(timeout=5):
+                    raise RuntimeError("stream cancellation timed out")
+            reason = "cancelled" if cancelled.is_set() else self.server.reason
+            self.write_event({"type": "done", "text": self.server.first_text, "finish_reason": reason,
+                              "input_tokens": 4, "output_tokens": 2})
+        finally:
+            del self.server.streams[key]
+
     def do_POST(self):
         data = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         self.server.calls.append((self.path, dict(self.headers), data))
+        if self.path.startswith('/generations/') and self.path.endswith('/stop'):
+            cancelled = self.server.streams.get(self.path.split('/')[2])
+            if cancelled:
+                cancelled.set()
+            self.send_response(200)
+            self.send_header('Content-Length', '2')
+            self.end_headers()
+            self.wfile.write(b'{}')
+            return
+        if self.path == '/generate/stream':
+            return self.serve_stream(data)
         prompt = data['prompt']
         if self.server.barrier:
             self.server.barrier.wait(timeout=5)
@@ -76,6 +112,10 @@ class GateIntegrationCase(unittest.TestCase):
         self.server.status = 200
         self.server.bad_reply = None
         self.server.barrier = None
+        self.server.streams = {}
+        self.server.pause = self.server.interrupt = False
+        self.server.reason = 'stop'
+        self.server.first_text = 'Early Δ'
         self.addCleanup(self.server.server_close)
         thread = threading.Thread(target=self.server.serve_forever, args=(0.02,), daemon=True)
         thread.start()
@@ -318,6 +358,82 @@ class ConversationTests(GateIntegrationCase):
         recovery = self.request('POST', path, json=failed_turn)
         self.assertEqual(recovery.status_code, 200)
         self.assertEqual(len(recovery.json['messages']), 4)
+
+    def stream_turn(self, conversation, data):
+        return self.client('alice').post(CONVERSATIONS + '/' + conversation['id'] + '/messages',
+                                         headers={'X-Wallet-Address': ALICE, 'Accept': gate.intelligence.NDJSON},
+                                         json=data, buffered=False)
+
+    def test_live_stop_is_wallet_scoped_and_the_partial_turn_is_saved_once(self):
+        row = self.create()
+        packet = self.turn_payload(row, 'observe')
+        self.server.pause = True
+        response = self.stream_turn(row, packet)
+        self.addCleanup(response.close)
+        events = iter(response.response)
+        self.assertEqual(json.loads(next(events)), {'type': 'start'})
+        self.assertEqual(json.loads(next(events)), {'type': 'delta', 'text': 'Early Δ'})
+        url = '/api/intelligence/generations/' + packet['request_id'] + '/stop'
+        worker_id, cancelled = next(iter(self.server.streams.items()))
+        self.assertNotEqual(worker_id, packet['request_id'])
+        self.assertEqual(self.client('alice').post(url, json={}, headers={'X-Wallet-Address': BOB}).status_code, 401)
+        self.assertEqual(self.client('bob').post(url, json={}, headers={'X-Wallet-Address': BOB}).status_code, 200)
+        self.assertFalse(cancelled.is_set())
+        self.assertEqual(self.client('alice').post(url, json={}, headers={'X-Wallet-Address': ALICE}).status_code, 200)
+        done, = map(json.loads, events)
+        self.assertEqual(done['type'], 'done')
+        self.assertEqual(done['finish_reason'], 'cancelled')
+        answer = {'role': 'assistant', 'content': 'Early Δ', 'finish_reason': 'cancelled'}
+        self.assertEqual(done['conversation']['messages'][1], answer)
+        self.assertEqual(self.request('GET', '/' + row['id']).json, done['conversation'])
+        count = len(self.server.calls)
+        replay = self.stream_turn(row, packet)
+        self.assertEqual(json.loads(replay.data), done)
+        self.assertEqual(len(self.server.calls), count)
+        for path, headers, data in self.server.calls:
+            self.assertTrue({'Cookie', 'X-Wallet-Address', 'X-AXGT-Auth-Token'}.isdisjoint(headers))
+        self.assertNotIn('max_new_tokens', self.server.calls[0][2])
+
+    def test_missing_terminal_frame_allows_retry_and_length_survives_reopen(self):
+        row = self.create()
+        packet = self.turn_payload(row, 'count')
+        self.server.interrupt = True
+        events = [json.loads(frame) for frame in self.stream_turn(row, packet).response]
+        self.assertEqual([event['type'] for event in events], ['start', 'delta', 'error'])
+        self.assertEqual(events[-1]['status'], 502)
+        self.assertEqual(self.request('GET', '/' + row['id']).json['revision'], 0)
+        self.server.reason = 'length'
+        self.server.interrupt = False
+        done = json.loads(self.stream_turn(row, packet).data.splitlines()[-1])
+        self.assertEqual(done['finish_reason'], 'length')
+        self.assertEqual(self.request('GET', '/' + row['id']).json['messages'][1]['finish_reason'], 'length')
+
+    def test_existing_volume_adopts_metadata_and_keeps_long_answers(self):
+        legacy = self.send(self.create(), 'A previous chat')
+        path = '/' + legacy['id']
+        # Reproduce the on-volume schema an owner had before streaming.
+        db = sqlite3.connect(self.root / ALICE / '.axonos-intelligence/history.sqlite3')
+        try:
+            db.execute('DROP TABLE turn_completions')
+            db.commit()
+        finally:
+            db.close()
+        self.assertEqual(self.request('GET', path).json, legacy)
+        self.server.reason = 'length'
+        self.server.first_text = 'persistent result ' * 4096
+        self.assertGreater(len(self.server.first_text), 65536)
+        packet = self.turn_payload(legacy, 'another result')
+        done = json.loads(self.stream_turn(legacy, packet).data.splitlines()[-1])
+        self.assertEqual(done['text'], self.server.first_text)
+        self.assertEqual(self.request('GET', path).json['messages'][-1],
+                         {'role': 'assistant', 'content': self.server.first_text, 'finish_reason': 'length'})
+
+    def test_temporary_stream_uses_same_protocol_without_wallet_storage(self):
+        response = self.client('alice').post(API, json={'prompt': 'count', 'request_id': str(uuid4())},
+                              headers={'X-Wallet-Address': ALICE, 'Accept': gate.intelligence.NDJSON})
+        events = [json.loads(frame) for frame in response.data.splitlines()]
+        self.assertEqual(events[-1], {'type': 'done', 'text': 'Early Δ', 'finish_reason': 'stop'})
+        self.rpc.assert_not_called()
 
     def test_delete_wins_over_a_reply_still_in_flight(self):
         row = self.create()

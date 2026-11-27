@@ -15,9 +15,9 @@ name: axonos
 
 services:
   axonos-launcher:
-    # October 8 launcher runtime with the wallet conversation storage RPC.
+    # October 8 runtime with wallet chat storage and streamed turn outcomes.
     # The gate deployment controller preserves this separately released service.
-    image: sha256:5d8552d19429160f6c842f25022396881f5f13b14cf7cf0701ca187e234b2925
+    image: sha256:637025ef38222bda85d4ebb693c8929bfbcc5348797c5795aac37e850dbe4926
     pull_policy: never
     build:
       context: .

@@ -2330,7 +2330,8 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         path, separator, query = target.partition('?')
         if path == '/intelligence' or re.fullmatch(r'/intelligence/share/[A-Za-z0-9_=.~-]{1,512}', path):
             methods = ('GET',)
-        elif path == '/api/intelligence/generate':
+        elif (path == '/api/intelligence/generate' or
+              re.fullmatch(r'/api/intelligence/generations/[0-9a-f-]{36}/stop', path)):
             methods = ('POST',)
         elif path == '/api/intelligence/conversations':
             methods = ('GET', 'POST')
@@ -2347,7 +2348,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         if (separator and not (method == 'GET' and (chat_page or search))) or self.headers.get('Transfer-Encoding'):
             return self._send_json(400, {"error": "Unexpected request target."}, no_cache=True)
         headers = {name: self.headers[name] for name in
-                   ('Cookie', 'X-AXGT-Auth-Token', 'X-Wallet-Address', 'Sec-Fetch-Site')
+                   ('Cookie', 'X-AXGT-Auth-Token', 'X-Wallet-Address', 'Sec-Fetch-Site', 'Accept')
                    if self.headers.get(name)}
         body = None
         if method in ('POST', 'PATCH'):
@@ -2372,8 +2373,10 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         try:
             upstream.request(method, target, body=body, headers=headers)
             response = upstream.getresponse()
-            result = response.read(1048577)
-            if len(result) > 1048576:
+            if response.headers.get_content_type() == 'application/x-ndjson':
+                return self._relay_intelligence_stream(response)
+            result = response.read(8 * 1024 * 1024 + 1)
+            if len(result) > 8 * 1024 * 1024:
                 raise ValueError
         except (ValueError, OSError, http.client.HTTPException):
             return self._send_json(503, {"error": "Intelligence is temporarily unavailable."}, no_cache=True)
@@ -2392,6 +2395,27 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         self.send_header('Connection', 'close')
         self.end_headers()
         self.wfile.write(result)
+
+    def _relay_intelligence_stream(self, response):
+        # read1 returns the bytes available now, including queue heartbeats.
+        # A regular read(size) may wait for a whole buffer on chunked input.
+        try:
+            self.send_response(response.status)
+            self.send_header('Content-Type', 'application/x-ndjson')
+            self.send_header('X-Accel-Buffering', 'no')
+            self.send_header('Cache-Control', 'no-store, no-transform, private')
+            self.send_header('Referrer-Policy', 'no-referrer')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            while block := response.read1(16384):
+                self.wfile.write(block)
+                self.wfile.flush()
+        except (OSError, http.client.HTTPException):
+            # Headers are already on the wire. The UI detects missing done.
+            pass
+        finally:
+            response.close()
 
     def _proxy_stripe_request(self, method: str):
         """Forward bounded payment requests to the public local Flask gate.
