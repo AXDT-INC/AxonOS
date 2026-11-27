@@ -24,6 +24,8 @@ except ImportError:
     import funding_ledger
     import intelligence
 
+conversation_rpc = intelligence.conversation_rpc
+
 from security_utils import (
     SimpleRateLimiter,
     client_ip_for_rate_limit,
@@ -870,7 +872,11 @@ def after_request(response):
     ):
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     # WebRTC status must never be cached (CDN/browser); stale JSON caused endless polling on wrong state.
-    if (is_x_capi or request.path in ("/intelligence", "/api/intelligence/generate")
+    if request.path.startswith("/intelligence/share/"):
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+    if (is_x_capi or request.path == "/intelligence"
+            or request.path.startswith(("/intelligence/share/", "/api/intelligence/"))
             or request.path.startswith(("/api/payments/", "/api/webrtc/status", "/api/terminal/"))):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
         response.headers["Pragma"] = "no-cache"
@@ -1782,14 +1788,20 @@ def intelligence_page():
     return render_template('intelligence.html', wallet=wallet, auth_unavailable=bool(error and error[1] == 503))
 
 
+def _intelligence_identity(allow_search=False):
+    wallet = (request.headers.get("X-Wallet-Address") or "").strip().lower()
+    if request.query_string and not (allow_search and list(request.args) == ["q"] and len(request.args.getlist("q")) == 1):
+        return None, (jsonify(error="Unexpected query parameters."), 400)
+    if not validate_wallet_address(wallet) or _is_guest_shaped(wallet):
+        return None, (jsonify(error="Sign in with your wallet to use Intelligence."), 401)
+    if request.headers.get("Sec-Fetch-Site") not in (None, "same-origin"):
+        return None, (jsonify(error="Open Intelligence on the AxonOS app."), 403)
+    return wallet, _require_auth_token(wallet)
+
+
 @app.post('/api/intelligence/generate')
 def intelligence_generate():
-    wallet = (request.headers.get("X-Wallet-Address") or "").strip()
-    if request.query_string or not validate_wallet_address(wallet) or _is_guest_shaped(wallet):
-        return jsonify(error="Sign in with your wallet to use Intelligence."), 401
-    if request.headers.get("Sec-Fetch-Site") not in (None, "same-origin"):
-        return jsonify(error="Open Intelligence on the AxonOS app."), 403
-    error = _require_auth_token(wallet)
+    wallet, error = _intelligence_identity()
     if error:
         return error
     if request.mimetype != 'application/json':
@@ -1804,6 +1816,96 @@ def intelligence_generate():
         return jsonify(error="Request body timed out."), 408
     payload, status = intelligence.generate(raw)
     return jsonify(payload), status
+
+
+def _conversation_input(fields):
+    if request.mimetype != "application/json":
+        return None, (jsonify(error="Send a JSON request."), 415)
+    if request.content_length is None or request.headers.get("Transfer-Encoding"):
+        return None, (jsonify(error="A Content-Length is required."), 400)
+    if request.content_length > intelligence.MAX_BODY:
+        return None, (jsonify(error="The request exceeds 64 KiB."), 413)
+    try:
+        body = json.loads(_bounded_request_body(intelligence.MAX_BODY, 5).decode("utf-8"))
+        if not isinstance(body, dict) or set(body) != set(fields):
+            raise ValueError
+        # Reject unpaired surrogates before serializing to the volume worker.
+        for value in body.values():
+            if isinstance(value, str):
+                value.encode("utf-8")
+    except (ValueError, RecursionError):
+        return None, (jsonify(error="Invalid conversation request."), 400)
+    except TimeoutError:
+        return None, (jsonify(error="Request body timed out."), 408)
+    return body, None
+
+
+def _conversation_operation(wallet, operation, **data):
+    payload, status = conversation_rpc(wallet, operation, **data)
+    return jsonify(payload), status
+
+
+@app.route('/api/intelligence/conversations', methods=['GET', 'POST'])
+def intelligence_conversations():
+    listing = request.method in ("GET", "HEAD")
+    wallet, error = _intelligence_identity(allow_search=listing)
+    if error:
+        return error
+    if listing:
+        return _conversation_operation(wallet, "list", q=request.args.get("q", ""))
+    _, error = _conversation_input(())
+    return error or _conversation_operation(wallet, "create")
+
+
+@app.route('/api/intelligence/conversations/<cid>', methods=['GET', 'PATCH', 'DELETE'])
+@app.post('/api/intelligence/conversations/<cid>/messages', defaults={"action": "messages"})
+@app.route('/api/intelligence/conversations/<cid>/share', methods=['POST', 'DELETE'], defaults={"action": "share"})
+def intelligence_conversation(cid, action=None):
+    wallet, error = _intelligence_identity()
+    if error:
+        return error
+    if not re.fullmatch(r"[0-9a-f]{32}", cid):
+        return jsonify(error="Conversation unavailable."), 404
+    if request.method in ("GET", "HEAD"):
+        return _conversation_operation(wallet, "get", id=cid)
+    if request.method == "DELETE":
+        return _conversation_operation(wallet, "revoke" if action == "share" else "delete", id=cid)
+    fields = ("prompt", "revision", "request_id") if action == "messages" else () if action == "share" else ("title",)
+    data, error = _conversation_input(fields)
+    if error:
+        return error
+    if action == "share":
+        try:
+            token = intelligence.new_share_token(wallet, cid)
+        except ValueError:
+            return jsonify(error="Conversation sharing is unavailable."), 503
+        return _conversation_operation(wallet, "share", id=cid, token=token)
+    if action != "messages":
+        return _conversation_operation(wallet, "rename", id=cid, **data)
+
+    prepared, status = conversation_rpc(wallet, "prepare", id=cid, **data)
+    if status != 200 or "conversation" in prepared:
+        return jsonify(prepared.get("conversation", prepared)), status
+    raw = json.dumps({"prompt": prepared["prompt"]}, ensure_ascii=False).encode()
+    reply, status = intelligence.generate(raw)
+    if status != 200:
+        return jsonify(reply), status
+    return _conversation_operation(wallet, "append", id=cid, answer=reply["text"], **data)
+
+
+@app.get('/intelligence/share/<token>')
+def intelligence_shared(token):
+    identity = intelligence.resolve_share(token) if not request.query_string else None
+    if identity:
+        wallet, cid = identity
+        shared, status = conversation_rpc(wallet, "public", id=cid, token=token)
+        if status == 200:
+            return render_template("intelligence.html", wallet=None, shared_conversation=shared)
+        if status >= 500:
+            return render_template("intelligence.html", wallet=None,
+                                   shared_error="Shared conversation temporarily unavailable. Try again shortly."), 503
+    return render_template("intelligence.html", wallet=None,
+                           shared_error="This link was revoked or the conversation is no longer available."), 404
 
 
 @app.route('/api/payments/stripe/checkout', methods=['POST', 'OPTIONS'])
@@ -4165,7 +4267,7 @@ def _deadline_websocket_handler(base_handler, gevent_module):
             elif any(handoff_http.is_handoff_target(target) for target in candidates):
                 safe = "handoff request (target redacted)"
             else:
-                safe = handoff_http.privacy_safe_http_log(original)
+                safe = handoff_http.privacy_safe_http_log(redact_terminal_websocket_query(original))
             self.requestline = safe
             try:
                 return super().format_request()

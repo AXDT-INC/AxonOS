@@ -68,3 +68,58 @@ def generate(raw):
         return {"error": "AxonAI returned an invalid reply."}, 502
     finally:
         connection.close()
+
+
+def conversation_rpc(wallet, operation, **data):
+    """Delegate volume access to the authenticated launcher off the WSGI hub."""
+    import os
+    try:
+        from . import session_launcher
+    except ImportError:
+        import session_launcher
+    base = os.environ.get("AXGT_SESSION_LAUNCHER_URL", "").rstrip("/")
+    if not base or not os.environ.get("AXGT_SESSION_LAUNCHER_TOKEN", "").strip():
+        return {"error": "Wallet storage is unavailable."}, 503
+    args = ("POST", base + "/intelligence/storage", {"wallet": wallet, "operation": operation, "data": data}, 30)
+    try:
+        from gevent import get_hub
+    except ImportError:
+        status, payload, error = session_launcher._http_json(*args)
+    else:
+        status, payload, error = get_hub().threadpool.apply(session_launcher._http_json, args)
+    if error or status in (401, 403) or not isinstance(payload, dict) or ("error" not in payload and status >= 400):
+        return {"error": "Wallet storage is unavailable. Try again shortly."}, 503
+    return payload, status
+
+
+def _share_cipher():
+    import base64
+    import hashlib
+    import os
+    from cryptography.fernet import Fernet
+
+    secret = os.environ.get("AXGT_SESSION_LAUNCHER_TOKEN", "").strip()
+    if not secret or secret == "change-me-launcher-token":
+        raise ValueError("A private launcher token is required for sharing.")
+    key = hashlib.sha256(b"axonos/intelligence/public-share/v1\0" + secret.encode()).digest()
+    return Fernet(base64.urlsafe_b64encode(key))
+
+
+def new_share_token(wallet, cid):
+    # Both identifiers travel in the encrypted capability. The wallet home
+    # additionally records the exact active token, which enforces revocation.
+    return _share_cipher().encrypt((wallet + cid).encode("ascii")).decode("ascii")
+
+
+def resolve_share(token):
+    import re
+    from cryptography.fernet import InvalidToken
+    if not re.fullmatch(r"[A-Za-z0-9_-]{100,510}={0,2}", token):
+        return None
+    try:
+        identity = _share_cipher().decrypt(token.encode()).decode("ascii")
+    except (InvalidToken, ValueError):
+        return None
+    if re.fullmatch(r"0x[0-9a-f]{72}", identity):
+        return identity[:42], identity[42:]
+    return None

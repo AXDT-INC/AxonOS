@@ -220,6 +220,18 @@ _FORBIDDEN_SESSION_ENV_NAMES = {
 _ALLOWED_SESSION_PASSTHROUGH_NAMES = set(SESSION_MEDIA_ENV_NAMES)
 _session_operation_locks: Dict[int, threading.RLock] = {}
 _session_operation_locks_guard = threading.Lock()
+# A bounded set of per-name locks coordinates history access with volume
+# replacement and pruning. Docker otherwise creates missing named mounts.
+_volume_locks = tuple(threading.Lock() for _ in range(256))
+
+
+def _volume_lock(name):
+    return _volume_locks[hash(name) % len(_volume_locks)]
+
+
+def _prune_volume(name):
+    with _volume_lock(name):
+        return subprocess.run(["docker", "volume", "rm", name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
 
 def _session_operation_lock(session_id: int) -> threading.RLock:
@@ -500,6 +512,11 @@ def _ensure_persistent_storage_volume(
     requested_storage_gb: int,
     wallet_address: Optional[str] = None,
 ) -> Tuple[bool, Optional[str]]:
+    with _volume_lock(volume_name):
+        return _ensure_persistent_storage_volume_locked(volume_name, requested_storage_gb, wallet_address)
+
+
+def _ensure_persistent_storage_volume_locked(volume_name, requested_storage_gb, wallet_address):
     if "unittest" in sys.modules and os.getenv("AXGT_REAL_STORAGE_TEST") != "1":
         return True, None
     storage_dir = os.getenv("AXGT_PERSISTENT_STORAGE_DIR", "/var/lib/docker/axonos_storage").strip()
@@ -1781,6 +1798,41 @@ def _configuration_errors() -> List[str]:
     return errors
 
 
+@app.post("/intelligence/storage")
+def intelligence_storage():
+    # This route mounts a wallet home. Local unauthenticated launcher mode
+    # is suitable for disposable sessions only.
+    if (os.getenv("AXGT_SESSION_LAUNCHER_TOKEN") or "").strip() in ("", "change-me-launcher-token"):
+        return jsonify(error="Wallet storage authentication is unavailable."), 503
+    auth_error = _require_token()
+    if auth_error:
+        return auth_error
+    if request.content_length is None or request.content_length > 512 * 1024:
+        return jsonify(error="Invalid storage request size."), 413
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or set(body) != {"wallet", "operation", "data"}:
+        return jsonify(error="Invalid wallet storage request."), 400
+    try:
+        from . import intelligence_volume
+    except ImportError:
+        import intelligence_volume
+    wallet = body["wallet"]
+    if not isinstance(wallet, str) or not intelligence_volume.WALLET.fullmatch(wallet):
+        return jsonify(error="Invalid wallet storage request."), 400
+    prefix = _persistent_storage_volume_prefix()
+    lock = _volume_lock(prefix + wallet)
+    if not lock.acquire(timeout=4):
+        return jsonify(error="Wallet storage is busy. Try again shortly."), 503
+    try:
+        payload, status = intelligence_volume.run(
+            wallet, body["operation"], body["data"], prefix,
+            _persistent_storage_enabled(), _image_name(),
+        )
+        return jsonify(payload), status
+    finally:
+        lock.release()
+
+
 @app.route("/healthz", methods=["GET"])
 def healthz():
     errors = _configuration_errors()
@@ -2227,7 +2279,7 @@ def _run_volume_cleanup() -> None:
 
                 if remaining < min_balance_limit:
                     logger.info("Auto volume prune: Pruning volume %s due to balance (%s) exceeding debt limit (%s)", volume_name, remaining, min_balance_limit)
-                    rm_res = subprocess.run(["docker", "volume", "rm", volume_name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    rm_res = _prune_volume(volume_name)
                     if rm_res.returncode != 0:
                         logger.warning("Auto volume prune: Failed to remove volume %s: %s", volume_name, rm_res.stderr.strip())
                     continue
@@ -2271,7 +2323,7 @@ def _run_volume_cleanup() -> None:
 
                     if new_remaining < min_balance_limit:
                         logger.info("Auto volume prune: Pruning volume %s after charge pushed balance (%s) below debt limit (%s)", volume_name, new_remaining, min_balance_limit)
-                        rm_res = subprocess.run(["docker", "volume", "rm", volume_name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                        rm_res = _prune_volume(volume_name)
                         if rm_res.returncode != 0:
                             logger.warning("Auto volume prune: Failed to remove volume %s: %s", volume_name, rm_res.stderr.strip())
 

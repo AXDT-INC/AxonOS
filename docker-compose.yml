@@ -15,9 +15,9 @@ name: axonos
 
 services:
   axonos-launcher:
-    # clu1 release reconciliation: retain the October 8 launcher and tenant
-    # template. The deployment controller must not rebuild/recreate this service.
-    image: sha256:14cecf32f88b20a66e1245954ffd31050c3f6196782c38b50ba58a3f775acdf9
+    # October 8 launcher runtime with the wallet conversation storage RPC.
+    # The gate deployment controller preserves this separately released service.
+    image: sha256:5d8552d19429160f6c842f25022396881f5f13b14cf7cf0701ca187e234b2925
     pull_policy: never
     build:
       context: .

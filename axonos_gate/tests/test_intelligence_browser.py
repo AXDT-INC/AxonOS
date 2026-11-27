@@ -1,8 +1,10 @@
 """Opt-in Chromium checks using the gate template, packaged assets and simulated API replies."""
+from copy import deepcopy
 import os
 from pathlib import Path
 import unittest
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
+from uuid import UUID
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -30,6 +32,11 @@ class IntelligenceBrowser(unittest.TestCase):
         self.wallet = None
         self.status = 200
         self.answer = ''
+        self.storage = False
+        self.chats = {}
+        self.snapshot = None
+        self.turn_requests = []
+        self.fail_history = False
         self.prompts = []
         self.requests = []
         self.page.route('**/*', self.route)
@@ -42,6 +49,13 @@ class IntelligenceBrowser(unittest.TestCase):
             return route.abort()
         if url.path == '/intelligence':
             return route.fulfill(content_type='text/html', body=self.template.render(wallet=self.wallet))
+        if url.path == '/intelligence/share/example':
+            if self.snapshot is None:
+                return route.fulfill(status=404, content_type='text/html',
+                                     body=self.template.render(shared_error='This link was revoked.'))
+            return route.fulfill(content_type='text/html', body=self.template.render(shared_conversation=self.snapshot))
+        if url.path.startswith('/api/intelligence/conversations'):
+            return self.conversations(route, url)
         if url.path == '/':
             return route.fulfill(content_type='text/html', body='Workspace sign-in')
         if url.path == '/api/intelligence/generate':
@@ -53,6 +67,54 @@ class IntelligenceBrowser(unittest.TestCase):
         if url.path == '/app/styles/axonos-theme.css':
             asset = THEME / 'axonos-theme.css'
         return route.fulfill(path=asset) if asset.is_file() else route.fulfill(status=404, body='')
+
+    def conversations(self, route, url):
+        self.assertEqual(route.request.headers.get('x-wallet-address'), self.wallet)
+        method = route.request.method
+        parts = url.path.strip('/').split('/')[3:]
+        if not parts:
+            if method == 'GET':
+                if self.fail_history:
+                    return route.fulfill(status=503, json={'error': 'History unavailable'})
+                query = parse_qs(url.query).get('q', [''])[0].lower()
+                items = [chat for chat in self.chats.values()
+                         if query in (chat['title'] + str(chat['messages'])).lower()]
+                return route.fulfill(json={'storage_available': self.storage, 'conversations': items})
+            ident = str(len(self.chats) + 1)
+            chat = self.chats[ident] = {'id': ident, 'title': 'New chat', 'revision': 0,
+                                        'messages': [], 'shared': False, 'share_url': None}
+            return route.fulfill(status=201, json=chat)
+        ident = parts[0]
+        chat = self.chats.get(ident)
+        if not chat:
+            return route.fulfill(status=404, json={'error': 'Conversation unavailable'})
+        if parts[1:] == ['messages']:
+            turn = route.request.post_data_json
+            self.turn_requests.append(turn)
+            if self.status != 200:
+                return route.fulfill(status=self.status, json={'error': 'Try again'})
+            self.assertEqual(turn['revision'], chat['revision'])
+            if not chat['messages']:
+                chat['title'] = turn['prompt']
+            chat['revision'] += 1
+            chat['messages'].extend([{'role': 'user', 'content': turn['prompt']},
+                                     {'role': 'assistant', 'content': self.answer}])
+            return route.fulfill(json=chat)
+        if parts[1:] == ['share']:
+            if method == 'DELETE':
+                self.snapshot = chat['share_url'] = None
+                chat['shared'] = False
+                return route.fulfill(json={})
+            chat['share_url'] = '/intelligence/share/example'
+            chat['shared'] = True
+            self.snapshot = deepcopy(chat)
+            return route.fulfill(json={'url': chat['share_url']})
+        if method == 'PATCH':
+            chat['title'] = route.request.post_data_json['title']
+        if method == 'DELETE':
+            del self.chats[ident]
+            return route.fulfill(json={})
+        return route.fulfill(json=chat)
 
     def send(self, text):
         self.page.locator('#prompt').fill(text)
@@ -128,8 +190,88 @@ $\href{https://external.test}{untrusted}$ and $\unknowncommand$."""
         for width in (320, 1280):
             self.page.set_viewport_size({'width': width, 'height': 800})
             self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth <= innerWidth'))
+            self.assertEqual(self.page.locator('#shell').bounding_box()['height'], 800)
         self.send('follow up')
         self.page.locator('#thread article:nth-child(4)').wait_for()
         self.assertEqual(self.prompts[-1], f'User: {question}\n\nAxonAI: {self.answer}\n\nUser: follow up')
         self.page.locator('#reset').click()
         self.assertEqual(self.page.locator('#thread article').count(), 0)
+
+    def test_sidebar_history_and_public_snapshot(self):
+        self.wallet, self.storage, self.answer = WALLET, True, '**Referenced** text'
+        self.page.goto(BASE + '/intelligence')
+        self.send('first study')
+        self.page.locator('#thread article:nth-child(2) strong').first.wait_for()
+        self.page.reload()
+        self.page.locator('#thread .assistant .content strong').wait_for()
+        self.assertEqual(self.page.locator('#chat-title').inner_text(), 'first study')
+        self.page.get_by_role('button', name='New chat', exact=True).click()
+        self.assertEqual(self.page.locator('#thread article').count(), 0)
+        self.send('second study')
+        self.page.locator('#thread .assistant').wait_for()
+        self.page.get_by_role('button', name='Open sidebar').click()
+        self.page.get_by_role('searchbox').fill('first')
+        self.page.wait_for_function("document.querySelectorAll('.chat-link').length === 1")
+        self.page.get_by_role('button', name='first study', exact=True).click()
+        self.page.wait_for_function("document.querySelector('#chat-title').textContent === 'first study'")
+        self.page.get_by_role('button', name='Open sidebar').click()
+        self.page.get_by_role('button', name='Options for first study').click()
+        self.page.get_by_role('button', name='Rename', exact=True).click()
+        self.page.get_by_label('Conversation title', exact=True).fill('Follow-up notes')
+        self.page.get_by_role('button', name='Save changes').click()
+        self.page.wait_for_function("document.querySelector('#chat-title').textContent === 'Follow-up notes'")
+        self.page.get_by_role('button', name='Close sidebar', exact=True).click()
+        self.page.get_by_role('button', name='Share', exact=True).click()
+        self.page.get_by_role('button', name='Create link').wait_for()
+        self.assertIsNone(self.snapshot)
+        self.page.get_by_role('button', name='Create link').click()
+        share_url = self.page.get_by_label('Share link', exact=True)
+        share_url.wait_for()
+        link = share_url.input_value()
+        self.page.get_by_role('button', name='Close', exact=True).click()
+        self.send('private follow up')
+        self.page.locator('#thread article:nth-child(4)').wait_for()
+        owner_url = self.page.url
+        self.page.goto(link)
+        self.assertEqual(self.page.locator('.shared-main h1').inner_text(), 'Follow-up notes')
+        self.assertEqual(self.page.locator('.assistant .content strong').inner_text(), 'Referenced')
+        self.assertEqual(self.page.locator('textarea, #history').count(), 0)
+        self.assertNotIn('private follow up', self.page.locator('body').inner_text())
+        self.page.goto(owner_url)
+        self.page.get_by_role('button', name='Share', exact=True).click()
+        self.page.get_by_role('button', name='Revoke link').click()
+        self.page.get_by_text('Share link revoked.', exact=True).wait_for()
+        self.assertEqual(self.page.goto(link).status, 404)
+        self.assertEqual(self.page.get_by_role('heading', level=1).inner_text(), 'Conversation unavailable')
+        self.assertTrue(self.page.get_by_role('link', name='Open Intelligence').is_visible())
+        self.page.set_viewport_size({'width': 1280, 'height': 800})
+        self.page.goto(owner_url)
+        self.page.get_by_role('button', name='Close sidebar', exact=True).click()
+        self.assertFalse(self.page.locator('#sidebar').is_visible())
+        self.page.get_by_role('button', name='Open sidebar').click()
+        self.page.get_by_role('button', name='Options for Follow-up notes').click()
+        self.page.get_by_role('button', name='Delete', exact=True).click()
+        self.page.get_by_role('button', name='Delete conversation', exact=True).click()
+        self.page.wait_for_function("document.querySelector('#chat-title').textContent === 'New chat'")
+        self.assertEqual(self.page.locator('.chat-link').all_text_contents(), ['second study'])
+
+    def test_history_error_and_idempotent_send_retry(self):
+        self.wallet, self.storage, self.fail_history = WALLET, True, True
+        self.page.add_init_script("crypto.randomUUID = undefined")
+        self.page.set_viewport_size({'width': 1100, 'height': 800})
+        self.page.goto(BASE + '/intelligence')
+        self.page.get_by_text('History unavailable', exact=True).wait_for()
+        self.assertFalse(self.page.locator('#temporary').is_visible())
+        self.assertFalse(self.page.locator('#prompt').is_editable())
+        self.fail_history = False
+        self.page.get_by_role('button', name='Retry history').click()
+        self.status = 503
+        self.send('repeat safely')
+        self.page.locator('#status').get_by_text('Try again').wait_for()
+        self.assertEqual(self.page.locator('#prompt').input_value(), 'repeat safely')
+        self.status, self.answer = 200, 'Done'
+        self.page.locator('#send').click()
+        self.page.locator('#thread .assistant').wait_for()
+        self.assertEqual(len(self.chats), 1)
+        self.assertEqual(self.turn_requests[0], self.turn_requests[1])
+        self.assertEqual(UUID(self.turn_requests[0]['request_id']).version, 4)

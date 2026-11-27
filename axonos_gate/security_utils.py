@@ -15,6 +15,8 @@ from urllib.parse import unquote, urlsplit
 _TERMINAL_WS_LOG_QUERY_RE = re.compile(
     r"(/api/terminal/ws)\?[^\s'\"<>]*"
 )
+_INTELLIGENCE_SHARE_LOG_RE = re.compile(r"(/intelligence/share/)[^\s'\"<>]*")
+_INTELLIGENCE_SEARCH_LOG_RE = re.compile(r"(/api/intelligence/conversations)\?[^\s'\"<>]*")
 _QUERY_FIELD_LOG_RE = re.compile(
     r"([?&])([^=&\s'\"<>#]*)(=)([^&\s'\"<>#]*)",
     re.IGNORECASE,
@@ -90,7 +92,9 @@ def redact_terminal_websocket_query(value):
     if not isinstance(value, str):
         return value
     terminal_safe = _TERMINAL_WS_LOG_QUERY_RE.sub(r"\1?[query-redacted]", value)
-    return _QUERY_FIELD_LOG_RE.sub(_redact_sensitive_query_field, terminal_safe)
+    safe = _INTELLIGENCE_SHARE_LOG_RE.sub(r"\1[redacted]", terminal_safe)
+    safe = _INTELLIGENCE_SEARCH_LOG_RE.sub(r"\1?[redacted]", safe)
+    return _QUERY_FIELD_LOG_RE.sub(_redact_sensitive_query_field, safe)
 
 
 def parse_cors_allowlist(value: Optional[str]) -> Tuple[bool, Set[str]]:

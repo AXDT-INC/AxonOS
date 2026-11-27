@@ -17,6 +17,7 @@ WORKDIR /app
 RUN pip install --no-cache-dir Flask>=2.3.0 psycopg2-binary
 
 COPY axonos_gate/session_launcher_service.py /app/session_launcher_service.py
+COPY axonos_gate/intelligence_volume.py axonos_gate/intelligence_store.py /app/
 COPY axonos_gate/docker_gpu_cli.py /app/docker_gpu_cli.py
 
 EXPOSE 8090

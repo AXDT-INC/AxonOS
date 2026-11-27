@@ -1,67 +1,111 @@
+{% macro icon(name) -%}
+<svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-{{ name }}"/></svg>
+{%- endmacro %}
+{% macro brand() -%}
+<a class="brand" href="/" aria-label="AxonOS workspace"><img src="/axon-x.png" alt="">Axon<span>OS</span></a>
+{%- endmacro %}
+{% macro model_info() -%}
+<p class="lead">An experimental scientific research assistant from AxonDAO, fine-tuned from Qwen3.8-27B.</p>
+<dl class="specs"><div><dt>Parameters</dt><dd>27B</dd></div><div><dt>Training examples</dt><dd>10,684</dd></div><div><dt>Source articles</dt><dd>4,230</dd></div></dl>
+<h2>Research limits</h2><p>Production inference has been validated. Answers can contain incorrect reasoning or invented citations. Check claims against the original evidence. Clinical validity and scientific superiority over the base model remain unestablished.</p>
+<nav class="model-links" aria-label="Model release"><a href="https://github.com/AXDT-INC/AxonIntelligence">GitHub source {{ icon('external') }}</a><a href="https://huggingface.co/AxonDAO/AxonAI-v1-27B">Hugging Face model {{ icon('external') }}</a></nav>
+{%- endmacro %}
 <!doctype html>
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
     <meta name="description" content="Explore AxonAI-v1, AxonDAO’s experimental scientific research model. Connect a verified wallet to chat.">
+    <meta name="referrer" content="no-referrer">
     <title>Intelligence · AxonOS</title>
     <link rel="icon" href="/icon.png">
     <link rel="stylesheet" href="/app/styles/axonos-theme.css">
-    <link rel="stylesheet" href="/app/intelligence.css">
-    {% if wallet %}
+    <link rel="stylesheet" href="/app/intelligence.css?v=2">
+    {% if wallet or shared_conversation %}
     <script src="/app/vendor/intelligence/markdown-it.umd.min.js" defer></script>
     <script src="/app/vendor/intelligence/plugin-tex.min.js" defer></script>
     <script src="/app/vendor/intelligence/katex.min.js" defer></script>
-    <script src="/app/intelligence.js" defer></script>
+    <script src="/app/intelligence.js?v=2" defer></script>
     {% endif %}
 </head>
-<body data-wallet="{{ wallet or '' }}">
-    <header class="top">
-        <a class="brand" href="/" aria-label="AxonOS workspace"><img src="/axon-x.png" alt="">Axon<span>OS</span></a>
-        <span class="section-name">Intelligence</span>
-        <a class="workspace" href="/">Workspace</a>
-    </header>
-    <main>
-        {% if wallet %}
-        <div class="chat-heading">
-            <h1>Chat with AxonAI-v1</h1>
-            <button id="reset" class="axonos-dashboard-guest-btn" type="button">New chat</button>
-        </div>
-        <div class="conversation">
-            <section id="thread" role="log" aria-label="Conversation" aria-live="polite"></section>
-            <div class="empty"><img src="/axon-x.png" alt=""><h2>What are you investigating?</h2>
-                <p>Ask about a research method, a calculation or the evidence behind a claim.</p></div>
-        </div>
-        <form>
-            <label for="prompt">Message AxonAI</label>
-            <textarea id="prompt" rows="2" placeholder="Ask a scientific question…" required></textarea>
-            <div class="controls"><p id="status" role="status"></p>
-                <button id="send" class="axonos-dashboard-new-btn" type="submit">Send</button></div>
-        </form>
-        <details><summary>About the model and its limits</summary>
-        {% endif %}
-        <section class="intro" aria-label="About AxonAI-v1">
-            <div>
-                {% if wallet %}<h2>AxonAI-v1</h2>{% else %}<h1>AxonAI-v1</h1>{% endif %}
-                <p class="lead">An experimental scientific research assistant from AxonDAO, fine-tuned from Qwen3.8-27B.</p>
-                <p>Explore how a method works, compare interpretations of a result, or trace the assumptions behind a scientific calculation.</p>
-                <nav class="actions" aria-label="Model access and release">
-                    {% if not wallet and not auth_unavailable %}<a class="axonos-dashboard-new-btn" href="/?view=intelligence">Connect wallet to chat</a>{% endif %}
-                    <a href="https://github.com/AXDT-INC/AxonIntelligence">GitHub source</a>
-                    <a href="https://huggingface.co/AxonDAO/AxonAI-v1-27B">Hugging Face model</a>
-                </nav>
-                {% if auth_unavailable %}<p role="status">Wallet verification is temporarily unavailable. Reload to try again.</p>{% endif %}
-            </div>
-            <dl class="specs">
-                <div><dt>Parameters</dt><dd>27B</dd></div>
-                <div><dt>Training examples</dt><dd>10,684</dd></div>
-                <div><dt>Source articles</dt><dd>4,230</dd></div>
-            </dl>
-        </section>
-        <section class="limitations"><h2>Research limits</h2>
-            <p>Production inference has been validated. Answers can contain incorrect reasoning or invented citations. Check claims against the original evidence. Clinical validity and scientific superiority over the base model remain unestablished.</p>
-        </section>
-        {% if wallet %}</details>{% endif %}
+<body data-wallet="{{ wallet or '' }}" class="{% if shared_conversation or shared_error %}shared-page{% elif wallet %}chat-page{% else %}public-page{% endif %}">
+    <svg class="symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false"><defs>
+        <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></symbol>
+        <symbol id="i-new" viewBox="0 0 24 24"><path d="M11 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-5m-9 1 1-4 7-7 3 3-7 7-4 1Zm6-9 3 3"/></symbol>
+        <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+        <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+        <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol>
+        <symbol id="i-external" viewBox="0 0 24 24"><path d="M6 18 18 6M7 6h11v11"/></symbol>
+        <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 15V3m-4 4 4-4 4 4M7 10H5v10h14V10h-2"/></symbol>
+        <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+        <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></symbol>
+        <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 6v14M3 5c4-1 6-1 9 1 3-2 5-2 9-1v13c-4-1-6-1-9 1-3-2-5-2-9-1Z"/></symbol>
+        <symbol id="i-flask" viewBox="0 0 24 24"><path d="M9 3h6m-5 0v7l-6 9a1 1 0 0 0 1 2h14a1 1 0 0 0 1-2l-6-9V3M7 15h10"/></symbol>
+        <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-9v.1"/></symbol>
+    </defs></svg>
+    {% if shared_error %}
+    <header class="public-bar">{{ brand() }}</header>
+    <main class="shared-main"><p class="shared-label">{{ icon('share') }} Shared conversation</p><h1>Conversation unavailable</h1>
+        <p class="unavailable-message">{{ shared_error }}</p><a href="/intelligence" class="primary-button">Open Intelligence {{ icon('external') }}</a>
     </main>
+    {% elif shared_conversation %}
+    <header class="public-bar">{{ brand() }}<a href="/intelligence">Open Intelligence {{ icon('external') }}</a></header>
+    <main class="shared-main"><p class="shared-label">{{ icon('share') }} Shared conversation</p><h1>{{ shared_conversation.title }}</h1>
+        <section id="thread" aria-label="Shared conversation">{% for item in shared_conversation.messages %}<article class="{{ 'user' if item.role == 'user' else 'assistant' }}"><strong>{{ 'User' if item.role == 'user' else 'AxonAI' }}</strong><div class="content">{{ item.content }}</div></article>{% endfor %}</section>
+    </main>
+    {% elif wallet %}
+    <div id="shell">
+        <aside id="sidebar" aria-label="Conversation sidebar">
+            <div class="sidebar-top">{{ brand() }}<button type="button" class="icon-button" id="sidebar-close" aria-label="Close sidebar" title="Close sidebar">{{ icon('panel') }}</button></div>
+            <button id="reset" type="button" class="new-chat">{{ icon('new') }}New chat</button>
+            <label class="search-box">{{ icon('search') }}<span class="sr-only">Search conversations</span><input type="search" id="search" maxlength="200" autocomplete="off" placeholder="Search conversations"></label>
+            <h2 class="list-heading">Conversations</h2>
+            <nav id="history" aria-label="Saved conversations"></nav><p id="list-message">Loading conversations…</p><button id="retry-list" class="text-button" type="button" hidden>Retry history</button>
+            <div class="sidebar-foot"><div class="wallet-icon">{{ icon('lock') }}</div><div><strong>Connected wallet</strong><span title="{{ wallet }}">{{ wallet[:6] }}…{{ wallet[-4:] }}</span></div><a href="/" class="icon-button" aria-label="Back to workspace" title="Back to workspace">{{ icon('external') }}</a></div>
+        </aside>
+        <button id="scrim" type="button" tabindex="-1" aria-label="Close conversation sidebar" hidden></button>
+        <main id="chat-main">
+            <header class="chat-bar">
+                <button id="sidebar-toggle" type="button" class="icon-button" aria-label="Open sidebar" title="Open sidebar" aria-controls="sidebar">{{ icon('panel') }}</button>
+                <div class="chat-location"><span>Intelligence</span><span class="crumb" aria-hidden="true">/</span><h1 id="chat-title">New chat</h1></div>
+                <button id="share" type="button" class="subtle-button" hidden>{{ icon('share') }}<span>Share</span></button>
+                <button id="new-mobile" class="icon-button" type="button" aria-label="New chat" title="New chat">{{ icon('new') }}</button>
+            </header>
+            <div id="chat-scroll" class="is-empty">
+                <div id="welcome"><div class="hero-mark"><img src="/axon-x.png" alt=""></div>
+                    <h2>What are you investigating?</h2>
+                </div>
+                <section id="thread" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions"></section>
+            </div>
+            <div class="composer-area"><div class="composer-inner">
+                <p id="temporary" hidden>Temporary chat · This wallet has no storage volume. Messages last until you leave this page.</p>
+                <form id="composer"><label for="prompt" class="sr-only">Message AxonAI</label>
+                    <textarea id="prompt" rows="1" placeholder="Message AxonAI…" required></textarea>
+                    <div class="composer-tools"><button type="button" class="model-button" id="model-info" aria-label="About AxonAI-v1"><span class="model-dot"></span>AxonAI-v1 {{ icon('info') }}</button>
+                    <button id="send" type="submit" aria-label="Send message" title="Send message">{{ icon('up') }}</button></div>
+                </form>
+                <p id="status" role="status"></p>
+                <div id="starters" aria-label="Suggested questions">
+                    <button type="button" data-prompt="How does a double-blind study reduce bias?">{{ icon('flask') }}<span>Explore a research method</span>{{ icon('external') }}</button>
+                    <button type="button" data-prompt="What should I look for when assessing the evidence behind a scientific claim?">{{ icon('book') }}<span>Evaluate the evidence</span>{{ icon('external') }}</button>
+                </div>
+                <p class="composer-hint">AxonAI can make mistakes. Check important claims.</p>
+            </div></div>
+        </main>
+    </div>
+    <dialog id="about" aria-labelledby="about-title"><div class="dialog-head"><h1 id="about-title">AxonAI-v1</h1><button type="button" class="icon-button close-dialog" aria-label="Close">{{ icon('close') }}</button></div>{{ model_info() }}</dialog>
+    <dialog id="manage" aria-labelledby="dialog-title"><div class="dialog-head"><h2 id="dialog-title">Conversation options</h2><button type="button" class="icon-button close-dialog" aria-label="Close">{{ icon('close') }}</button></div>
+        <div id="dialog-options" class="action-list"><button type="button" data-action="rename">Rename</button><button type="button" data-action="share">Share</button><button type="button" class="danger" data-action="delete">Delete</button></div>
+        <form id="dialog-rename" hidden><label for="rename-title">Conversation title</label><input id="rename-title" required maxlength="120" autocomplete="off"><button type="submit" class="primary-button">Save changes</button></form>
+        <div id="dialog-delete" hidden><p>Deleting this conversation also revokes its share link. This action is permanent.</p><button id="confirm-delete" type="button" class="danger-button">Delete conversation</button></div>
+        <div id="dialog-share" hidden><p id="share-description"></p><label id="share-url-label" hidden>Share link<input id="share-url" readonly></label><div class="share-actions"><button id="create-link" type="button" class="primary-button">Create link</button><button id="copy-link" type="button" class="primary-button" hidden>Copy link</button><button id="revoke-link" type="button" class="secondary-button" hidden>Revoke link</button></div></div>
+        <p id="dialog-status" role="status"></p>
+    </dialog>
+    {% else %}
+    <header class="public-bar">{{ brand() }}<a href="/">Workspace {{ icon('external') }}</a></header>
+    <main class="public-main"><div class="hero-mark"><img src="/axon-x.png" alt=""></div><h1>AxonAI-v1</h1>{{ model_info() }}
+        {% if auth_unavailable %}<p role="status">Wallet verification is temporarily unavailable. Reload to try again.</p>{% else %}<a class="primary-button" href="/?view=intelligence">Connect wallet to chat {{ icon('external') }}</a>{% endif %}
+    </main>
+    {% endif %}
 </body>
 </html>

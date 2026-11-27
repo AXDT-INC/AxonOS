@@ -556,7 +556,8 @@ def _probe_open_db_connections(path: str) -> None:
         )
         logger.warning(
             "db-leak-probe path=%s open_before_gc=%d open_after_gc=%d %s",
-            path.split("?")[0], before, after, "; ".join(details),
+            "/intelligence/share/[redacted]" if path.startswith("/intelligence/share/") else path.split("?")[0],
+            before, after, "; ".join(details),
         )
     except Exception as exc:  # never let diagnostics break a response
         logger.warning("db-leak-probe failed: %s", exc)
@@ -1388,7 +1389,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
 
     def end_headers(self):
         if (getattr(self, '_response_no_cache', False) and not getattr(self, '_handoff_response', False)
-                and self.path != '/intelligence'):
+                and not getattr(self, '_intelligence_response', False)):
             super().send_header('Cache-Control', 'no-cache, must-revalidate')
             super().send_header('Pragma', 'no-cache')
             self._response_no_cache = False
@@ -1658,7 +1659,7 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
 
         request_path = _up_cfg(self.path).path
         self._observe_request_gpc_early(request_path)
-        if request_path == '/intelligence':
+        if request_path == '/intelligence' or request_path.startswith(('/intelligence/share/', '/api/intelligence/')):
             return self._proxy_intelligence('GET')
         if request_path.startswith('/api/x-attribution/handoff/') or request_path in ('/attribution/entry', '/attribution/callback'):
             return self._handle_handoff_request('GET')
@@ -2322,16 +2323,34 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         return super().do_GET()
 
     def _proxy_intelligence(self, method):
-        """6080 serves the same authenticated page and API as the public Flask gate."""
-        target = '/intelligence' if method == 'GET' else '/api/intelligence/generate'
+        """Relay only the Intelligence surface to the fixed loopback gate."""
+        self._intelligence_response = True
         self.close_connection = True
-        if self.path != target:
+        target = self.path
+        path, separator, query = target.partition('?')
+        if path == '/intelligence' or re.fullmatch(r'/intelligence/share/[A-Za-z0-9_=.~-]{1,512}', path):
+            methods = ('GET',)
+        elif path == '/api/intelligence/generate':
+            methods = ('POST',)
+        elif path == '/api/intelligence/conversations':
+            methods = ('GET', 'POST')
+        else:
+            item = re.fullmatch(r'/api/intelligence/conversations/[0-9a-f]{32}(?:/(messages|share))?', path)
+            if not item:
+                return self._send_json(404, {"error": "Not found."}, no_cache=True)
+            methods = {None: ('GET', 'PATCH', 'DELETE'), 'messages': ('POST',),
+                       'share': ('POST', 'DELETE')}[item.group(1)]
+        if method not in methods:
+            return self._send_json(405, {"error": "Method not allowed."}, no_cache=True)
+        chat_page = path == '/intelligence' and re.fullmatch(r'chat=[0-9a-f]{32}', query)
+        search = path == '/api/intelligence/conversations' and len(query) <= 2600 and '#' not in query
+        if (separator and not (method == 'GET' and (chat_page or search))) or self.headers.get('Transfer-Encoding'):
             return self._send_json(400, {"error": "Unexpected request target."}, no_cache=True)
         headers = {name: self.headers[name] for name in
                    ('Cookie', 'X-AXGT-Auth-Token', 'X-Wallet-Address', 'Sec-Fetch-Site')
                    if self.headers.get(name)}
         body = None
-        if method == 'POST':
+        if method in ('POST', 'PATCH'):
             if self.headers.get_content_type() != 'application/json':
                 return self._send_json(415, {"error": "Send a JSON request."}, no_cache=True)
             if len(self.headers.get_all('Content-Length') or []) != 1:
@@ -2346,13 +2365,15 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             except (ValueError, RecursionError):
                 return self._send_json(400, {"error": "Invalid JSON request."}, no_cache=True)
             headers['Content-Type'] = 'application/json'
+        elif self.headers.get('Content-Length', '0') != '0':
+            return self._send_json(400, {"error": "Unexpected request body."}, no_cache=True)
 
-        upstream = http.client.HTTPConnection('127.0.0.1', int(os.getenv('GATE_PORT') or '8889'), timeout=160)
+        upstream = http.client.HTTPConnection('127.0.0.1', int(os.getenv('GATE_PORT') or '8889'), timeout=180)
         try:
             upstream.request(method, target, body=body, headers=headers)
             response = upstream.getresponse()
-            result = response.read(131073)
-            if len(result) > 131072:
+            result = response.read(1048577)
+            if len(result) > 1048576:
                 raise ValueError
         except (ValueError, OSError, http.client.HTTPException):
             return self._send_json(503, {"error": "Intelligence is temporarily unavailable."}, no_cache=True)
@@ -2362,6 +2383,10 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
         self.send_header('Content-Type', response.getheader('Content-Type'))
         self.send_header('Content-Length', str(len(result)))
         self.send_header('Cache-Control', 'no-store, private')
+        self.send_header('Referrer-Policy', 'no-referrer')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        if path.startswith('/intelligence/share/'):
+            self.send_header('X-Robots-Tag', 'noindex, nofollow, noarchive')
         if response.status == 302:
             self.send_header('Location', '/?view=intelligence')
         self.send_header('Connection', 'close')
@@ -2613,13 +2638,23 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
             return self._handle_files_request('PUT')
         self.send_error(405, "Method Not Allowed")
 
+    def do_PATCH(self):
+        if self.path.startswith('/api/intelligence/'):
+            return self._proxy_intelligence('PATCH')
+        self.send_error(501, "Unsupported method")
+
+    def do_DELETE(self):
+        if self.path.startswith('/api/intelligence/'):
+            return self._proxy_intelligence('DELETE')
+        self.send_error(501, "Unsupported method")
+
     def do_POST(self):
         from urllib.parse import urlsplit
 
         pu = urlsplit(self.path)
         ponly = pu.path
         self._observe_request_gpc_early(ponly)
-        if ponly == '/api/intelligence/generate':
+        if ponly.startswith('/api/intelligence/'):
             return self._proxy_intelligence('POST')
         if ponly.startswith('/api/x-attribution/handoff/') or ponly in ('/attribution/entry', '/attribution/callback'):
             return self._handle_handoff_request('POST')

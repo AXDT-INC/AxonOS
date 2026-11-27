@@ -29,6 +29,12 @@ This module implements **prepaid deposit-credit billing** for AxonOS remote desk
 5. Claim a session; during the session the in-container heartbeat daemon (and optionally the browser) sends heartbeats; each heartbeat bills elapsed time since last billing checkpoint.
 6. When remaining minutes reach zero, the session enters credit grace (or ends) and access is denied. Offline storage continues to bill against the balance (accruing debt) unless the volume is deleted or balance drops below the negative debt limit threshold.
 
+## Intelligence conversation history
+
+Open `/intelligence` with a verified wallet to start a chat, search titles and messages, rename a conversation or delete it. The launcher stores saved chats in `.axonos-intelligence/history.sqlite3` inside the wallet’s existing home volume. History is available between desktop sessions and follows the volume’s backup and retention policy. Wallets without a provisioned volume can use temporary chat for the lifetime of the page.
+
+Conversations start private. **Share → Create link** publishes a snapshot of the current title and messages. Anyone with the link can read it. Later messages stay private. **Revoke link** or **Delete conversation** closes the public link. To share a newer snapshot, revoke the current link and create another. Rotating the launcher credential invalidates previously issued links.
+
 ## Session lifetime
 
 Paid desktop and SSH workloads survive viewer/SSH disconnection and tab close.
