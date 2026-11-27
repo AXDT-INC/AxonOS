@@ -18,6 +18,7 @@
     <meta name="description" content="Explore AxonAI-v1, AxonDAO’s experimental scientific research model. Connect a verified wallet to chat.">
     <meta name="referrer" content="no-referrer">
     <title>Intelligence · AxonOS</title>
+    {% if not shared_conversation and not shared_error %}{% include 'attribution-head.html' %}{% endif %}
     <link rel="icon" href="/icon.png">
     <link rel="stylesheet" href="/app/styles/axonos-theme.css">
     <link rel="stylesheet" href="/app/intelligence.css?v=4">
@@ -65,6 +66,7 @@
             <label class="search-box">{{ icon('search') }}<span class="sr-only">Search conversations</span><input type="search" id="search" maxlength="200" autocomplete="off" placeholder="Search conversations"></label>
             <h2 class="list-heading">Conversations</h2>
             <nav id="history" aria-label="Saved conversations"></nav><p id="list-message">Loading conversations…</p><button id="retry-list" class="text-button" type="button" hidden>Retry history</button>
+            <button type="button" id="axonos-privacy-trigger" class="text-button" hidden>Privacy settings</button>
             <div class="sidebar-foot"><div class="wallet-icon">{{ icon('lock') }}</div><div><strong>Connected wallet</strong><span title="{{ wallet }}">{{ wallet[:6] }}…{{ wallet[-4:] }}</span></div><a href="/" class="icon-button" aria-label="Back to workspace" title="Back to workspace">{{ icon('external') }}</a></div>
         </aside>
         <button id="scrim" type="button" tabindex="-1" aria-label="Close conversation sidebar" hidden></button>
@@ -113,10 +115,11 @@
         <p id="dialog-status" role="status"></p>
     </dialog>
     {% else %}
-    <header class="public-bar">{{ brand() }}<a href="/">Workspace {{ icon('external') }}</a></header>
+    <header class="public-bar">{{ brand() }}<button type="button" id="axonos-privacy-trigger" class="text-button" hidden>Privacy settings</button><a href="/">Workspace {{ icon('external') }}</a></header>
     <main class="public-main"><div class="hero-mark"><img src="/axon-x.png" alt=""></div><h1>AxonAI-v1</h1>{{ model_info() }}
         {% if auth_unavailable %}<p role="status">Wallet verification is temporarily unavailable. Reload to try again.</p>{% else %}<a class="primary-button" href="/?view=intelligence">Connect wallet to chat {{ icon('external') }}</a>{% endif %}
     </main>
     {% endif %}
+    {% if not shared_conversation and not shared_error %}<div id="axonos-attribution-preferences"></div>{% endif %}
 </body>
 </html>

@@ -44,7 +44,7 @@ LEASE_SECONDS = 45
 WORKER_STATEMENT_TIMEOUT_MS = 5_000
 WORKER_LOCK_TIMEOUT_MS = 500
 CLEANUP_STATEMENT_TIMEOUT_MS = 750
-EXPECTED_SCHEMA_VERSION = 6
+EXPECTED_SCHEMA_VERSION = 7
 SCHEMA_ATTESTATION_TTL_SECONDS = 30.0
 MIN_ATTEMPT_INTERVAL_SECONDS = 0.25
 LIVE_DELIVERY_BLOCK_REASON = x_capi.LIVE_MODE_UNAVAILABLE_REASON
@@ -85,12 +85,12 @@ _schema_attestation_lock = threading.Lock()
 _schema_attestation_key: Optional[tuple[str, str, str]] = None
 _schema_attestation_until = 0.0
 
-# Canonical, schema-name-independent catalog representation of the reviewed v5
+# Canonical, schema-name-independent catalog representation of the reviewed v7
 # objects.  The digest is intentionally compiled into the worker: trusting a
 # mutable "schema version" row would let an existing trigger, rewrite rule,
 # RLS policy, or weakened constraint survive a grants-only migration.
 _EXPECTED_SCHEMA_CATALOG_SHA256 = (
-    "d58adf2343b30d51c08643f3f772f825ed45798f23289b54ab810491b47b83e0"
+    "25c3e0a452a0ce2ce66c71b9f6362cca0c2807ba428e319676200e0012c911ad"
 )
 _SCHEMA_CATALOG_SQL = r"""
 WITH target AS (
@@ -564,7 +564,7 @@ def _worker_db_target_is_isolated() -> bool:
 
 
 def _schema_catalog_is_exact(cur) -> bool:
-    """Reject every catalog shape other than the reviewed fresh-v4 schema."""
+    """Reject every catalog shape other than the reviewed schema."""
     try:
         cur.execute(_SCHEMA_CATALOG_SQL)
         row = cur.fetchone()

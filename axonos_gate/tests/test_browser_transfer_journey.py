@@ -112,6 +112,11 @@ class BrowserTransferJourney(unittest.TestCase):
                     return request_route.fulfill(content_type='text/javascript', body=(ROOT/'novnc-theme'/url.path.lstrip('/')).read_text())
                 if url.path == '/privacy-preferences.html':
                     return request_route.fulfill(content_type='text/html', body=(ROOT/'novnc-theme/privacy-preferences.html').read_text())
+                if url.path == '/intelligence':
+                    from jinja2 import Environment, FileSystemLoader, select_autoescape
+                    template = Environment(loader=FileSystemLoader(ROOT / 'axonos_gate/templates'),
+                                           autoescape=select_autoescape()).get_template('intelligence.html')
+                    return request_route.fulfill(content_type='text/html', body=template.render(wallet=None))
                 if url.path == '/': return request_route.fulfill(content_type='text/html', body=self.app_html)
             request_route.abort()
         with patch.dict(os.environ, env, clear=True), \

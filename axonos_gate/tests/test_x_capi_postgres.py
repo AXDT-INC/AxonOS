@@ -54,7 +54,8 @@ def _handoff_migration_text(schema, owner, worker):
     root = Path(__file__).resolve().parents[1] / "migrations"
     text = (root / "008_x_capi_handoff.sql").read_text()
     text += "\n" + (root / "009_x_capi_funnel.sql").read_text()
-    for name in ("008_x_capi_v4_preflight.sql", "008_x_capi_v5_postflight.sql", "009_x_capi_v6_postflight.sql"):
+    text += "\n" + (root / "010_x_capi_intelligence.sql").read_text()
+    for name in ("008_x_capi_v4_preflight.sql", "008_x_capi_v5_postflight.sql", "009_x_capi_v6_postflight.sql", "010_x_capi_v7_postflight.sql"):
         text = text.replace("\\ir " + name, (root / name).read_text())
     text = text.replace(_MIGRATION_SEARCH_PATH, 'SET LOCAL search_path = "' + schema + '";')
     for variable, role in (("owner_role", owner), ("worker_role", worker)):
@@ -291,6 +292,8 @@ class PostgresOutboxTests(unittest.TestCase):
             cur.execute(handoff[start:end])
             funnel = (Path(__file__).resolve().parents[1] / "migrations" / "009_x_capi_funnel.sql").read_text()
             cur.execute(funnel[funnel.index("ALTER TABLE"):funnel.index("\\ir 009_")])
+            intel = (Path(__file__).resolve().parents[1] / "migrations" / "010_x_capi_intelligence.sql").read_text()
+            cur.execute(intel[intel.index("ALTER TABLE"):intel.index("\\ir 010_")])
         conn.commit()
         conn.close()
 

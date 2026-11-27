@@ -36,6 +36,8 @@ IDs. Only `off` and synthetic `dry_run` are stageable.
 | `X_CAPI_EVENT_LANDING_PAGE_VIEWED` | blank | Optional server-side landing view event ID for revised shared consent. |
 | `X_CAPI_EVENT_APP_LAUNCH_CLICKED` | blank | Optional server-side Launch click event ID for revised shared consent. |
 | `X_CAPI_EVENT_APP_PAGE_VIEWED` | blank | Optional server-side app arrival event ID for revised shared consent. |
+| `X_CAPI_EVENT_INTELLIGENCE_LAUNCH_CLICKED` | blank | Consented Launch AxonIntelligence click on the landing page. |
+| `X_CAPI_EVENT_INTELLIGENCE_PAGE_VIEWED` | blank | Consented Intelligence arrival from the landing page or a direct X ad. |
 | `X_CAPI_EVENT_WALLET_VERIFIED` | blank | Exact CAPI event ID; blank disables this milestone. |
 | `X_CAPI_EVENT_DEPOSIT_COMPLETED` | blank | Exact primary paid-conversion event ID. |
 | `X_CAPI_EVENT_SESSION_STARTED` | blank | Exact new-session activation event ID. |

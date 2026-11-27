@@ -51,7 +51,10 @@ _EVENT_ENV = {
     MILESTONE_DEPOSIT_COMPLETED: "X_CAPI_EVENT_DEPOSIT_COMPLETED",
     MILESTONE_SESSION_STARTED: "X_CAPI_EVENT_SESSION_STARTED",
 }
-FUNNEL_EVENTS = ("landing_page_viewed", "app_launch_clicked", "app_page_viewed")
+FUNNEL_EVENTS = (
+    "landing_page_viewed", "app_launch_clicked", "app_page_viewed",
+    "intelligence_launch_clicked", "intelligence_page_viewed",
+)
 _EVENT_ENV.update({name: "X_CAPI_EVENT_" + name.upper() for name in FUNNEL_EVENTS})
 _MODE_VALUES = frozenset({"off", "dry_run", "live"})
 LIVE_MODE_UNAVAILABLE_REASON = "live_delivery_disabled"

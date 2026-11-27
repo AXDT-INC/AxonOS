@@ -269,9 +269,7 @@ const initializeXAttribution = (initialLandingClick) => {
             // page's memory only: a reload before the choice deliberately loses
             // attribution. Granted and closed/revocable capabilities may remain
             // tab-scoped so consent or withdrawal survives navigation.
-            var verifiedWallet = String(
-                window.verifiedWalletAddress || ''
-            ).trim().toLowerCase();
+            var verifiedWallet = currentVerifiedWallet();
             var walletLatchSafe = !WALLET_RE.test(verifiedWallet) ||
                 GUEST_WALLET_RE.test(verifiedWallet) ||
                 (!bindWalletPending && boundWallet === verifiedWallet);
@@ -460,14 +458,24 @@ const initializeXAttribution = (initialLandingClick) => {
         });
     }
 
+    // Intelligence renders this address only after authenticating the HttpOnly
+    // session cookie. The bind endpoint verifies that cookie against the wallet.
+    function intelligenceCookieWallet() {
+        return window.location?.pathname === '/intelligence' ? document.body?.dataset?.wallet : '';
+    }
+
+    function currentVerifiedWallet() {
+        return String(window.verifiedWalletAddress || intelligenceCookieWallet() || '').trim().toLowerCase();
+    }
+
     function maybeBindVerifiedWallet() {
         if (!sharedPreferencesLoaded || (sharedPreferences &&
             (!sharedTracked || !sharedPreferences.permitted()))) return;
-        var wallet = String(window.verifiedWalletAddress || '').trim().toLowerCase();
+        var wallet = currentVerifiedWallet();
         var authToken = String(window.verifiedWalletAuthToken || '').trim();
         if (state !== 'granted' || gpcActive || revocationPending ||
             !WALLET_RE.test(wallet) || GUEST_WALLET_RE.test(wallet) ||
-            !authToken || !OPAQUE_CONTEXT_RE.test(context)) return;
+            (!authToken && wallet !== intelligenceCookieWallet()) || !OPAQUE_CONTEXT_RE.test(context)) return;
 
         // A wallet authentication may be in flight while the globals still
         // describe the previously verified wallet.  The synchronous request
@@ -504,9 +512,9 @@ const initializeXAttribution = (initialLandingClick) => {
             }, BIND_TIMEOUT_MS) : null;
             var bindHeaders = {
                 'Content-Type': 'application/json',
-                'X-AXGT-Auth-Token': authToken,
                 'X-AxonOS-Attribution': publicContext
             };
+            if (authToken) bindHeaders['X-AXGT-Auth-Token'] = authToken;
             // This is deliberately fire-and-forget: attribution can never delay
             // or fail auth, payments, session launch, or reconnect. Even a
             // synchronous Fetch/AbortController failure is contained here.
@@ -524,7 +532,7 @@ const initializeXAttribution = (initialLandingClick) => {
                 if (timer) clearTimeout(timer);
                 if (!accepted && bindAttemptKey === attemptKey &&
                     attemptGeneration === stateGeneration && context === publicContext &&
-                    String(window.verifiedWalletAddress || '').trim().toLowerCase() === wallet) {
+                    currentVerifiedWallet() === wallet) {
                     // Retry only on a later browser lifecycle/online signal. Do
                     // not spin when the isolated local worker is unavailable.
                     bindAttemptKey = '';
@@ -591,7 +599,7 @@ const initializeXAttribution = (initialLandingClick) => {
     // globals. If attribution wins the race instead, synchronizePublicContext
     // invokes the same idempotent, once-per-context path.
     window.axonosNotifyWalletVerified = function (walletAddress) {
-        var current = String(window.verifiedWalletAddress || '').trim().toLowerCase();
+        var current = currentVerifiedWallet();
         if (String(walletAddress || '').trim().toLowerCase() !== current) return;
         if (walletAuthenticationCandidate === current) {
             walletAuthenticationCandidate = '';
@@ -603,9 +611,10 @@ const initializeXAttribution = (initialLandingClick) => {
         if (arrivalPending && ownershipEstablished && !revokeOnlyLifecycle && enabled && state === 'granted' && context && csrf && sharedTracked &&
             sharedPreferences?.funnelPermitted?.() && !revocationPending && !gpcActive) {
             arrivalPending = false;
-            sharedPreferences.reportFunnel('app_page_viewed', context, csrf).catch(function () {});
+            var milestone = window.location?.pathname === '/intelligence' ? 'intelligence_page_viewed' : 'app_page_viewed';
+            sharedPreferences.reportFunnel(milestone, context, csrf).catch(function () {});
         }
-        var verifiedWallet = String(window.verifiedWalletAddress || '').trim().toLowerCase();
+        var verifiedWallet = currentVerifiedWallet();
         var walletCompatible = !bindWalletPending && (
             !WALLET_RE.test(verifiedWallet) ||
             (!!boundWallet && boundWallet === verifiedWallet)

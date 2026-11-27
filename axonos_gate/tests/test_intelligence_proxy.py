@@ -93,6 +93,18 @@ class ConversationProxyTests(fixtures.GateIntegrationCase):
         finally:
             conn.close()
 
+    def test_ad_arrival_renders_without_forwarding_click_or_enabling_shared_pages(self):
+        marker = 'Synthetic_Ingress_Click'
+        code, body, headers = self.exchange('GET', '/intelligence?utm_source=x&twclid=' + marker, owner=False)
+        self.assertEqual(code, 200)
+        self.assertEqual(headers['Referrer-Policy'], 'no-referrer')
+        self.assertNotIn(marker.encode(), body)
+        self.assertLess(body.index(b'captureAxonosAttribution'), body.index(b'<link'))
+        self.assertIn(b'id="axonos-privacy-trigger"', body)
+        self.assertNotIn(marker.encode(), self.log_path.read_bytes())
+        self.assertEqual(self.exchange('GET', '/intelligence/share/example?twclid=' + marker)[0], 400)
+        self.assertEqual(self.exchange('GET', '/api/intelligence/conversations?twclid=' + marker)[0], 400)
+
     def test_partial_response_reaches_browser_before_stop_at_other_connection(self):
         row = self.exchange('POST', '/api/intelligence/conversations', {})[1]
         item = '/api/intelligence/conversations/' + row['id']

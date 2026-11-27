@@ -305,10 +305,63 @@ class IntelligenceBrowser(unittest.TestCase):
         self.assertEqual(self.page.locator('.assistant .content').inner_text(), 'Only part of this reply')
         self.assertFalse(self.page.locator('#stop').is_visible())
 
+    def test_consent_controls_direct_and_landing_ad_arrivals(self):
+        marker = 'Synthetic_Intelligence_Click'
+        actions = []
+        binds = []
+        candidates = []
+        def attribution(route):
+            req = route.request
+            path = urlsplit(req.url).path
+            headers = req.all_headers()
+            click = headers.get('x-axonos-landing-click')
+            if click:
+                candidates.append(click)
+            data = dict(ok=True, enabled=True, context='C' * 40, csrf='S' * 40,
+                        expires_at=int(time.time()) + 600, attribution_ttl_days=7)
+            if path.endswith('/status'):
+                data.update(state='unset', landing_click_accepted=click == marker,
+                            preferences=dict(enabled=True, app_origin=BASE, ttl_days=7, policy_version='test',
+                                             policy_epoch=2, funnel_events=['intelligence_page_viewed']))
+            elif path.endswith('/bind'):
+                binds.append((req.post_data_json, headers.get('x-axgt-auth-token')))
+                data.update(accepted=True)
+            else:
+                action = req.post_data_json['action']
+                actions.append(action)
+                data.update(state='granted' if action == 'grant' else 'revoked')
+            route.fulfill(status=202 if path.endswith('/consent') else 200, json=data)
+
+        self.page.route('**/api/x-attribution/*', attribution)
+        self.page.goto(BASE + '/intelligence?twclid=' + marker)
+        self.page.wait_for_function('window.axonosAttributionReady === true')
+        self.assertEqual(self.page.url, BASE + '/intelligence')
+        self.assertEqual(candidates, [marker])
+        self.assertEqual(actions, [])
+        self.page.get_by_role('button', name='Reject optional').click()
+        self.assertNotIn('intelligence_page_viewed', actions)
+
+        # A transferred fragment arriving in a signed-in, consenting browser
+        # produces the existing app milestone and uses the authenticated cookie.
+        self.page.goto(BASE + '/intelligence')
+        self.page.get_by_role('button', name='Privacy settings').click()
+        self.page.get_by_role('button', name='Accept optional').click()
+        self.page.get_by_role('button', name='Accept optional').wait_for(state='hidden')
+        self.wallet = WALLET
+        self.page.goto(BASE + '/')
+        self.page.goto(BASE + '/intelligence#axonos_x_click=' + marker)
+        self.page.wait_for_function('!!window.axonosAttributionContext')
+        self.page.wait_for_timeout(100)
+        self.assertEqual(self.page.url, BASE + '/intelligence')
+        self.assertEqual(actions.count('intelligence_page_viewed'), 1)
+        self.assertEqual(binds, [({'wallet_address': WALLET}, None)])
+        self.assertTrue(all(marker not in u.geturl() for u in self.requests if u.path != '/intelligence'))
+
     def test_public_entry_and_wallet_change(self):
         self.page.goto(BASE + '/intelligence')
         self.assertEqual(self.page.locator('textarea').count(), 0)
-        self.assertFalse(any(u.path.startswith(('/api/', '/app/vendor/intelligence')) for u in self.requests))
+        self.assertFalse(any(u.path.startswith(('/api/', '/app/vendor/intelligence'))
+                             and u.path != '/api/x-attribution/status' for u in self.requests))
         self.page.get_by_role('link', name='Connect wallet to chat').click()
         self.page.wait_for_url(BASE + '/?view=intelligence')
         self.wallet = WALLET

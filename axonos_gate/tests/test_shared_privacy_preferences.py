@@ -301,6 +301,31 @@ class FunnelJourney(unittest.TestCase):
                 if 'app_page_viewed' in milestones(): break
             self.assertEqual(milestones(), ['landing_page_viewed', 'app_launch_clicked', 'app_page_viewed'])
 
+    def test_intelligence_landing_and_direct_arrivals(self):
+        for direct in (False, True):
+            with self.subTest(direct=direct), patch.object(x_capi, 'rate_limit_digest_key', return_value=b'synthetic'), \
+                    patch.object(x_capi, '_send_local_envelope', return_value=True) as queued, self.journey() as (page, _, grants):
+                if direct:
+                    page.goto('https://app.axonos.io/intelligence?twclid=' + CLICK)
+                    self.assertEqual(page.url, 'https://app.axonos.io/intelligence')
+                    self.assertFalse(queued.called)
+                    page.get_by_role('button', name='Accept optional', exact=True).click()
+                else:
+                    frame = self.landing(page)
+                    frame.get_by_role('button', name='Accept optional', exact=True).click()
+                    for _ in range(100):
+                        page.wait_for_timeout(50)
+                        if queued.called: break
+                    page.get_by_role('link', name='Launch AxonIntelligence', exact=True).first.click()
+                    page.wait_for_url('https://app.axonos.io/intelligence')
+                for _ in range(100):
+                    page.wait_for_timeout(50)
+                    milestones = [call.args[0]['milestone'] for call in queued.call_args_list
+                                  if call.args[0]['action'] == 'funnel']
+                    if 'intelligence_page_viewed' in milestones: break
+                expected = [] if direct else ['landing_page_viewed', 'intelligence_launch_clicked']
+                self.assertEqual(milestones, expected + ['intelligence_page_viewed'])
+
     def test_old_choices_keep_their_scope(self):
         import json
         import time

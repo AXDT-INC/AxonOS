@@ -1,0 +1,292 @@
+    <script>
+        (function captureAxonosAttribution() {
+            window.axonosUrlQueryScrubFailed = false;
+            // Capture X's click ID only in memory, validate its shape, and
+            // remove it before any unrelated page resource loads. A URL
+            // consent flag is deliberately ignored: consent is app-owned.
+            window.axonosPendingTwclid = '';
+            // If parsing or History API rewriting fails, discard the entire
+            // query. Initialize this before touching URLSearchParams so even a
+            // constructor failure cannot leave a click or confused key behind.
+            var attributionFallbackClean = window.location.pathname;
+            try {
+                // Landing forwards only after an explicit click. Fragments do
+                // not enter HTTP requests; scrub synchronously before resources.
+                // This is matching data, never consent or authenticated origin.
+                var attributionHash = String(window.location.hash || '');
+                var fragmentClick = '';
+                var fragmentAttribution = /axonos_x_click|twclid/i.test(attributionHash);
+                try {
+                    if (attributionHash.length > 8192) throw new Error('fragment too large');
+                    var decodedFragment = attributionHash;
+                    for (var fragmentDepth = 0; fragmentDepth < 8; fragmentDepth += 1) {
+                        var nextFragment = decodeURIComponent(decodedFragment);
+                        fragmentAttribution = fragmentAttribution || /axonos_x_click|twclid/i.test(nextFragment);
+                        if (nextFragment === decodedFragment) break;
+                        decodedFragment = nextFragment;
+                    }
+                    if (fragmentDepth === 8) fragmentAttribution = true;
+                } catch (e) { fragmentAttribution = true; }
+                if (fragmentAttribution) {
+                    var fragmentMatch = /^#axonos_x_click=([A-Za-z0-9_-]{8,256})$(?![\s\S])/.exec(attributionHash);
+                    fragmentClick = fragmentMatch ? fragmentMatch[1] : '';
+                    attributionHash = '';
+                }
+                attributionFallbackClean = window.location.pathname + attributionHash;
+                var rawAttributionQuery = String(window.location.search || '').replace(/^\?/, '');
+                if (rawAttributionQuery.length > 8192) {
+                    throw new Error('query too large to scrub safely');
+                }
+                var rawExactTwclidCount = 0;
+                var rawConfusedTwclid = false;
+                var forceAttributionQueryRemoval = false;
+                function tolerantAsciiQueryName(value) {
+                    // decodeURIComponent rejects the entire input when even
+                    // one escape is malformed. Decode valid ASCII escapes
+                    // independently so `%74wclid%ZZ` cannot hide `twclid`
+                    // from the scrubber. Repetition covers nested `%25`.
+                    var current = String(value || '').replace(/\+/g, ' ');
+                    var decodeLimit = current.length + 1;
+                    for (var tolerantDecode = 0;
+                        tolerantDecode < decodeLimit; tolerantDecode += 1) {
+                        var next = current.replace(
+                            /%([0-9a-fA-F]{2})/g,
+                            function (_match, octet) {
+                                return String.fromCharCode(parseInt(octet, 16));
+                            }
+                        );
+                        if (next === current) break;
+                        current = next;
+                    }
+                    return current.toLowerCase();
+                }
+                rawAttributionQuery.split('&').forEach(function (entry) {
+                    if (!entry) return;
+                    var rawKey = entry.split('=', 1)[0];
+                    // Deep repeated decoding is intentionally conservative,
+                    // but must not become quadratic work on an attacker-sized
+                    // request line. No AxonOS query name needs this much room;
+                    // discard the complete query instead of interpreting it.
+                    if (rawKey.length > 256) {
+                        forceAttributionQueryRemoval = true;
+                        return;
+                    }
+                    var decodedRawKey = rawKey.replace(/\+/g, ' ');
+                    var rawDecodeLimit = decodedRawKey.length + 1;
+                    for (var rawKeyDecode = 0;
+                        rawKeyDecode < rawDecodeLimit; rawKeyDecode += 1) {
+                        try {
+                            var nextRawKey = decodeURIComponent(decodedRawKey);
+                            if (nextRawKey === decodedRawKey) break;
+                            decodedRawKey = nextRawKey;
+                        } catch (e) { break; }
+                    }
+                    var tolerantRawKey = tolerantAsciiQueryName(rawKey);
+                    if (decodedRawKey.toLowerCase() === 'twclid' &&
+                        tolerantRawKey === 'twclid') {
+                        if (rawKey === 'twclid') rawExactTwclidCount += 1;
+                        else rawConfusedTwclid = true;
+                    } else if (tolerantRawKey.indexOf('twclid') !== -1 ||
+                        /twclid/i.test(decodedRawKey) || /twclid/i.test(rawKey)) {
+                        // A malformed escape surrounding a visible sensitive
+                        // name cannot be safely deleted through URLSearchParams.
+                        forceAttributionQueryRemoval = true;
+                    }
+                });
+                var attributionParams = new URLSearchParams(window.location.search || '');
+                var attributionKeys = [];
+                var clickCandidates = [];
+                function canonicalAttributionKey(value) {
+                    var current = String(value || '');
+                    var decodeLimit = current.length + 1;
+                    for (var keyDecode = 0;
+                        keyDecode < decodeLimit; keyDecode += 1) {
+                        try {
+                            var decoded = decodeURIComponent(current);
+                            if (decoded === current) break;
+                            current = decoded;
+                        } catch (e) { break; }
+                    }
+                    return current.toLowerCase();
+                }
+                attributionParams.forEach(function (value, key) {
+                    if (String(key).length > 256) {
+                        forceAttributionQueryRemoval = true;
+                        attributionKeys.push(key);
+                        return;
+                    }
+                    var canonicalKey = canonicalAttributionKey(key);
+                    if (canonicalKey === 'twclid') {
+                        // URLSearchParams already performed the one normal URL
+                        // decode. Deeper/case-confused aliases are scrubbed but
+                        // never accepted as an advertising identifier.
+                        // Do not normalize surrounding whitespace or controls
+                        // into an otherwise valid identifier. The allowlist
+                        // below must evaluate the value exactly as decoded from
+                        // the URL.
+                        clickCandidates.push(
+                            key === 'twclid' ? String(value || '') : ''
+                        );
+                    }
+                    if (canonicalKey === 'twclid' || canonicalKey === 'consent' ||
+                        canonicalKey === 'x_capi_handoff' || canonicalKey === 'x_capi_context') {
+                        attributionKeys.push(key);
+                    }
+                });
+                var clickCandidate = clickCandidates.length === 1 &&
+                    rawExactTwclidCount === 1 && !rawConfusedTwclid
+                    ? clickCandidates[0] : '';
+                if (fragmentAttribution) {
+                    clickCandidate = rawExactTwclidCount === 0 && !rawConfusedTwclid && clickCandidates.length === 0
+                        ? fragmentClick : '';
+                }
+                var walletShaped = /^(?:0x)?[0-9a-f]{40}$/i.test(clickCandidate);
+                var prefixedDigestShaped = /^0x[0-9a-f]{64}$/i.test(clickCandidate);
+                var uuidShaped = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clickCandidate);
+                var ipv4Shaped = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(clickCandidate);
+                var phoneDigits = (clickCandidate.match(/[0-9]/g) || []).length;
+                var phoneShaped = /^[0-9][0-9._~-]{6,20}$/.test(clickCandidate) &&
+                    phoneDigits >= 7 && phoneDigits <= 15;
+                var digestShaped = /^[0-9a-f]{32,128}$/i.test(clickCandidate);
+                var walletHandleShaped = /^[A-Za-z0-9_-]{1,64}\.(?:eth|sol|btc|crypto|wallet)$/i.test(clickCandidate);
+                var secretShaped = /^(?:sk-[A-Za-z0-9_-]+|xox[baprs]-|gh[pousr]_|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{8,}\.|bearer[._~-]|postgres(?:ql)?[._~:-])/i.test(clickCandidate);
+                var globalPrivacyControlActive = false;
+                try { globalPrivacyControlActive = navigator.globalPrivacyControl === true; } catch (e) { }
+                if (/^[A-Za-z0-9._~-]{8,256}$/.test(clickCandidate) &&
+                    !walletShaped && !prefixedDigestShaped && !uuidShaped &&
+                    !ipv4Shaped && !phoneShaped && !digestShaped &&
+                    !walletHandleShaped && !secretShaped &&
+                    !globalPrivacyControlActive) {
+                    window.axonosPendingTwclid = clickCandidate;
+                }
+                attributionKeys.forEach(function (name) {
+                    attributionParams.delete(name);
+                });
+                if (forceAttributionQueryRemoval) {
+                    throw new Error('ambiguous attribution key');
+                }
+                var attributionQuery = attributionParams.toString();
+                var attributionClean = window.location.pathname +
+                    (attributionQuery ? '?' + attributionQuery : '') +
+                    attributionHash;
+                var attributionCurrent = window.location.pathname +
+                    window.location.search + window.location.hash;
+                if (attributionClean !== attributionCurrent) {
+                    window.history.replaceState(window.history.state, '', attributionClean);
+                }
+            } catch (e) {
+                window.axonosPendingTwclid = '';
+                window.axonosUrlQueryScrubFailed = true;
+                // Old/restricted browsers that reject History API mutation get
+                // one clean replacement navigation. Never continue knowingly
+                // carrying the identifier into subresource referrers or app UI.
+                try {
+                    if (attributionFallbackClean !==
+                        window.location.pathname + window.location.search + window.location.hash) {
+                        window.location.replace(attributionFallbackClean);
+                    }
+                } catch (ignored) { }
+            }
+        })();
+    </script>
+
+    <script>
+        // Keep the optional attribution bridge off the parser's critical path.
+        // This tiny inline closure is the sole handoff: it consumes and deletes
+        // the scrubbed click synchronously, then imports the larger bridge without
+        // delaying the wallet, payment, session, reconnect, or viewer UI.
+        (function loadAxonosAttributionBridge() {
+            'use strict';
+            var RAW_CLICK_RETENTION_MS = 10000;
+            var initialClick = String(window.axonosPendingTwclid || '');
+
+            // Business request builders fail closed while the optional module is
+            // unavailable.  They never read the private click held below.
+            window.axonosAttributionContext = '';
+            window.axonosAttributionReady = false;
+            window.axonosPendingTwclid = '';
+            try { delete window.axonosPendingTwclid; } catch (e) { }
+
+            function monotonicNow() {
+                try {
+                    var value = window.performance &&
+                        typeof window.performance.now === 'function'
+                        ? window.performance.now() : NaN;
+                    return Number.isFinite(value) && value >= 0 ? value : null;
+                } catch (e) {
+                    return null;
+                }
+            }
+            var clickCapturedAt = monotonicNow();
+            var clickDeadline = clickCapturedAt === null
+                ? null : clickCapturedAt + RAW_CLICK_RETENTION_MS;
+            if (clickDeadline === null) initialClick = '';
+
+            var retentionTimer = null;
+            function discardInitialClick() {
+                // A stalled module fetch must not retain a vendor identifier for
+                // the lifetime of an otherwise usable AxonOS page.
+                initialClick = '';
+                clickCapturedAt = null;
+                clickDeadline = null;
+                if (retentionTimer !== null) {
+                    clearTimeout(retentionTimer);
+                    retentionTimer = null;
+                }
+            }
+            function discardInitialClickOnPageHide() {
+                // A module completion queued across navigation/BFCache must never
+                // resurrect the prior document's advertising identifier.
+                discardInitialClick();
+            }
+            function expireInitialClick() {
+                discardInitialClick();
+                window.removeEventListener('pagehide', discardInitialClickOnPageHide);
+            }
+            retentionTimer = setTimeout(expireInitialClick, RAW_CLICK_RETENTION_MS);
+            window.addEventListener('pagehide', discardInitialClickOnPageHide, {
+                once: true
+            });
+
+            function takeInitialClick() {
+                var now = monotonicNow();
+                // Timers can be throttled in background tabs. The monotonic
+                // deadline, not callback scheduling order, is authoritative.
+                var withinDeadline = clickCapturedAt !== null &&
+                    clickDeadline !== null && now !== null &&
+                    now >= clickCapturedAt && now < clickDeadline;
+                var value = withinDeadline ? initialClick : '';
+                discardInitialClick();
+                window.removeEventListener('pagehide', discardInitialClickOnPageHide);
+                return value;
+            }
+
+            var moduleRequest;
+            try {
+                moduleRequest = import('./app/x-attribution.js?v=8');
+            } catch (e) {
+                takeInitialClick();
+                return;
+            }
+            Promise.resolve(moduleRequest).then(function (bridge) {
+                var click = takeInitialClick();
+                var initialize = bridge && (bridge.default || bridge.initializeXAttribution);
+                if (typeof initialize !== 'function') return;
+                try {
+                    initialize(click);
+                } finally {
+                    click = '';
+                }
+            }).catch(function () {
+                takeInitialClick();
+            });
+        })();
+    </script>
+
+    <script>
+        // Only preferences are shared across sites. Attribution grants remain
+        // app-owned and separately bound to an eligible click and wallet.
+        window.axonosPrivacyReady = import('./app/privacy-preferences.js?v=4')
+            .then(function (module) { return module.initializePrivacyPreferences(); })
+            .catch(function () { return { unavailable: true, permitted: function () { return false; } }; });
+    </script>

@@ -33,14 +33,16 @@ on the app origin.
 |---|---|
 | Consented landing visit | `X_CAPI_EVENT_LANDING_PAGE_VIEWED` |
 | Consented ordinary Launch click | `X_CAPI_EVENT_APP_LAUNCH_CLICKED` |
-| Eligible app arrival | `X_CAPI_EVENT_APP_PAGE_VIEWED` |
+| Eligible AxonOS desktop arrival | `X_CAPI_EVENT_APP_PAGE_VIEWED` |
+| Consented Launch AxonIntelligence click | `X_CAPI_EVENT_INTELLIGENCE_LAUNCH_CLICKED` |
+| Eligible Intelligence arrival, including direct X ads | `X_CAPI_EVENT_INTELLIGENCE_PAGE_VIEWED` |
 
 Supply each desired X event ID to the gate and worker. Blank disables that
 event. The landing repo uses the existing app-origin preferences frame and
-needs no X event IDs. Schema migration 009 extends the outbox and deduplication
+needs no X event IDs. Schema migrations 009 and 010 extend the outbox and deduplication
 constraints. The gate authenticates each new observation to the worker, which
 deduplicates each milestone per click ID. The revised shared preference
-covers all six events. A valid earlier acceptance continues to cover wallet,
+covers the eight configured milestones. A valid earlier acceptance continues to cover wallet,
 deposit and session milestones. An earlier rejection continues to suppress
 sharing. Enabling these optional mappings on an existing shared deployment
 does not require rotating the consent epoch. The original grant scope stays
@@ -50,7 +52,7 @@ ingestion and before dispatch.
 The landing frame can report a consented view while the visitor is still on
 the landing page. Measurement is best effort. Unanswered choices, GPC, a
 closed page before submission or an expired landing click can leave gaps.
-Launching never waits longer than 300 ms for an optional Launch report.
+Launching never waits longer than 300 ms for an optional Launch report. Direct ad arrivals on `/intelligence` record only the eligible Intelligence page view. Shared conversation links do not initialize attribution.
 
 Each app tab still obtains its own server-encrypted attribution ticket and
 passes the existing click, CSRF, policy and verified-wallet checks. Before a

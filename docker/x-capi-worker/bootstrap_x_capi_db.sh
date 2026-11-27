@@ -154,9 +154,10 @@ elif [ "$schema_version" = 4 ]; then
     { printf '%s\n' 'BEGIN;'; cat "$migration_dir/008_x_capi_v4_preflight.sql"; printf '%s\n' 'ROLLBACK;'; } |
         psql -X -w -q -o /dev/null -v ON_ERROR_STOP=1 \
             -v owner_role="$owner_role" -v worker_role="$worker_role"
-elif [ "$schema_version" = 5 ] || [ "$schema_version" = 6 ]; then
+elif [ "$schema_version" = 5 ] || [ "$schema_version" = 6 ] || [ "$schema_version" = 7 ]; then
     postflight=008_x_capi_v5_postflight.sql
     if [ "$schema_version" = 6 ]; then postflight=009_x_capi_v6_postflight.sql; fi
+    if [ "$schema_version" = 7 ]; then postflight=010_x_capi_v7_postflight.sql; fi
     # The helper is read-only; no historical v4 grants are applied on restart.
     { printf '%s\n' 'BEGIN;'; cat "$migration_dir/$postflight"; printf '%s\n' 'ROLLBACK;'; } |
         psql -X -w -q -o /dev/null -v ON_ERROR_STOP=1 \

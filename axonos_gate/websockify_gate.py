@@ -2343,9 +2343,16 @@ class AxonOSProxyRequestHandler(websockify.websocketproxy.ProxyRequestHandler):
                        'share': ('POST', 'DELETE')}[item.group(1)]
         if method not in methods:
             return self._send_json(405, {"error": "Method not allowed."}, no_cache=True)
-        chat_page = path == '/intelligence' and re.fullmatch(r'chat=[0-9a-f]{32}', query)
+        # The browser scrubs ad arrivals before loading page resources. Forward
+        # only a canonical saved-chat selector to the authenticated renderer.
+        entry_page = path == '/intelligence' and len(query) <= 8192
+        if entry_page and separator:
+            chats = [field for field in query.split('&') if field.startswith('chat=')]
+            target = path
+            if len(chats) == 1 and re.fullmatch(r'chat=[0-9a-f]{32}', chats[0]):
+                target += '?' + chats[0]
         search = path == '/api/intelligence/conversations' and len(query) <= 2600 and '#' not in query
-        if (separator and not (method == 'GET' and (chat_page or search))) or self.headers.get('Transfer-Encoding'):
+        if (separator and not (method == 'GET' and (entry_page or search))) or self.headers.get('Transfer-Encoding'):
             return self._send_json(400, {"error": "Unexpected request target."}, no_cache=True)
         headers = {name: self.headers[name] for name in
                    ('Cookie', 'X-AXGT-Auth-Token', 'X-Wallet-Address', 'Sec-Fetch-Site', 'Accept')

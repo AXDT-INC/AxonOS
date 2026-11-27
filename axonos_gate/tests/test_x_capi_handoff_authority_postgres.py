@@ -510,7 +510,7 @@ class BrowserFunnelPostgresTests(unittest.TestCase):
                     self.assertEqual(worker.process_ingest_envelope(conn, event), 'duplicate')
             with conn.cursor() as cur:
                 cur.execute('SELECT count(*) FROM x_capi_outbox')
-                self.assertEqual(cur.fetchone(), (3,))
+                self.assertEqual(cur.fetchone(), (len(x_capi.FUNNEL_EVENTS),))
             self.assertEqual(worker.process_ingest_envelope(conn, dict(v=1, action='revoke',
                 context_token=grant['context'], event_timestamp_ms=int(time.time()*1000))), 'revoked')
             self.assertEqual(worker.process_ingest_envelope(conn, event), 'wallet_or_lifecycle_mismatch')

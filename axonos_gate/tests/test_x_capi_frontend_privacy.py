@@ -149,11 +149,18 @@ class XcapiFrontendPrivacyTests(unittest.TestCase):
         self.assertIn("def log_message(self, format, *args):", proxy)
         self.assertIn("redact_terminal_websocket_query(format)", proxy)
 
+    def test_static_desktop_embeds_the_intelligence_attribution_head_verbatim(self):
+        partial = (ROOT / "axonos_gate/templates/attribution-head.html").read_text()
+        self.assertEqual(self.between(
+            self.page, "<!-- BEGIN generated attribution-head.html -->\n",
+            "    <!-- END generated attribution-head.html -->",
+        ), partial)
+
     def test_url_scrub_is_canonical_duplicate_safe_and_precedes_resources(self):
         scrub = self.between(
             self.page,
             "// Capture X's click ID only in memory",
-            "try {\n                var params = new URLSearchParams",
+            "</script>",
         )
         self.assertIn("canonicalAttributionKey", scrub)
         self.assertIn("tolerantAsciiQueryName", scrub)
@@ -187,17 +194,17 @@ class XcapiFrontendPrivacyTests(unittest.TestCase):
         self.assertIn("initialClick = ''", loader)
         self.assertIn("window.performance.now()", loader)
         self.assertIn("now < clickDeadline", loader)
-        self.assertIn("import('./app/x-attribution.js?v=7')", loader)
+        self.assertIn("import('./app/x-attribution.js?v=8')", loader)
         self.assertIn("initialize(click)", loader)
         self.assertIn("window.addEventListener('pagehide'", loader)
         self.assertIn("window.removeEventListener('pagehide'", loader)
         self.assertLess(
             loader.index("delete window.axonosPendingTwclid"),
-            loader.index("import('./app/x-attribution.js?v=7')"),
+            loader.index("import('./app/x-attribution.js?v=8')"),
         )
         self.assertLess(
             loader.index("retentionTimer = setTimeout"),
-            loader.index("import('./app/x-attribution.js?v=7')"),
+            loader.index("import('./app/x-attribution.js?v=8')"),
         )
         self.assertLess(
             self.page.index("loadAxonosAttributionBridge"),
@@ -224,7 +231,7 @@ class XcapiFrontendPrivacyTests(unittest.TestCase):
             r"<script>\s*([\s\S]*?)</script>", head_before_resources
         )
         scrub = next(
-            (source for source in inline_scripts if "captureAxonosGuestEntry" in source),
+            (source for source in inline_scripts if "captureAxonosAttribution" in source),
             None,
         )
         loader = next(
@@ -277,7 +284,7 @@ class XcapiFrontendPrivacyTests(unittest.TestCase):
                             content_type="text/html; charset=utf-8",
                             body=synthetic_page,
                         )
-                    elif url == "https://app.example/app/x-attribution.js?v=7":
+                    elif url == "https://app.example/app/x-attribution.js?v=8":
                         # Intentionally leave the optional module request open.
                         held_module_routes.append(route)
                     else:
@@ -383,7 +390,7 @@ class XcapiFrontendPrivacyTests(unittest.TestCase):
                                 content_type="text/html; charset=utf-8",
                                 body=monotonic_html,
                             )
-                        elif url == "https://app.example/app/x-attribution.js?v=7":
+                        elif url == "https://app.example/app/x-attribution.js?v=8":
                             held_after_deadline.append(route)
                         else:
                             route.abort()
@@ -440,7 +447,7 @@ class XcapiFrontendPrivacyTests(unittest.TestCase):
                                 content_type="text/html; charset=utf-8",
                                 body=pagehide_html,
                             )
-                        elif url == "https://app.example/app/x-attribution.js?v=7":
+                        elif url == "https://app.example/app/x-attribution.js?v=8":
                             held_after_pagehide.append(route)
                         else:
                             route.abort()

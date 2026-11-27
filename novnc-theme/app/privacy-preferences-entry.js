@@ -1,2 +1,2 @@
-import { initializePrivacyPreferences } from './privacy-preferences.js?v=3';
+import { initializePrivacyPreferences } from './privacy-preferences.js?v=4';
 window.axonosPrivacyReady = initializePrivacyPreferences();

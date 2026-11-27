@@ -27,26 +27,10 @@ Copyright (C) 2019 The noVNC Authors
     <meta charset="utf-8">
     <meta name="referrer" content="no-referrer">
 
+    <!-- BEGIN generated attribution-head.html -->
     <script>
-        // Guest entry must win the boot race synchronously. The main application
-        // initializes on DOMContentLoaded, but remembered-wallet paint and wallet
-        // restore probes can run before an invite is redeemed. Capture and scrub
-        // the one-use bearer token now, before any external page resource or
-        // asynchronous startup path can observe the original URL.
-        (function captureAxonosGuestEntry() {
-            var storageKey = 'axonos_guest_session';
-            var invite = '';
-            var stored = null;
-
-            window.axonosGuestEntryPending = false;
-            window.axonosPendingGuestInvite = '';
-            window.axonosPendingStoredGuestSession = null;
+        (function captureAxonosAttribution() {
             window.axonosUrlQueryScrubFailed = false;
-            window.axonosGuestEntryPendingOrActive = function () {
-                return window.axonosGuestEntryPending === true ||
-                    !!window.axonosGuestSession;
-            };
-
             // Capture X's click ID only in memory, validate its shape, and
             // remove it before any unrelated page resource loads. A URL
             // consent flag is deliberately ignored: consent is app-owned.
@@ -233,41 +217,6 @@ Copyright (C) 2019 The noVNC Authors
                     }
                 } catch (ignored) { }
             }
-
-            // If canonical scrubbing failed, do not parse the original query a
-            // second time while the clean replacement navigation is pending.
-            if (!window.axonosUrlQueryScrubFailed) {
-                try {
-                    var params = new URLSearchParams(window.location.search || '');
-                    invite = (params.get('invite') || '').trim();
-                    if (invite) {
-                        params.delete('invite');
-                        var query = params.toString();
-                        var clean = window.location.pathname + (query ? '?' + query : '') +
-                            (window.location.hash || '');
-                        window.history.replaceState(window.history.state, '', clean);
-                    }
-                } catch (e) { /* URL APIs unavailable: ordinary startup remains usable */ }
-            }
-
-            try {
-                var raw = window.sessionStorage.getItem(storageKey);
-                if (raw) {
-                    var parsed = JSON.parse(raw);
-                    var address = String((parsed && parsed.address) || '').trim().toLowerCase();
-                    var expiresAtMs = Number(parsed && parsed.expiresAtMs);
-                    if (/^0x6775657374[0-9a-f]{30}$/.test(address) &&
-                        isFinite(expiresAtMs) && expiresAtMs > Date.now()) {
-                        stored = parsed;
-                    } else {
-                        window.sessionStorage.removeItem(storageKey);
-                    }
-                }
-            } catch (e) { /* private mode or malformed storage: ignore it */ }
-
-            window.axonosPendingGuestInvite = invite;
-            window.axonosPendingStoredGuestSession = stored;
-            window.axonosGuestEntryPending = !!(invite || stored);
         })();
     </script>
 
@@ -344,7 +293,7 @@ Copyright (C) 2019 The noVNC Authors
 
             var moduleRequest;
             try {
-                moduleRequest = import('./app/x-attribution.js?v=7');
+                moduleRequest = import('./app/x-attribution.js?v=8');
             } catch (e) {
                 takeInitialClick();
                 return;
@@ -367,9 +316,66 @@ Copyright (C) 2019 The noVNC Authors
     <script>
         // Only preferences are shared across sites. Attribution grants remain
         // app-owned and separately bound to an eligible click and wallet.
-        window.axonosPrivacyReady = import('./app/privacy-preferences.js?v=3')
+        window.axonosPrivacyReady = import('./app/privacy-preferences.js?v=4')
             .then(function (module) { return module.initializePrivacyPreferences(); })
             .catch(function () { return { unavailable: true, permitted: function () { return false; } }; });
+    </script>
+    <!-- END generated attribution-head.html -->
+
+    <script>
+        // Guest entry must win the boot race synchronously. The main application
+        // initializes on DOMContentLoaded, but remembered-wallet paint and wallet
+        // restore probes can run before an invite is redeemed. Capture and scrub
+        // the one-use bearer token now, before any external page resource or
+        // asynchronous startup path can observe the original URL.
+        (function captureAxonosGuestEntry() {
+            var storageKey = 'axonos_guest_session';
+            var invite = '';
+            var stored = null;
+
+            window.axonosGuestEntryPending = false;
+            window.axonosPendingGuestInvite = '';
+            window.axonosPendingStoredGuestSession = null;
+            window.axonosGuestEntryPendingOrActive = function () {
+                return window.axonosGuestEntryPending === true ||
+                    !!window.axonosGuestSession;
+            };
+
+            // If canonical scrubbing failed, do not parse the original query a
+            // second time while the clean replacement navigation is pending.
+            if (!window.axonosUrlQueryScrubFailed) {
+                try {
+                    var params = new URLSearchParams(window.location.search || '');
+                    invite = (params.get('invite') || '').trim();
+                    if (invite) {
+                        params.delete('invite');
+                        var query = params.toString();
+                        var clean = window.location.pathname + (query ? '?' + query : '') +
+                            (window.location.hash || '');
+                        window.history.replaceState(window.history.state, '', clean);
+                    }
+                } catch (e) { /* URL APIs unavailable: ordinary startup remains usable */ }
+            }
+
+            try {
+                var raw = window.sessionStorage.getItem(storageKey);
+                if (raw) {
+                    var parsed = JSON.parse(raw);
+                    var address = String((parsed && parsed.address) || '').trim().toLowerCase();
+                    var expiresAtMs = Number(parsed && parsed.expiresAtMs);
+                    if (/^0x6775657374[0-9a-f]{30}$/.test(address) &&
+                        isFinite(expiresAtMs) && expiresAtMs > Date.now()) {
+                        stored = parsed;
+                    } else {
+                        window.sessionStorage.removeItem(storageKey);
+                    }
+                }
+            } catch (e) { /* private mode or malformed storage: ignore it */ }
+
+            window.axonosPendingGuestInvite = invite;
+            window.axonosPendingStoredGuestSession = stored;
+            window.axonosGuestEntryPending = !!(invite || stored);
+        })();
     </script>
 
     <!-- Icons - Using AxonOS icon.png -->

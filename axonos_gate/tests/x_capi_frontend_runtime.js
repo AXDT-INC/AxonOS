@@ -262,6 +262,9 @@ function testUrlScrubFallbackStopsUnsafeReparse() {
     );
     assert(failed.runtime.axonosPendingTwclid === '',
         'history failure retained raw click globally');
+    const guest = pageSource.match(/<script>([^<]*?function captureAxonosGuestEntry[\s\S]*?)<\/script>/);
+    assert(guest, 'guest entry bootstrap was not found');
+    vm.runInContext(guest[1], failed.runtime);
     assert(failed.runtime.axonosPendingGuestInvite === '',
         'history failure reparsed the unsafe original query');
     assert(failed.runtime.axonosUrlQueryScrubFailed === true,

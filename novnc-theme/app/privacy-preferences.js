@@ -128,7 +128,8 @@ async function start() {
         if (!funnelPermitted()) {
             offeredClick = false;
             landingTicket = null;
-        } else if (!offeredClick && (funnelEvents.has('landing_page_viewed') || funnelEvents.has('app_launch_clicked'))) {
+        } else if (!offeredClick && (funnelEvents.has('landing_page_viewed') || funnelEvents.has('app_launch_clicked') ||
+                funnelEvents.has('intelligence_launch_clicked'))) {
             offeredClick = true;
             window.parent.postMessage({ type: 'axonos-funnel-request-v1' }, config.landing_origin);
         }
@@ -311,7 +312,7 @@ async function start() {
         heading.append(title, close); card.append(heading);
         const text = element('p', 'axp-description', gpc()
             ? 'Your browser privacy signal keeps optional X conversion sharing off.'
-            : 'We use essential storage to run AxonOS. With your permission, X can measure ad visits to our landing page and app, Launch clicks, and eligible activity in the app.');
+            : 'We use essential storage to run AxonOS. With your permission, X can measure ad visits to our landing page, AxonOS and AxonIntelligence, their Launch buttons, and eligible activity in the app.');
         text.id = 'axp-description'; card.append(text);
         if (expanded) renderDetails(card);
         else {
@@ -349,7 +350,7 @@ async function start() {
         card.append(categories);
         const details = element('details', 'axp-notice');
         details.append(element('summary', '', 'How your data is used'));
-        details.append(element('p', '', 'If you allow sharing, X receives an ad-click ID, conversion type, time and deduplication ID for landing-page views, Launch clicks, app page views, wallet verifications, paid deposits and new sessions. We do not send wallet addresses, payment amounts or desktop contents.'));
+        details.append(element('p', '', 'If you allow sharing, X receives an ad-click ID, conversion type, time and deduplication ID for landing-page views, AxonOS and AxonIntelligence Launch clicks and page views, wallet verifications, paid deposits and new sessions. We do not send wallet addresses, payment amounts or desktop contents.'));
         details.append(element('p', '', 'Your choice is saved in an app-host cookie for up to ' + Math.floor(lifetime / 86400000) + ' days and applies to this browser on the landing page and app. Attribution uses encrypted browser-held contexts; withdrawal capabilities remain until their attribution periods expire.'));
         details.append(element('p', '', 'You can change your choice here at any time. Rejecting stops new sharing and cancels unsent events after server confirmation. Sent or in-flight events may not be recallable. Clearing browser storage removes its withdrawal capabilities. Global Privacy Control keeps sharing off.'));
         details.append(element('p', '', 'These preferences cover X attribution, not all AxonOS data processing.'));
@@ -376,8 +377,11 @@ async function start() {
             funnelPermitted() && typeof event.data.click === 'string' && /^[A-Za-z0-9_-]{8,256}$/.test(event.data.click)) {
             landingTicket = prepareLanding(event.data.click).catch(() => null);
         }
-        if (event.data?.type === 'axonos-funnel-launch-v1' && landingTicket && funnelPermitted()) {
-            landingTicket.then(grant => grant && reportFunnel('app_launch_clicked', grant.context, grant.csrf))
+        const desktopLaunch = event.data?.type === 'axonos-funnel-launch-v1';
+        const intelligenceLaunch = event.data?.type === 'axonos-funnel-intelligence-launch-v1';
+        if ((desktopLaunch || intelligenceLaunch) && landingTicket && funnelPermitted()) {
+            const milestone = intelligenceLaunch ? 'intelligence_launch_clicked' : 'app_launch_clicked';
+            landingTicket.then(grant => grant && reportFunnel(milestone, grant.context, grant.csrf))
                 .catch(() => false).finally(() => window.parent.postMessage(
                     { type: 'axonos-funnel-launch-done-v1' }, config.landing_origin));
         }
