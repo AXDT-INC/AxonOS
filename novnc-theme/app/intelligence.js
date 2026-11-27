@@ -53,6 +53,7 @@
     let current = null;
     let busy = false;
     let listVersion = 0;
+    let storageTail = Promise.resolve();
     let selectedVersion = 0;
     let searchTimer;
     let pendingTurn = null;
@@ -155,8 +156,15 @@
         return response;
     }
 
-    async function api(path, method = 'GET', data) {
-        return (await request(path, method, data)).json();
+    // Each wallet has one storage lock. Wait for the preceding response body,
+    // including failed reads, before issuing the next sidebar operation.
+    function storageRequest(path, method = 'GET', data, shouldSend) {
+        const result = storageTail.then(async () => {
+            if (shouldSend && !shouldSend()) return;
+            return (await request(path, method, data)).json();
+        });
+        storageTail = result.catch(() => {});
+        return result;
     }
 
     function errorText(error) {
@@ -166,6 +174,7 @@
 
     function updateControls() {
         const waiting = busy || storageAvailable === null;
+        search.disabled = storageAvailable === null;
         input.readOnly = waiting;
         el('send').disabled = waiting || !input.value.trim();
         el('send').hidden = Boolean(generation);
@@ -292,7 +301,7 @@
         busy = true;
         updateControls();
         try {
-            const data = await api(collection + '/' + encodeURIComponent(id));
+            const data = await storageRequest(collection + '/' + encodeURIComponent(id));
             if (!active || version !== selectedVersion) return;
             showConversation(data);
             if (mobile.matches) resizeSidebar();
@@ -343,11 +352,23 @@
     }
 
     async function loadHistory() {
+        clearTimeout(searchTimer);
         const version = ++listVersion;
         const query = search.value.trim();
+        const isCurrent = () => active && version === listVersion;
+        const path = collection + (query ? '?q=' + encodeURIComponent(query) : '');
+        const read = () => storageRequest(path, 'GET', undefined, isCurrent);
         try {
-            const data = await api(collection + (query ? '?q=' + encodeURIComponent(query) : ''));
-            if (!active || version !== listVersion) return;
+            let data;
+            try {
+                data = await read();
+            } catch (error) {
+                // A second tab can briefly hold the same wallet lock.
+                if (!isCurrent() || storageAvailable !== true || error.status !== 503) throw error;
+                await new Promise(resolve => setTimeout(resolve, 350));
+                data = await read();
+            }
+            if (!isCurrent()) return;
             storageAvailable = data.storage_available !== false;
             el('temporary').hidden = storageAvailable;
             search.closest('label').hidden = !storageAvailable;
@@ -376,7 +397,10 @@
     search.addEventListener('input', () => {
         ++listVersion;
         clearTimeout(searchTimer);
-        searchTimer = setTimeout(loadHistory, 180);
+        el('retry-list').hidden = true;
+        el('list-message').textContent = 'Searching…';
+        el('list-message').hidden = false;
+        searchTimer = setTimeout(loadHistory, 250);
     });
 
     function newChat() {
@@ -457,7 +481,7 @@
 
     async function stopRemote(turn) {
         try {
-            await api('/api/intelligence/generations/' + turn.id + '/stop', 'POST', {});
+            await request('/api/intelligence/generations/' + turn.id + '/stop', 'POST', {});
         } catch (error) {
             if (!active || generation !== turn) return;
             turn.stopping = false;
@@ -531,16 +555,16 @@
     async function generateReply(question, turn) {
         let path, payload;
         const saved = storageAvailable;
+        const newConversation = saved && !current;
         const messages = current?.messages || [];
         if (saved) {
             if (!current) {
-                const created = await api(collection, 'POST', {});
+                const created = await storageRequest(collection, 'POST', {});
                 if (!active) return;
                 current = created;
                 const url = new URL(location.href);
                 url.searchParams.set('chat', created.id);
                 window.history.replaceState(null, '', url);
-                void loadHistory();
             }
             if (!pendingTurn || pendingTurn.prompt !== question || pendingTurn.revision !== current.revision) {
                 pendingTurn = {prompt: question, revision: current.revision, request_id: turn.id};
@@ -562,6 +586,7 @@
             }
             if (event.type === 'start') {
                 turn.started = true;
+                if (newConversation) void loadHistory();
                 if (turn.stopping) void stopRemote(turn);
             } else if (event.type === 'delta' && typeof event.text === 'string' && event.text) {
                 turn.text += event.text;
@@ -621,7 +646,7 @@
         } catch (error) {
             if (!active) return;
             if (error.status === 409 && current?.id) {
-                try { current = await api(collection + '/' + current.id); } catch { /* Keep the draft if reload fails. */ }
+                try { current = await storageRequest(collection + '/' + current.id); } catch { /* Keep the draft if reload fails. */ }
                 pendingTurn = null;
             }
             if (!active) return;
@@ -684,7 +709,7 @@
         el('dialog-share').hidden = true;
         el('dialog-status').textContent = 'Loading sharing settings…';
         try {
-            const data = await api(collection + '/' + id);
+            const data = await storageRequest(collection + '/' + id);
             if (!active || !manage.open || version !== dialogVersion) return;
             managed = data;
             setShare(data.share_url);
@@ -720,18 +745,18 @@
         el('dialog-status').textContent = 'Saving…';
         try {
             if (action === 'delete') {
-                await api(path, 'DELETE');
+                await storageRequest(path, 'DELETE');
                 if (!active) return;
                 if (current?.id === id) showConversation(null);
                 manage.close();
             } else if (action === 'rename') {
-                const updated = await api(path, 'PATCH', {title: el('rename-title').value.trim()});
+                const updated = await storageRequest(path, 'PATCH', {title: el('rename-title').value.trim()});
                 if (!active) return;
                 if (current?.id === id) showConversation(updated, false);
                 manage.close();
             } else {
                 const creating = action === 'create';
-                const result = await api(path + '/share', creating ? 'POST' : 'DELETE', creating ? {} : undefined);
+                const result = await storageRequest(path + '/share', creating ? 'POST' : 'DELETE', creating ? {} : undefined);
                 if (!active || version !== dialogVersion) return;
                 setShare(creating ? result.url : null);
                 el('dialog-status').textContent = creating ? 'Share link created.' : 'Share link revoked.';

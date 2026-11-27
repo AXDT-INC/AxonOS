@@ -3,6 +3,7 @@ from copy import deepcopy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
+import time
 from queue import Queue
 from threading import Event, Thread
 from pathlib import Path
@@ -441,6 +442,51 @@ $\href{https://external.test}{untrusted}$ and $\unknowncommand$."""
         self.page.get_by_role('button', name='Delete conversation', exact=True).click()
         self.page.wait_for_function("document.querySelector('#chat-title').textContent === 'New chat'")
         self.assertEqual(self.page.locator('.chat-link').all_text_contents(), ['second study'])
+
+    def test_slow_history_search_coalesces_typing_and_retries_only_current_query(self):
+        self.wallet, self.storage = WALLET, True
+        self.page.set_viewport_size({'width': 1100, 'height': 800})
+        self.page.goto(BASE + '/intelligence')
+        self.page.get_by_text('Your chats will appear here.', exact=True).wait_for()
+        queries, pending = [], []
+
+        def hold(route):
+            queries.append(parse_qs(urlsplit(route.request.url).query).get('q', [''])[0])
+            pending.append(route)
+
+        def next_route():
+            # Playwright emits its request event before the routing callback.
+            deadline = time.monotonic() + 5
+            while not pending and time.monotonic() < deadline:
+                self.page.wait_for_timeout(10)
+            self.assertTrue(pending, 'Expected a held wallet search request')
+            return pending.pop(0)
+
+        self.page.route('**/api/intelligence/conversations*', hold)
+        search = self.page.get_by_role('searchbox')
+        with self.page.expect_request(lambda r: r.url.endswith('?q=one')):
+            search.fill('one')
+        search.fill('two')
+        self.page.wait_for_timeout(400)  # Expire debounce while the first read holds the lock.
+        search.fill('thr')
+        search.fill('three')
+        self.page.wait_for_timeout(400)
+        self.assertEqual(queries, ['one'])
+        self.assertEqual(search.input_value(), 'three')
+        busy = {'error': 'Wallet storage is busy. Try again shortly.'}
+        with self.page.expect_request(lambda r: r.url.endswith('?q=three')):
+            next_route().fulfill(status=503, json=busy)
+        self.assertFalse(self.page.get_by_text(busy['error'], exact=True).is_visible())
+        with self.page.expect_request(lambda r: r.url.endswith('?q=three')):
+            next_route().fulfill(status=503, json=busy)
+        next_route().fulfill(json={'storage_available': True, 'conversations': [
+            {'id': '3', 'title': 'Three studies', 'shared': False}]})
+        self.page.get_by_role('button', name='Three studies', exact=True).wait_for()
+        with self.page.expect_request(lambda r: r.url.endswith('/conversations')):
+            search.fill('')
+        next_route().fulfill(json={'storage_available': True, 'conversations': []})
+        self.page.get_by_text('Your chats will appear here.', exact=True).wait_for()
+        self.assertEqual(queries, ['one', 'three', 'three', ''])
 
     def test_history_error_and_idempotent_send_retry(self):
         self.wallet, self.storage, self.fail_history = WALLET, True, True
