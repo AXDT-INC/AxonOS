@@ -46,6 +46,7 @@
     const list = el('history');
     const search = el('search');
     const title = el('chat-title');
+    const restorePanel = el('restore-panel');
     const shell = el('shell');
     const mobile = matchMedia('(max-width: 760px)');
     let active = true;
@@ -225,6 +226,11 @@
         } else {
             thread.replaceChildren(...messages.map(item => message(item.role, item.content, item.finish_reason)));
         }
+        if (restorePanel && !restorePanel.hidden) {
+            restorePanel.hidden = true;
+            scroll.hidden = false;
+            form.closest('.composer-area').hidden = false;
+        }
         scroll.classList.toggle('is-empty', !thread.childElementCount);
         const url = new URL(location.href);
         if (conversation?.id) url.searchParams.set('chat', conversation.id);
@@ -295,6 +301,11 @@
     });
     resizeSidebar();
 
+    function restoreNotice(text, retry) {
+        el('restore-message').textContent = text;
+        el('restore-retry').hidden = !retry;
+    }
+
     async function selectConversation(id) {
         if (busy) return;
         const version = ++selectedVersion;
@@ -303,11 +314,16 @@
         try {
             const data = await storageRequest(collection + '/' + encodeURIComponent(id));
             if (!active || version !== selectedVersion) return;
+            storageAvailable = true;
             showConversation(data);
             if (mobile.matches) resizeSidebar();
             input.focus({preventScroll: true});
         } catch (error) {
             if (!active || version !== selectedVersion) return;
+            if (restorePanel && !restorePanel.hidden) {
+                restoreNotice(errorText(error), true);
+                return;
+            }
             if (error.status === 404) {
                 if (!current || current.id === id) showConversation(null);
                 void loadHistory();
@@ -386,13 +402,23 @@
         }
     }
     async function initialize() {
+        const id = new URLSearchParams(location.search).get('chat');
+        if (id && restorePanel && !restorePanel.hidden) {
+            // Restore the requested transcript before spending a wallet read on the sidebar.
+            restoreNotice('Loading conversation…', false);
+            await selectConversation(id);
+            if (active) await loadHistory();
+            return;
+        }
         await loadHistory();
         if (!active || storageAvailable === null) return;
         status.textContent = '';
-        const id = new URLSearchParams(location.search).get('chat');
-        if (id && storageAvailable) await selectConversation(id);
+        if (current) return;
+        const selected = new URLSearchParams(location.search).get('chat');
+        if (selected && storageAvailable) await selectConversation(selected);
         else showConversation(null);
     }
+    el('restore-retry')?.addEventListener('click', initialize);
     el('retry-list').addEventListener('click', () => storageAvailable === null ? initialize() : loadHistory());
     search.addEventListener('input', () => {
         ++listVersion;

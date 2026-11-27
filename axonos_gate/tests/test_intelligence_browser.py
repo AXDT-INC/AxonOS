@@ -8,7 +8,7 @@ from queue import Queue
 from threading import Event, Thread
 from pathlib import Path
 import unittest
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, parse_qsl, urlsplit
 from uuid import UUID
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -58,7 +58,7 @@ class IntelligenceBrowser(unittest.TestCase):
         elif url.netloc != 'axonos.test':
             return route.abort()
         if url.path == '/intelligence':
-            return route.fulfill(content_type='text/html', body=self.template.render(wallet=self.wallet))
+            return route.fulfill(content_type='text/html', body=self.template.render(wallet=self.wallet, request={'args': dict(parse_qsl(url.query))}))
         if url.path == '/intelligence/share/example':
             if self.snapshot is None:
                 return route.fulfill(status=404, content_type='text/html',
@@ -442,6 +442,46 @@ $\href{https://external.test}{untrusted}$ and $\unknowncommand$."""
         self.page.get_by_role('button', name='Delete conversation', exact=True).click()
         self.page.wait_for_function("document.querySelector('#chat-title').textContent === 'New chat'")
         self.assertEqual(self.page.locator('.chat-link').all_text_contents(), ['second study'])
+
+    def test_existing_url_stays_neutral_before_scripts_and_until_restored(self):
+        self.wallet, self.storage = WALLET, True
+        url = BASE + '/intelligence?chat=study'
+        self.chats['study'] = {'id': 'study', 'title': 'Saved study', 'revision': 1,
+                               'messages': [{'role': 'user', 'content': 'Stored question'}]}
+
+        def neutral():
+            self.assertEqual(self.page.locator('#chat-title').inner_text(), 'Conversation')
+            for selector in ('#welcome', '#starters', '#composer'):
+                self.assertFalse(self.page.locator(selector).is_visible())
+
+        # First paint must also work when the deferred application script is unavailable.
+        script = '**/app/intelligence.js*'
+        self.page.route(script, lambda route: route.abort())
+        self.page.goto(url)
+        self.page.get_by_text('Loading conversation…', exact=True).wait_for()
+        neutral()
+        self.page.unroute(script)
+        held = []
+        detail = '**/api/intelligence/conversations/study'
+        self.page.route(detail, lambda route: held.append(route))
+        self.page.reload()
+        self.page.get_by_text('Loading conversation…', exact=True).wait_for()
+        deadline = time.monotonic() + 5
+        while not held and time.monotonic() < deadline:
+            self.page.wait_for_timeout(10)
+        self.assertEqual(len(held), 1)
+        neutral()
+        held.pop().fulfill(status=503, json={'error': 'Storage temporarily unavailable'})
+        self.page.get_by_text('Storage temporarily unavailable', exact=True).wait_for()
+        neutral()
+        self.assertEqual(self.page.url, url)
+        self.page.unroute(detail)
+        self.page.get_by_role('button', name='Retry conversation').click()
+        self.page.get_by_text('Stored question', exact=True).wait_for()
+        self.assertEqual(self.page.locator('#chat-title').inner_text(), 'Saved study')
+        self.assertFalse(self.page.locator('#restore-panel').is_visible())
+        self.assertTrue(self.page.locator('#prompt').is_editable())
+        self.assertEqual(self.page.url, url)
 
     def test_slow_history_search_coalesces_typing_and_retries_only_current_query(self):
         self.wallet, self.storage = WALLET, True

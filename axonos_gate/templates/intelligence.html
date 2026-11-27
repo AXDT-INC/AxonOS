@@ -20,12 +20,12 @@
     <title>Intelligence · AxonOS</title>
     <link rel="icon" href="/icon.png">
     <link rel="stylesheet" href="/app/styles/axonos-theme.css">
-    <link rel="stylesheet" href="/app/intelligence.css?v=3">
+    <link rel="stylesheet" href="/app/intelligence.css?v=4">
     {% if wallet or shared_conversation %}
     <script src="/app/vendor/intelligence/markdown-it.umd.min.js" defer></script>
     <script src="/app/vendor/intelligence/plugin-tex.min.js" defer></script>
     <script src="/app/vendor/intelligence/katex.min.js" defer></script>
-    <script src="/app/intelligence.js?v=3" defer></script>
+    <script src="/app/intelligence.js?v=4" defer></script>
     {% endif %}
 </head>
 <body data-wallet="{{ wallet or '' }}" class="{% if shared_conversation or shared_error %}shared-page{% elif wallet %}chat-page{% else %}public-page{% endif %}">
@@ -57,6 +57,7 @@
         </article>{% endfor %}</section>
     </main>
     {% elif wallet %}
+    {% set restoring = request.args.get('chat') %}
     <div id="shell">
         <aside id="sidebar" aria-label="Conversation sidebar">
             <div class="sidebar-top">{{ brand() }}<button type="button" class="icon-button" id="sidebar-close" aria-label="Close sidebar" title="Close sidebar">{{ icon('panel') }}</button></div>
@@ -70,17 +71,21 @@
         <main id="chat-main">
             <header class="chat-bar">
                 <button id="sidebar-toggle" type="button" class="icon-button" aria-label="Open sidebar" title="Open sidebar" aria-controls="sidebar">{{ icon('panel') }}</button>
-                <div class="chat-location"><span>Intelligence</span><span class="crumb" aria-hidden="true">/</span><h1 id="chat-title">New chat</h1></div>
+                <div class="chat-location"><span>Intelligence</span><span class="crumb" aria-hidden="true">/</span><h1 id="chat-title">{{ 'Conversation' if restoring else 'New chat' }}</h1></div>
                 <button id="share" type="button" class="subtle-button" hidden>{{ icon('share') }}<span>Share</span></button>
                 <button id="new-mobile" class="icon-button" type="button" aria-label="New chat" title="New chat">{{ icon('new') }}</button>
             </header>
-            <div id="chat-scroll" class="is-empty">
+            <section id="restore-panel" aria-label="Saved conversation" {% if not restoring %}hidden{% endif %}>
+                <p id="restore-message" role="status">Loading conversation…</p>
+                <button id="restore-retry" class="secondary-button" type="button" hidden>Retry conversation</button>
+            </section>
+            <div id="chat-scroll" class="is-empty" {% if restoring %}hidden{% endif %}>
                 <div id="welcome"><div class="hero-mark"><img src="/axon-x.png" alt=""></div>
                     <h2>What are you investigating?</h2>
                 </div>
                 <section id="thread" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions"></section>
             </div>
-            <div class="composer-area"><div class="composer-inner">
+            <div class="composer-area" {% if restoring %}hidden{% endif %}><div class="composer-inner">
                 <template id="waiting-indicator"><span class="reply-wait" role="status"><i aria-hidden="true"></i><i aria-hidden="true"></i><i aria-hidden="true"></i><span class="sr-only">Waiting for AxonAI</span></span></template>
                 <button id="latest" class="icon-button" aria-label="Jump to latest message" title="Jump to latest message" type="button" hidden>{{ icon('up') }}</button>
                 <p id="temporary" hidden>Temporary chat · This wallet has no storage volume. Messages last until you leave this page.</p>

@@ -64,6 +64,8 @@ a { color: var(--accent); text-underline-offset: .2em; }
 .subtle-button:hover, .secondary-button:hover { background: var(--raised); }
 #new-mobile { display: none; }
 #shell.sidebar-hidden #new-mobile { display: inline-grid; }
+#restore-panel { margin: auto; padding: 1.5rem; text-align: center; color: var(--muted); }
+#restore-retry { margin-top: .8rem; }
 #chat-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-anchor: none; overscroll-behavior: contain; scrollbar-width: thin; }
 #chat-scroll.is-empty { display: flex; flex-direction: column; justify-content: safe flex-end; }
 #welcome { position: relative; flex: none; text-align: center; max-width: 100%; padding: 1.4rem 1rem 1.8rem; }
